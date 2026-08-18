@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.combine
 object AppThemeState {
     private lateinit var themePrefs: SharedPreferences
 
-    private val _presetIndex = MutableStateFlow(1)
+    private val _presetIndex = MutableStateFlow(10)
     val presetIndex: StateFlow<Int> = _presetIndex
 
     private val _customAccent = MutableStateFlow(Color(0xFF0055FF))
@@ -83,10 +83,10 @@ object AppThemeState {
             themePrefs.edit().putBoolean("preset_schema_v2", true).apply()
         }
 
-        _presetIndex.value = themePrefs.getInt("preset_index", 1).coerceIn(0, themePresets.size - 1)
+        _presetIndex.value = themePrefs.getInt("preset_index", 10).coerceIn(0, themePresets.size - 1)
         val savedAccent = themePrefs.getInt("custom_accent", Color(0xFF0055FF).toArgb())
         _customAccent.value = Color(savedAccent)
-        _customBaseIndex.value = themePrefs.getInt("custom_base_index", 1).coerceIn(0, CUSTOM_PRESET_INDEX)
+        _customBaseIndex.value = themePrefs.getInt("custom_base_index", 10).coerceIn(0, CUSTOM_PRESET_INDEX)
         _isDarkMode.value = true
         _showStores.value = themePrefs.getBoolean("show_stores", true)
         _showInternalStorage.value = themePrefs.getBoolean("show_internal_storage", true)

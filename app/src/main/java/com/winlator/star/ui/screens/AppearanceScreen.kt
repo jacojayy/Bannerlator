@@ -83,11 +83,12 @@ fun AppearanceScreen() {
         // ── Preset themes ────────────────────────────────────────────────
         SectionLabel("Theme Presets")
 
-        val rows = themePresets.chunked(4)
+        val hiddenIndices = setOf(1) // AMOLED — hidden but still selectable programmatically
+        val visiblePresets = themePresets.mapIndexedNotNull { i, p -> if (i !in hiddenIndices) i to p else null }
+        val rows = visiblePresets.chunked(4)
         rows.forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                row.forEach { preset ->
-                    val index = themePresets.indexOf(preset)
+                row.forEach { (index, preset) ->
                     val isSelected = selectedIndex == index
                     PresetSwatch(
                         preset = preset,

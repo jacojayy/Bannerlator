@@ -267,7 +267,7 @@ private fun GlowingProgressBar(
     // intentional: the glow/gradient/track/shimmer below form a hand-tuned multi-stop brand
     // progress visual (no clean per-stop colorScheme token) and are drawn inside a DrawScope
     // (outside composition), so they're left off-theme; the rest of the splash follows the theme.
-    val glowColor = if (isComplete) Color(0xFF4499FF) else Color(0xFF0055FF)
+    val glowColor = if (isComplete) Color(0xFFCC88FF) else Color(0xFF9933FF)
 
     Canvas(modifier = modifier) {
         val barH   = size.height
@@ -300,7 +300,7 @@ private fun GlowingProgressBar(
             // Fill gradient
             drawRoundRect(
                 brush = Brush.horizontalGradient(
-                    colors = listOf(Color(0xFF0033AA), Color(0xFF0055FF), Color(0xFF4488FF)),
+                    colors = listOf(Color(0xFF4B0082), Color(0xFF9933FF), Color(0xFFCC88FF)),
                     endX   = fillW,
                 ),
                 size         = Size(fillW, barH),

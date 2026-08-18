@@ -18,7 +18,7 @@ import com.winlator.star.perf.TempWatchdog
  * All of this is wrapped so a failure here can never take down app startup — the perf tier is
  * strictly additive.
  */
-class BannerlatorApp : Application() {
+class WinHubApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
@@ -32,7 +32,7 @@ class BannerlatorApp : Application() {
                 com.winlator.star.core.CrashReporter.install(this)
             }
         } catch (t: Throwable) {
-            Log.w("BannerlatorApp", "crash reporter not installed", t)
+            Log.w("WinHubApp", "crash reporter not installed", t)
         }
 
         // Exit-reason auto-save (opt-in, off by default): if the previous process died — including a
@@ -44,11 +44,11 @@ class BannerlatorApp : Application() {
                     .getBoolean(com.winlator.star.core.ExitReasonReporter.PREF_AUTOSAVE, false)) {
                 Thread {
                     try { com.winlator.star.core.ExitReasonReporter.captureToFile(this) }
-                    catch (t: Throwable) { Log.w("BannerlatorApp", "exit-reason autosave failed", t) }
+                    catch (t: Throwable) { Log.w("WinHubApp", "exit-reason autosave failed", t) }
                 }.start()
             }
         } catch (t: Throwable) {
-            Log.w("BannerlatorApp", "exit-reason autosave not scheduled", t)
+            Log.w("WinHubApp", "exit-reason autosave not scheduled", t)
         }
 
         // Reclaim stale update installers from the external cache. On a fresh cold start there is
@@ -58,10 +58,10 @@ class BannerlatorApp : Application() {
         try {
             Thread {
                 try { com.winlator.star.core.UpdateManager.pruneUpdateCacheAtStartup(this) }
-                catch (t: Throwable) { Log.w("BannerlatorApp", "update-cache prune failed", t) }
+                catch (t: Throwable) { Log.w("WinHubApp", "update-cache prune failed", t) }
             }.start()
         } catch (t: Throwable) {
-            Log.w("BannerlatorApp", "update-cache prune not scheduled", t)
+            Log.w("WinHubApp", "update-cache prune not scheduled", t)
         }
 
         try {
@@ -75,12 +75,12 @@ class BannerlatorApp : Application() {
             ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
                 override fun onStop(owner: LifecycleOwner) {
                     try { PerfRevertRegistry.revertAll() } catch (t: Throwable) {
-                        Log.w("BannerlatorApp", "background revert failed", t)
+                        Log.w("WinHubApp", "background revert failed", t)
                     }
                 }
             })
         } catch (t: Throwable) {
-            Log.w("BannerlatorApp", "perf safety-core init failed", t)
+            Log.w("WinHubApp", "perf safety-core init failed", t)
         }
     }
 }

@@ -147,17 +147,17 @@ android {
         standard {
             dimension "version"
             applicationId "com.winlator.banner"
-            resValue "string", "app_name", "Bannerlator Bionic"
+            resValue "string", "app_name", "WinHub Bionic"
         }
         ludashi {
             dimension "version"
             applicationId "com.ludashi.benchmark"
-            resValue "string", "app_name", "Bannerlator Bionic Ludashi"
+            resValue "string", "app_name", "WinHub Bionic Ludashi"
         }
         pubg {
             dimension "version"
             applicationId "com.tencent.ig"
-            resValue "string", "app_name", "Bannerlator Bionic PuBG"
+            resValue "string", "app_name", "WinHub Bionic PuBG"
         }
     }
 

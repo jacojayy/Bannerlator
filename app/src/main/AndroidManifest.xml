@@ -46,7 +46,7 @@
         tools:ignore="ProtectedPermissions" />
 
     <application
-        android:name="com.winlator.star.BannerlatorApp"
+        android:name="com.winlator.star.WinHubApp"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -65,7 +65,7 @@
         <!-- Main activity -->
         <activity
             android:name="com.winlator.star.MainActivity"
-            android:theme="@style/Theme.Bannerlator.Splash"
+            android:theme="@style/Theme.WinHub.Splash"
             android:screenOrientation="sensor"
             android:exported="true"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation">

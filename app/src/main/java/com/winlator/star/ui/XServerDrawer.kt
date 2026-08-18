@@ -1119,10 +1119,6 @@ private fun GraphicsContent(state: XServerDrawerState) {
     // nativeRenderingEnabled is collected once at the top of GraphicsContent (drives the GL grey-out).
     // Native Rendering is only offered on renderers that support direct scanout (Vulkan); it's hidden
     // on the OpenGL renderer, where the bespoke GL scanout path is disabled for now.
-    val nativeRenderingSupported by state.nativeRenderingSupported.collectAsState()
-    if (nativeRenderingSupported)
-        ToggleRow("Native Rendering", nativeRenderingEnabled) { state.onNativeRenderingToggle?.run() }
-
 }
 
 // ───── Runtime-backend diagnostic chip (Graphics tab header) ─────

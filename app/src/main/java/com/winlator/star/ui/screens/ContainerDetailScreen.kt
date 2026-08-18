@@ -608,14 +608,6 @@ internal fun VulkanSettingsDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(stringResource(R.string.renderer_native), Modifier.weight(1f))
-                    IconButton(onClick = { helpRes = R.string.help_renderer_native }) {
-                        Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                    }
-                    Switch(checked = nativeRender, onCheckedChange = { nativeRender = it })
-                }
-
                 val presentModes = listOf("fifo", "mailbox", "immediate")
                 val presentModeLabels = listOf(
                     stringResource(R.string.renderer_present_mode_fifo),

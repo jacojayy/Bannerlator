@@ -6026,7 +6026,7 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
         add("selectIcon"); add("gfxDriver"); add("gfxWrapper"); add("gfxConfig")
         add("dxWrapper"); add("dxConfig"); add("renderer")
         if (selectedRenderer == "SurfaceFlinger") add("sfCompat")
-        if (selectedRenderer == "Vulkan") { add("vkNative"); add("vkColors"); add("vkPresent") }
+        if (selectedRenderer == "Vulkan") { add("vkColors"); add("vkPresent") }
         add("renderScale")
         if (panelRates.isNotEmpty()) add("refresh")
         add("frameGen"); add("fpsLimiter"); add("audio"); add("emulator")
@@ -6266,13 +6266,6 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
 
                     // Vulkan renderer per-game overrides — only relevant when this game runs on Vulkan.
                     if (selectedRenderer == "Vulkan") {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(stringResource(R.string.renderer_native), Modifier.weight(1f))
-                            IconButton(onClick = { helpRes = R.string.help_renderer_native }) {
-                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                            }
-                            DpSwitch(dp, "vkNative", checked = vkNative, onCheckedChange = { vkNative = it })
-                        }
                         // Colors = the game buffer's channel order. BGRA (default) presents as-is; RGBA
                         // swaps R/B (routes through the compositor — native can't swap). Per-game so one
                         // game can differ from the container / its siblings.

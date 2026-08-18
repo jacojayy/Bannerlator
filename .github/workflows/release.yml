@@ -1,0 +1,115 @@
+name: Nightly Manual Release Build
+
+# STABLE builds — builds via the reusable _build.yml (same matrix build as the
+# artifacts-only workflow), then a second job downloads the flavor artifacts and
+# publishes the GitHub release + update.json. A release is ONLY produced here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: 'Release notes (optional)'
+        required: false
+        default: ''
+      release_tag:
+        description: 'Release tag (e.g. 1.7, 1.8)'
+        required: true
+        default: '1.0'
+      release_title:
+        description: 'Release title (e.g. Bannerlator 1.0)'
+        required: true
+        default: 'Bannerlator 1.0'
+      release_number:
+        description: 'Release number for APK name (e.g. 1.7, 1.9-pre1)'
+        required: true
+        default: '1.0'
+      make_prerelease:
+        description: 'Pre-release? (true = beta build, not offered to stable users)'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+permissions:
+  contents: write
+
+jobs:
+  # Phase 1 — build all 3 flavors in parallel (reusable matrix build).
+  build:
+    uses: ./.github/workflows/_build.yml
+    with:
+      release_number: ${{ inputs.release_number }}
+
+  # Phase 2 — collect the built APKs and publish the release + update.json.
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Clone repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 20        # for the git-log changelog; no submodules/assets needed here
+
+    - name: Download built APKs
+      uses: actions/download-artifact@v4
+      with:
+        pattern: Bannerlator-${{ inputs.release_number }}-*
+        path: dist
+        merge-multiple: true   # all 3 flavor APKs land flat in dist/
+
+    - name: List downloaded APKs
+      run: ls -la dist/
+
+    - name: Get version info
+      run: |
+        echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+        echo "VERSION=$(grep versionName app/build.gradle | head -1 | cut -d '"' -f 2)" >> $GITHUB_ENV
+        echo "BUILD_DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
+
+    - name: Generate update.json
+      # Drives the in-app updater (UpdateManager). The app fetches this from
+      # releases/latest/download/update.json; because make_latest=true +
+      # prerelease=false below, only stable cuts ever change it.
+      # release_notes/title arrive via env (NOT inline ${{ }}) so backticks / $ /
+      # newlines in the notes can't trigger shell command-substitution (exit 127).
+      env:
+        RELEASE_NOTES: ${{ inputs.release_notes }}
+        RELEASE_TITLE: ${{ inputs.release_title }}
+      run: |
+        VERSION_CODE=$(grep versionCode app/build.gradle | head -1 | grep -oE '[0-9]+' | head -1)
+        N="${{ inputs.release_number }}"
+        NOTES="$RELEASE_NOTES"
+        [ -z "$NOTES" ] && NOTES="$RELEASE_TITLE"
+        jq -n \
+          --argjson vc "$VERSION_CODE" \
+          --arg vn "$VERSION" \
+          --arg notes "$NOTES" \
+          --arg std "Bannerlator-${N}-standard.apk" \
+          --arg lud "Bannerlator-${N}-ludashi.apk" \
+          --arg pbg "Bannerlator-${N}-pubg.apk" \
+          '{versionCode:$vc, versionName:$vn, notes:$notes, minSupported:1,
+            apk:{"com.winlator.banner":$std,"com.ludashi.benchmark":$lud,"com.tencent.ig":$pbg}}' \
+          > update.json
+        echo "Generated update.json:"; cat update.json
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ inputs.release_tag }}
+        name: ${{ inputs.release_title }}
+        # Body is EXACTLY the supplied release_notes — which already opens with the
+        # centered logo + badges. Do NOT prepend a second logo or a `git log`
+        # changelog table: that produced a duplicate logo + a raw commit listing
+        # stacked above the real notes at the top of every release.
+        body: ${{ inputs.release_notes }}
+        files: |
+          dist/Bannerlator-${{ inputs.release_number }}-standard.apk
+          dist/Bannerlator-${{ inputs.release_number }}-ludashi.apk
+          dist/Bannerlator-${{ inputs.release_number }}-pubg.apk
+          update.json
+        prerelease: ${{ inputs.make_prerelease == 'true' }}
+        # Only a stable cut becomes "latest"; pre-releases never do, so the
+        # default (toggle-off) updater keeps pointing at the last stable.
+        make_latest: ${{ inputs.make_prerelease != 'true' }}

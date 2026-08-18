@@ -1,0 +1,5895 @@
+# Star-Compose — Progress Log
+
+## 2026-08-18 (checkpoint) — 🎮🌐 **Epic EOS Phase 1 + device-test round 1 (branch, NOT merged)**
+> **PR #206 (arro000) merged to main `921bfd64`** first (Epic library crash on duplicate `appName` → `distinctBy`). Then **Epic EOS Phase 1** on branch `feat/epic-eos-launch-args` (tip **`544f35bf`**, on top of #206), NOT merged. Real-Epic launch-arg auth (no emulator — game's own EOSSDK auths against real EOS with the user's Epic account): new `store/EpicSidecar.java` + `EpicLaunchArgs.java` + `EpicEosDetector.java`; injection at `XServerDisplayActivity.getWineStartCommand():6639` (Epic + `epicEos!=0`); `StarLaunchBridge.EpicMeta` stamps `storeSource=epic/epicAppName/epicSandboxId/epicCatalogId/epicEos` on the shortcut; EOS badge in Epic list/detail + mixed ShortcutsScreen; per-shortcut EOS toggle. Full compare + port plan (BannerHub 3.8.0 vs GameNative — both real-Epic not emulator; BH 3.8.0 wiring is dead code; GN is the live reference) → memory `project_bannerlator_epic_eos_support`. Phases 2 (`-epicovt` ownership token / Denuvo) + 3 (EOS Overlay) deferred.
+> **Device test r1 (Metalstorm, a Unity EOS game):** toggle + mixed-grid badge ✅. Fixed: EOS badge missing in grid/poster views + narrow poster cards + launch-splash EOS chip (`544f35bf`). **Critical:** "File not found" on launch was ROOT-CAUSED to a pre-existing install-path bug (NOT the EOS args) — `EpicGameDetailActivity` installed to `files/epic_games` (OUTSIDE imagefs) while `Z:` maps to imagefs, so `Z:\data\…\files\epic_games\…exe` was unreachable; `EpicGamesActivity` (list) already used `imagefs/epic_games`. Fixed `d08e4462` (detail-screen `:347`/`:595` + write-check `:316` → `imagefs/epic_games`). **RESUME:** install `…-epic-eos-p1b-pubg.apk`, REINSTALL Metalstorm (old install won't migrate), retest launch. ⚠️ Two agents pushed builds without confirming green (one non-compiling) — always re-verify CI. → memory `project_bannerlator_epic_eos_support`.
+
+## 2026-08-18 — ✅ **Three HUD/FPS/Contents fixes merged to main + main artifacts build**
+> Merged three device-tested feature branches to `main` (rebase-onto-main + fast-forward each, linear history; all three branches + the leftover agent worktree deleted after). Final `main` = **`a1c7c17a`** (from `267865f8`). No versionCode bump (frozen vc72). Each was CI-green AND device-tested by the user before merge.
+> **1. HUD-hidden skip + DX-API-label gate** (`XServerDisplayActivity.java`). `driveHudFrameTick` now bails on `!hudCounterEnabled` (was only `frameRatingWindowId == -1`), so with "Show HUD" off we no longer run `fpsCounter.tick()` + `frameRating/perfHud.update()` every presented frame (they were running against GONE widgets — the toggle-off bind at `~7904` still set `frameRatingWindowId`). Also gated the 2s `dx-api-detect` thread's loop on `hudCounterEnabled` (idle-sleep + `continue`; thread stays alive to resume on re-enable) so the `/proc/maps` API scan + label push also stop while hidden — nothing HUD-related runs when off. Concept from WinNative PR #620 (we have no leaderboard recorder, so ported the idea not the diff). Commits `fabeeee7` (frame-tick) + `82737c8f` (dx-api).
+> **2. In-game "Show HUD" toggle self-enables FPS.** The ONLY build-gate is container-scoped `container.isShowFPS()` (`~4639`); a shortcut only overrides the `fpsCounterConfig` blob (there is NO per-game show-FPS gate). Bug: with container Show FPS off, flipping the in-game FPS-tab "Show HUD" set `hudEnabled` against a HUD that was never built → inert (onFpsConfigApply's live style-swap only ran when a HUD already existed). Fix: refactored the launch build block into an idempotent `ensureHudBuilt()`; `onFpsConfigApply`, when `hudEnabled`→true, now sets `container.setShowFPS(true)+saveData()` (CONTAINER-WIDE — user's explicit choice; affects sibling games' availability but stays hidden + near-zero cost thanks to fix #1) and builds+binds the HUD live so it appears with no relaunch/no trip to container settings. Turning off just hides (leaves showFPS on). Commit `e5db0f7f` (rebased into `1fcaa53c`).
+> **3. D7VK Contents browse chip.** `CONTENT_TYPE_D7VK` (D3D7→Vulkan) is a real, installable content type but had no filter chip in the Contents hub — its 2 items only appeared under "All". Added `"D7VK"` to the Nightlies source's `supportedTypes` (`RemoteSourceRepository.kt:259`, between DXVK and VKD3D) and to `ContentsTypes.ALL` (cross-source search parity). Verified the live Nightlies pack JSON carries 2 D7VK items (`d7vk-v2.1-2437e5d35-nightly.wcp`, cached under key `d7vk`); `getTypeByName("D7VK")`/`canonicalType` already resolve it. Commit `e4e3a7ff` (rebased into `a1c7c17a`).
+> **CI:** branch runs all success — hud `32095248420`+`32096802872`, ingame `32096033113`, d7vk `32096210007`. Post-merge **main artifacts-only build** run **32097342424**, conclusion=**success**, `headSha=a1c7c17a`, all 3 flavor artifacts present (~522 MB). Not staged (artifacts-only per request). Earlier this session: WinNative PR #603 input-ring hardening (controller-input-death fix) was merged as `267865f8` and its branch deleted.
+
+## 2026-08-17 (later) — 🎮 **Input-ring hardening — WinNative PR #603 ported (branch, CI-green, staged, NOT merged)**
+> Branch `feat/input-ring-hardening-603` off `main` `5650c7f7`, tip `5e758280`, 3 commits (bisect-clean): `9f5cab33` fakeinput ring capacity 512→4096; `3590898b` store-release fences around seqlock publishes (new `winlator/ring_fence.c` in `libwinlator.so`, JNI symbol `Java_com_winlator_star_inputcontrols_FakeInputWriter_nativeStoreFence` — renamed from WinNative's `_cmod_` package; 4 call sites: writeSnapshotLocked odd/even, clearSnapshotLocked odd/even, plus between snapshot and write_seq bump in `flushBufferToRing`); `5e758280` `WinHandler.neutralizeControllers()` + wired into `XServerDisplayActivity.onDrawerOpened` (zeroes tracked pad `state`+`remappedState` and pushes once through the pad's `writers[slot]` — rumble state lives outside `GamepadState` and is untouched, and per-device `assignSlot` preserves our slot pinning/OSC-share plumbing). Also folded upstream's "refresh every launch, do NOT reintroduce `!exists()` guard" comment into `GuestProgramLauncherComponent` (our copy is already unguarded). Fix #4 (unconditional libfakeinput copy) already ours since earlier. Ported from `WinNative-Emu/WinNative` PR #603 (`d6f9a14e`).
+> CI: `CI Build (artifacts only)` run **32092180474**, conclusion=**success**, `headSha=5e758280…` matches pushed tip; all 3 flavor artifacts present (~500MB each). Staged: `/sdcard/Download/Bannerlator-input-ring-603-pubg.apk` (sha256 `e6ddd41946af…0328d`, 500MB, `com.tencent.ig`). **NOT merged — leave for user review.** Tests the strong-alternative hypothesis on the live God-of-War controller-input-death bug (top suspect was `send_vibration` blocking; ring overflow + missing store-release fences on the seqlock keyframe is a plausible alternative — the reader uses `__ATOMIC_ACQUIRE` but our writer only did plain mapped-buffer stores). No versionCode bump (frozen at vc72). No conflicts with our `WinHandler` surface. JNI rename grep-verified clean.
+
+## 2026-08-17 (checkpoint) — 🧱🎬 **5 Proton/GE layers rebuilt (Arihany bionic fixes + DA 1.3.1) + FMV root-cause found**
+> **Proton/GE layer rollout (repo `The412Banner/proton-wine`, NOT this app repo — pointer for context).** Rebuilt **5 arm64ec layers** with 3 Android bionic fixes ported from Arihany's WCPHub build (GameNative lineage) + DirectAudio v1.3.1: **GE-Proton 11.0-5 (vc6), GE-Proton 11.0-3 (vc8), Proton 11.0-1 (vc4), Proton 10.0-4 (vc5), GE-Proton 10.0-34 (vc1)**. The 3 fixes: (1) **SD-card boot** (`noexec`/`force_anon`, GameNative's Wine-10 diff hand-ported to Wine 11) — DEVICE-PROVEN: Dragon Age Inquisition now boots off SD on GE-11.0-5 (old build crashed `map_image_into_view … noexec filesystem`); (2) File-Explorer drive-root copy crash; (3) `LC_ALL=C.UTF-8` locale. One consolidated release, published server-side (subagents run on-device → never `gh release upload` ~1GB over user wifi; use a `workflow_dispatch` job that `gh run download`s on the runner). Feature branches unmerged (merge to `proton_11.0`+p10 pending user go). Full detail → memory `project_proton_arihany_fixes_rollout`.
+> **🎬 FMV/cutscene root cause (THIS app).** Videos (e.g. Ninja Gaiden Sigma) fail on ALL our Protons but play on the "coffincolors" build — NOT a codec/layer gap (our wcps ship every MF/winegstreamer/winedmo DLL; codecs live in the imagefs). Root cause: the app **hard-forces `PROTON_VIDEO_CONVERT=0`/`PROTON_DEMUX=0`/`PROTON_AUDIO_CONVERT=0`** on every launch at `GuestProgramLauncherComponent.java:403-405`, killing Proton's winegstreamer transcode fallback. A per-shortcut `envVars` override re-enables it (merged last, ~line 509). Proper fix = a per-container "Enable FMV/video transcode" toggle (default on) instead of the hard `=0`. ⚠️ Deeper NGS blocker = WMV3/ASF decode (`avdec_wmv3 negotiation failed`) — separate, unsolved, diagnostic staged. Full detail → memory `reference_bannerlator_fmv_proton_video_convert`.
+
+## 2026-08-16 (checkpoint) — 🏁🔊 **3.0.0-pre1 SHIPPED (first 3.0 opt-in beta) + bionic-fg issue triage**
+> **Cut the first 3.0 pre-release** to get the new audio stack into testers' hands: **DirectAudio** (native Wine→AAudio driver, no Pulse/ALSA middleman — public repo `The412Banner/directaudio`, LGPL-2.1) + **adaptive PulseAudio 13 & ALSA** stacks, plus the a6xx driver-crash fix, the Contents hub, and appearance/HUD/updater polish. **Deliberately scoped:** controller/input is UNCHANGED from 2.9.9 (the #345 slot-takeover rework is not merged), and win-fg frame-gen is still PASSTHROUGH (Phase 3 frame insertion pending). DirectAudio only runs on the 4 rebuilt arm64ec compat layers **10.0-4 / 11.0-1 / 11.0-3 / 11.0-5** (downloaded in-app via Contents / `contents.json`; source of truth `core/DirectAudioSupport.kt`).
+> **Version/mechanics:** bumped `versionCode` 71→**72**, `versionName` **3.0.0-pre1** (a bump is required so the updater's opt-in prerelease path offers it; stable-only path compares `> BuildConfig.VERSION_CODE`). Built commit **`307f44ac`**; `main` advanced via doc-only follow-ups to **`582be0ba`** (named the 4 layers, then linked+explained the DirectAudio repo). Dispatched `release.yml` (run `31991453830`) with `make_prerelease=true` → GitHub release **isPrerelease=true, make_latest=false**, so `releases/latest` stays **2.9.9** and only `update_include_prereleases` opt-in users get it. **Tag `3.0.0-pre1` moved to `582be0ba`** so the release's linked changelog reflects the final doc (APKs built from 307f44ac, differ only by docs).
+> **Release notes:** full sectioned "What's New — everything since 2.9.9" lives BOTH in the GitHub release body and the in-app `update.json` notes (user chose full-in-body), following the prior-release logo+badges layout, and a standalone thorough changelog is committed at **`docs/releases/3.0.0-pre1.md`** (linked from the release; verified reachable at the tag; names all 4 layers + the DirectAudio repo). ⚠️ A transient `isPrerelease=false` was a manual GitHub toggle by the user, NOT a workflow bug (CI log confirmed `prerelease: true`); reverted with `gh release edit --prerelease --latest=false`.
+> **Issue triage (bionic-fg):** bionic-fg is removed (replaced by clean-room win-fg after the proprietary-weights takedown), so closed the one issue genuinely about it — **#295** (NSUNS4, "whilst using bionic-fg... models drop frames") — as *not planned*, with a courteous win-fg/lsfg-vk explanation. Left open: #287 (about lsfg-vk, a different live path), #265/#201 (server-archives/feature grab-bags — matched only via "Winlator-Bionic"/bot comments), and #326/#307 (Xclipse 530 "frame-gen doesn't work" **+ a separate native-rendering-restart bug** worth tracking — user chose keep-open).
+
+## 2026-08-16 (later) — 🔀 **Container download sheet: opt-in community repos (source toggle)**
+> The Edit-Container / shortcut component download sheet (`ContentDownloadSheet.kt`, per type: DXVK/VKD3D/Box64/WOWBox64/FEXCore/Wine/Proton/D7VK/VEGAS; GPU drivers untouched) now unifies with the Contents-screen repos behind an opt-in toggle. Default is unchanged: **Official only** (the curated `contents.json` via `REMOTE_PROFILES`/`setRemoteProfiles`/`getProfiles`). A compact **"Include community repos"** switch at the top (below the title/folder row, above the list; persisted globally in `component_download_prefs`/`include_community`, default OFF) additionally fetches versions for the active type from `com.winlator.star.ui.screens.contents.RemoteSourceRepository`'s COMPONENT sources (StevenMXZ/Arihany/Nightlies + custom — filtered to those whose `supportedTypes` include this type; the driver registry is never consulted). Fetch is lazy (only when on), per type, with a loading spinner.
+> When on, **per-source filter chips** (Official + each community source, color-dotted) let the user include/exclude repos (never emptied — at least one stays). The list is **grouped by source, Official first**, each group with a color swatch + Official/Community badge + count; every community row carries a **source pill**. Rows keep the existing chrome (leading Memory chip + version + trailing cloud-download; installed row keeps blue-check/info/trash) — no big-button redesign. A community version already installed locally shows an **Installed** badge instead of a redundant download.
+> **Bridge:** `RemoteItem` → an installable `ContentProfile` with `remoteUrl` set and a URL-hash `verCode` (only for a unique registry/entry key — the real type/version/code come from the archive's own profile.json at extract, so it never affects the install path or dir). Install (official + community) goes through the SAME `startContentDownload`/`ContentsManager` `.wcp` pipeline, so it lands in the content store and auto-appears in the selectors. Dedup community by `downloadUrl`; LazyColumn keys are section+index prefixed so an official+community duplicate can't collide. Offline fallback + process-lifetime progress card behavior unchanged. One file: `ContentDownloadSheet.kt`.
+
+## 2026-08-16 (later) — 🩹 **Contents hub: fix list scroll-clipping at large UI scale + unify breakpoint (+ dedup keep-raw, cog icon)**
+> Device test at 100% interface scale exposed clipped/unscrollable lists. Root cause: scroll containers used `fillMaxSize()` while sitting as the LAST child of a Column after fixed siblings (header/keep-raw/chips/search-field/buttons), so they claimed the FULL parent height and their bottoms ran off-screen. Fixed every such list to `weight(1f).fillMaxWidth()` so it takes only the REMAINING height and scrolls within it: **RepoDetail** item list + its loading/empty Box branches; **SourceListPane** repo list + its search-results branch; **SearchResultsPane** searching/empty Box + results list; **MyFilesTab** folder list + empty Box. Also wrapped the narrow tab content in a weighted Box (was `fillMaxSize` under the TabRow). `InstalledTab` (single `verticalScroll` Column) and the dialogs were already correct and unchanged.
+> **Breakpoint unified:** the wide/narrow decision is now taken ONCE from the full screen width in `ContentsHubScreen` and passed down (`HubTabContent(..., wide)` → `DownloadTab(vm, wide)`); removed `DownloadTab`'s own inner `BoxWithConstraints` (which measured after the ~80dp rail and could yield rail-shown-but-single-pane). States are now clean: narrow → top tabs + single pane; wide → left rail + master–detail.
+> **Also folded in:** removed the duplicate per-repo "Keep raw archive" bar from `RepoDetail` (the Settings-dialog toggle is the single source of truth writing the same `keepRaw` pref the download flow reads; also reclaims detail height), dropping its now-unused local `keepRaw` collector; and changed the `SourceListPane` Settings action icon from `FolderSpecial` (read as a folder) to the `Settings` cog (`import …filled.Settings`). One file: `ContentsHubScreen.kt`.
+
+## 2026-08-16 (later) — 📂 **Contents hub: in-app file picker for both install buttons + search results in the right pane (landscape)**
+> Two changes in one pass on `ContentsHubScreen.kt`. (1) Both "Install … from file…" buttons now open the app's own file manager (`InAppFilePicker`/`FilePickerActivity`), never the system SAF UI: My Files → `InAppFilePicker.buildIntent(context, InAppFilePicker.WCP, "Select content pack")` with the result read via `InAppFilePicker.pickedUri(result.data)` (was `ACTION_OPEN_DOCUMENT` + `result.data?.data`); Installed → GPU driver removed the ported "Pick via system…" SAF option so its `install_drivers` warning confirm goes straight to `InAppFilePicker.DRIVER`, and the picker's result handler dropped the `result.data?.data` fallback. Install routing unchanged (component → ContentsManager, driver → `AdrenotoolsManager.installDriver`); lists still refresh. Only JSON repo-list import still uses SAF (out of scope). (2) In landscape/wide, cross-source search results now render in the RIGHT detail pane at full card width instead of the cramped 360dp left column: extracted the results block into a reusable `SearchResultsPane(vm, modifier)`; `SourceListPane` gained a `showInlineResults` flag (narrow=true keeps results inline replacing the list; wide=false always shows search field + repo list on the left); the wide right pane is now `when { query.isNotBlank() -> SearchResultsPane ; selected != null -> RepoDetail ; else -> EmptyDetailPlaceholder }`. Narrow/portrait behavior unchanged; ✕ clear button and BackHandler still work.
+
+## 2026-08-16 (later) — 🧭 **Contents hub: left NavigationRail for tabs in landscape**
+> In wide/landscape the three hub tabs (Download Components / My Files / Installed) now sit in a left vertical `NavigationRail` instead of the top `TabRow`; portrait/narrow keeps the top `TabRow` unchanged. Lifted the existing `maxWidth >= 760.dp` `BoxWithConstraints` signal up to the hub composable so it governs the tab chrome as well as the Download tab's master–detail: wide → `Row { NavigationRail ; content(weight 1f) }`, narrow → `Column { TabRow ; content }`. The `when(tab)` body was extracted into a shared `HubTabContent` used by both branches, so DownloadTab (and its `BackHandler` + master–detail) is unchanged and simply re-measures the remaining width — landscape now reads rail · repo-list (360dp) · detail (weight), which fits typical landscape widths without horizontal overflow (falls back to single-pane if the content area drops below 760dp). Each rail item has an icon (Download → `Download`, My Files → `Folder`, Installed → `CheckCircle`) + a compact label, orange selected icon/label/indicator via `NavigationRailItemDefaults.colors`. One file: `ContentsHubScreen.kt`.
+
+## 2026-08-16 (later) — 🐛 **Contents hub: fix ghost white buttons + device-back exiting the screen**
+> Two device-test bugs in `ContentsHubScreen.kt`. (1) The two faint "Install … from file…" buttons rendered as a solid white box with invisible text: `PrimaryButton` did `.background(container.copy(alpha = if (enabled) 1f else 0.9f))`, forcing the caller's translucent tint (`cs.onSurface.copy(alpha = 0.06f)`) fully opaque → white fill under white text. Now it uses `.background(container, …)` verbatim (respects the caller's alpha) and dims the disabled state with `Modifier.alpha(0.5f)` on the whole Row instead. The opaque `cs.primary` "Download & Install" button is unchanged (full alpha, `alpha(1f)`). (2) Device/gesture Back closed all of Contents from a repo-detail view — added `BackHandler(enabled = selected != null) { vm.selectSource(null) }` in `DownloadTab` (only composed on the Download tab, so it intercepts back solely while a repo detail is open, on both narrow and wide) → returns to the source list; with no repo selected, back leaves the screen normally. Imports: `androidx.activity.compose.BackHandler`, `androidx.compose.ui.draw.alpha`.
+
+## 2026-08-16 (later) — 🗂️ **Contents hub: third "Installed" tab (manage installed drivers + components)**
+> Added `HubTab.INSTALLED` (Download Components / My Files / Installed) so Contents reaches parity with the AdrenoTools screen for viewing/removing what's installed (AdrenoTools stays live; not removed). Two sections in one scrolling column:
+> • **GPU Drivers** — lists `AdrenotoolsManager(context).enumarateInstalledDrivers()` (name + version via `getDriverName`/`getDriverVersion` — metadata only, no probing, a6xx-safe); each row has a Remove (trash) with confirm → `manager.removeDriver(id)`; plus an "Install GPU driver from file…" button porting AdrenoToolsScreen's flow verbatim (`R.string.install_drivers_message`/`install_drivers_warning` confirm → `InAppFilePicker.DRIVER` picker with SAF fallback → `manager.installDriver(uri)`). This gives drivers their own explicit, filtered local-install entry.
+> • **Components** — for each `ContentProfile.ContentType`, lists the installed `ContentsManager.getProfiles(type)` (remoteUrl==null) grouped into FolderCard-style expandable cards; each row (verName + verCode) has a Remove with confirm → `ContentsManager.removeContent(...)` + `syncContents()`. Per-section empty states.
+> A `refreshKey` re-reads both lists after any install/remove, and `vm.refreshStatus()` keeps the Download tab's Installed badges in sync. Reuses the existing `PrimaryButton`/`typeIcon`/card styling + `OutlinedAlertDialog`. One file: `ContentsHubScreen.kt`.
+
+## 2026-08-16 (later) — 🔗 **Contents hub: GPU-driver repos now come from the shared AdrenoTools registry**
+> Made driver LISTING single-source-of-truth (install was already shared via `AdrenotoolsManager.installDriver`). Contents' driver rows/items now come from `DriverSources.allSources(context)` + `DriverSourceStore`, fetched via the adrenotools `RemoteDriverRepository.fetchEntries` — the same repos (Kimchi, MTR/WinNative, Banners-Turnip, StevenMXZ-drivers, whitebelyash) and the same custom/hidden edits appear in both screens.
+> **Bridge:** a new `HubSource` sealed type (`Component(RemoteSource)` | `Driver(RemoteDriverSource)`) backs the one merged source list, disambiguating same-named sources (the component "StevenMXZ" vs the driver "StevenMXZ") that a name-keyed model would have collided. The screen reads only interface members (`name`/`displayFormat`/`typePills`/`driverOnly`/`removeIsHide`); selection/keys use structural equality + a `driverOnly` suffix so the two StevenMXZ rows never clash. Driver browse maps `RemoteDriverEntry{displayName,downloadUrl}` → the Contents `RemoteItem`/`CatalogItem` shape (type "GPU Drivers"); no PACK_JSON re-parse. Cross-source search also folds in the driver registry.
+> **De-duped:** removed the standalone driver entries (K11MCH1, whitebelyash, MTR) and the StevenMXZ GPU-driver `extraEndpoint` from `RemoteSourceRepository.defaultSources`, and dropped "GPU Drivers" from the component repos' `supportedTypes` — GPU-driver items now come exclusively from the shared registry (no double-listing). Component defaults are 3: StevenMXZ, Arihany WCPHub, Nightlies.
+> **Add / hide sharing:** the "Add repository" sheet gained a "GPU driver source" toggle — driver sources persist through the SAME `DriverSourceStore` (JSON-URL feed, or an owner/repo GitHub-releases feed inferred from the URL) and hiding a built-in driver repo calls `setBuiltInEnabled(name,false)`; both reflect in AdrenoTools. Component custom sources still use the Contents store. Install stays `AdrenotoolsManager.installDriver`; listing stays metadata-only (a6xx-safe). Files: `ContentsHubViewModel.kt`, `ContentsHubScreen.kt`, `RemoteSourceRepository.kt`.
+
+## 2026-08-16 (later) — ✨ **Contents hub: clear-search button + drop Xnick417x default**
+> Added a trailing clear (✕) button to the "Search all repositories…" field in `SourceListPane` — shown only when the query is non-empty, `Icons.Filled.Close` tinted `onSurfaceVariant` (matching the leading search icon), contentDescription "Clear search". It calls the same `vm.setQuery("")` the field's `onValueChange` uses, so query text AND `searchResults` reset and the pane returns to the "Select Online Repository" list (no stale "0 results"). Separately, removed the `Xnick417x` (`Winlator-Bionic-Nightly-wcp`) entry from `RemoteSourceRepository.defaultSources`; defaults are now the 6: StevenMXZ, Arihany WCPHub, AdrenoToolsDrivers (K11MCH1), freedreno Turnip CI (whitebelyash), MaxesTechReview (MTR), Nightlies by The412Banner. Custom add/import/export machinery untouched.
+
+## 2026-08-16 (later) — 🐛 **Contents hub: fix empty right pane in landscape master–detail**
+> Wide/two-pane layout showed the left 360dp source list fine but a blank right detail pane. The inter-pane separator was a horizontal `Divider(Modifier.fillMaxSize().width(1.dp))` — a Material3 horizontal `Divider` internally forces `fillMaxWidth()`, overriding the 1dp width, so as a non-weighted Row child it ate all remaining horizontal space and the weighted right `Box` measured to 0 width (invisible). Swapped it for `VerticalDivider(Modifier.fillMaxHeight())` (fills height, thickness-wide). Also made both panes' height-fill explicit (`.width(360.dp).fillMaxHeight()` / `.weight(1f).fillMaxHeight()`) so neither relies on constraint-order to keep its width. One file, `ContentsHubScreen.kt`.
+
+## 2026-08-16 (later) — 🐛 **Contents hub: fix multi-word cross-source search**
+> "dxvk 2" returned 0 results ("dxvk" and "2" each worked). `searchCache` matched the whole query as one substring against each field separately, so a query whose words straddle name ("DXVK") and version ("2.4.1") matched nothing, and it never searched type/source. Now it splits the query into whitespace-delimited tokens and requires EVERY token to appear in a combined per-item haystack (`displayName + versionName + componentType + sourceName`, lowercased). Keeps the `SearchResult(sourceName, componentType, item)` shape and the `distinctBy { it.item.downloadUrl }` dedupe (crash-fix invariant); the VM's own `.distinctBy` on mapped results is unchanged.
+
+## 2026-08-16 (later) — 🐛 **Contents hub: stop doubling item titles**
+> Screenshot showed every title twice ("FEX-2507 FEX-2507", "FEX-2512G FEX-2512G"). PACK_JSON / release-tag sources (Nightlies) set `name == version` (both the tag), so the naive `"$name $version"` printed it twice. In `ComponentRow` (the single renderer for both the repo-detail card and cross-source search) the title is now de-duplicating: show just `name` when the version is blank, equals the name, or is already contained in it; otherwise `"$name $version"`. The filename/size/date row (which already carries the version) is untouched.
+
+## 2026-08-16 (later) — 🐛 **Contents hub: fix duplicate-key crash on opening a repo**
+> Device test crashed opening StevenMXZ (and again on a FEXCore item): `IllegalArgumentException: Key "…Box640.4.1-fix …box64-0.4.1-fix.wcp" was already used` — Compose throws hard when a `LazyColumn` sees a duplicate key. Community catalogs (StevenMXZ points assets at ziad9267's repo) list the same asset twice, and the loose contains-matching across type buckets can surface one asset under two types. **Fix (2 files):** (1) dedupe at the data layer — `ContentsHubViewModel` now `distinctBy { it.downloadUrl }` on both the per-source `detailItems` and the cross-source `searchResults`, so a real duplicate never reaches the list; (2) defense-in-depth — every LazyColumn in `ContentsHubScreen` (repo list, repo-detail items, search results, My Files folders) switched to `itemsIndexed` with an index-prefixed key (`"$i-…"`) so a collision can't crash the UI again. List assembly already fully replaces (never appends onto a populated list), and the repo cache is keyed per `source::type` with overwrite — no separate dup path.
+
+## 2026-08-16 — 📦 **Contents hub: unified component + GPU-driver downloader/manager** (branch `feat/contents-component-downloader` off main `a1c9faf5`)
+> New drawer screen `Contents` that merges compatibility-layer components (DXVK/VKD3D/Box64/WOWBox64/FEXCore, plus Wine/Proton) and GPU drivers into one browse/download/manage surface. Two tabs — **Download Components** (repo picker → per-repo catalog, landscape master–detail) and **My Files** (raw-archive library by type). Faithful to the approved orange-on-black mockup.
+> **Sourcing = hybrid.** New `RemoteSourceRepository` (multi-format fetch/parse/search/cache engine: WCP JSON, Pack JSON, GitHub releases wcp/zip/turnip, repo-contents, rankings, manifest) ships the 7 curated defaults (StevenMXZ, Arihany WCPHub, Xnick417x, AdrenoToolsDrivers/K11MCH1, freedreno Turnip CI/whitebelyash, MaxesTechReview, Nightlies) and supports user add/remove/hide/import/export of custom sources. GPU drivers are a first-class type in the same list.
+> **Install reuses the existing pipelines.** `ContentsInstaller` runs on the process-lifetime `DownloadScope.io`, bracketed by `DownloadForegroundService`, progress on `ContentDownloadRegistry` — so an install survives backgrounding. Component archives go through `ContentsManager.extraContentFile`/`finishInstallContent` (the archive self-describes type/version); GPU-driver zips go through `AdrenotoolsManager.installDriver`. Everything installed this way auto-surfaces in the container/shortcut selectors — no selector changes.
+> **Keep-raw + My Files.** `ComponentLibrary` files the untouched download under `<base>/components/<Type>/` (default `Download/bannerlator/`, sibling to logs/saves; base is user-selectable incl. a persisted SAF tree). My Files browses by type with install-offline / share / delete, plus install-from-file. Installed/Saved badges cross-check `getProfiles` + the adrenotools store (metadata-only `enumarateInstalledDrivers`, no driver probing — a6xx-safe) and a persisted saved-key set.
+> Wired into `AppNavGraph` + the drawer (`Screen.Contents` added to `drawerItems`, `AppDrawer` item + icon). Removed the orphaned, never-wired `ui/screens/ContentsScreen.kt`/`ContentsViewModel.kt`. No versionCode bump (frozen 71); no Room/schema changes. Local full build not possible in this env (AAPT2 x86 binary can't start under PRoot/ARM) — compiles verified by review + symbol/signature audit; CI to build all flavors.
+## 2026-08-16 (later) — 🔠 **Appearance: default Interface Scale (UI) to 90%, matching text**
+> Set all four scale defaults in `AppThemeState.kt` from `1.0f` → `0.9f`: the initial `_uiScale`/`_fontScale` MutableStateFlows and the `getFloat("ui_scale"/"font_scale", …)` fallbacks. Only affects NEW installs / users who never explicitly set a scale (fallback + initial state); anyone who already picked a value keeps it. `0.9` is on-grid (SCALE_STEP 0.05, range 0.5–1.5) so the −/+ steppers and the % label still line up. AppearanceScreen slider logic untouched.
+
+## 2026-08-15 — 🔋🌡️ **Fusion pill: battery temp as a "BAT °C" chip next to RAM** (branch `feat/hud-batt-temp-by-ram` off main `e514c04e`)
+> Battery temp was already fully built (metric from `BatteryManager.EXTRA_TEMPERATURE` in `HudMetrics.collectBattery`, danger-band coloring via `HudMetrics.tempColor`/`TempSensor.BATTERY`, a "Temp" toggle in the drawer) and rendered in Full/Tiles/Mega — but **`buildPill` was the one size that never drew it** (its battery branch checked `showBattery || showPower`, omitting `showBatteryTemp`). Per user's chosen mockup, added it as a **"BAT 34°C" chip right after RAM on the pill's RAM row** (not the battery row), separated by the pill's own " · ". Uses the existing `tempSpans(..., TempSensor.BATTERY, ...)` so it **color-shifts warm→red identically to GPU/CPU temp**. Gated `showBatteryTemp && s.battery.tempC != null`; `collectBattery()` runs unconditionally (`HudMetrics.java:1078`) so tempC is always available, and the "Temp" toggle (default on) drives `showBatteryTemp`, independent of the battery-% row (`showBattery`, default off — why the user's pill showed no battery at all). One file, `FusionHudView.buildPill`. CI/device PENDING (device screenshot to confirm placement). → memory [[project_bannerlator_hud_battery_temp]]
+
+## 2026-08-15 (later) — 🩹🎮 **Option 1: stop probing custom Adrenotools drivers in the driver-select UI (GameNative's approach)** (same branch `fix/adrenotools-app-profile-crash`)
+> Cross-repo sweep (WinNative / GameNative / StevenMXZ-pipetto, 3 read-only agents) found NO hidden env/prop/flag that disarms the Adreno app-profile crash — none of them have one. The robust one, **GameNative**, avoids it *structurally*: it never eagerly probes a custom adrenotools driver in-app (its `enumerateExtensions`/`getRenderer(driver)` overloads are dead code, with a comment `// This method appears to crash on several devices`); the proprietary blob is only realized at game launch inside the guest. Also found: the shared `blob-patcher.py` renames the driver's vendor deps but DELIBERATELY leaves `libadreno_app_profiles.so` (the crashing lib) untouched, and nobody stubs it.
+> **Change (2 files, Kotlin):** in the container Graphics-Driver dialog (`ContainerDetailScreen.kt`) and the per-shortcut dialog (`ui/cds/payload`), the `LaunchedEffect(version)` that called `GPUInformation.enumerateExtensions(version,…)` now first checks — race-free, straight from the filesystem via `AdrenotoolsManager.enumarateInstalledDrivers()` — whether the selected version is an installed custom driver; if so it **skips the native probe entirely** (`allExtensions = emptyList()`, no fell-back flag) and lets the driver be realized at game launch. Wrapper/Turnip versions still probe as before. The SIGSEGV/SIGBUS seatbelt + "Bannerlator" identity from the earlier commits stay as backstops.
+> **Status:** built-edited, CI/device PENDING. Expected result on the reporter's a6xx: selecting the 863.1 driver no longer crashes AND no longer shows a bare "0/0 extensions" — and the driver should actually be usable at launch (needs his confirmation). Detail in memory [[project_bannerlator_adrenotools_driver_crash]].
+
+## 2026-08-15 — 🩹🎮 **Adrenotools driver-select crash (a6xx) — root-caused to Adreno per-app GPU profile + fixed** (branch `fix/adrenotools-app-profile-crash` off main `d883d01d`, one file `cpp/winlator/vulkan.c`, +53/−46)
+> **Breakthrough:** the tombstone-decoder build finally gave a CLEAN backtrace from the reporter (Xiaomi 2109119DG / Redmi Note 11, Android 14, a6xx). Crash = SIGSEGV/SEGV_MAPERR fault 0x3c inside Qualcomm vendor code: `enumerateExtensions → init_vulkan → 4_patched.so → vulkan.ad0863.so → ApplyApplicationProfile (/vendor/lib64/libadreno_app_profiles.so) → HIDL getGpuProf (vendor.qti.qspmhal@1.0) → 💥`. NOT libjpeg/libcrypto (preload was irrelevant to this), NOT DXVK, NOT GL/RenderThread (the earlier garbled read was wrong).
+> **Real root cause (reconciled with "it works in WinNative"):** the crash is Adreno's **per-app GPU profile selector**, which matches a tuning profile by the app/engine name we pass in `VkApplicationInfo`. WinNative's identical probe on the same blob+GPU does NOT crash — the only runtime difference is identity: it says `"WinNative"`, we said `"Winlator"`. On this device's vendor profile DB the `"Winlator"` match walks into a null-deref; an unrecognised name doesn't.
+> **Fix (two parts, both in this branch):** (1) **the actual repair** — `pApplicationName`/`pEngineName` `"Winlator"` → `"Bannerlator"` (unrecognised name ⇒ no bad profile match ⇒ default path, same as WinNative). (2) **safety net** — the probe signal guard only trapped **SIGILL**; extended to **SIGSEGV + SIGBUS** across all 4 probe fns via new `install_/restore_probe_signal_guard()` helpers, so ANY incompatible driver on ANY device now degrades to system-ICD (`last_driver_fell_back`→UI note) instead of hard-crashing.
+> **Status:** built locally-edited, CI/device PENDING. Neither of my devices crashes (a7xx + Pocket FIT) → needs the a6xx reporter to confirm the rename makes the 863.1 driver actually load+enumerate. Hypothesis strongly supported (backtrace points exactly at app-profile matching; identity string is the one differing variable). Detail in memory [[project_bannerlator_adrenotools_driver_crash]].
+
+## 2026-08-15 — 🧹 **#3 Sync + Present resource-lifetime leak fix (the deferred, FPS-limiter-coupled one)** (branch `fix/sync-present-lifetime` off main `788fa3f3`)
+> The 4th verified-applicable Pipetto (MIT) fix, `a91edd45`, held back from the safe batch because our `PresentExtension` carries an FPS limiter upstream lacks. `PresentExtension.events` (Present SelectInput registrations, holding Window+XClient refs) and its FPS-limiter `windowTimings`/`pendingIdles`, plus `SyncExtension.fences`, were never pruned when a window/drawable was destroyed — a slow leak over a session as windows come and go.
+> **Change (3 files):** both extensions now `implement XResourceManager.OnResourceLifecycleListener`, registered in `XServer.setupExtensions()` (Present on windowManager; Sync on window+pixmap managers). `PresentExtension.onFreeResource` prunes `events` (by window.id, under `synchronized(events)`) + `windowTimings`/`pendingIdles` (ConcurrentHashMap, by id) — ONLY for the freed window, so live windows' pacing is untouched. `SyncExtension` reworked from `SparseBooleanArray` to `SparseArray<Fence{drawableId,triggered}>`; `createFence` now READS the drawable id (same 4 bytes it used to `skip(4)` — parse position/fence-id unchanged) so `onFreeResource` can drop fences bound to a destroyed drawable. All fence ops (setTriggered/trigger/reset/destroy/await) keep identical semantics.
+> **Care taken:** lock order verified (onFreeResource runs under WM/PIXMAP lock → takes events/fences, the same order the present path uses — no cycle); byte-precise CRLF-preserving edit to XServer.java (an editor pass had introduced a spurious line-ending churn in an unrelated block — reverted, re-applied so the diff is only the intended change). CI/device PENDING. ⚠️ **MUST device-verify the FPS limiter/cap still behaves before merge** (the reason this was split out). NOT merged.
+
+## 2026-08-15 — 🧹 **Three portable upstream correctness fixes from Pipetto (MIT), verified-applicable + ported** (branch `fix/upstream-winlator-portables` off main `d883d01d`)
+> A cross-repo sweep + a per-fix verification agent triaged 9 recent Pipetto-crypto/winlator (`winlator_bionic`, MIT) commits against our diverged `com.winlator.star` tree: 4 apply, 2 already-fixed (unmapped-keycode guard `Keyboard.java:103`, long-named-exe suspend `ProcessHelper.java:394`), 2 not-present (rootCursor COMPOSER_OVERLAY, nativeSetPerformanceMode), 1 diverged-do-not-port (remove-legacy-pixmapFromFd — we intentionally keep the dual AHB+dmabuf path). This branch lands the **3 SAFE** of the 4 (the 4th, Sync/Present lifetime, is medium-risk and deferred to its own branch because it's coupled to our FPS limiter).
+> **#1 🔴 `AtomRequests.getAtomName` (`0616071d`):** our reply was malformed — omitted the CARD16 name-length field, put the 22-byte pad AFTER the name (frame-shifting/corrupting every GetAtomName reply), and its reply-length wrongly counted the fixed pad. Also the `id < 0` guard let a positive out-of-range atom crash (`atoms.get` NPE/IndexOOB) instead of BadAtom. Fixed to spec: `!Atom.isValid(id)` guard; reply = `writeInt((n+3)/4)` (ceil words of the writeString8-padded name) + `writeShort(n)` + `writePad(22)` + `writeString8(name)`. Verified writeString8 pads `-n&3` to a 4-byte boundary so the length math is exact. Impact: fewer rare X glitches/crashes in clipboard/DND/reverse-atom paths; not a perf change.
+> **#2 🟠 DRI3 pixmap leak (`a5384023`):** `pixmapFromHardwareBuffer`+`pixmapFromFd` (`DRI3Extension.java:165,182`) called `createPixmap(drawable)` and discarded the result — never `registerAsOwnerOfResource`, so DRI3 pixmaps (their GPUImage/AHB + SHM mappings) leaked when a client died without an explicit FreePixmap. Now capture the Pixmap and register ownership (freed in `freeResources()` on disconnect), mirroring `PixmapRequests`. Pixmap extends XResource (type-safe); pixmapId validated non-existent above so createPixmap is non-null, guard is defensive. Impact: less native/GPU memory creep across game exit/relaunch + long sessions.
+> **#4 🟡 `KeyValueSet` single-item config (`5447fc25`):** the iterator's initial `end = data.indexOf(",")` lacked the `-1 → data.length()` guard that `next()` already has, so a comma-less single-item config (`"key=value"`) was never iterated and `get()` returned the fallback. Added the guard. Empty string still yields end==0 (no iteration, correct). Impact: a niche "setting not sticking" fix.
+> **Status:** static-verified thorough (diff reviewed; type contracts, sole getAtomName dispatch caller, no dependent tests — ConfigExporterTest doesn't touch KeyValueSet iteration). CI/device PENDING. NOT related to the adrenotools branch. Deferred: #3 Sync+Present lifetime (own branch, FPS-limiter-coupled). → memory [[reference_upstream_perf_survey_202608]]
+
+## 2026-08-11 — 🔊🎛️ **DirectAudio cog presets now actually control the driver — DEVICE-PROVEN + MERGED to main** (`main` = `49af2507`, branch `feat/directaudio-cog-presets`, app build `31514689172` green all 3 flavors)
+> **Bug (diagnosed live via new instrumentation):** the DirectAudio launch branch in `XServerDisplayActivity` read nothing → cog selections never reached the unixlib (ran the driver's compiled defaults); and the shared presets leave `bufferFrames=0` + only vary perfMode, so for DirectAudio every preset resolved to the same **62.5 ms** and "Stable" selected NONE (choppy under FEX). Added `getFramesPerBurst` logcat instrumentation to the driver to prove it — logs `open:`/`hb:` lines (perf-mode granted + burst/buffer ms + xruns) under logcat tag **`DirectAudio`** (`__android_log_print`, `-llog`), on the `directaudio` repo branch `feat/burst-logcat`; instrumented `.so` hot-swapped into the on-device **P11-5 GE layer `11.0-5-arm64ec-5`**.
+> **Fix (`applyDirectAudioConfig`, +39/−3, one file):** at launch resolve the cog preset → concrete `BANNER_AUDIO_DIRECT_*` env, mapping each preset to a REAL buffer and **forcing LOW_LATENCY** (device-proven; NONE = normal-priority thread the guest preempts under box64/FEX → choppy). ⚡Low/✨Auto=1248fr(**26 ms**), ⚖️Balanced=2000(42 ms), 🛡️Stable=3000(**62.5 ms**), 🎛️Custom=user knobs. Self-contained in the directaudio branch → shared presets UNTOUCHED → **no ALSA/Pulse bleed**. Buffers stay in the proven-safe LOW_LATENCY ≤62.5 ms envelope (adaptive grows on xruns).
+> **✅ DEVICE-PROVEN (DiRT Showdown, P11-5 GE, instrumented driver in-layer):** launch on **Auto → 26.00 ms** (0 xruns, held flat through a full race AND an in-game flip to Stable = no live change), launch on **Stable → 62.50 ms** (0 xruns). Two presets → two correct latencies on the same driver; before the fix both were 62.5 ms. Confirms DirectAudio config is read once at stream open — **no live in-game apply** (`XServerDisplayActivity` line 4370). LOW_LATENCY fast path GRANTED on device (`perf_got=12`, 4 ms burst); JT/GameNative's "~26 ms safe low latency" empirically confirmed. Showdown = 1 WASAPI voice (game mixes internally).
+> **🔴 Open (does NOT block the fix):** background→foreground = SILENCE until game restart — AAudio stream torn down when the game backgrounds; driver only auto-reopens on route-change `AAUDIO_ERROR_DISCONNECTED` (`mixer_error_cb`), not the focus/background case, and the LOW_LATENCY/MMAP-exclusive stream is more fragile. Needs driver stall-detect + reopen, or an app→driver "foreground, re-check audio" signal. 🟡 Also open: live in-game apply for DirectAudio (driver has reopen machinery; needs a live channel). vc frozen 71. Full detail in memory [[project_bannerlator_directaudio_moonshot]].
+
+## 2026-08-11 — 🌙🔊 **DirectAudio moonshot: DEVICE-PROVEN + compat sweep + in-process mixer built** (repo `The412Banner/proton-wine` branch `feat/directaudio`; driver `dlls/winedirectaudio.drv/directaudio.c`; hot-swapped into on-device Proton layer `11.0-3-arm64ec-6`, uid 10248). Full detail in memory [[project_bannerlator_directaudio_moonshot]].
+> **What DirectAudio is:** a native Wine audio driver whose unixlib calls Android **AAudio directly** — guest WASAPI → `winedirectaudio.drv` → AAudio → speakers, **no PulseAudio daemon, no ALSA aserver**. Built into Proton 11-3 GE (arm64ec). Iterated all session via CI build → hot-swap the 3 driver files into the installed layer → unattended device capture (launch-detect → run → `debuggerd`/trace → `am force-stop` → foreground Termux) since the app runs on the SAME test device.
+> **🎉 MOONSHOT DEVICE-PROVEN:** **Hades booted with real sound through AAudio, no middleman** (user-confirmed). Trace: `client_Initialize`, `create_stream 48k/32f/2ch`, `open_aaudio FLOAT`, `client_Start`, zero errors. First real game on the native pipe.
+> **Fixes landed to get there (each device/trace-proven):** PhysicalSpeakers prop `7346d47`; **removed a bogus capture endpoint** `084774a` (the fa00ac27 "add capture" lead was WRONG — working ALSA exposes 0 capture; our unopenable capture endpoint made games bail); S_OK for all shared formats `738ba42`; unique per-endpoint device paths `0882747`; MIDI `send_notify` init `2f1850a` (was a no-op — red herring).
+> **Compat sweep (all xuser-2):** Hades ✅ boots+smooth · DiRT Showdown ✅ boots (choppy) · Insane 2 ✅ boots (choppy) · God of War ⬛ black screen but **audio PERFECT** (2 streams init+open, 0 errors) = too heavy to RENDER, not audio · DiRT 3 ⬛ audio declines (lone real audio-compat case; guest WASAPI wrapper's odd double-enum path, invisible under FEX). **Audio inits on 4/5.**
+> **Choppy/echo root cause (diagnosed by trace):** scales with concurrent stream count — Hades=1(smooth), Insane 2=2, **DiRT Showdown=5**. We opened **one AAudio stream per guest client**; N independent callbacks drift/underrun under FEX load and phase at AudioFlinger. A capacity-headroom build (`c48a730`) made it WORSE → reverted. Buffer size wasn't the lever; **stream count/mixing** was. User intuited "direct-to-speakers mixing" — refined to the game's own multi-streams phasing.
+> **🎛️ FIX BUILT (staged overnight for AM test): in-process mixer** — commit `769fd14`, CI `31455388494`. Replaced per-stream AAudio with **ONE shared output (48k/float/stereo)** + a summing `mixer_cb`. Each guest client = a voice (ring unchanged); per-voice **format-convert (8/16/24/32 PCM + float), channel down/up-mix to stereo (mono/stereo/quad/5.1/7.1, −3dB), linear resample if rate≠48k**. Same consolidation pulse/alsa get from their daemon, but in-process, no IPC; AudioFlinger still does the final HW mix. Expected: multi-stream games smooth + no echo + lower CPU (1 callback not N); Hades unchanged. ⚠️ built blind — verify CI green before AM swap. In-layer NOW = reverted `eeee3ffd`; morning: green → swap (backup `.pre-769f`) → user retests Insane 2 + DiRT Showdown.
+> **Open follow-ups:** DiRT 3 boot (deprioritized hard case); DiRT Showdown "crash on side-menu" = X-server teardown, not audio; app-side community-config export still binary pulse/alsa (directaudio round-trips to alsa). Old proton-wine CI runs pruned to just the latest per user request.
+> **✅ APP WIRING MERGED TO MAIN 2026-08-11 (`main` = `1f22b1d3`, CI green run `31489338727` all 3 flavors):** DirectAudio is now a first-class selectable engine. Landed the wiring (`d3dfc92c` = cherry-pick of `b2f62f7c`: arrays.xml entry, DIRECT engine tag, own `banner_audio_directaudio` prefs + `BANNER_AUDIO_DIRECT_*` keys, cog/label, changeWineAudioDriver + launch branch, registry Audio=directaudio) + polish (`1f22b1d3`): **`DirectAudio (Experimental)`** label (parseIdentifier strips the `(...)` so id stays `directaudio`), **warning pop-up** on select in both container + shortcut dropdowns (reuses HelpDialog + new `directaudio_experimental_warning` string), and **`DEFAULT_AUDIO_DRIVER` alsa→`pulseaudio`** (DirectAudio strictly opt-in, never default). Mirrors the Proton side (other session): 11-5 GE wcp built+staged with directaudio baked in but REMOVED from mmdevapi `default_list` → pulse/alsa default, directaudio opt-in via registry. Both halves agree. Ships in **stable 3.0** (Proton wcp + this app merge together). Known follow-up (acceptable for experimental): DIRECT-engine preset-persistence quirk (Stable can revert to Auto). vc frozen 71 (no auto-release). **Main artifacts build `31490158300` green (3 flavors); pubg APK staged `/sdcard/Download/Bannerlator-directaudio-main-pubg.apk` sha `aaaba921…` (on-device==host) for manual install.** Proton side: GE-Proton **11.0-5-arm64ec** sdk28+sdk35 built+verified+staged with directaudio baked in (opt-in, removed from mmdevapi default_list). Driver v1 tag `directaudio-v1`/`c989608` (proton-wine). DirectAudio end-to-end complete for 3.0 — user cuts 3.0 when ready ("plenty more to do first").
+> **🎛️ MORNING 2026-08-11 — in-process MIXER device-proven + preset tuning (in-layer `1383ed18`):** built the mixer (one 48k/float/stereo AAudio output, all guest streams summed in with 8/16/24/32-PCM+float conversion, mono/stereo/quad/5.1/7.1 downmix, resample) — **fixes multi-stream choppy/echo** (was one AAudio stream per guest client → N callbacks phasing at AudioFlinger under FEX load). Device-proven: DiRT Showdown (4-5 streams) + Insane 2 (2) now smooth; skip monitor logged `mixer live: xruns=0`. **Key finding: under FEX load it's AAudio THREAD PRIORITY not buffer size — LOW_LATENCY (high-priority thread) stays fed; NONE/POWER_SAVING (normal priority) gets preempted → skips** (so the "no crackle" preset was the *skippiest*). ⛔ A tuning build that put LOW_LATENCY on a BIG buffer (100/350ms) **crashed Insane 2 — low-latency fast-path + big buffer are incompatible; reverted.** **FINAL `c989608`:** proven plain mixer + one line (default perf NONE→LOW_LATENCY) so no-preset games are smooth out-of-box; buffers untouched (60ms/250ms). Deferred: preset rework (LOW_LATENCY + *small* buffers only), app-side Stable-preset-persist bug (DIRECT engine reverts to auto), DiRT 3 boot. ALSA/Pulse untouched throughout (separate binaries + `BANNER_AUDIO_ALSA_*`/`_PULSE_*` keys).
+
+## 2026-08-10 — 🎮 **#338 phantom on-screen pad shows with profile "Disabled" + fake timeout** (branch `fix/smart-default-touch-disabled-338` off main `ca98c930`, commit `f449d41b`, CI `31387069047` GREEN, ✅ **DEVICE-PROVEN on AYANEO → MERGED to main (FF)**)
+> **Reported (NaufalFajri, 2.9.8, AYANEO):** control profile is "Disabled" yet launching shows the "Virtual Gamepad" on-screen overlay; it also auto-hides like a timeout even though Timeout is off. "If I reselect Disabled the OSC disappears."
+> **Root cause — our own #333 smart-default regression (b2ce9d95 + f76b16e1).** At launch `selected_profile_index` is read (default -1) but is NEVER written anywhere, so the launch path ALWAYS hits the "no profile" else-branch. #333 changed that branch to force-seed the bundled "Virtual Gamepad" whenever `resolvedAutoHideControlsOnPad()` is true — and new containers seed auto-hide ON from the global default (`DEFAULT_AUTO_HIDE_ON_PAD=true`). So every fresh 2.9.8 container shows the phantom pad regardless of the user picking "Disabled" (Disabled and never-picked are the same -1 value — indistinguishable).
+> **The fake "timeout" is the auto-hide's own slot rule backfiring:** device screenshots (Players tab) show the phantom OSC auto-assigned to **P2** while the AYANEO built-in pad took **P1**. Auto-hide only hides the OSC when a pad occupies the OSC's *home* slot; pad-on-different-player reads as a 2nd player → overlay kept. So the phantom pad both appears AND won't hide. Reset Input un-assigns the OSC (P2→Unassigned), which is why reset (like re-selecting Disabled) clears it.
+> **Fix (`XServerDisplayActivity.java`, +31 lines, one file):** gate the #333 smart-default seed with two extra conditions. (a) new `hasConnectedGameController()` (reads the same `winHandler.getPlayerSlotAssignments()`, excludes the on-screen row) — if a real pad is present at launch the out-of-box need is already met, so don't seed a phantom pad that grabs P2 and defeats auto-hide. (b) new persisted pref `smart_default_touch_optout` written in BOTH controls-dialog confirm handlers as `profileIndex == 0` (explicit "-- Disabled --") — so re-selecting Disabled sticks across relaunches; picking a real profile clears it. Fresh user with NO controller still gets the out-of-box pad.
+> **✅ DEVICE-PROVEN 2026-08-10 (installed pubg sha `41b08052…` == staged fix build):** three screenshots vs earlier bug shots — (1) launch = clean desktop, NO phantom pad, "Controller detected → P1" toast; (2) Controls drawer Profile "-- Disabled --" with nothing showing; (3) Players tab = On-screen controls **"Unassigned"** (was auto-grabbing P2), Xbox pad **Player 1**. Both symptoms gone. **MERGED to main (fast-forward over `ca98c930`).** Optional untested sanity: a no-controller container should still get the out-of-box pad (non-blocking).
+## 2026-08-10 — 🔊 **Adaptive AAudio sink (fix crackling) — PA13 stack CI cross-build GREEN** (branch `feat/pulseaudio-adaptive-aaudio-sink`, run `31382221031`, artifact `pulseaudio-arm64` verified; NOT integrated yet)
+> **Goal:** kill audio crackling (AAudio buffer underruns) on speaker + headphones, keep latency as low as each device sustains, automatically, with manual presets + fine-tuning. Design/plan in `docs/adaptive-audio-plan.md`.
+> **Module provenance:** `module-aaudio-sink.c` is **BrunoSX & Tom Yan's** (`brunodev85/pulseaudio-android`, LGPL-2.1), built against **stock upstream PulseAudio 13.0** (== our ABI). We forked it (`native/pulseaudio-android/pulseaudio-module/module-aaudio-sink.c`) adding **adaptive xrun-driven buffer growth** (grow-on-underrun to capacity, monotonic → settles at lowest crackle-free size) + `adaptive`/`buffer_frames`/`max_buffer_frames` modargs, on top of Bruno's `performance_mode`/`volume`.
+> **Build (3b whole stack, vendored `native/pulseaudio-android/` + `.github/workflows/build-pulseaudio.yml`):** cross-compiles PA 13.0 + libtool/libsndfile + our module for arm64. Went green after 8 evidence-based fixes: tarballs-not-git (help2man), stable GNU mirror (502), Ubuntu/Debian PA orig-tarball + UA (freedesktop 418s CI), pre-seed gnu11 autoconf cache (clang18 false-negative on `-pedantic -Werror`), `-Wno-error=` clang16+ legacy-C downgrades (stack+module), full-libtool-from-tarball for `ltdl.h`, `ac_cv_header_execinfo_h=no` (no backtrace() at API26). NDK pinned r27c. Artifact strings confirm our modargs compiled in. Failed runs deleted; only the green one kept.
+> ⏭️ NEXT: integrate (swap client `.so` → jniLibs/arm64-v8a, modules → assets/pulseaudio.tzst; wire default.pa `performance_mode`/adaptive args + `nativeRecreateSink`; default `PULSE_LATENCY_MSEC`) → presets + fine-tune UI/env → device-prove crackle-free. → [[project_bannerlator_adaptive_aaudio_sink]]
+
+## 2026-08-09 — 🎧 **Audio follows headphone plug/unplug DURING gameplay** (branch `fix/audio-follow-route-headset`, ✅ **DEVICE-PROVEN both directions + MERGED to main `3f470869` (FF over `8d432376`), shipping in 2.9.8**)
+> **Reported:** during gameplay, plugging in wired headphones does NOT move audio to them; unplugging leaves gameplay muted through the device speakers. Headphones only work if plugged in BEFORE the game starts.
+> **Root cause (same class as the HDMI/background "walkie-talkie" drop):** the guest's PulseAudio `AAudioSink` keeps its already-open AAudio output stream pointed at whatever device was default at stream-open time. A mid-game route change (headset in) doesn't move it; a route removal (headset out) tears the stream down without reopening → silent speaker. The proven cure is the existing `resetGuestAudio()` → `PulseAudioComponent.resetAudioSink()` (suspend→200ms→resume `AAudioSink` via native `libpasink`), which reopens the stream onto the CURRENT default route without restarting the daemon.
+> **Fix (`XServerDisplayActivity.java`, ~91 lines, single file):** new `AudioDeviceCallback` route watcher. `registerAudioRouteWatcher()` (called at end of `onResume`) installs it via `AudioManager.registerAudioDeviceCallback(cb, handler)`; `unregisterAudioRouteWatcher()` (in `onPause`) drops it + cancels any pending reset. On output add/remove, `isRouteChangingOutput()` filters to sink routes that matter — 3.5mm (`WIRED_HEADPHONES`/`WIRED_HEADSET`), USB (`USB_HEADSET`/`USB_DEVICE`), Bluetooth (`A2DP`/`SCO`/BLE 26/27), HDMI (`HDMI`/`ARC`/`EARC`), `AUX_LINE` — then `onAudioRouteChanged()` debounces ~350ms (a single plug surfaces as several callbacks; unplug also fires `BECOMING_NOISY` + a transient dead route) and calls the SAME `resetGuestAudio()`. A `primed` flag swallows the initial device-list `onAudioDevicesAdded` delivered at register so entering a game with headphones already in doesn't fire a spurious reset. Removals are never gated, so unplug always resets → speaker.
+> **Why AudioDeviceCallback over ACTION_HEADSET_PLUG:** the broadcast is analog-3.5mm only; the callback covers USB-C/BT/HDMI too (handhelds) in one path. minSdk 26 ≥ API 23 → no version guard needed.
+> **v1 device test (APK `Bannerlator-audio-route-pubg`, sha `8f6e2f92`, install-verified) → STILL MUTED both directions.** But the tag-filtered logcat proved the watcher + `resetGuestAudio()` fire correctly (three `pasink … ok` suspend/resume cycles on plug + unplug) — so `resetGuestAudio()` is the WRONG lever, not a wiring bug.
+> **ROOT CAUSE (device-proven from logcat):** a route change *disconnects* the AAudio stream — `AAudioStream setDisconnected … current state: 4`, then every resume does `AAudioStream_requestStart(s#2)` → `systemStart() stream is disconnected` → **returns -895 (AAUDIO_ERROR_DISCONNECTED)**. A disconnected AAudio stream can NEVER be restarted; per the AAudio contract you must `close()` it and open a NEW one. The bundled `module-aaudio-sink` (prebuilt in `assets/pulseaudio.tzst`; no source in repo) implements PA sink suspend/resume as `requestStop`/`requestStart` on the SAME handle — fine for a backgrounded (idle) stream, useless for a disconnected one. That's exactly why the HDMI/background fix works but hotplug doesn't. PA itself is oblivious — the dead sink just reads `IDLE`.
+> **DE-RISKED LIVE (Termux `pactl` 17.0 → running 13.0 daemon over PS0, proto 35↔33, game live in background):** proved the recovery recipe end-to-end on the user's device. `pactl load-module module-aaudio-sink sink_name=recoverN` (opens a fresh stream on the CURRENT route) → `move-sink-input <idx> recoverN` for each guest stream → `set-default-sink recoverN` → `unload-module <old>`. User plugged headphones (→ mute), I ran it, **user confirmed sound through headphones.** Guest streams (sink-inputs 6 & 7) moved with no DONT_MOVE resistance; daemon + guest connection never dropped; unloading the dead sinks was safe.
+> **REAL FIX (commit 2, this branch):** new native `PulseAudioComponent.nativeRecreateSink()` in `cpp/pasink/pasink.c` mechanizes that exact recipe over the dlopen'd 13.0 libpulse client (load module-aaudio-sink `sink_name=recoverN` → enumerate sink-inputs [reads only index @ offset 0, ABI-safe] → move each onto the new sink → set-default → unload the previous recovery module). `PulseAudioComponent.recreateSinkForRouteChange()` tracks `lastRecoverModuleIdx`/`recoverCounter` (guarded by `recoverLock`) and feeds the prior module back to unload — steady state = 1 dead original sink + 1 live recovery sink (bounded; original left loaded on the first change to avoid fragile sink-struct parsing). The AudioDeviceCallback watcher's debounced runnable now calls `resetGuestAudioForRouteChange()` (recreate) instead of `resetGuestAudio()` (suspend/resume). `resetGuestAudio()` is UNCHANGED and still used for background/foreground + the TV "Reset audio" button (stream idle there, not disconnected).
+> **✅ DEVICE-PROVEN 2026-08-09:** user tested APK `Bannerlator-audio-route2-pubg` (run `31352838744`, native `pasink.so` compiled clean), reported "works both directions" — plug mid-game → audio to headset, unplug → back to speaker. The AudioDeviceCallback-triggered recreate path recovers exactly like the manual pactl run. **MERGED to main `3f470869`; cutting 2.9.8 (vc 69→70).**
+> Follow-up (optional, not blocking): also reap the original AAudioSink on the first route change (needs module enumeration by name — currently one dead original sink lingers per session, bounded/harmless).
+
+## 2026-08-08 — 🔕 **Silent session (game/container-launch) notification** (branch `fix/silent-session-notification` off main `93d6c0af`, commits `4ec7b31a`+`ef296bcd`, CI run `31270319429` GREEN, vc 69 / 2.9.7, ✅ **MERGED main `8632de63` 2026-08-08 — user device-verified "works great"**) — update-over-install confirmed working on-device: same package/versionCode/cert → channel auto-flipped to silent on first launch after update.
+> **Reported:** the FGS session notification pops up + makes a sound on every container/game launch. Wanted: quiet, still in the notification shade, FGS background-keepalive unchanged.
+> **Commit `4ec7b31a`:** channel `IMPORTANCE_HIGH → LOW` (`GameSessionForegroundService.java:71`) + notification `PRIORITY_HIGH → LOW` (`:89`); dead-code `createNotifcationChannel()` in `XServerDisplayActivity` also flipped (`:802`). **Migration built in:** `createChannel()` deletes an existing channel whose importance > LOW then recreates it (`:63-67`) — Android ignores importance changes on an existing channel, so delete+recreate is the documented downgrade path. Channel ID unchanged `"Winlator"` → update-over-install (same vc/signature) flips to silent on FIRST session launch after update.
+> **Commit `ef296bcd`:** corrected the typed `startForeground(id, n, FOREGROUND_SERVICE_TYPE_DATA_SYNC)` gate `UPSIDE_DOWN_CAKE`(34) → `Q`(29) + fixed the misleading "requires API 34" comment. The 3-arg overload has existed since API 29; our own `DownloadForegroundService.kt:169-173` + `UnpackService.kt:405-410` already gate at Q — GameSessionForegroundService was the odd one out (verified via `javap` against the android-34 stub jar: both overloads present, no @SinceApi).
+> **Key facts:** channel importance HIGH vs LOW = presentation ONLY (popup/sound vs quiet-in-bar). It does NOT change FGS process priority — that comes from `startForeground()` (called unconditionally `:51`), not the channel; even blocking the channel doesn't stop the FGS. Both flavors targetSdk 28.
+> **CI `31270319429` (label `silent-notification`):** ✅ GREEN, headSha `ef296bcd`==tip, 3 flavors. **PUBG APK staged → `/sdcard/Download/Bannerlator-silent-notification-pubg.apk`** (524,549,859 bytes). Verified vs current install: same package `com.tencent.ig`, same versionCode **69** (2.9.7), **identical signing cert** (CERT.RSA byte-compare) → installs over cleanly as an update. ✅ **Device-verified by user 2026-08-08 → MERGED main `8632de63`.**
+
+## 2026-08-06 — 🧩 **In-game Task Manager: Processor Affinity + enriched header** (branch `feat/taskmgr-affinity-metrics` off main `35f96a40`, commits `9eefd867`+`8056a1d0`, vc 68 / 2.9.6, NOT on main, ⚠️ NOT CI-COMPILED — GitHub Actions was in a major outage when built)
+> User request (matches a Winlator feature + BannerHub HUD): add per-process **Processor Affinity** to the in-game Task Manager ⋮ menu, and an **enriched header** (compact perf stat grid + container settings). Approved off interactive HTML previews (`processor_affinity_preview.html`, `taskmgr_enriched_preview.html`, `taskmgr_full_interactive.html` in device Downloads). To ship in 2.9.6.
+> **Part A — Processor Affinity (`9eefd867`):** ⋮ menu now = **Processor Affinity · Bring to Front · End Process**. New `ProcessorAffinityDialog` (Windows-style: `<All Processors>` + CPU 0..N checkboxes, pre-ticked to the process's current mask, OK disabled when none) fires the ALREADY-WIRED `XServerDialogState.onTmSetAffinity(pid,mask)` → `winHandler.setProcessAffinity` → `SetProcessAffinityMask` → `sched_setaffinity`. Added `affinityMask` to `TmProcess` (was reported by guest, dropped before UI). NOT persisted (Windows-like). No native/guest changes. Files: `XServerDialogState.kt`, `XServerDisplayActivity.java` (:7004), `XServerDrawer.kt` (TmProcessRow + dialog).
+> **Part B — enriched header (`8056a1d0`):** `TmHeaderStats` + `TmContainerInfo` StateFlows; `updateTmCpuMemory` now also does ONE `HudMetrics.snapshot()` + `fpsCounter` read → `setTmHeader` (CPU/GPU %+temp, GPU clock, FPS+min, RAM, SWAP, battery %/W/temp, per-core MHz — reuses existing cross-vendor `HudMetrics` readers, no new sysfs). `buildTmContainerInfo()` set once from `wineInfo`/`dxwrapper`/`resolvedRenderer()`/`graphicsDriver`/`container.getScreenSize()`/`Build`. `TmContent` renders `TmStatGrid` (2-col tiles) + `TmCoreStrip` (scrollable C0..Cn) + collapsible `TmContainerPanel`; removed old redundant CPU/Memory strips.
+> ⏭️ NEXT (BLOCKED on GitHub Actions recovery): CI-compile (real compile check — large blind change) → device-test (affinity pins live; header metrics populate; container panel correct; Mali shows "—" for kgsl-only GPU fields) → merge to main → include in 2.9.6.
+
+## 2026-08-06 — 🧭 **Container editor: tabs back to a TOP icon bar in portrait (landscape rail unchanged)** (branch `feat/container-portrait-top-tabs` off main `fc735218`, commit `1e5d8e19`, vc 67, NOT on main)
+> **Request:** the landscape-overhaul left rail is fine in landscape, but in PORTRAIT the user wants the 5 container-editor tabs back across the TOP (as they were pre-overhaul) — keeping the NEW rail icons/labels, just repositioned. Scope = the 3 container editor screens (New / Edit / Defaults, all `ContainerDetailScreen.kt`); File Manager + Save Manager untouched. Approved off HTML mockup `/sdcard/Download/container_portrait_top_tabs.html`.
+> **Impl:** new `ContainerTopTabs` composable. Layout branches on `LocalConfiguration.orientation`: PORTRAIT = `Column`(ContainerTopTabs + content); LANDSCAPE = unchanged `Row`(CollapsibleRail + content). The scrolling content `Box` factored into ONE shared `@Composable () -> Unit` lambda (`mainContent`) reused by both branches (no dup of the `when(activeTab)` dispatch). Collapsed-rail "active tab name over content" header now portrait-dropped (redundant with visible labels), still shown landscape-collapsed. Defaults mode = 4 tabs (no DRIVES). Long titles abbreviated (ENVIROMENT→ENVIRON, WIN COMPONENTS→WIN COMP).
+> **v1 device feedback → v2 (`4441cb35`, preview `container_portrait_top_tabs_v2.html`):** (1) v1's separate help/reset row above the tabs left an empty top band — REMOVED; (2) action buttons now INLINE at the END of the tab row (New/Edit = HELP; Defaults = HELP + RESET), faint divider before them; (3) every cell (tabs + buttons) now `Modifier.weight(1f)` so they EVENLY fill the full width — 6 cells on every screen. Shared `TopCell` composable; `topActionLabel(icon)` maps Restore→RESET else HELP; dropped now-unused `horizontalScroll` import. Files: `ui/screens/ContainerDetailScreen.kt` (+import `Configuration`). ⏭️ NEXT: CI → stage pubg → device-test (portrait even top row, tabs switch, HELP/RESET work, save ✓, landscape rail unchanged, rotate preserves tab/scroll/edits) → merge.
+
+## 2026-08-06 — 🌙 **Fix: Pale Moon showing as a container-desktop + Games-tab shortcut on new containers** (branch `fix/palemoon-desktop-shortcut` off main `422f6c91`, commit `99767b39`, vc 67, NOT on main)
+> **Reported:** creating a container drops a "Pale Moon" shortcut on the container's Windows desktop AND surfaces it as an entry in the app's Games tab. User wants BOTH gone but Pale Moon kept launchable from the container **Start Menu**. (Surfaced more visibly by the picker-refresh fix which now re-scans the Games tab on ON_RESUME — the Desktop `Pale Moon.lnk` was always there.)
+> **Cause:** Pale Moon is baked into `app/src/main/assets/container_pattern_common.tzst` at TWO paths — `…/users/xuser/Desktop/Pale Moon.lnk` (Desktop, also feeds Games tab via `loadShortcuts` scanning `getDesktopDir()`) and `…/Start Menu/Pale Moon.lnk` (keep). Stamped into containers by the additive overlay in `XServerDisplayActivity.applyGeneralPatches` (extract at :6126), gated by `PATTERN_CONTENT_VERSION`. No code creates it — pattern-only.
+> **Fix (both halves needed — user chose "strip from pattern asset" + "auto-clean existing"):**
+> 1. **Repacked the pattern asset** (`tar --delete` of the Desktop `Pale Moon.lnk`; every other file byte-identical; Start Menu kept; 238→237 entries; zstd integrity verified; sha `030b3487…`→`33ba2d42…`). New containers never seed the Desktop shortcut.
+> 2. **Code delete for existing containers** — overlay is additive so a repack alone can't clean already-created containers. Added `removePaleMoonDesktopShortcut(container)` in `applyGeneralPatches` (deletes `Pale Moon.lnk` + `Pale Moon.desktop` from `getDesktopDir()` ONLY; `getStartMenuDir()` untouched). Bumped `PATTERN_CONTENT_VERSION` "5"→"6" so it trips once on every existing container's next launch. vc stays 67.
+> Files: `assets/container_pattern_common.tzst`, `XServerDisplayActivity.java` (:2905 version, :6124-6131 patches + new helper). ⏭️ NEXT: CI → stage pubg → device-test (new container has NO desktop Pale Moon + NO Games-tab entry; Start-Menu Pale Moon still launches; existing container cleaned on next launch) → merge.
+
+## 2026-08-06 — 🗂️ **Fix: new container missing from add-game picker until launch/restart** (branch `fix/shortcut-container-list-refresh` off main `f1f36279`, commit `255032b9`, CI run `31102393885`, vc 67, NOT on main)
+> **Reported bug:** create a container → go to Games/Shortcuts → "add a game" → the just-created container is absent from the container picker until you launch a container OR restart the app. **Verdict: BUG (stale in-memory list), NOT by design.** Container is FULLY on disk at creation (dir + wine-prefix scaffold + `system.reg` + `.container` JSON all written synchronously in `ContainerManager.createContainer`); first launch only swaps the `home/xuser` symlink, which enumeration never reads — so nothing list-relevant is deferred to launch.
+> **Root cause:** `ShortcutsViewModel` holds ONE `ContainerManager` for the whole session (`ShortcutsViewModel.kt:196`), scanned once at construction; its `refresh()` (ON_RESUME) reloaded shortcuts only, never re-scanning containers. Container CREATION happens in the editor's OWN separate `ContainerManager` instance (`ContainerDetailViewModel.kt:326`) → the add goes into a different object. "Launch/restart fixes it" = incidental ViewModel reconstruction (MainActivity evicted while a game runs → fresh manager → fresh disk scan), NOT a real refresh. Contrast: `ContainersViewModel.refresh()` rebuilds its manager every time → Containers tab never had this bug.
+> **Fix (2 files, +15 lines):** added `ContainerManager.reloadContainers()` (public re-scan wrapper over `loadContainers()`); `ShortcutsViewModel.refresh()` now calls it before `loadShortcuts()`. Since `refresh()` already runs on ON_RESUME, returning to the Games tab re-scans disk and the container appears immediately. `loadShortcuts()` iterates the same list, so shortcuts rebuild from the fresh set too (bonus). Surgical (not a full manager rebuild like ContainersViewModel) because `ShortcutsViewModel.manager` is a `val`; also skips the redundant gyro-migration pass a rebuild triggers. **No Room schema change → vc stays 67.** Files: `container/ContainerManager.java`, `ui/screens/ShortcutsViewModel.kt`. ⏭️ NEXT: CI green → stage pubg APK for user device-test → merge to main (gate = device-proven).
+
+## 2026-08-05 — ❓ **Ship-tier task #5: extend "?" help to ALL technical settings — both editors (ADDITIVE UI ONLY)** (branch `feat/ship-tier-turnip-hud`, NOT on main, low device-test risk)
+> Continuation of task #4: same `helpRes`/`HelpDialog`/`IconButton` pattern, now across EVERY technical field in the container editor (`ContainerDetailScreen.kt`) AND the per-game shortcut editor (`ShortcutsScreen.kt`). No behavior/env/default/layout-restructure changes — only Rows-wrap + "?" buttons + string resources + glossary.
+> **A) Shared Turnip/Wrapper Driver dialog TOP section** (was bare; shared dialog → both editors): "?" added to Vulkan Version (`help_vulkan_version` — WRAPPER_VK_VERSION reported to DXVK/VKD3D, driver-clamped), Graphics Driver Version (`help_graphics_driver_version`), Show incompatible drivers (`help_show_incompatible_drivers`), Available Extensions viewer (`help_available_extensions`), GPU Name (`help_gpu_name` — WRAPPER_DEVICE_NAME/ID/VENDOR_ID spoof, inert on WineD3D & sarek DXVK), Max Device Memory (`help_max_device_memory` — WRAPPER_VMEM_MAX_SIZE), Present Modes (`help_wrapper_present_modes` — MESA_VK_WSI_PRESENT_MODE, immediate also sets WRAPPER_MAX_IMAGE_COUNT=1), Memory Resource Type (`help_resource_type` — WRAPPER_RESOURCE_TYPE auto/dmabuf/ahb/opaque), BCn Emulation top-level (`help_bcn_emulation` — none/partial/full/auto).
+> **B) Graphics/perf** (both editors): Colors (`help_renderer_colors` — swapRB BGRA/RGBA), Native rendering (`help_renderer_native`), SurfaceFlinger compat (`help_renderer_sf_compat` — ASR BGRA→RGBA), FPS limiter (`help_fps_limiter` — loads limiter; cap set in-game), Frame Generation (`help_frame_generation` — bionic-fg vs lsfg-vk, Vulkan-only, experimental), Audio driver (`help_audio_driver` — ALSA/PulseAudio).
+> **C) Compat/input/other** (both editors): FEXCore preset (`help_fexcore_preset` — grounded on FEXCorePresetManager TSO knobs: Stability/Compat=full TSO, Performance=TSO off, +Denuvo), FEXCore version (`help_fexcore_version`), Startup mode (`help_startup_selection` — Normal/Essential/Aggressive/Custom services), Gyro mode/activator/activation-mode/sensitivity/target (`help_gyro_*`). XInput/DInput/Exclusive REUSE existing `help_xinput`/`help_dinput`/`help_exclusive_xinput` (added to shortcut editor to match container). SKIPPED per scope: Name, Exec path, Screen resolution.
+> **Wiring:** `GraphicsDriverConfigDialog`, `VulkanConfigDialog`, `TopLevelFields` already carried their own `helpRes`; `ScAdvancedTab` (shortcut editor's Advanced tab) had none → added the same local `helpRes`+`HelpDialog` pair (mirrors the container pattern). 23 NEW `values/strings.xml` strings (CDATA + bold-title, tone matching `help_wine_version`/the task-#4 Turnip strings), all authored from the env-var/behavior each field drives (grounded in XServerDisplayActivity.java + FEXCorePresetManager.java). **Glossary** (`GlossarySheet.kt`): +8 entries — FPS limiter, Native rendering (Picture settings); Vulkan version, GPU spoofing, Max device memory (GPUs); FEXCore preset (x86-on-ARM); Gyro (motion aim), Audio driver (Controls & audio). Present-mode/Frame-generation already existed → not duplicated.
+> Files: `ui/screens/ContainerDetailScreen.kt`, `ui/screens/ShortcutsScreen.kt`, `ui/components/GlossarySheet.kt`, `res/values/strings.xml`. XML well-formed (validated), apostrophes escaped, all 23 `R.string.*` refs resolve (1 def each). Additive UI only → compile-verified via CI; low device-test risk.
+
+## 2026-08-05 — ❓ **Ship-tier task #4: per-option "?" help + glossary for Turnip/Wrapper Driver Config (ADDITIVE UI ONLY)** (branch `feat/ship-tier-turnip-hud`, NOT on main, low device-test risk)
+> Pure UI/help layer on top of the Turnip GMEM + TU_DEBUG work already on this branch — NO behavior/env-var/default changes, no dialog restructure. Added the existing `helpRes`/`HelpDialog` pattern to `GraphicsDriverConfigDialog` (it had none of its own) and a "?" `IconButton` next to each of: GMEM dropdown, Advanced TU_DEBUG tokens (forcecb/nocb share one string, sysmem, deck_emu), Sync Every Frame, Disable KHR_present_wait, One UI/HyperOS Fix, BCn Emulation Type, BCn Emulation Cache, and BOTH ASTC toggles (BCn→ASTC + Transcode to ASTC, same string). None had a "?" before — all 11 buttons are new; none reused.
+> **New string resources** (`values/strings.xml`, CDATA + bold-title tone matching `help_wine_version`/`help_renderer`): `help_turnip_gmem`, `help_turnip_sysmem`, `help_sync_every_frame`, `help_turnip_concurrent_binning`, `help_turnip_deck_emu` (used the copy the task supplied verbatim), plus AUTHORED-from-code: `help_disable_present_wait` (grounds on `WRAPPER_DISABLE_PRESENT_WAIT` = stop using VK_KHR_present_wait when a driver implements it wrong), `help_oneui_hyperos_fix` (`FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1` — Samsung One UI / Xiaomi HyperOS Adreno texture-compression hint), `help_bcn_emulation_type` (compute layer `ENABLE_BCN_COMPUTE` vs software `WRAPPER_EMULATE_BCN`; no effect on Adreno), `help_bcn_emulation_cache` (`WRAPPER_USE_BCN_CACHE` reuse of decoded textures), `help_bcn_transcode_astc` (`WRAPPER_BCN_ASTC`/`BCN_TRANSCODE_TO_ASTC` repack to hardware ASTC; no effect on Adreno).
+> **Glossary** (`ui/components/GlossarySheet.kt`): new `GlossarySection("Turnip & driver tuning")` after "GPUs & how they draw" with 7 `GlossaryEntry` items — GMEM (tiled rendering), sysmem, Sync Every Frame, Concurrent binning (forcecb/nocb), deck_emu, KHR_present_wait, BCn emulation / Transcode to ASTC — same style/length as existing entries. Files: `ui/screens/ContainerDetailScreen.kt`, `ui/components/GlossarySheet.kt`, `res/values/strings.xml`. XML well-formed, apostrophes escaped, all `R.string.*` refs resolve. Shared dialog → change surfaces in BOTH the container editor and per-game shortcut editor. Compile-verified via CI only; UI-only so low device-test risk.
+
+## 2026-08-05 — 📟 **Ship-tier task #3: HUD cross-vendor sysfs FALLBACKS (additive)** (branch `feat/ship-tier-turnip-hud`, NOT on main, device-UNPROVEN)
+> Fills the remaining non-Adreno OEM gaps in the shared metric backend `widget/HudMetrics.java`. RECON first: the cross-vendor hardening (`5492324a`) + battery/diag follow-ups are ALREADY on main — `origin/feat/hud-cross-vendor` is 157 lines BEHIND current `HudMetrics`. So this is a scoped GAP-FILL, not a redo. GL/Zink HUD FPS already works on main (`89049002`) — untouched. Existing backend already covers Adreno KGSL, generic devfreq/platform GPU walks (mali/g3d/panfrost/pvr/xclipse/sgpu), thermal-zone prioritized CPU/GPU temp with many vendor tokens, and battery voltage_now/power_now/current-unit fallbacks.
+> **ADDED (all appended LAST / guarded on "primary returned empty" — Adreno path byte-for-byte unchanged):**
+> 1. **GPU load** → MediaTek GED: `/sys/kernel/ged/hal/gpu_utilization` ("<loading> <block> <idle>" → first token %), `/sys/module/ged/parameters/gpu_loading`. Appended to the END of `GPU_USAGE_STATIC_PATHS`; discovery filters by `canRead()`, so on Adreno these aren't even candidates and `kgsl-3d0/gpubusy` (first) returns before them.
+> 2. **GPU clock** → MediaTek GED: `/sys/kernel/ged/hal/current_freqency` (vendor's spelling, kHz), `/sys/kernel/ged/hal/gpu_clock` (MHz). Appended to END of `GPU_CLOCK_PATHS`; Adreno `gpuclk` (first) wins.
+> 3. **Charging detection** → new `readChargingFromPowerSupply()` scans `/sys/class/power_supply/*`: a non-battery supply with `online==1`, or the battery's `status` == "charging"/"full" (exact match — "not charging"/"discharging" correctly stay FALSE). Wired into `collectBattery()` ONLY when `EXTRA_STATUS == UNKNOWN` or the battery intent is null, and into legacy `getBattery()` ONLY when the intent is null. On Adreno the framework returns a real status → fallback never entered.
+> **SKIPPED — vertical Fusion HUD:** `FusionHudView.setVertical()` is deliberately a no-op ("Fusion has no orientation; tap cycles size"), Canvas-drawn; a vertical variant would re-architect its row renderer = risks Fusion's look/behavior (forbidden). Classic HUD already has `FrameRatingHorizontal` flip. So no vertical work.
+> **Proof of no-regression:** every fallback is either (a) appended after existing candidates in a list that returns the FIRST readable node, and not `canRead` on Adreno, or (b) gated behind an explicit framework-gave-no-value branch. Diagnostics MISS lists derive from the same arrays, so new candidates auto-appear in the export. Files: `widget/HudMetrics.java` only. Compile-verified via CI only. **device-UNPROVEN**: needs a non-Adreno OEM (MediaTek/other) to confirm the fallbacks actually populate, AND an Adreno device to confirm zero regression.
+
+## 2026-08-05 — 🧊 **Ship-tier Turnip: GMEM tri-state + advanced TU_DEBUG tokens (per-container + per-game)** (branch `feat/ship-tier-turnip-hud`, NOT on main, device-UNPROVEN)
+> Two additive Turnip features, surgical, no default-behavior change. **Task #1 — Turnip GMEM tri-state** (Auto/Force On/Force Off) in the Graphics Driver dialog: Auto adds `gmem` to `TU_DEBUG` ONLY on Adreno 710/720/722 (escape hatch for those chips on a STOCK driver); Force On always adds it; Force Off never does (Off ≠ force sysmem). **Task #2 — advanced TU_DEBUG tokens** (opt-in collapsed expert section): `forcecb`/`nocb`/`sysmem`/`deck_emu` checkboxes (deck_emu labeled "requires a Banners-Turnip driver"). Both persist per-container AND per-game via the EXISTING `graphicsDriverConfig` semicolon store (shortcut extra wins) — no new settings mechanism. New keys `turnipGmem` + `turnipTokens`. **Compose logic** in `XServerDisplayActivity.applyTurnipTuDebug()` (runs right before `setEnvVars`, after all env merges): builds a de-duplicated token set from task#1+task#2, and if NON-EMPTY unions it into any existing `TU_DEBUG` (container `DEFAULT_ENV_VARS` ships `noconform,sysmem`; manual/shortcut env preserved). If the contribution set is EMPTY (default Auto on a non-target GPU) it returns WITHOUT touching envVars → unchanged environment. GPU gate = new `GPUInformation.isAutoGmemGpu()` (reuses `extractModelName`, matches Adreno 710/720/722 only, native `getRenderer` called only in Auto mode via `&&` short-circuit). Files: `core/GPUInformation.java`, `XServerDisplayActivity.java`, `ui/screens/ContainerDetailScreen.kt` (shared dialog → both editors). Compile-verified via CI only; device-UNPROVEN until the user tests on real 710/720/722 hardware.
+> **FOLLOW-UP FIX (sysmem defeats gmem):** `DEFAULT_ENV_VARS` ships `TU_DEBUG=noconform,sysmem`, and Turnip's `sysmem` forces the bypass path that DEFEATS `gmem` — so the naive union `noconform,sysmem,gmem` silently no-op'd the feature on the common default container. Fix (matches GameNative #1656 sysmem→gmem): in `applyTurnipTuDebug()`, after building the merged set, `if (add.contains("gmem")) merged.remove("sysmem")` so gmem wins (strips sysmem from BOTH the pre-existing tokens and any task-2 sysmem pick). Verified: default container + GMEM=Auto on 710/720/722 → **`noconform,gmem`**; Force On any GPU → sysmem stripped; Force Off / Auto-non-target → empty `add` → early-return → `noconform,sysmem` untouched. UI: the sysmem checkbox is greyed out (with a hint) when GMEM=Force On, and a blocked sysmem is not persisted — the UI can't express the contradiction.
+
+## 2026-08-05 — 🌐 **Container DNS fix + Pale Moon browser bundled — ✅ ALL MERGED TO MAIN, DEVICE-PROVEN** (`main` `e0b904f2`, vc67 FROZEN)
+
+> User: "no internet in container even with mono+gecko" on a P11 GE arm container. Diagnosed on-device (root bridge): NOT connectivity (raw-IP ping worked) — **DNS name resolution**. Root cause in source: `GuestProgramLauncherComponent.java:414` set the guest `ANDROID_RESOLV_DNS` env from `getDnsServers().get(0)` with NO filter; on the user's dual-stack Wi-Fi `get(0)` = an **IPv6 link-local** (`fe80::…%wlan0`) meaningless inside the box64/wine netstack → every hostname lookup failed. (mono/gecko = red herrings; blank Wine IE = Gecko 2.47.4 too old for modern TLS, an invalid test. resolv.conf edits were inert — the guest reads the env var, not resolv.conf.)
+> **DNS fix (`17a53e98`, merged as `7e7415f1`):** iterate `getDnsServers()` for the first `Inet4Address && !linkLocal/loopback/anyLocal` → `getHostAddress()`; keep `8.8.4.4` fallback; null-guard LinkProperties. Device-proven (NetSurf loaded google.com). Merged to main KEEPING origin/main's stray `mali-report` dump commits (user chose no force-push; they live in `docs/mali-reports/`).
+> **Browsers:** installed **NetSurf 3.11**, then **Pale Moon 34.3.0** (win64 portable) into the container as real replacements for the dead Wine IE — both own-engine + OpenSSL, run under box64/FEX. Pale Moon self-registers as the default http/https handler on first launch.
+> **Pale Moon made permanent "like AIO Graphics Test" (`0dc30673`):** bundled into `app/src/main/assets/container_pattern_common.tzst` (42.5→90.4 MB, +48 MB APK) = `drive_c/PaleMoon/` + a LinkInfo-bearing `Pale Moon.lnk` in BOTH the Start Menu and `users/xuser/Desktop` (the Desktop copy is what `ContainerManager.loadShortcuts` → `MSLink.parseFilePath` reads for the launcher card; validated against a parseFilePath port → `C:\PaleMoon\palemoon.exe`). **NO `.reg` in the pattern** — corruption-safe additive overlay; caught+reverted an initial `user.reg` approach that would have clobbered existing prefixes' registry on re-extract.
+> **Existing-container propagation (`e0b904f2`):** `applyGeneralPatches` (re-extracts the common pattern into a prefix) only fired on versionCode/imgVersion change, and frozen vc67 blocked it. Added `XServerDisplayActivity.PATTERN_CONTENT_VERSION="1"` as a 3rd condition in the `setupWineSystemFiles` gate + stored container extra `patternVersion` → forces a one-time ADDITIVE re-extract on each existing container's next launch, independent of versionCode. Bump the constant on any future pattern-content change.
+> **Shipped:** all three fast-forwarded to `origin/main` = **`e0b904f2`**. User installed `Bannerlator-1.0-palemoon-pubg.apk` (sha `6e3573ea`, run `31013263882`) → "tested and works". vc stays 67; the next stable auto-ships all of it. ⚠️ Open nicety: whether Pale Moon shows in the app's CUSTOM Start menu (`wine_startmenu.json` / `WineStartMenuCreator`) vs just the launcher card — add a json entry only if the user reports it missing. Full detail: memory `project_bannerlator_container_dns_no_internet`.
+
+## 2026-08-04 — 🏁 **CUT 2.9.5 STABLE — ✅ DONE & VERIFIED-LIVE** (versionCode 66→**67**, versionName `2.9.5`)
+> ✅ Second dispatch `30961554997` (`6d98a0ae`) ALL-GREEN + PUBLISHED. Verified: isPrerelease=false, `releases/latest`→**2.9.5**, tag `2.9.5`→built commit **`6d98a0ae`** (no drift — docs pushed before dispatch), served `update.json` = **vc67 / 2.9.5** with all 3 flavor APK names + the frame-gen ⚠️ in notes, 3 APKs + update.json attached. Pubg APK (`1e6b0fce`) already staged to `/sdcard/Download`. vc now FROZEN at 67 for dev/pre until next stable. Release-history + MEMORY.md + freeze-vc memory (grep-gotcha) all updated.
+>
+> **(original cut record:)**
+> Explicit user go ("cut 2.9.5 and fast forward to version code 67"). Bumped `app/build.gradle` (vc 67, name `2.9.5`), README version table → 2.9.5/vc67 + What's-New-2.9.5 section + TOC, release body = `scratchpad/release_body_2.9.5.md`. Contents = the 4 pillars in the checkpoint below. make_prerelease=false → make_latest. After cut → back to frozen-vc/artifact-only until next stable.
+>
+> **⚠️ First dispatch (`30960991777`, `fc2219e4`) FAILED — builds green, `release` job died.** Root cause: `release.yml` does `grep versionCode app/build.gradle | head -1`, and the **frozen-vc explainer comment I'd added said "versionCode" ABOVE the real line** → grep hit the comment → empty vc → `jq --argjson vc ""` invalid JSON → job exit 2. (APKs themselves were fine — Gradle reads the real `versionCode 67`.) **FIX:** reworded the comment to "version code" (no literal token) + added a NB warning in-file. Also added user-requested frame-gen ⚠️ ("still experimental/WIP, no magic, varies game/device/components") to body + README. Re-dispatching on the fixed commit.
+> 🔎 the `gh run watch --exit-status` tool AGAIN misreported this failure as exit 0 — verified via `--json conclusion`.
+
+## 2026-08-04 — 🔖 **CHECKPOINT: pre-2.9.5-stable-cut** (`main` `8858e748`, vc66 FROZEN, UNRELEASED)
+> Snapshot taken right before cutting 2.9.5 stable. Everything since 2.9.4 (`e76e9b0a`) is merged on `main`; artifacts build GREEN (run `30960113196`, headSha `8858e748`), pubg APK staged (sha `1e6b0fce`). Release-notes draft ready.
+>
+> **In 2.9.5 — 4 pillars:**
+> 1. **📦 Unpack Archive** — File Manager extractor: ISO/UDF/ZIP/RAR/7z/tar via bundled NDK 7-Zip; **GOG** via bundled innoextract; **native FreeArc repack install on-device** via bundled `unarc` (srep-repacks still need a PC — app says so); one-tap Fast Extract → minimizable pill + foreground notification; content-aware ⋮ menu; power/thread + read-buffer controls.
+> 2. **🖥️ Landscape UI overhaul** — tabs → shared collapsible LEFT rail (Container editors / File Manager / Save Manager); per-screen collapse memory, persistence-A, rotation-reflow; portrait = always-collapsed + tiny icon labels; FM Locations rail + grid default + portrait grid-toggle fix + New-Folder-in-toolbar + outlined selectors; Save Manager multi-col cards + Steam sync badge/banner; wine-glass rail glyph; slim 40dp header; new **App Orientation** setting (Auto/Portrait/Landscape — games unaffected).
+> 3. **🎞️ Frame Gen & Present Modes** — mailbox-during-FG fix + bionic-fg re-enabled (device-verified); live in-game Present Mode selector (Vulkan-gated); present-mode help/glossary.
+> 4. **🐛 GL/Zink perf-HUD FPS fix** (0.0 → real; counts on the child render surface the game presents to) + landscape polish.
+>
+> ⏭️ **NEXT (on explicit user go): CUT 2.9.5 STABLE** — bump versionCode 66→stable + versionName `2.9.5`; update README + release body + `update.json` `notes` (real one-liner); dispatch `release.yml` on THIS commit; verify tag→built-commit (release.yml default-branch quirk), `releases/latest`, all 3 APKs; then back to artifact-only + frozen vc.
+> Known non-blocking follow-up: Save Manager **Custom-tab sync badge stays 0** (hoist `CustomSaveVault.listStatuses`).
+
+## 2026-08-04 — ✅ **GL/Zink perf-HUD 0.0 fps — FIXED, DEVICE-PROVEN** (branch `fix/gl-zink-hud-fps-binding`, off main `d1b91464`)
+
+> Stronghold Crusader (Zink) showed `0.0 fps` / `1000.0ms` in the Fusion HUD while running fine. **Root cause (proven by on-device diagnostics):** the FPS tick counts only frames on `frameRatingWindowId`, which the guest `_MESA_DRV` property binds to the **top-level game window** (`stronghold_crusader_extreme.exe`, id 50331653). But under Zink the game presents into a **classless CHILD GL render surface** (id 46137468, `isApp=false`) — a *different* window. On the Vulkan host renderer that present routes through `PresentExtension → VulkanRenderer.onUpdateWindowContentDirect → setHudFrameTick(window.id=46137468)`, which never equals the bound 50331653 → 0 frames counted → 1000ms/0fps fallback. D3D/DXVK/Vulkan are unaffected (their `_MESA_DRV` window IS the presenting window, so the strict match always fires). **Fix:** unified all four present/tick paths (SHM copyArea, Vulkan AHB copy, GL/Vulkan native scanout, ASR) through one helper `driveHudFrameTick(int wid)`. Strict path (`wid==frameRatingWindowId`) preserved exactly → non-Zink unchanged. Self-heal: when the presenter differs, count it as long as a **real game app window is FOCUSED** (in-game, not at the shell) and the presenter isn't the desktop shell — deliberately NOT requiring the presenter itself to be a top-level app window (an interim version did, and threw the real child surface away). Healed window tracked in a `volatile int` (no off-thread mutation of WM state; can't race `changeFrameRatingVisibility`), reset when the bound window unmaps. **Device-proven: pill reads 122.5 fps / 8.2ms; logcat `GL/Zink HUD self-heal: counting FPS on presenting window 46137468 (focused game 50331653…)`.** Iterated across several wrong hypotheses (copyArea-only, app-window-required) — see memory `project_bannerlator_gl_zink_hud_fps_binding`.
+## 2026-08-04 — 🔧 **pre17b (vc66 — FROZEN) — fix: RailItem param order broke call sites** (branch `feat/container-landscape-ui`)
+
+> pre17 (`d5ed8ec7`) failed CI: I'd added `badge: Int` as the LAST param of `RailItem`, so the trailing `onClick` lambda at every existing call site bound to `badge` (Int mismatch + "no value for onClick") — SteamSaveManager:343-345, ContainerDetail:200, FileManager:1344/1350/1361. Fix: keep `onClick: () -> Unit` LAST and put `badge: Int = 0` (defaulted) BEFORE it, so trailing-lambda call sites resolve unchanged and only the Steam site passes `badge = needSync` (now via named `badge = …, onClick = { … }`). All 7 `RailItem(` call sites re-checked. versionCode frozen 66.
+
+## 2026-08-04 — 🍷 **pre17 (vc66 — FROZEN) — wine-glass rail glyph + scrollable rail + Save-Manager sync badge** (branch `feat/container-landscape-ui`)
+
+> Batched shared-rail improvements. versionCode frozen 66; versionName `-pre17`.
+> - **Wine-glass container glyph** (`d47bea60`): `CollapsibleRail` gained an optional `headerIcon` drawable; the container editors (`ContainerDetailScreen`) now pass `R.drawable.icon_menu_container` — the SAME wine-glass icon the container LIST cards use (themed with the accent) — replacing the plain solid square. Scoped to the container screens only; File Manager keeps its square, Save Manager keeps its square.
+> - **Scrollable rail** (`d47bea60`): the rail's section/item list is now `weight(1f) + verticalScroll`, so a tall rail (e.g. many File Manager favourites in landscape, or all 5 container tabs on a short screen) is fully reachable; the header and the optional footer stay pinned.
+> - **Rail item badges** (`d47bea60`): `RailItem` gained `badge: Int = 0`, rendered as a small accent count badge (Material3 `BadgedBox`) on the icon in BOTH expanded and collapsed layouts.
+> - **Save Manager sync-count relocation** (`8040d0ce`, android-app-engineer subagent): removed the bottom-of-rail `footer` summary (it collapsed to a confusing bare "2"). Instead the **Steam tab RailItem now carries `badge = needSync`** (`statuses.count { it.state.needsAttention() }`), and a rounded errorContainer-tinted **"⚠️ N games need syncing" strip** appears at the top of the content pane when `needSync > 0` (hidden on the Settings tab). ⚠️ Custom tab keeps `badge = 0` — its rows load inside `CustomSaveTab`, so no per-tab count is available at the parent without lifting that state (out of scope); the content strip on the Custom tab still shows the Steam-scope count (a known nuance).
+> ⏭️ CI (pre17) → stage pubg. ⚠️ Compose-only, not device-run. (pre16 = CI-green.)
+
+## 2026-08-04 — 🏷️ **pre16 (vc66 — FROZEN) — portrait FM folder-label hide + tiny labels under collapsed rail icons** (branch `feat/container-landscape-ui`)
+
+> - **(1) File Manager, portrait only:** hide the toolbar current-folder name (redundant with the path bar directly below). In `ORIENTATION_PORTRAIT` the folder-name `Text` is replaced by a weighted `Spacer` (keeps the action icons right-aligned); the drive selector chip + path bar stay. Landscape unchanged (folder name still shown).
+> - **(2) Shared `CollapsibleRail`, collapsed items — tiny labels under each icon** (all three rail screens: File Manager / Save Manager / Container editors). When collapsed (always in portrait; also manual landscape-collapse) each item renders a Column [icon over a ~7.5sp label, 2 lines max, `textAlign=Center`], WITHOUT widening the rail (icon size unchanged; collapsed padding trimmed to fit). Multi-word names wrap ("SD card", "WIN COMP"); over-long single words abbreviate via `collapsedLabel()` (ENVIROMENT→ENVIRON, WIN COMPONENTS→WIN COMP, Downloads→Downlds, else `take(8)+…`); short ones pass through. Active item keeps its accent highlight; FM items keep the outlined style; the Save Manager footer stays. **Kept** the existing "active item name over the content" header (collapsed) — mildly redundant now but a prominent "you're here" cue, and dropping it would touch the container editor + the Save Manager screen separately; low value vs risk. versionCode frozen 66; versionName `-pre16`. (pre15 drive-outline = CI-green.)
+
+## 2026-08-04 — 🎨 **pre15 (vc66 — FROZEN) — outline the File Manager drive selector** (branch `feat/container-landscape-ui`)
+
+> Styling tweak: the toolbar drive/location selector (the `currentDriveLabel` chip next to the back arrow that opens the Drive C:/Z:/Internal/SD dropdown) was plain text. Gave it the same outlined-button look as "＋ New Folder" + the rail location items — rounded `RoundedCornerShape(8.dp)` + `border(1.dp, primary.copy(alpha=0.6f))` (theme accent token, not hardcoded) over the existing surfaceContainer fill, plus a ▾ caret so it reads as a tappable button. Dropdown behaviour unchanged. Added the `foundation.border` import. versionCode frozen 66; versionName `-pre15`. (pre14 grid-toggle fix = CI-green, 3 artifacts.)
+
+## 2026-08-04 — 🐛 **pre14 (vc66 — FROZEN) — fix: File Manager grid/list toggle dead in portrait** (branch `feat/container-landscape-ui`)
+
+> On-device bug from the part-3 landscape refactor: the grid/list toggle did nothing in PORTRAIT — `FileManagerScreen` forced `val showGrid = fmLandscape && gridView`, so portrait was pinned to the single-column list and ignored `fmGridView`. Fix: `showGrid = gridView` — the toggle is now the source of truth in BOTH orientations (choice persists across rotation). Grid stays the default (pref default true); portrait grid renders ~2 cols via the existing `GridCells.Adaptive(104dp)`; the toggle icon/state already reflects `gridView`, so it's correct in portrait now. Removed the now-unused `LocalConfiguration`/`Configuration` imports. versionCode frozen 66; versionName `-pre14` (supersedes the pre13 CI run).
+
+## 2026-08-04 — 🎨 **pre13 (vc66 — FROZEN) — landscape refinements: slim header, toolbar New Folder, outlined rail** (branch `feat/container-landscape-ui`)
+
+> Three UI refinements on top of pre12. versionCode frozen 66; versionName `-pre13`. Accent uses the real theme token (not hardcoded orange).
+> - **(1) Slim top header (~40%, every screen):** `ui/AppTopBar.kt` reworked from the fixed-height Material3 `TopAppBar` (~64dp) to a compact 40dp custom Row (glyph/nav + title + actions), reclaiming the extra vertical band on every app screen that uses it.
+> - **(2) New Folder → toolbar (File Manager):** removed the bottom bar that held "New Folder"; the file list reclaims that strip. Added a compact outlined "＋ New Folder" button in the top toolbar next to the grid/list toggle (hidden in pick mode / favourites view), firing the same `showNewFolderDialog`.
+> - **(3) Outlined rail selection items:** `CollapsibleRail` gained an additive `outlinedItems: Boolean = false` — each item becomes a rounded outlined button, selected = accent border + accent-dim fill. **Scope: File Manager locations only** (`outlinedItems = true`); the container tabs and Save Manager rails keep their flat rows (5 stacked outlined tabs read too heavy — the coordinator's judgment call). Additive + default false, so the other rails are unaffected.
+> ⏭️ CI (pre13) → stage pubg. ⚠️ Compose-only, not device-run.
+
+## 2026-08-04 — 🧭 **pre12 (vc66 — FROZEN) — landscape pass COMPLETE (File Manager + Save Manager rails)** (branch `feat/container-landscape-ui`)
+
+> Finishes the landscape UI pass — parts 3 & 4 on top of pre11 (parts 1,2,5, CI-green `905d843a`). versionCode stays frozen at 66; versionName `-pre12`.
+> - **(3) File Manager** (`FileManagerScreen.kt`, `57fc1c02`): shared `CollapsibleRail` as a LEFT LOCATIONS rail (not in pick mode) — grouped sections STORAGE (Internal + removable drives), QUICK (Downloads/Games/Pictures when present), ★ FAVORITES; tapping jumps there via `openDrive`. Toolbar (search/sort/star/grid) + breadcrumb unchanged; rail + file area in a Row so files fill the rest. LANDSCAPE defaults to the grid/tile view (`fmGridView` default→true, gated to landscape via `showGrid`) with the row↔grid toggle kept; PORTRAIT = single-column list + collapsed icon-only rail. Per-screen key `"filemanager"`.
+> - **(4) Save Manager** (`store/SteamSaveManagerActivity.kt` — the Steam/Custom tabs lived in `internal fun SaveManagerScreen`; `d222c2e4`, done by android-app-engineer subagent): Steam/Custom + a new **Settings** entry moved into the shared left rail, top `TabRow` removed, + a persistent **"N need syncing"** summary (reuses `SaveState.needsAttention()`/`needSync`, Steam list scope) shown via a new **additive** `CollapsibleRail(footer=…)` slot (default null, named args — `FileManager`/`ContainerDetail` callers unaffected). Game cards → `LazyVerticalGrid(Fixed(landscape?2:1))`, all per-card actions intact; collapsed rail surfaces the active section name over the content. **ROTATION FIX:** the Activity had NO `configChanges` → it recreated on rotate and dropped selected tab/scroll; added `configChanges` (mirrors MainActivity) + `rememberSaveable` for the section. Per-screen key `"savemanager"`.
+> ⏭️ CI (pre12) → stage the COMPLETE pass (parts 1–5) as ONE pubg APK for on-device test: rail expand/collapse + portrait-lock + per-screen persistence across rotation on all 3 rail screens; File Manager landscape grid + locations nav; Save Manager 2-up + rotation state kept; the Appearance App-orientation setting. ⚠️ Compose-only, not device-run.
+
+## 2026-08-04 — 🧭 **pre11 (vc66 — FROZEN) — shared collapsible rail + app-orientation setting** (branch `feat/container-landscape-ui`)
+
+> 🔒 **New standing rule applied:** `versionCode` no longer bumps on dev/pre builds — it stays FROZEN (66) and only increases on a STABLE cut. Reinstalling the same vc over-the-top works. versionName carries the `-preN` label only.
+>
+> Landscape-pass, delivered in the coordinator's priority order. **Parts 1, 2, 5 done this run; 3 (File Manager) + 4 (Save Manager) remain — recon done, shared component ready.**
+> - **(1) Shared rail component** `ui/components/CollapsibleRail.kt`: `RailState`/`rememberRailState(screenKey)` + `CollapsibleRail(sections/links)`. UNIFIED rule — **landscape: expanded by default, per-screen persistence A** (independent pref keys `rail_<screen>_collapsed/_userChose`), NOT overridden by rotation; **portrait: ALWAYS collapsed, toggle HIDDEN, never expandable**; portrait→landscape restores that screen's landscape choice. Supports grouped `RailSection`s (for File Manager's STORAGE/QUICK/FAVORITES) + `RailLink`s (help/reset). `rememberSaveable` + configChanges (no recreate) preserve selection/fields/scroll.
+> - **(2) Container editors** switched to the shared rail (`rememberRailState("containers")`), replacing pre10's inline `SettingsRail`; **portrait now always-collapsed with the toggle hidden** (pre10 only set initial-collapsed). Landscape default-expanded + persistence + bottom-space reclaim from pre10 retained. Deleted the dead local `SettingsRail`.
+> - **(5) App orientation setting** (Appearance tab): new `core/AppOrientation.kt` (pref `app_orientation` = auto/portrait/landscape) + a 3-way SegmentedButton in `AppearanceScreen`. Applied to `MainActivity.requestedOrientation` on start (`onCreate`) and live on change. **Auto = SENSOR (default, unchanged behavior).** ONLY affects the app UI — the game's `XServerDisplayActivity` sets its own orientation and is untouched.
+>
+> **⏭️ REMAINING (next run):** **(3) File Manager** (`ui/screens/FileManagerScreen.kt`, ~2000 lines; grid toggle `fmGridView` already exists, `GridCells.Adaptive`) — add the shared rail as a LEFT LOCATIONS rail (STORAGE/QUICK/FAVORITES), landscape grid default (keep row↔grid toggle), portrait single-column + collapsed. **(4) Save Manager** — files: `store/SteamSaveManagerActivity.kt` (+ nav `store/SaveManagerScreen.kt`); move Steam/Custom + a Settings entry + "N need syncing" summary into the shared left rail, multi-column cards, portrait single-column. ⚠️ FLAG: Save Manager is an Activity-hosted tabbed screen — will confirm its rotation state-preservation when implementing (4). ⚠️ Compose-only so far, not device-run.
+
+## 2026-08-04 — 🧭 **pre10 (vc66) — container editors: collapsible left rail + landscape vertical fill** (branch `feat/container-landscape-ui`)
+
+> **RECON (reported):** New Container, Edit Container AND New Container Defaults **all share ONE scaffold** — `ui/screens/ContainerDetailScreen.kt` (`viewModel.defaultsMode` = the `EDIT_DEFAULTS_ID=-2` sentinel drops DRIVES + adds the Reset link; New=id-1, Edit=id>0). So the redesign is a single change. **Rotation state is already safe:** `MainActivity` has `orientation|screenSize|screenLayout|smallestScreenSize|density` in `configChanges` (NO Activity recreate), and `selectedTab` + all fields live in `ContainerDetailViewModel` → tab/values/scroll preserved across rotation. The per-game shortcut editor (`ShortcutsScreen`) has its own separate TabRow scaffold — OUT of scope, unchanged.
+>
+> **PART 1 — collapsible left rail (mockup Option 3):** replaced the top `ScrollableTabRow` + the "What is all this?"/Reset header with a new `SettingsRail` composable on the LEFT (app glyph + title, help + reset links, and the GENERAL/ENVIRONMENT/DRIVES/WIN COMPONENTS/ADVANCED items with Material icons + accent-highlighted active row). Content now runs full height beside it. Collapsible via a ‹‹/›› handle: animated width 190dp↔58dp (`animateDpAsState`); collapsed = icons only, header = just the glyph, help/reset become icon buttons, and the **active tab name shows as a small header over the content** so you keep your place. **Persistence = Option A:** manual choice persists in prefs (`containerRailCollapsed`/`containerRailUserChose`) and is NEVER overridden by rotation; orientation only sets the INITIAL state until the first manual toggle (landscape→expanded, portrait→collapsed), re-evaluated on rotation only while unchosen (`rememberSaveable` + a `LaunchedEffect(isLandscape)`).
+>
+> **PART 2 — landscape vertical fill:** removed the fixed `Spacer(80.dp)` dead band below the scroll area; the content Box now `fillMaxSize().verticalScroll()` beside the rail and reserves only a bottom buffer = 72dp (save FAB clearance) + the system nav-bar inset, appended INSIDE the scroll — so content reaches near the bottom (respecting the gesture/nav inset) instead of a large empty zone, and content-heavy tabs are no longer cut off. Save ✓ FAB stays bottom-right via the Scaffold, above the buffer/inset.
+>
+> ⏭️ CI (pre10) → stage pubg; device-verify rail expand/collapse + persistence across rotation + vertical fill across the 5 tabs × 3 modes × both orientations. ⚠️ Compose-only change, not yet device-run.
+
+## 2026-08-04 — 🏁 **Unpack-Archive suite MERGED to main → 2.9.5; native FreeArc DEVICE-PROVEN in-app** (`main` `17f9e986`, vc65 2.9.5-pre9)
+
+> The whole Unpack-Archive feature suite is on main, headed to **2.9.5**. Two merges today (both `--no-ff [skip ci]`): pre7 (7-Zip engine + GOG/innoextract + `.wcp` content-aware menu) → `023d012b`; pre8+pre9 (native FreeArc `unarc` + Fast Extract) → `17f9e986`. Artifacts-only build on main **GREEN** (run `30944487397`, headSha `17f9e986`).
+>
+> **Native FreeArc DEVICE-PROVEN IN-APP:** on pre9 (installed, hash-verified `cbfa52ea`) the File Manager routes a FreeArc `Setup.exe`/`Setup-1.bin` to `libunarc.so`, which runs **under the app uid (`u0_a248`, NO SIGSYS/159)** and extracts Crimson Desert `Setup-1.bin` → uniquified sibling `…/voices38-crimson.desert (1)/` with the **correct game structure** (`bin64/`/`meta/`/`_CommonRedist/` + numbered `.paz` data dirs `0000`–`0035`), decoding through the 74 GB lzma block (RSS ~1.74 GB). Works for lzma/tornado/rep repacks; `srep`/`precomp`/encryption → honest PC/container fallback. (Full 140 GB extract still finishing on-device at report time; codec decode already byte-exact per Phase-1 CRC + live correct output.) The `unarc` port: bionic arm64 (NDK r29, mirror/freearc 0.67-alpha), grzip LP64 fix (`LZP.c:46` sizeof(uint32)→sizeof(uint8*)), invoked `x -o+ -ld- -dp<dir> --noarcext`.
+>
+> **Release hygiene (branch audit):** ALL 4 of today's branches merged to main (file-manager-iso-unpack, freearc-native-install, framegen-fps-glossary, framegen-mailbox-present-fix) — nothing from today unmerged. ~38 older unmerged branches are pre-existing experiments/parked/awaiting-reporter-confirm (e.g. `fix/stale-component-installs-189`, `fix/fab-rtl-273-off-main`, `fix/mali-bcn-255-off-main`, `integration/mali-bcn-on-main`) — gated, not forgotten. **2.9.5 = everything on main since 2.9.4** (frame-gen + this unpack suite); still `-pre` (vc65), NOT cut yet.
+
+## 2026-08-04 — ⚡ **pre9 (vc65) — "Fast Extract" one-tap ⋮ action** (branch `feat/freearc-native-install`)
+
+> Convenience shortcut: a new **"Fast Extract"** ⋮-menu item beside "Unpack Archive…" (same content-aware visibility). "Fast" = fast-to-START (one tap, no screen) — NOT a new/faster engine; identical throughput, reuses the exact same engines/routing/service. New `core/unpack/FastExtract.kt`: classifies via the EXISTING logic (`resolveInnoTarget`/`classifyInno`/`SevenZip.list`), picks the screen's default dest (new sibling folder named for the archive/game, uniquified) + Auto power + 1 MB buffer, and calls `UnpackService.start` directly → the app-wide pill takes over (no `UnpackArchiveActivity`). Graceful edges (no dead-ends): not-an-archive (content pre-flight null) → toast "Not a recognized archive — nothing to unpack" (no job); CONTAINER_ONLY srep/unopenable → toast + opens the full screen so the container card shows; All-Files-Access off → opens the full screen (grant card); already running → "Another unpack is already in progress". Routes 7-Zip / innoextract / native-unarc identically (incl. unarc's mandatory `-ld-`, size-poll progress, wakelock, notification, cancel). "Unpack Archive…" stays the full-control primary (folder picker / Power / buffer). Wired via `onFastExtract` on `FileItemRow`. ⏭️ CI (pre9) → stage pubg.
+
+## 2026-08-04 — 🗜️ **pre8 (vc64) — native FreeArc `unarc` in-app extraction** (branch `feat/freearc-native-install`, off merged main incl. pre7)
+
+> Phase 3: FreeArc repacks (FitGirl/DODI; Crimson Desert = the proven case) now extract IN-APP instead of only via the container installer. The compat engineer proved a byte-exact/CRC-verified bionic `unarc` (NDK r29) at `/home/claude-user/freearc-port/unarc.stripped` (deps: system libc/m/dl + libc++_shared, already bundled).
+>
+> **Vendored** `unarc.stripped` → `app/src/main/jniLibs/arm64-v8a/libunarc.so` (sha256 `7d124518…`); NOTICE_UNARC.txt documents provenance (FreeArc 0.67-alpha, GPL, mirror/freearc + the grzip LP64 `sizeof(uint32)`→`sizeof(uint8*)` fix) and the required invocation.
+> **Engine** `core/unpack/Unarc.kt`: `list` (`unarc l` → totals: 310 files / 140 GB), `extract` = `unarc x -o+ -ld- -dp<dest> <Setup-1.bin>` (**`-ld-` REQUIRED** — default mem cap corrupts the 96 MB lzma/rep chains). unarc block-buffers stdout, so **progress is driven by POLLING the dest size** (2.5 s) vs the `unarc l` total (speed/ETA from the byte delta) — a `unarc-poller` thread in the service; per-file "Extracting …" lines feed currentFile best-effort.
+> **Routing** `SevenZip.InnoRoute` now `INNOEXTRACT` / **`FREEARC_NATIVE`** / `CONTAINER_ONLY`: FreeArc (Records.ini Type=Freearc) → native unarc on the first `Setup-*.bin` when `Unarc.isAvailable`, else container. No proactive srep probe — a srep/undecodable repack fails at runtime and the ERROR terminal shows the honest "may use SREP → run Setup.exe in a container / on a PC" message + fallback (no dead-ends). Service gains `EXTRA_ENGINE` ("7z"/"inno"/"unarc"); `UnpackState.engine` lets the error UI tailor the message; the screen keys progress/terminal on `jobArchive` (Setup-1.bin for FreeArc).
+> **UI** primary "Unpack game natively (unarc)" for FreeArc + destination picker + container fallback. **NO Power selector for unarc** (confirmed: the decompress-only build has no `-mt`/thread flag; 4x4 auto-parallelizes) — instead the coordinator's honest caption: I/O-bound, storage is the real lever, no thread knob. 7-Zip keeps its Power/buffer selector; innoextract unchanged.
+> ⚠️ **Shell-run proven** (bionic runs; `unarc l` = 310 files/140 GB; extraction structure proven by compat engineer). **NOT yet in-app (app-seccomp) device-verified** — coordinator to extract Setup-1.bin THROUGH the app to F:/exFAT (/storage/7B7F-E3AA) and confirm no SIGSYS + correct structure + CRC through the ~74 GB lzma block. → CI (pre8) green then stage pubg.
+
+## 2026-08-04 — 🔖 **Session checkpoint** (branch `feat/file-manager-iso-unpack`, HEAD `8ad3245a` / pre7 vc63)
+
+> **pre7 (run `30935866043` green) STAGED + INSTALLED** on device (pubg `com.tencent.ig`, apk sha256 `62ec50a3f18c7eb1add2710e51fb625d254bad0888657f88c8fd75ec07d859d7`). ⏭️ NEXT = device-verify the **in-app (app-seccomp)** run: unpack a real GOG installer (Stronghold Crusader HD) *through the app* to disk + confirm `.wcp` files now show the Unpack option. green ≠ device-proven (the bundled-ELF SIGSYS/159 lesson — innoextract is proven from the exec sandbox only so far).
+> **Native FreeArc engine (separate research thread, not on this branch): Phase 0 GO + Phase 1 GO — the hard part is PROVEN.** Phase 0: `Setup-1.bin` is raw FreeArc (`ArC`@0, self-describing, no ISDone dep); codecs = `storing`/`lzma:96mb`/`tornado:16mb`/`rep:96mb`(built-in dedup, **NOT** srep)/`grzip`/`4x4`/`exe`+`delta`; no srep/precomp/lzp. **Phase 1: FreeArc `unarc` PORTED to bionic arm64** (NDK r29, `mirror/freearc` 0.67-alpha) — on-device **byte-exact CRC-verified decode of ALL codecs** (tornado & rep, the risky ones, both pass); dir varint decoder works (310 files, 140 GB→87 GB); peak RAM **~1.74 GB** (fits 16 GB). 2 issues: (a) must pass **`-ld-`** (default mem cap starves the 96 MB lzma/rep chain) — trivial; (b) **GRZip heap-overrun on bionic** corrupts single-pass multi-block runs (output itself CRC-correct) — needs an ASAN bounds fix (~few lines); grzip wraps only 1×483 B block in this repack. Per-block extraction works TODAY; full single-pass 81 GB extract needs the grzip fix. Binary: `/data/local/tmp/fa/unarc`; source/build `/home/claude-user/freearc-port/`. Full findings: memory `project_bannerlator_native_freearc_engine`.
+
+## 2026-08-04 — 📦 **File Manager "Unpack Archive" — 7-Zip userspace extractor** (branch `feat/file-manager-iso-unpack`, vc57 `2.9.5-pre1`, UNRELEASED pre-work)
+
+> New File Manager feature to extract disc images and archives the kernel can't loop-mount. Target device has NO iso9660/udf FS support (`/proc/filesystems` = fuse only), so a loop-mount fails "No such device" — extraction is done entirely in userspace by a bundled 7-Zip binary. Real input: an 82 GB UDF hybrid image holding a single 87 GB `Setup-1.bin`, extracted onto an exFAT SD/USB volume under `/storage/<UUID>/`.
+>
+> **Engine:** official 7-Zip 24.08 arm64 STANDALONE binary vendored as `app/src/main/jniLibs/arm64-v8a/lib7zz.so` (the STATIC `7zzs` build → runs on Android's kernel via raw syscalls, no glibc/bionic). Exec'd from `applicationInfo.nativeLibraryDir` (the one exec-able dir under scoped storage; NOT filesDir). `android:extractNativeLibs="true"` added. Attribution: repo-root `NOTICE_7ZIP.txt` + `License_7zip.txt` (LGPL-2.1 + unRAR). Upstream sha256 `8b2683984ea10d5654d6816d9b3287a03f6d6efcd17be23bfa364ea0a5ec60db`.
+>
+> **Files:** `core/unpack/SevenZip.kt` (list `l -slt`, extract `x -bsp1 -bb1 -mmt=N`, \r/\b-aware stdout progress parse), `core/unpack/UnpackModels.kt` (StateFlow `UnpackManager`, PowerMode, ReadBuffer), `core/unpack/UnpackService.kt` (foreground service, ongoing progress+Cancel notification, kills 7zz on cancel), `ui/screens/UnpackArchiveScreen.kt` (source/type/size, dest folder picker via existing `InAppFilePicker.buildDirIntent`, Power SegmentedButton Auto/Max/Manual + honest I/O-bound caption, Read-buffer 256K/1M/4M, %/MB-s/ETA/current-file/Cancel, Done/Error-tail), `UnpackArchiveActivity.kt`. Wired into `FileManagerScreen` ⋮ menu ("Unpack Archive…" for `SevenZip.isSupported`). Manifest: activity + `UnpackService` (dataSync FGS).
+>
+> **InnoSetup-aware (coordinator scope-add):** the real file is an InnoSetup repack (Setup.exe + Setup-1.bin, 87 GB). `SevenZip.resolveInnoTarget` detects the repack from either entry point (selecting `Setup.exe`, or a `Setup-N.bin`) via the `-\d+\.bin` sibling tell, and points 7-Zip at the installer `.exe` (`7zz x Setup.exe …`) to unpack the payload behind the .bin volumes. Menu label + button become "Unpack game payload"; speed/ETA/size track the summed .bin payload, not the tiny exe. If 7zz can't parse a customised InnoSetup, the error surfaces the exact "must be installed by running Setup.exe inside a Winlator container" message + a "Run Setup.exe in a container" button (new `util/ContainerExeRunner`, reuses WinePath + XServerDisplayActivity). Plain `.bin`/`.001` that are disc images or split parts still extract normally.
+>
+> **Honesty:** power caption states extra cores only help many-file/solid archives, a single huge file won't parallelize. All-Files-Access reused for direct `java.io.File` writes; when off + dest on `/storage`, extraction is gated with a Grant-access button (a native process can't write through SAF, so no fake SAF fallback for 80 GB).
+>
+> **pre7 (vc63) — innoextract for GOG/standard-Inno + .wcp/content-aware menu.** Two workstreams on the branch.
+> **(A) GOG/InnoSetup via innoextract (device-proven):** standard-Inno/GOG `setup_*.exe` are NOT FreeArc — 7-Zip only sees a PE and can't extract the game, but innoextract can. Vendored a BIONIC (NDK r29, Termux aarch64) `innoextract 1.9` as `libinnoextract.so` + its dependency closure (boost iostreams/filesystem/program_options/regex/random/atomic/container, liblzma, libz, libbz2, libiconv; libc++_shared shared with 7-Zip) into jniLibs. Versioned sonames (`liblzma.so.5`/`libz.so.1`/`libbz2.so.1.0`) unversioned via `patchelf --set-soname`+`--replace-needed` (built patchelf from source here); RUNPATHs stripped; exec'd with `LD_LIBRARY_PATH=nativeLibraryDir`. **Device-verified on the reference GOG installer (Stronghold Crusader HD, Inno 5.6.2): 4095 files / 868 MB, exit 0**, `--progress` emits CR-delimited `NN%` (parsed inline). New `core/unpack/Innoextract.kt`; `SevenZip.InnoRoute` now `INNOEXTRACT` vs `CONTAINER_ONLY` (FreeArc = Records.ini Type=Freearc → container; else innoextract); `resolveInnoTarget` broadened to GOG `setup_*.exe`. Service routes `isInno`→innoextract (FreeArc never reaches it — uses the container button). Screen: primary "Unpack game files (innoextract)" for INNOEXTRACT, container card for FreeArc, container fallback always offered (no dead-ends). NOTICE_INNOEXTRACT.txt documents provenance + patchelf fix-ups. ⚠️ shell-run + on-device extraction proven; in-app (app-seccomp) run still to be device-confirmed by coordinator.
+> **(B) .wcp / content-aware menu fix:** `.wcp` (a tar.zst) showed no Unpack option (extension-gated). Added `.wcp`/`.tzst` to the list AND made ⋮-menu visibility CONTENT-AWARE via a cheap magic-byte sniff (`looksLikeArchive`: zstd/xz/gzip/7z/zip/rar/bzip2 headers + tar `ustar`@257 + ISO `CD001`@32769) so any real archive (renamed `.bin` etc.) is offered regardless of extension — header read only, never `7zz l` per entry. Nice-to-have: after a `.wcp/.tzst/.tar.gz` extract, auto-unwrap the single inner `.tar` so one action lands the real files.
+>
+> **pre6 (vc62) — shipping cleanup; 7-Zip is the SINGLE extractor.** pre5 is DEVICE-PROVEN end-to-end (nested .7z→.iso→.bin→files, incl. `.bin` content-sniffed as 7z). Decision (user, option A): **remove the old Java `ArchiveExtractor` entirely** — the bundled 7-Zip build is a strict superset (`7zz i`: zip/7z/rar/iso/udf/cab/tar/gzip/bzip2/xz/wim/zstd — old couldn't even do rar/iso). Changes: deleted `core/ArchiveExtractor.kt`; removed the duplicate "Extract" menu item, `performExtract`, and its confirm-dialog + `pendingExtract`/`onExtract` from `FileManagerScreen`; kept the `commons-compress`/xz/zstd deps (still used by `TarCompressorUtils`/`AmazonManifest`). Menu now has ONE action per file — "Unpack Archive…" (or "Unpack / Install…" for InnoSetup); `isSupported` broadened to the full superset incl. `.zst/.tgz/.txz/.tbz2/.tzst`. **Content pre-flight kept:** the screen judges any file (incl. `.bin`) by content via `7zz l` — opens → proceed; no container → friendly "This file isn't a recognized archive or disc image — it looks like raw data, nothing to unpack" (no raw 7-Zip error); InnoSetup Setup-*.bin → container route unchanged. Dropped the per-byte "0%" fix (was only for the now-deleted extractor; the 7-Zip engine already reports per-byte). ⏭️ CI (pre6) → stage pubg; device-verify one-action-per-format menu + tarball extract + `.bin` raw-data message.
+>
+> **pre5 (vc61) — BIONIC engine (BLOCKING device fix):** On-device, pre4's vendored 7zz (official GENERIC-LINUX arm64 static build) FAILED on every archive: exit 159 = 128+31 = SIGSYS. Spawned from the app it inherits the app seccomp-bpf filter and TRAPs on a syscall (likely clone3 for -mmt); the non-bionic binary dies silently (no bionic SIGSYS logger / debuggerd). Runs from root shell (laxer seccomp), useless in-app. FIX: rebuilt **7-Zip 24.08 from source with the Android NDK r29 clang** (bionic; interpreter /system/bin/linker64) → integrates with app seccomp (same reason Termux p7zip works under an app). Vendored `lib7zz.so` (new sha256 `b6a59359…`) + its matching `libc++_shared.so`; exec'd with `LD_LIBRARY_PATH=nativeLibraryDir`. One-line portability patch (`TimeUtils.cpp`: skip `timespec_get` on `__ANDROID__`, use `clock_gettime`) documented in NOTICE. gradle `pickFirsts` guards the libc++ dup. **Also fixed progress parsing** — device byte-capture proved 7-Zip redraws the % with BACKSPACES not newlines, so the old flush-on-newline parser would jump 0→100; now the `%` is parsed inline the instant its byte arrives. Device-verified from shell: runs, `l -slt` (Type=7z), and `x -mmt=8` extract to disk all work. ⚠️ STILL NEEDS in-app (app-seccomp) device verification before trusting — compiles/shell-run ≠ in-app proven. → coordinator to drive on-device in-app test.
+>
+> **pre4 (vc60) — compile fix:** pre3 (`4c4356e9`) failed CI on all 3 flavors — `SevenZip.kt:169 Unresolved reference 'StringUtils'` (used `StringUtils.formatBytes` in `prettySize` without importing `com.winlator.star.core.StringUtils`). Added the import (project util, already used by `UnpackService`; no new dependency). Sole error in the module. Everything else in pre3 stands.
+>
+> **pre3 (vc59) — FreeArc repack routing (CORRECTNESS FIX):** On-device the real target (Crimson Desert) proved 7zz 24.08 CANNOT open the InnoSetup Setup.exe ("Cannot open the file as archive") — the payload is FreeArc (`Records.ini` `Type=Freearc_Original`, Size=81GB), and 7-Zip has NO FreeArc support (most FitGirl/DODI repacks are FreeArc). New `SevenZip.classifyInno`: reads a sibling `Records.ini` (Type/Size → surfaced as e.g. "FreeArc, 81 GB") and, unless it's FreeArc, runs a fast `7zz l` pre-flight; FreeArc or a failed pre-flight ⇒ `InnoRoute.CONTAINER_ONLY`. Screen classifies BEFORE offering an action (off main thread): CONTAINER_ONLY shows a "Can't unpack directly — install by running Setup.exe in a container" card whose primary action is `ContainerExeRunner` (NO doomed 7z button, destination/power controls hidden); SEVENZIP keeps the "Unpack game payload" button AND still offers the container action (no dead-ends, even if 7z fails at runtime). Plain archives (iso/udf/zip/rar/7z) unchanged. Menu label for InnoSetup → "Unpack / Install…". ⏭️ CI (pre3) → re-stage pubg.
+>
+> **pre2 (vc58) — battery-kill hardening + non-blocking pill (HONOR/PowerGenie target):** (1) `UnpackService` now acquires a `PARTIAL_WAKE_LOCK` ("bannerlator:unpack", ref-count off) around the whole extraction, released in the worker `finally` AND `onDestroy` — balanced on success/error/cancel/death (screen-off CPU suspend was the "paused job" cause). (2) `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` manifest perm + a non-blocking "Allow background running" card on the screen (checks `isIgnoringBatteryOptimizations`, refreshed on resume). (3) One-time dismissible aggressive-OEM hint (lock in Recents / battery = No restrictions) + "App settings" deep-link. (4) START_STICKY null-intent restart clears the stale notification + stops (7z isn't resumable; the wakelock+exemption prevent the kill). (5) **Non-blocking app-wide progress pill** `ui/UnpackProgressPill` injected into MainActivity's root scaffold — observes the SAME `UnpackManager` StateFlow; archive name + determinate % + MB/s + Cancel; tap reopens the full view. Three tiers (full screen ↔ pill ↔ notification) never diverge. Screen adds a "Minimize" button + "safe to leave" copy; one-at-a-time enforced (service guard + screen "another job in progress" gate). ⏭️ CI (pre2) → stage pubg APK for device test (verify `lib7zz.so` exec + real image/InnoSetup extract + screen-off survival).
+
+## 2026-08-04 — 🎞️✅ **Frame-gen present-mode overhaul — MERGED to main `b82c4941`** (post-2.9.4, unreleased)
+
+> Merge `--no-ff` of `feat/framegen-mailbox-present-fix` (5 commits `ab0ab3db`→`3f308a98`), no drift/conflicts. Rolls up the whole frame-generation fix + UX.
+>
+> **Root cause found by comparing against GameNative on-device:** frame generation (lsfg-vk + bionic-fg) was crippled by the host compositor's default **FIFO** present mode — `presentPixmap()` drives the host present AND ticks the fps counter in one synchronous call, so FIFO's vsync-block **backpressured** the guest present and strangled the generated frames (they collapsed upstream, never reached the screen). Symptom: FPS *dropped* as the multiplier rose. GameNative uses **Mailbox** (`MESA_VK_WSI_PRESENT_MODE=mailbox`), which is why it worked. Full technical writeup: memory `reference_bannerlator_lsfg_fps_count_present_path`.
+>
+> **What shipped:**
+> - **Auto-mailbox during frame gen** — `effectivePresentMode()` forces Mailbox whenever FG is multiplying (mult≥2), at launch AND live via `onBionicFgConfigChange`; reverts to the user's saved mode (transient, never persisted) when FG goes off. Device-proven: DiRT 3 64.8→107/150/183 fps at 2×/3×/4×, frametime 15.4→5.5 ms; live `setPresentMode → applying=1` (Mailbox) at 2×, back to `presentMode=2` (FIFO) at Off.
+> - **Live in-game Present Mode selector** (Graphics tab) — FIFO/Mailbox/Immediate, reflects the effective mode, auto-highlights Mailbox during FG, blocks FIFO/Immediate with a ~2s note while FG runs; live-applies + persists when FG off.
+> - **FG gated to the Vulkan renderer** — dropdown greyed + runtime guard (no FG env on non-Vulkan). GL/SurfaceFlinger have no present-mode control; guest GL games still work via Zink (GL-on-Vulkan).
+> - **Present-mode "?" help + glossary** (FIFO/Mailbox/Immediate) extended into BOTH the container editor and the per-game shortcut editor (+ the container "What is all this?" glossary now in the shortcut editor too).
+> - **bionic-fg re-enabled** — the same fix resolved its old unreliability; **device-verified working** by the user. Ships un-gated (still labeled experimental in notes).
+>
+> Resolvers are shortcut-first-then-container, so all of the above works identically for container and per-game launches. Release-notes copy staged in memory `reference_bannerlator_next_release_notes` — fold into the next stable (2.9.5/3.0). Main artifacts build run `30879129898`.
+
+## 2026-08-03 — 🏷️ **2.9.4 STABLE cut** (versionCode 56, plain tag `2.9.4`, prerelease:false, make_latest:true)
+
+> Cut from main `44795df7`. Bump `versionCode 55→56` / `versionName 2.9.3→2.9.4` in `app/build.gradle`. Stable (in-app updater offers it). Entirely app-side — no ImageFS reinstall.
+>
+> **Headline: HUD overhaul + container-setup QoL.** Rolls up everything merged to main since 2.9.3:
+> - **HUD:** Fusion HUD is now the DEFAULT overlay at Pill size (`6d6fac65`); new system-wide **RAM%** row in the Pill + latency-under-battery reorder (`bde19832`); **FPS-tab accordion** — master **Show HUD** on/off toggle (live, no relaunch), collapsible appearance sections closed by default, theme-accent rail divider (`ac199907`).
+> - **Container setup:** user-configurable **per-arch New Container Defaults** (`bf0329b2`); **"What is all this?" glossary** 34 terms + per-field help (`cfd161ab`/`1bdd46a4`/`ccd2dc80`); **env-var editor fixes** — custom vars no longer dropped, Name/Value fields, catalog 34→75 (`11b7693d`); **Save Manager** custom Restore always available + in-app picker (`b46aef82`/`71088358`).
+> - **Fixes:** **log storage → Documents** fixing the "game closes mid-play" FUSE/media-service crash (`1644ad31`); **RTL "+" button** off-screen fix #200 (`facb5571`, credit @aszba258-cyber/@alroe2435-cell, verified iManiii); **Mali BCn→ASTC** transcode toggle on the default compute path (`6ff83995`/`7cb9c537`); landscape dialog scroll/clipping fixes (`53746f94`/`c48bd47e`).
+> - **Notes:** bionic-fg stays disabled (use lsfg-vk); lsfg-vk flagged experimental.
+>
+> Updater one-liner (plain, release.yml-safe): "Bannerlator 2.9.4 — HUD overhaul: Fusion is now the default overlay with a Show HUD on/off switch and a RAM readout, plus per-architecture Container Defaults, a newcomer glossary, and a fix for the log-storage bug that closed games mid-play. App-side — install over 2.9.3. Full notes below."
+>
+> **✅ LIVE + VERIFIED (2026-08-03):** release run `30863815167` success; **tag `2.9.4` landed on the built commit `e76e9b0a` — NO drift** (docs pushed before dispatch, per the 2.9.2 lesson); `isPrerelease=false`, `releases/latest → 2.9.4`; `update.json` vc56 (real one-liner, no placeholder); 3 flavor APKs + update.json attached; rich GitHub body applied post-publish via `gh release edit 2.9.4 --notes-file --latest` (layout matches 2.9.3; every non-bot/non-docs commit in `2.9.3..e76e9b0a` audited into the notes, incl. the Mali double-decode fix).
+
+## 2026-08-03 — ⚙️✅ **User-configurable New Container Defaults (per-arch) — MERGED to main** (post-2.9.3, unreleased)
+
+> Merge `bf0329b2` (--no-ff of `feat/new-container-defaults`; revert tag `checkpoint-pre-container-defaults-20260803` → `1a1cc57f`). Device-verified. Built with android-app-engineer (2 rework rounds + 2 fix rounds).
+>
+> Every new container was seeded from hardcoded `Container.DEFAULT_*`. Now a **Settings cog on the Games/Containers top bar** opens the SAME container editor in a "New Container Defaults" mode (sentinel `EDIT_DEFAULTS_ID=-2` on the existing `container_detail?id=` route). The ✓ saves the form as a **profile** in a dedicated SharedPreferences file (`new_container_defaults` — survives in-place updates, isolated from export/import) instead of creating a container; new containers then seed their preference fields from it.
+>
+> **Per-architecture** (user's call): because emulator/box64/wowbox64/FEXCore are arch-coupled (`refreshWineDependent`→`applyArch` swaps the box64↔wowbox64 lists on `isArm64EC`), the Wine Version field is replaced in defaults mode by an **Architecture selector (x86-64 / arm64ec)** and TWO independent profiles are stored (`profile_x86_64` / `profile_arm64ec`). A new container seeds from the profile matching its wine's arch. **Wine Version + Name + Drives are never templated** (stripped from the profile; wine read from the real container only). "Reset to app defaults" clears the current arch's profile.
+>
+> Seeding: `loadContainerData` reads preference fields from `seed = container ?: buildTemplateContainer(arch)`; identity/device fields stay on the real container. `Container.getData()` split out of `saveData()` (no disk write) so the profile reuses the exact serialized field set. **No profile for an arch → seed null → byte-identical built-in defaults.** Edit mode + export/import unaffected.
+>
+> Two bugs caught on-device + fixed before merge: (1) JVM signature clash — the `defaultsArch` property's auto `setDefaultsArch` collided with an explicit `fun setDefaultsArch` → renamed to `selectDefaultsArch`. (2) **arch-flip re-seed** (user-diagnosed): create screen starts on x86-64 wine → seeds x86_64 profile; switching to an arm64ec Proton ran `applyArch` (reset box64 version) but never re-seeded from the arm64ec profile → box64 `0.3.7` / FEX stale `2508`, presets only "right" because both profiles shared them. Fixed by factoring arch-dependent seeding into `seedArchDependentDefaults(arch)` called at load AND from `onWineVersionChanged` on an arch flip in create mode (one code path, can't drift).
+
+## 2026-08-03 — 💾✅ **Save restore usability — 2 fixes MERGED to main** (post-2.9.3, unreleased)
+
+> Both merged to `main` via `--no-ff` (revert tags `checkpoint-pre-*-20260803`), device-verified via staged APKs (host↔device sha256 matched). Independent siblings touching different files → merged in sequence with zero conflict/erasure (verified both present on main after the second merge).
+>
+> **1. Custom-game Restore always available** (merge `b46aef82`, tag `checkpoint-pre-custom-restore-20260803`, `SteamSaveManagerActivity.kt` Custom tab). The Restore button was `enabled = status.hasBackup` and only read Bannerlator's own vault — so a GameHub→Bannerlator user with no local backup was locked out. Now always enabled → a chooser: **"Restore latest backup"** (shown when a vault snapshot exists) or **"Restore from a file…"** → browse the **in-app file picker** (`InAppFilePicker.SAVE`) for a GameHub/Bannerlator save `.zip` → pick a target container → `GameSaveBackup.restore`. Reuses the primitive that already accepts any `Uri`.
+>
+> **2. Game ⋮ menu "Restore saves" → in-app picker** (merge `71088358`, tag `checkpoint-pre-shortcut-restore-20260803`, `ShortcutsScreen.kt`). It launched the SYSTEM SAF picker (`GetContent("application/zip")`); switched to the built-in in-app file picker (`InAppFilePicker.SAVE`), consistent with the container menu + backup flow. **No format prompt** (user chose this): `GameSaveBackup.restore` **auto-detects the layout** — `remapForRestore` translates GameHub `steamuser` ↔ our `xuser` — so a GameHub or Bannerlator save both restore through the one path. (Backup must ask Winlator-vs-GameHub because it picks an OUTPUT format; restore doesn't.)
+>
+> Branches `feat/custom-save-restore-from-file` + `feat/shortcut-restore-inapp-picker` deleted (local+remote) after verifying both merged. ⚠️ Shared-working-dir hazard continued (concurrent session + mali-report bot moved `main`'s tip) — my merges were confirmed intact on `origin/main` each time; verify `git branch --show-current` before every commit/push here.
+
+## 2026-08-02 (PM) — 📖✅ **Container glossary + env-var editor fixes — MERGED to main** (post-2.9.3, unreleased)
+
+> A run of newcomer-help + editor-quality work, all merged to `main` after the 2.9.3 cut (trunk only — 2.9.3 stays the public build until the next release). Each landed via `--no-ff` with a `checkpoint-pre-*-20260802` revert tag.
+>
+> **1. Env-var editor fixes** (merge `11b7693d`, tag `checkpoint-pre-envvar-fix-20260802`). Custom (non-catalog) environment variables were SILENTLY DROPPED on save — device-reproduced via the root bridge (the new container's `.container` saved defaults only). Root cause: a custom var was created with a blank value and `renderRows` filtered out blank-value rows; typing `NAME=VALUE` wasn't split so the whole string became a value-less name. NOT create-vs-edit or launch-related — custom-var-specific, both container + shortcut editors (shared `EnvVarsEditor`). Fix: keep every NAMED row (empty `NAME=` is valid), split typed text on the first `=`, and a two-box **Add Variable** dialog (Name + Value, no `=` needed) with a live "will it save?" preview. Then expanded the recognized catalog **~34 → 75** with typed controls — the full BCn/Mali/wrapper/compat family (so `BCN_TRANSCODE_TO_ASTC` etc. autocomplete); excluded internal plumbing (paths/ICD/prefix) + preset-managed box64/FEX.
+>
+> **2. "What is all this?" newcomer glossary** (Phase 1, merge `cfd161ab`; tag `checkpoint-pre-glossary-20260802`). Community-requested (WinNative setup-wizard-tutorial idea). Labeled button above the container-editor tabs → searchable glossary bottom-sheet. Reusable `ui/components/GlossarySheet.kt`.
+>
+> **3. Glossary Phase 2 — pinned tabs + per-field help** (merge `1bdd46a4`; tag `checkpoint-pre-glossary-p2-20260802`). Tab row + button are now a PINNED header (only content scrolls); the button collapses on scroll, returns at top. Per-field `?` help on all 7 fields (Wine Version / Graphics Driver / DX Wrapper / Renderer / XInput / DInput / Exclusive Input) → CENTERED, scrollable Compose dialog (`HelpDialog` via the app-standard `OutlinedAlertDialog`) after two rejected forms (glossary-prefiltered sheet; the legacy top-left `showHelpBox` popup that couldn't scroll). Also hardened `AppUtils.showHelpBox` (measure at real width + `ScrollView`) for its remaining callers on other screens.
+>
+> **4. Glossary +13 terms** (merge `ccd2dc80`; tag `checkpoint-pre-glossary-terms-20260802`). 21 → **34 terms** / 7 sections: added DirectX/OpenGL/Zink, ASTC/ETC2, Adrenotools, SurfaceFlinger renderer, Shader stutter & cache, ESYNC/FSYNC, DLL overrides, Components + a new **Controls & audio** section (XInput vs DInput, Exclusive input, MIDI SoundFont).
+>
+> All device-verified via staged APKs (host↔device sha256 matched each). Also amended the LIVE 2.9.3 release notes to give the Steam Cloud two-way save sync its own billing (it had been swallowed by the general Save Manager copy). ⚠️ Shared-working-dir hazard bit twice (a concurrent session moved `HEAD` to `main` mid-work) — commits were safe on their branch refs; standing rule reinforced: verify `git branch --show-current` before every commit/push here.
+
+## 2026-08-02 — 🏁 **2.9.3 STABLE cut** (versionCode 55) — Save Manager v2 + lsfg GameNative-parity defaults
+
+> Cutting current `main` as **2.9.3 stable** (feature release over 2.9.2). Headline = **Save Manager v2** (three-tier Cloud/Library/Container, auto-Collect on exit + before uninstall, cloud honesty, universal custom-game vault, LOCAL_ONLY visibility, Steam badge/auto-connect). Plus **lsfg-vk GameNative-parity defaults** (perf_mode ON, flow_scale 0.80, per-container Auto-enable at launch ON) and the **perf-HUD dual-API** hardening. All app-side, no ImageFS reinstall; signed with the committed testkey (in-place update safe). Version bump `build.gradle` 54→55 / 2.9.2→2.9.3; README updated (version table, contents, "What's New in 2.9.3"); NEW in-depth user doc `docs/save-manager-guide.md` (305 lines, verified against code) linked from the release + README. Release notes open with a milestone banner (2,000 Discord members + 400k downloads). Cut via `release.yml` (Nightly Manual Release Build) → all 3 flavors + auto-`update.json`, make_latest. ⚠️ Corrected a wrong "App Settings/in-game drawer" entry-point claim before publish (real entries: side menu Library, Steam store, game ⋮/detail).
+
+
+
+## 2026-08-01 — 🎞️🏁 **lsfg-vk: adopt GameNative's proven defaults — MERGED to main** (`--no-ff` merge `62935d89`; built commit `fe19fd0a`; main build run `30730493963` @ `62935d89` green, APK `bannerlator-main-lsfg-defaults-62935d8-standard.apk` sha256 `d0f52139`)
+
+> **MERGED to main by explicit user directive (revert point: tag `checkpoint-pre-lsfg-gamenative-defaults-20260801` → `b7ac9af8`; `git revert -m 1 62935d89` to undo). ⚠️ Merged WITHOUT an on-device pass — recommendation was to device-test first; user chose to merge. Compiles-green only.** Companion audit (`reference_bannerlator_lsfg_hook_and_interference`): our layer injection/hook is correct + right-timed (== GameNative, different mechanism), gestures/HUDs do NOT interfere; smoothness levers are compositor resample (renderer choice + VRR match) + not stacking ReShade with lsfg. The separate 1-commit branch `feat/lsfg-perf-mode-under-multiplier` (`d62f4f0`, in-game toggle relocation) was DELETED at user request (recoverable from that SHA).
+>
+> Our shipped lsfg-vk `.so` is byte-identical to GameNative's v1.0.2-android, so the FPS/smoothness gap vs GameNative is purely **wiring/defaults**. Live comparison of `utkarshdalal/GameNative` (default branch) surfaced three differences; ported the two safe defaults + added a per-container opt-in for the third (which conflicts with our deliberate default-off design):
+> 1. **`performance_mode` default → ON** (`Container.java` `isLsfgPerformanceMode` `"0"→"1"`) — GameNative default; the lighter LSFG_3_1P model is cheaper on Adreno. Aligned the two Compose initializers (`ContainerDetailViewModel` field init + `loadContainerData` → `!= false`) so new/unset containers actually show it ON.
+> 2. **lsfg-only `flow_scale` default → 0.80** (`LSFG_DEFAULT_FLOW_SCALE=0.80f`; `getFrameGenFlowScale()` returns an engine-dependent UNSET default via `hasExtra` — lsfg 0.80, bionic-fg stays 0.60; explicit user values still honored). Shared `FRAMEGEN_DEFAULT_FLOW_SCALE` untouched → bionic-fg unaffected.
+> 3. **NEW per-container "Auto-enable at launch" flag** (`lsfgAutoEnable`, default **ON** — GameNative parity). When ON, an lsfg container starts frame gen LIVE at its saved multiplier from the first frame instead of the safe global default (layer loaded but OFF, opt-in per session from the FG drawer). Default ON matches GameNative; uncheck it to restore the start-off behavior for a given lsfg container. This intentionally supersedes the 2026-06-23 "always start off" default **for lsfg containers only** — bionic-fg still always starts off in-game. Wired: launch conf write + drawer seed (`XServerDisplayActivity`), per-container Switch shown only when engine==lsfg (`ContainerDetailScreen`/`ViewModel`, initializers default ON), strings. The existing `setupUI` `applyFpsLimit` re-evaluates `lsfgGovernsFps()` after the seed, so the cap steps aside automatically for mult>=2 — no extra call needed.
+>
+> NOT device-proven yet (merged pre-test per user call). Note: config export/import round-trip does not (yet) enumerate `lsfgAutoEnable`/`lsfgPerformanceMode` — out of scope, flag for later if community-config parity is wanted.
+
+## 2026-08-01 — 🏁 **Save Manager v2 MERGED to main** — universal save vault + honesty + auto-collect (`--no-ff` merge `96239931`, built from main run `30727170203`)
+
+> **Full pre-merge on-device checklist PASSED (10 sections), then merged.** Built on the Steam Cloud engine already on main. Adds: LOCAL_ONLY visibility; auto-Collect on game exit (Steam→appId Library, custom→vault) with per-type toggles + confirm/info alerts + collect-before-uninstall; cloud honesty (PICS UFS check + post-upload empty-manifest check → "backed up locally" for no-retention games like FlatOut 2); a universal CUSTOM-game vault (exe/folder imports get Winlator/GameHub backup/restore + auto-snapshot on exit to `Downloads/Bannerlator/game saves/<Game>/`, a Custom tab with restore-into-a-chosen-container); Save Manager drawer entry, Steam status badge + auto-connect, settings cog, immediate post-sync timestamps.
+>
+> **7 bugs found + fixed live during on-device testing** (each device-confirmed): Steam auto-connect from the Save Manager/detail (`d99cecb8`, was store-home-only → badge stuck offline via the drawer); live Steam **badge** in the header (`f9eee1d1`); auto-collect **derives the appId** for pre-existing untagged Steam shortcuts (`3a1fc403` — HL2's shortcut predates the tag → exit hook parsed appId 0 and silently skipped; now derived from the `steam_games/<Folder>` exec-path via getInstalledGames); **stale-timestamp** after sync (`54c5c6b2` — persist lastDownload/UploadAt synchronously before onDone, cloud re-baseline async); no-retention **upload honesty** (`6865f086` — FlatOut 2 committed 17 files but Steam's cloud came back empty; now a synchronous post-upload empty-manifest check reports "doesn't keep Steam Cloud saves — backed up locally" and marks the record so future syncs skip); **DB-init on drawer entry** (`272b863a` — Steam games falsely showed "Not set up" when the Save Manager was the first screen after a fresh install because the Steam DB wasn't initialized; now initialized before the status load).
+>
+> **Checklist results (all ✅):** §1 cloud core (Download→Apply→load in-game, Sync-to-Cloud combo, incremental) · §2 cloud honesty (HL2 retains; FlatOut 2 "backed up locally") · §3 status states · §4 auto-collect on exit + toggle actually gates it · §5 custom vault (manual both layouts + auto-snapshot on exit, verified xuser vs steamuser layouts) · §6 Custom tab + restore-into-picked-container ("Restored 2 files to P11 GE Arm", files written to the container) · §7 drawer · §8 path separation (Steam appId `SteamCloudSaves/<id>` vs custom name `game saves/<Game>/`, no overlap) · §9 toggle alerts · §10 badge/auto-connect. Revert if ever needed: `git revert -m 1 96239931`. ⚠️ Known cosmetic (not a blocker): HL2 Sync-to-Cloud re-uploads 2 `config.cfg` path-variants each time (the round-trip path-format quirk; real saves skip correctly as up-to-date).
+>
+> ✅ **Build-from-main GREEN** (run `30727170203`, all 3 flavors) — the merge compiles + packages clean from main. 📄 Feature-guide doc page published (app-styled artifact + saved to device as `Bannerlator-Save-Manager-Guide.html`). Clean stopping point — nothing pending. Optional next: cut a versioned release (vc bump + tag + update.json), or tidy the config-round-trip cosmetic.
+
+
+
+> A large save-management arc, built + device-proven in pieces on ONE branch, held for a full on-device sweep before merging to main. The Steam Cloud save engine itself already merged earlier (three-tier Cloud/Library/Container, incremental additive upload, parallel transfer, the 2-combo Sync-from/to-Cloud UI, the Save Manager screen + two entry points). THIS branch adds the rest:
+>
+> - **LOCAL_ONLY visibility** (`e02f9563`) — a played-but-never-synced game now shows in the Save Manager as "Not backed up" (was invisible until manually collected; user-found via FlatOut 2). Sync-from-Cloud disabled when the cloud has nothing.
+> - **Auto-Collect on game exit (A)** (`37314d8b`) — Steam-library games auto-collect their saves to the appId Library on exit (bounded 8s latch in `XServerDisplayActivity.exit()` before `restartApplication`'s `exit(0)`; gate later hardened to genuine-Steam only). Plus a collect-before-uninstall guard.
+> - **Cloud honesty (B)** (`d6ae9112`) — `hasCloudSupport(appId)` reads PICS `appinfo/ufs/savefiles`; games with no Steam Cloud (e.g. FlatOut 2) get an honest "backed up locally" message instead of a false "Uploaded N" (device-found: upload said success, re-download showed nothing). HL2 (supported) unaffected. Also hardened the exit gate so a cover-linked custom import (carries a steamAppId for art) can't be mis-filed under a Steam appId Library.
+> - **Custom-game vault (C1/C2)** (`e66f0d4e`, `9d2b1d01`) — custom exe/folder imports get local-only Back up / Restore-to-a-chosen-container in the Games ⋮ menu (Winlator/GameHub layout picker), AND auto-snapshot on exit. All custom backups live under `Downloads/Bannerlator/game saves/<Game>/` — manual = timestamped history, auto = `auto-latest.zip` (overwrite, atomic temp-rename). Steam paths (`SteamCloudSaves/<appId>` + cloud) untouched — separate keyspace (Steam=appId, Custom=GameIdentity).
+> - **Drawer entry** (`e66f0d4e`) — "Save Manager" added to the side-menu Library section (new `Screen.SaveManager` nav route; `SaveManagerScreen` shared composable). Old hidden `Screen.Saves` left untouched.
+> - **Settings cog + toggles + alerts** (`00ec3575`, `6dbf9aa2`) — cog in the Save Manager header → two switches (default ON) gating auto-backup-on-exit per game type (`save_manager_prefs`); turning OFF pops a Continue/Cancel warning (Cancel reverts), ON shows a brief OK.
+> - **C phase 3 (Custom tab)** (`eb2bd926`) — Steam | Custom tabs in the Save Manager; the Custom tab lists custom games (shortcut art, "Backed up <time>"/"No backup yet") with per-row Back up (layout picker) / Restore-to-a-chosen-container. `CustomSaveVault.manualBackup` is now the one shared backup impl (the ⋮ menu routes through it too). Final feature piece.
+>
+> **Merge gate:** a 9-section verification checklist is prepared (Steam cloud regression, cloud honesty, LOCAL_ONLY, auto-collect + toggles, custom vault manual+auto, Custom tab, drawer, path-separation safety, toggle alerts). Once C phase 3 builds + installs, walk the checklist on device; all pass → merge `--no-ff` to main + build artifacts from main; any failure → fix on the branch and re-test that section. Nothing on this branch is merged yet.
+
+## 2026-07-29 — 🏁 **2.9.2 SHIPPED as stable — hotfix** (tag `2.9.2`, run `30456942457`, vc54, main `0a8d3286`)
+
+> Cut immediately after the off-state fix merged (`1af856db`), because the bug was live for every 2.9.1 user and cost them a per-line disk write on every launch. Version bump `0a8d3286` (vc 53→54, vn 2.9.1→2.9.2), dispatched `release.yml` with `make_prerelease=false`. ✅ Dispatch verified: run headSha == the pushed SHA.
+>
+> Full body applied post-cut via `gh release edit --notes-file`, in 2.9.1's exact layout and voice — centred logo, three badges, the `⚠️`/`>` callout idiom, the Mali report badge pair, the standing **Proton 9 arm64ec `.wcp`** section (link + size + sha256 + Xnick417x credit) and the fresh-install-has-no-Wine warning, then Credits and the root footnote. README updated to match: version row → 2.9.2/vc54, a new What's New section above 2.9.1's rather than overwriting it.
+>
+> 🙏 **Credits lead with @D4V1Z0N** — he found it, reported it, and device-confirmed the fix across off/on/off/on cycles before it shipped. The notes say so plainly ("This release is his"), and close the credits with a line about small-looking reports, because this one looked small and was not.
+>
+> ### ⚠️ Two post-cut corrections, both caught by the standing verify steps
+> 1. **The tag came out on the wrong commit — again.** `release.yml` tagged `c6864d2c` (the README/PROGRESS_LOG commit) rather than the built `0a8d3286`, because main moved between the version bump and the docs commit. Force-repointed to the built commit and re-verified via `git ls-remote`. 📌 The known default-branch quirk is harmless only when main HEAD *is* the built commit — which is exactly what stops being true the moment docs land after the bump. **Either push docs before dispatching, or expect to repoint every time.**
+> 2. **`update.json` shipped the dispatch placeholder.** Its `notes` field is the blurb the **in-app updater** shows users, and it had gone out reading *"Full notes applied after the cut"* — internal process language, live to every updating device. Re-uploaded with `--clobber` as *"Hotfix over 2.9.1 — turning logging off in the Log Manager now actually stops logging. Full notes below."*, matching 2.9.1's convention. 📌 **Write the real user-facing one-liner at dispatch time; that input is not scratch.**
+>
+> ✅ Final verified state: `releases/latest`→2.9.2, isPrerelease=false, isDraft=false, tag→`0a8d3286`, `update.json` vc54 + all 3 APK names, 3 APKs + update.json attached, working tree clean and `main` == `origin/main` at `c6864d2c`.
+
+## 2026-07-29 — 🔇 **The Log Manager's switches never actually stopped logging** (branch `fix/log-manager-off-state` off main `b16f6dfd`)
+
+> Reported by a community tester: *"I can't completely disable the logs, even after disabling all the options in the log manager, it continues to log, even when using `WINEDEBUG=-all`."* Correct on every count, and worse than it reads.
+>
+> **The bug.** `XServerDisplayActivity.setupXEnvironment()` opened `wine_debug.log` and called `ProcessHelper.addDebugCallback(...)` **unconditionally** — there was no test of any preference anywhere in that block. `enable_wine_debug` only chose the WINEDEBUG **channel string**; nothing gated the file. The switches turned the volume down, not the recorder off.
+>
+> **Why `WINEDEBUG=-all` couldn't save them.** Their env var *does* win (container/shortcut vars are `putAll`'d after ours, and `EnvVars.putAll` overwrites). But `wine_debug.log` is not a Wine-written file — it is ours, fed from `ProcessHelper`'s debug callback, which carries the stdout/stderr of **everything we spawn**: Box64/FEXCore, wineserver, the preloader, DXVK. Silencing Wine cannot empty a file that captures the rest, plus the ~20-line header we write into it ourselves.
+>
+> **🔑 The part that matters more than the complaint.** `ProcessHelper.execGuestProgram` redirects a process's stdout/stderr to `/dev/null` and spawns **no reader threads** — but only while `debugCallbacks` is empty. Registering one unconditionally made that branch unreachable, so **every user on 2.9.1, on every launch**, paid for a reader-thread pair per process, a `redact()` pass per line and a disk write per line. Under a screen whose `?` copy sells that cost as opt-in. This was a shipped perf regression, not just a UX complaint.
+>
+> ### Fix
+> - **`wine_debug.log` is opt-in.** `File logDir = isLaunchLoggingEnabled() ? resolveGameLogDir(…) : null;` — the whole body already sat inside `if (logDir != null)`, so off now means no folder, no rotation, no file, and critically **no callback**, which lets the `/dev/null` path fire again. Gated on the existing `isLaunchLoggingEnabled()` (Wine debug **OR** Box64/FEXCore) because both write to that one stream, and it is the same predicate the in-game Logs drawer and the launch-failure card already use — the three stay consistent.
+> - **No more empty per-game folders.** Both DXVK call sites called `resolveGameLogDir(…)` eagerly, and 🔑 **resolving CREATES the folder**, so even with DXVK logs off every launch littered one. New `dxvkLogDir()` returns null when the switch is off, and `DXVKConfigDialog.setEnvVars` now reads the pref **before** resolving a path instead of after.
+> - **The off-state `WINEDEBUG` now says what it does:** `+err,+warn,+fixme,-all` → `-all`. Same effective value — Wine parses left to right and the unprefixed trailing `-all` clears every class on every channel, so it already overrode the three before it, which were themselves written where Wine expects a *channel* name rather than the err/warn/fixme *classes* they meant to name. The comment claiming "errors still surface" was wrong; nothing that currently works is lost.
+>
+> ⚠️ **Behaviour change to announce:** with everything switched off, a crash now leaves no `wine_debug.log`. That is the point of the fix, and the failure card already detects the state and says to turn logging on — but anyone relying on the file always being there will not find it.
+>
+> ### 📌 How this got through the device test
+> The 2026-07-28 test was thorough on every ON path — rotation created `previous/`, Delete offered the right count, Clear all spared foreign files, the Report button carried the right GPU string — and **every one of those asserted presence. None asserted absence.** TEST 1 even ran per-game OFF + custom location + keep=0, but its assertion was *"the decoy files are byte-identical"*, because it was built to catch the data-loss bug; `wine_debug.log` was being written throughout it and nobody looked, because a log file existing is what we expected everywhere else. The five switches were only ever verified to **save**, which is settings plumbing, not behaviour. 📌 **For any feature with an off-switch, one pass must prove the off state produces nothing.** Same shape as the `hasDetail` sorting fix from that session: it compiled, it read correctly, and it changed nothing.
+
+## 2026-07-29 — 🏁 **2.9.1 SHIPPED as stable** (tag `2.9.1` → built commit `43932724`, run `30420489783`, vc53)
+
+> Cut through `release.yml` with `make_prerelease=false` — the only workflow that publishes a release and `update.json`. ✅ Verified after the cut: `releases/latest`→2.9.1, isPrerelease=false, isDraft=false, **tag→built commit** (main HEAD == built commit, so the known default-branch quirk was harmless), `update.json` vc53 + all 3 APK names, 3 APKs + update.json attached.
+>
+> Full 80-line body applied post-cut via `gh release edit --notes-file`, in 2.9's layout and voice, covering **all 43 commits since 2.9**. Carries the **Proton 9 arm64ec `.wcp` download link** (size, sha256, Xnick417x credit) per the standing rule, plus the warning that a fresh install now ships with **no Wine at all**. README updated to match in `9a167ba4` — version row to 2.9.1/vc53, a new What's New section, the 2.9 section kept below rather than overwritten. 📌 That commit lands *after* the tag, so it is not in the tagged tree; same as 2.9.
+>
+> 🔖 Revert point: tag `checkpoint-pre-ui-tweaks-20260729` → `b407787c`.
+
+## 2026-07-29 — 🎛️ **Drawer & library tweaks — merged `88bfb9e0`, all device-verified** (branch `feat/ui-tweaks`)
+
+> Five asks, delivered as one branch off `b407787c`.
+>
+> **Hideable drawer sections.** Appearance gains a **Side Menu** block with three independent switches: game stores, internal storage, SD card storage. Each hides its whole block — header included — so turning one off leaves no orphaned divider.
+>
+> **SD card storage card.** The drawer's bar is now labelled **Internal Storage**, and a removable volume present at open gets its own card beneath it. 🔑 Detection goes through **`StorageRoots`**, not a fresh `/storage` listing — a card can be mounted and healthy yet absent from this process's mount view, which is exactly what defeated four earlier SD fixes. A volume we cannot stat is dropped rather than shown as "0 B / 0 B", and the enumeration runs on IO because it crosses Binder while the drawer is opening.
+>
+> **Draggable + button** on Games *and* Containers — long-press, slide along the bottom, position remembered per screen as a 0..1 fraction of free travel so it survives rotation and other screen sizes.
+>
+> **Multi-select removal** on Games (list *and* grid) and a **third view mode**: list / original adaptive grid / **4-across compact**. 🔑 Selection is keyed by `file.path`, not by `Shortcut` — `refresh()` rebuilds those objects and a set of stale instances would quietly stop matching. The old `is_grid_view` boolean can't express three states, so it seeds the new `view_mode` int; existing grid users stay on grid.
+>
+> ### 🐛🔑 Two bugs in the drag button, both mine, both worth remembering
+> 1. **It drew its frame and its contents apart** — an empty bordered square stuck hard left, untappable. `graphicsLayer` sat **after** the caller's `border`/`background`. Compose modifiers nest outside-in, so the transform moved only what was nested inside it: the icon and the hit box slid ~830px right while the frame stayed at the layout position. 📌 **A component that takes a styling `Modifier` from its caller and also transforms must wrap that modifier, not follow it.**
+> 2. **The long press registered but it would not move.** Two `pointerInput` blocks: the **later** modifier is the **inner** node and gets pointer events **first**, so the tap detector — which needs an `onLongPress` to avoid firing on a held press — consumed the press before the drag detector could claim it. The drag loop then found no unconsumed moves and ended instantly. Replaced both with **one `awaitEachGesture`**: whichever comes first, release or the long-press timeout, decides tap vs pick-up. 📌 **"First in the chain gets events first" is backwards for pointer input; when tap and drag must coexist, use one detector.**
+>
+> ⚠️ A momentary "the toggles are inverted" reading was **my own artifact** — I read prefs and screenshotted at different moments while the user was actively flipping switches. No bug. Worth remembering before reporting one against a live device.
+
+## 2026-07-28 — 🔒 **Five defects in the merged Log Manager's report builder** (branch `fix/log-report-safety` off main `e7a05765`)
+
+> Found by reading the Log Manager surface after issue **#191** (PRAGMATA crash) came in with a report whose useful half had been thrown away. The Log Manager itself held up — folders, rotation, the delete allowlist — every defect is in the **report builder**, the part added last (`340f2a40`) and exercised least by the device test. None was device-reproduced; all five are read off the code.
+>
+> **1. The loose predicate came back, on the publish path.** `LogInventory.isLog` was still `.log || .txt` — the exact "second, looser definition of a log file" that `LogRotation.isOurRunLog`'s javadoc was written to prevent. It was fixed for *delete* and missed for *listing* and *report*, and it feeds `filesIn()`, which is what `LogReport` zips for the user to attach to a **public** issue. On a shared root that means other subsystems' `.txt`; on a user-chosen root, the user's own files. `isLog` is now **deleted** — the class already had `isOurs`, the delete path's allowlist, and every call site goes through that one. Two names for one predicate is what caused this.
+> ⚠️ Live exposure at the time was **nil**: the active root (`Download/bannerlator`) had zero `.txt`, and app-data's only one is a benign 118-byte `steam_session.txt`. Real defect, no incident.
+>
+> **2. The safety claim published on the tracker wasn't true.** Every generated issue said *"redacted of usernames, e-mail addresses and tokens **before they are written**"*. Neither half held: `XServerDisplayActivity` wrote Wine output **raw** (redaction happened only when a report was built, so the file on disk — which #70 exists to make shareable — was unredacted), and the only username strippable is the Steam account name via `SteamRepository`-registered secrets, which is **empty when nobody has signed in**. No path/username pattern exists in the redactor at all. Fixed **both ways**: redaction moved to write time so the claim is now true, and the wording says what the code actually does — e-mails, tokens, Steam account name — and warns that paths are kept on purpose.
+> 🔑 Write-time redaction on a per-line callback is a hot path (a `+seh` run emits tens of millions of lines), so `SteamLogRedactor.redact` got a `maybeHasPattern` pre-check: one linear scan rules out all four regexes unless the line holds `@`, `ey`, `76561`, or an 88-char run. The dominant `+seh` spam line hits none of them.
+>
+> **3. The report threw away the evidence.** `MAX_FILE_BYTES` was 2 MB, **tail only**. #191's log was **72 MB** → 97% binned, and what survived was ~12,900 copies of one trace line. The head went too — including the `WINEDEBUG`/`WINEPREFIX`/container/shortcut block written at the top precisely so a report explains its own setup. The cap bought nothing: 2 MB of that text zipped to **15 KB**, ~140:1. Now **head + tail** with the omitted middle called out, cap **2 → 8 MB**.
+>
+> **4. A per-line failure handler was being handed whole files.** `LogcatCapture.redact` answers a throw with `"[line withheld]"` — right for its per-line caller, catastrophic on a blob: one failure collapsed megabytes into a single sentence and the report still looked complete. Now redacted line by line. `readContentRedacted` also catches `Throwable`, not `Exception`, since an 8 MB cap plus a redacted copy can OOM a low-RAM device and logging must never take the app down.
+>
+> **5. Rotation guard asked the wrong question.** It gated on the `isPerGameEnabled` **preference**, but `resolveGameLogDir` silently falls back to the flat root when the per-game folder can't be created or written — preference still reading "on". It now compares the directory it actually got against `resolveLogDir`. Bounded by the allowlist, so this could only ever have eaten our own logs, not the user's.
+>
+> ### ✅ DEVICE-TESTED on the AYANEO Pocket FIT (build `0bb06a3e`, run `30412524817`, installed sha verified against the staged APK)
+>
+> Real log folder backed up first (`bannerlator-BACKUP-b-20260728`, 64 entries) and re-verified after: **nothing in the backup is missing from the live folder.**
+>
+> **🟢 #1 — allowlist on the publish path.** Planted three decoys in the log root: `zz_private_notes.txt` (a user file), `steam_debug.txt` (another subsystem's), `important.log` (a foreign `.log`, to prove the extension alone is not enough). Log Manager listed **"Older logs — 56 files"**, matching `find`'s count of allowlist-shaped files exactly; the old `.log || .txt` predicate would have said **61**. Built the report: **57 entries, zero `.txt`, all three decoys absent**, and all three byte-identical on disk afterwards.
+>
+> **🟢 #3 — head+tail.** Reported the real 70.6 MB PRAGMATA log from #191. Zip contains **8,388,544 bytes** carrying: the full `=== Wine Debug Log ===` header (`WINEDEBUG: +seh,+err,+warn,+fixme`, WINEPREFIX, container, shortcut, DX wrapper state), the marker `[… 64075 KB of 72267 KB omitted from the middle — keeps the first 1024 KB and the last 7168 KB …]`, and the tail. 🔑 **Both crash facts survive**: the `EXCEPTION_ACCESS_VIOLATION` (line 51569) and the `icuuc68` forward failure + `raise (22)` (53240/53241) — the exact evidence the old tail-only rule threw away. Cost: **47,233-byte zip** vs 14,919 before, i.e. 4× the log for 32 KB.
+>
+> **🟢 #2 — wording, all three copies.** The corrected text is live on device in the report dialog. 🔴 **Device screenshots caught a THIRD copy I had missed** — `LogManagerScreen.kt:363`, and the worst of them ("so they are safe to share"). Fixed in `0bb06a3e`.
+>
+> **🟢 #2 — write-time redaction.** A fresh `+seh` launch writes a complete, well-formed log with header, and rotation into `previous/` still works, so the added per-line `redact()` neither garbles nor stalls logging. ⚠️ Neither log contained anything pattern-shaped, so the device could not positively prove the redactor still fires — the genuinely new logic is the `maybeHasPattern` fast path, where a bug means silently NO redaction. Proved it instead by compiling `SteamLogRedactor` standalone and running **11 assertions: all pass** — email / email-inside-a-Windows-path / JWT / SteamID64 / 88-char run / registered secret all redact; the `+seh` spam line, an 87-char run, a 40-hex depot chunk, a 19-digit manifest and a plain wine `err:` are all left untouched.
+>
+> **⚪ #4, #5 — not reproduced.** Both need a failure the device would not produce on demand (a redaction throw; a per-game mkdir failing). Code-verified only.
+>
+> ### ✅ CONFIRMED ON A REAL SUBMITTED REPORT — issue #193 (build `c20320ec`, installed sha verified)
+> A genuine PRAGMATA relaunch + crash + Report, filed as a real issue. Three reports of the same crash now exist across three builds, which is as clean an A/B/C as this gets: **#191** (old builder), **#192** (fixed builder, same 18:14 log — controlled A/B), **#193** (fixed builder + VKD3D fix, fresh 65 MB log).
+> - **`VKD3D: 2.14.1` now appears** in the `### From the logs` block — absent from both #191 and #192.
+> - **Rotation fired on a real launch** (the #5 guard's first real exercise): `previous/` 1 → 2 archives, the 18:14 log filed as `2026-07-28_18-14-45`, fresh log written.
+> - **Head+tail on a brand-new log**: marker reads `[… 58401 KB of 66593 KB omitted …]` — different numbers from #192's 72267 KB, proving a genuinely new source. Header intact; crash evidence at **51573** (the AV) and **53244/53245** (the `icuuc68` forward failure + `raise (22)`).
+> - Zip **47,149 B** for 8,388,512 B of log — matches the ~47 KB predicted from #192.
+> - 🔑 **The crash reproduced identically** — same access violation at `PRAGMATA.exe + 0x4CCB9FA`, same ICU abort. Confirms the reporting fixes changed nothing about the underlying failure.
+> - ⚪ **Redaction: a third null result.** The fresh log was written BY the fixed build, and it contains **0 redaction markers and 0 leftover plaintext patterns** — i.e. genuinely nothing to strip, not a failure to strip it. Wine's `+seh` output simply carries no emails, SteamID64s or token-shaped blobs. **Calling this settled on the 11 standalone assertions rather than relaunching hoping a secret appears.**
+>
+> ### 🐛 Two more found BY testing
+> 1. **`_d3d8.log` was missing from the allowlist** — DXVK writes it for D3D8 titles and a real folder had `AIO-Graphics-Test-32bit_d3d8.log` in it: ours, but invisible to every allowlist path. Added.
+> 2. **The third "safe to share" claim**, above.
+>
+> ### ⚠️ Observed, NOT caused by this branch, NOT fixed
+> A hand-written `.desktop` with an `Exec=` line the parser dislikes takes the **whole app down at startup** — `StringIndexOutOfBoundsException` at `Shortcut.java:92`, via `ContainerManager.loadShortcuts` → `ShortcutsViewModel.<init>`, so the games list never loads and the app is unusable until the file is removed by hand. I hit it planting a synthetic canary shortcut; the app never writes a file in that shape itself, so this is a robustness gap rather than a live bug. 🔑 The Log Manager's own crash reporter behaved perfectly throughout — five `crash_*.txt` with full cause and logcat. Test artifacts (decoys, canary `.desktop`, both test zips, the five crash reports) all removed.
+
+## 2026-07-28 — ✅ **Log Manager DEVICE-TESTED end to end — the two blocking tests PASS, five defects found and fixed** (branch `feat/log-manager` @ `6f89ed63`, run `30408135473`)
+
+> Drove the whole suite on the AYANEO Pocket FIT via the root bridge (prefs edited directly in `shared_prefs`, UI driven with `input tap/swipe` + screenshot verification). **Backed the real log folder up first** (`bannerlator-BACKUP-20260728`, 82 files, manifest-verified byte-identical) and ran every destructive test against a throwaway folder — a data-loss test must not be run on real data to find out whether the data-loss bug is fixed.
+>
+> ### 🟢 TEST 1 — rotation, per-game **OFF** + **CUSTOM** location + **keep=0** (the old data-loss path) — **PASS**
+> Planted `steam_debug.txt`, `bh_epic_debug.txt`, `bh_gog_debug.txt`, `my_notes.txt`, **`important.log` (a foreign `.log`, which the old bug matched)** and a `ReShade/preset.ini`, then launched twice. **All six survived byte-identical.** No `previous/` was created — rotation correctly stays inert while per-game folders are off, which is the designed guard.
+>
+> ### 🟢 TEST 1b — rotation actually WORKS when it should — **PASS**
+> Per-game ON, keep=2, four more launches: `previous/` went 1 → 2 → **2 with the oldest pruned**. Root decoys still byte-identical after six launches total.
+>
+> ### 🟢 TEST 2 — Delete / Clear all against foreign files — **PASS**
+> Of 9 loose files the confirm offered **4**; delete removed exactly our 4 and left every decoy + `ReShade/` untouched. **Clear all** then wiped the game folder and our logs and again left all five foreign files byte-identical. The allowlist holds.
+>
+> ### 🟢 Report button, GAME path (the untested half) — **PASS**, and it caught a follow-on
+> Issue body read `Device: AYANEO Pocket FIT` (dedup fix good) and **`GPU: Wrapper(Adreno (TM) 750)`** — a GPU at last, not the handheld. But a line labelled GPU should name the GPU: that raw DXVK device string now goes through `extractModelName` too, which the fallback path was already using.
+>
+> ### 🐛 Five defects found and fixed
+> 1. **GPU not normalized** — above.
+> 2. **"Delete Older logs logs?"** — the loose bucket is already named "Older logs", so only a game name needs the word appending.
+> 3. **Dead Delete button** — the loose bucket counts every log-shaped file but only ours are deletable, so a folder holding purely the user's files showed "5 files" then "Deletes 0 log files" with a live Delete. Now says nothing there is ours and offers only OK.
+> 4. **Browse-all dialog unusable in landscape** — title, search and chips each on their own row left **exactly one visible list row** on a landscape handheld, the form factor this runs on. Header collapsed to one row, redundant Done removed (the X closes it): **1 → 11 rows**.
+> 5. **Channel order buried the important ones** — `debug_buffer` sorted above `err`/`warn`/`fixme`/`seh`. 🔑 **My first fix (described-first) was verified on device to do nothing** — `debug_buffer` has a description too. `COMMON_WINE_CHANNELS` is the real priority order; now err/warn/fixme/seh/relay lead. Deliberately NOT selected-first: rows would jump under the finger while ticking.
+>
+> ⏭️ After testing, prefs restored (Download / per-game ON / keep 5), sandbox and test artifacts removed, and the real folder re-verified **82 files byte-identical** to the pre-test manifest. Backup kept at `/sdcard/Download/bannerlator-BACKUP-20260728`.
+
+## 2026-07-28 — ✨ **Per-shortcut "View logs" + browse all 521 Wine channels** (branch `feat/log-manager` @ `9ef0839b`, run `30405709785`)
+
+> **View logs on every shortcut.** Reaching a game's logs meant App Settings → Logs → Open Log Manager → find the game. Added to **both** menus — grid long-press and list overflow — opening the viewer on that game directly. New `LogInventory.forGame()` does the lookup, and 🔑 deliberately does **not** call `LogLocation.resolveGameLogDir`: **that creates the folder**, and asking whether logs exist must not.
+>
+> 🔑 The two empty cases are told apart rather than both opening a blank viewer. With per-game folders **off**, every game writes into one shared directory under names that cannot be attributed to a shortcut — there is no honest "this game's logs" to show, so it says that and points at the setting. On-but-nothing-captured says that instead.
+>
+> **Browse all 521 channels.** The picker showed 18 chips and a search field, and **search only helps once you know a name to type** — so 503 channels were effectively unreachable. Added a **"Browse all 521…" chip as the last item in the flow** (reading as "and the rest are through here" rather than as another channel) opening a scrollable dialog over the whole catalog, **grouped by family**: 521 names in one alphabetical column is technically all of them and practically unreadable, whereas "Sound" holding 15 is something a user can shop from. In-dialog search, an "On only" filter, and a **"What's this?"** toggle putting a one-line explanation under every row — off by default because it triples row height.
+>
+> 🔑 **New `WineChannelInfo.kt` works in two tiers, and the split is the point.** 185 hand-written descriptions for the channels genuinely worth knowing, and a prefix/suffix `categoryOf` classifier covering all 521 so the tail gets a **true** sentence ("Direct3D and graphics — output from Wine's `d3dxof` component") rather than an invented one. Nobody can honestly write 521 accurate descriptions. 📌 **Rule for future edits: if the specific behaviour isn't known, leave it out of `DESCRIPTIONS` and let the category answer.** Verified every described key exists in `wine_debug_channels.json` — dropped `trace`/`pid`/`timestamp`/`server`/`virtual`, which are debug *classes* and output modifiers, not channels.
+>
+> ⏭️ Both are **built and CI-green but NOT device-tested** (staged `bannerlator-logmgr9-9ef0839-standard.apk`).
+
+## 2026-07-28 — 🐛 **Report button named the handheld as the GPU** (branch `feat/log-manager` @ `c2d14099`, run `30403529505`)
+
+> Device test of the new **Report** button: the prefilled GitHub issue read ``- GPU: `AYANEO AYANEO Pocket FIT` `` — the device, not the GPU.
+>
+> **🔑 Every fact extractor in `LogReport.facts()` was an unanchored regex, so each matched the first thing that looked close enough.** `Device *: *(.+)` was written for DXVK's `info:    Device : Adreno (TM) 750`, but our OWN logcat header line — `Device: AYANEO AYANEO Pocket FIT`, written by `LogcatCapture.deviceHeader` at the top of `logcat.log` — sits in the same scanned blob and wins. For an **app-bucket report it is the only line that can ever match**, which is exactly the report in the screenshot (zip `app-2026-07-28_17-59-45.zip`). Two more of the four were broken the same way and had simply not been noticed: `DXVK: *v?(…)` also matches `DXVK: Read 46 valid state cache entries` → version `"Read"` whenever that line lands first, and `vkd3d-proton *v?(…)` captured the `-` out of `vkd3d-proton - applicationVersion: 3.0.1`.
+>
+> All four re-anchored to the shape the writing layer actually emits (`(?m)^info: +Device *: *…`, etc.), verified against the real logs on device — `Adreno (TM) 750` / `turnip Mesa driver (whitebelyash branch) 26.1.99` / `3.0-gplasync` / `3.0.1`, with the old patterns reproducing the bug on the same input.
+>
+> Added a fallback to `GPUInformation.getRenderer(null, null)` → `extractModelName` when no DXVK log is in the bundle, so app-only, native-Vulkan and wined3d reports still carry a real GPU instead of dropping the line.
+>
+> Also `LogcatCapture.deviceHeader` no longer repeats itself — MANUFACTURER/BRAND/MODEL overlap on most devices and the naive join produced the doubled "AYANEO AYANEO Pocket FIT" in the System block too.
+
+## 2026-07-28 — 🗂️ **Log Manager pass 3 — dead "Open in File Manager" fixed + laid out to match the approved mockup** (branch `feat/log-manager`)
+
+> Device screenshot showed the buttons doing nothing and the bottom half of the screen still not matching the HTML mockup (`/sdcard/Download/bannerlator-log-manager-plan.html`). Installed APK verified first: device base.apk sha256 `883a8ebf…14683582` == the staged `bannerlator-logmgr2-8239a36-standard.apk`, so this was the real build, not a stale install.
+>
+> **🐛 THE BUG: the restyle commit `8239a364` deleted the dialog that HOSTS the File Manager.** `browseDir` was still written by "Open in File Manager" and by "Manage" — and read by nothing. The `browseDir?.let { Dialog { FileManagerScreen(initialDir = dir) } }` block existed in `96742d22` and did not survive the 405-line rewrite, so both buttons set state into the void. Restored, plus the opaque `Surface` wrapper (a Dialog window is transparent and the File Manager paints no background of its own) and the re-scan on close.
+>
+> **Laid out to the mockup** — the remaining gaps were all in the bottom half:
+> - **Per-game cards** now carry the design's three-up **View · Share · Delete** row under a divider, replacing the single full-width "Open in File Manager" button. Icon tile picks 🎮 / ⚙️ / 📱 by group type.
+> - **New `ui/screens/LogViewerScreen.kt` — mockup screen 3, which had never been built.** File chips, a live **● following** tail, monospace body with severity colouring (err red / warn amber / layer chatter blue), and **Wrap · Find · Copy · Share**. Reads only the **last 256 KB** (`RandomAccessFile` seek, partial first line dropped) capped at 4000 lines — a Wine debug log with `seh` on reaches tens of MB in minutes, and a full read on the main thread would jank the dialog. Find filters lines with a match count; one shared horizontal scroll state so no-wrap mode can't shear lines apart.
+> - **Housekeeping** matches the mockup: "Keep last" is a value row with a **▾ preset menu** (0/1/3/5/10/20/50) instead of a −/+ stepper, and the total-size row regains **Clear all** in red, with **Browse** next to it for the File Manager.
+> - "Explain the log types" demoted from a filled accent button to a text link, and "Capture logcat now" from filled to outlined — the design keeps solid accent for switches only.
+>
+> **⚠️ Delete and Clear all reverse an earlier decision, so they are built to be incapable of the old bug.** `LogInventory.deleteGroup()` walks the folder and removes only names on `LogRotation.isOurRunLog`'s allowlist (now public, so there is exactly ONE definition of "a log we wrote") plus our own `crash_*.txt`; it recurses solely into the `previous/` archive we created, and removes the folder itself only when we emptied it and it is not the log root. `steam_debug.txt`, `bh_*_debug.txt`, ReShade/ and anything a user put in a custom log folder are untouchable by construction, not by care. Both actions confirm first and say the file count.
+> - Sharing copies to `cacheDir/logs/share` before handing a URI to the chooser (new `log_share` cache-path in `file_paths.xml`) — logs can live in a user-picked folder and granting a chooser access to that folder is not something to do casually.
+>
+> ⏭️ Device test still owes: rotation with **per-game OFF + a CUSTOM location** (the data-loss path), the new Delete/Clear all against a folder holding foreign files, and the viewer following a live game.
+
+## 2026-07-28 — 🗂️ **LOG MANAGER — built, CI-green, staged, NOT merged, NOT device-tested** (branch `feat/log-manager` @ `8239a36`, run `30389992534`)
+
+> ⏸️ **PAUSED — user at work, resuming later.** Staged `/sdcard/Download/bannerlator-logmgr2-8239a36-standard.apk` sha256 `883a8ebf…14683582` (host==device). Nothing merged; `main` untouched at `cc526ac2`.
+>
+> **What it is.** One Log Manager screen replacing the old Settings › Logs section: where logs go, which types to record, Wine channel chips, retention, and what is on disk per game. Same shape as the Performance screen incl. an always-live **`?` on every toggle whose copy LEADS WITH THE PERFORMANCE COST** (user's explicit ask). New files: `core/LogRotation.java`, `core/LogcatCapture.java`, `core/LogInventory.java`, `core/CrashReporter.java`, `ui/screens/LogManagerScreen.kt`; extended `core/LogLocation.java`.
+>
+> **User decisions (locked):** (1) game folders named after the **shortcut** (container name when no shortcut); (2) **leave** pre-existing flat logs alone, no migration; (3) **keep last 5**, user-adjustable via stepper; (4) originally "both surfaces" but **REVERSED after testing → App Settings ONLY**; the in-game entry was fully reverted (drawer row, `onLogManager`, `LOG_MANAGER` enum, host branch, activity callback — verified zero dangling refs). Correct call: the screen hosts a directory-picker launcher and the File Manager, neither safe inside XServerDisplayActivity.
+>
+> **Per-game folders are clean because we own all three destinations:** `DXVK_LOG_PATH` is a *directory* (DXVK names files itself), `VKD3D_LOG_FILE` a full path we set, `wine_debug.log` we write. No renaming or parsing needed.
+>
+> **🔐 SECURITY (user asked — the answer was "no, not automatically").** `SteamLogRedactor` only guarded the Steam diagnostic files. Now applied to logcat capture (per line, streaming) **and** crash reports **including the exception message and stack trace** — those routinely carry a tokenised URL or a path under the account name. Redaction failure drops the line rather than emitting it raw. 🔑 **Logcat is APP-ONLY BY DELIBERATE DESIGN — no system-wide capture even with root granted** (user's call): it would sweep other apps' data into a file we invite users to share, and our redactor cannot know a third party's secrets. I had added `RootManager.runCommand()` for that and **removed it again** rather than widen the su surface for an unshipped path.
+>
+> **🕵️ REVIEW AGENT CAUGHT TWO SHIP-BLOCKERS** (user asked for the handoff — vindicated):
+> 1. **Hard compile break** — a Kotlin local `fun saveMode()` referenced `refreshTick` declared 22 lines BELOW it. Locals resolve in declaration order. Signature damage from scripted text patching.
+> 2. **Guaranteed clobber, would have hit every user** — the old Logs UI was deleted but the Settings **Save FAB still wrote all five keys** from `remember{}`-ed state snapshotted at first composition. LogManagerScreen is a `Dialog` INSIDE SettingsScreen's composition, so SettingsScreen is never disposed and never re-reads. Repro: set anything in the manager → close → tap Save → silently reverts.
+> 3. **DATA LOSS, fixed after** — `LogRotation` matched **any `.log`/`.txt`** and ran on whatever `resolveGameLogDir()` returned. With per-game folders OFF that is the shared log root, which already holds `steam_debug.txt`, `steam_session.txt`, `bh_epic_debug.txt`, `bh_gog_debug.txt`, `bh_amazon_debug.txt`; with `MODE_CUSTOM` it is a folder the USER picked. Every launch archived them and pruning deleted them — **immediately with keep=0**. Now an explicit allowlist of names we write, **never `.txt`**, and rotation only runs when per-game folders are ON.
+> 4. **`LogInventory.delete()` DELETED OUTRIGHT** rather than fixed — it `deleteTree()`'d whatever dir an Entry pointed at, safe only while `scan()` never returned a folder we didn't create (it did: `ReShade/` under the default location). Deleting now goes through the File Manager. **That is why there is no "Clear all" button.**
+> 5. Logcat capture ran `Runtime.exec` + redaction + file write **on the UI thread** against its own documented contract → moved to `Dispatchers.IO`.
+>
+> **Two of my own bugs found by user device-testing:** `FileManagerScreen` honoured `initialDir` **only in pickMode** (browse mode hardcoded `/storage/emulated/0`) — that's why "Open" landed at Internal; and the FM shown in a `Dialog` was **transparent** (Dialog windows are, and FM draws no background of its own, normally sitting in the nav-host scaffold) → wrapped in an opaque `Surface`.
+>
+> **Restyle:** first cut drifted badly from the approved HTML mockup (`/sdcard/Download/bannerlator-log-manager-plan.html`). Now matches: section labels above cards, location as value+path row with *Change*, per-toggle hint lines, real chips with *+ add*/*reset*, retention stepper, total size, per-game cards with icon + relative time + one *Open in File Manager*.
+>
+> **⏭️ OPEN WHEN RESUMING:**
+> - **DEVICE TEST, priority one:** rotation with **per-game folders OFF + a CUSTOM location** (the data-loss path), plus normal per-game rotation across two launches, the `?` dialogs, and the FM opening at the right folder with an opaque background.
+> - **Untouched review findings:** disk I/O during composition (`LogInventory.scan` + recursive `sizeOfTree` synchronously in composition); DXVK toggle OFF no longer sets `DXVK_LOG_PATH`, so stray logs may fall back to the game's working dir — confirm on device.
+> - **Dead code to sweep in `SettingsScreen.kt`:** orphaned `enableWineDebug`/`wineDebugChannels`/`enableBox64Logs`/`logLocationMode`/`logLocationCustomPath`/`showLogLocationDropdown`/`logLocationDirLauncher` and the whole ~44-line `showDebugChannelDialog` block (nothing sets it true any more). Warnings only — `allWarningsAsErrors` is off.
+> - ⚠️ **SCOPE CREEP to decide:** this branch also corrects the stale Performance blurb ("coming soon — root-only controls" → "plus the opt-in root controls"). Correct post-2.9 but not Log Manager work — pull it out or keep it.
+
+## 🔖 NEXT RELEASE NOTES — carry these into the next release body
+
+> **📥 Proton 9 is no longer bundled — link it in every release from now on.** A fresh install now ships with **NO Wine at all**; the user installs one from the in-app catalog on first run (the create-container guard says so). Add to the release body, next to the APK assets:
+>
+> > **Proton 9.0 arm64ec** — not bundled, download if you want it:
+> > `https://github.com/The412Banner/Nightlies/releases/download/Proton/wine/proton-9.0-arm64ec.wcp`
+> > 66.7 MB · sha256 `f8a99fed387f1b097009129dc49368c8f500927640a9d4c7a192d850b1b2068c` · installs as `Proton-9.0-arm64ec-0` · built by **Xnick417x**
+> > Install in-app: Containers → download icon → pick the `.wcp`. It is also in the in-app catalog.
+>
+> Bundling that `.wcp` was built and CI-green on `feat/bundle-p9-wcp` (`dcb9b479`, APK 546 MB) but **deliberately not merged** — the APK stays at 476 MB and P9 is download-only. Branch deleted. → [[feedback_release_include_proton9_link]]
+
+## 2026-07-28 — 🔒 **imagefs pinned to our own release + CI-cached** (merged `ead0d5f5`)
+
+> `app/build.gradle` fetched the 193 MB base rootfs from **`star-emu/contents` at `refs/heads/main`** — a third party's moving branch with no tag, version or checksum. Whatever sat there at build time was baked into the APK, and an outage there simply broke the build: HTTP 504s before, and a **`java.net.SocketException: Connection reset` that failed main's `standard` flavor today** (run `30366997708`; the rerun passed, proving it was purely the fetch).
+>
+> Now points at **`base-assets-v1` on our own `winlator-contents`** — uploaded 2026-07-24 for exactly this and sitting unused until now. **Verified byte-identical, not assumed:** both our pinned copy and the current upstream file hash to `7838756e6a05c91afff68f4bf12aa2780f815877753f8dd354e203e99b9caf8a`, so the APK gets exactly the bytes 2.9 shipped with. The build now verifies that sha after download and **deletes the file on mismatch**, so a swapped or truncated asset fails loudly instead of shipping silently.
+>
+> **CI caches it** (`_build.yml`, keyed `imagefs-<sha>` read out of `app/build.gradle`), so publishing a new rootfs — new tag + new hash — invalidates the cache by itself; there is no separate cache version to bump. Cache entry confirmed live at 184 MiB; main build after the merge ran 6m17s. **Not committed to the repo instead:** at 193 MB it exceeds GitHub's 100 MB per-file limit, and in LFS it would burn the bandwidth quota and weigh down every clone permanently.
+
+## 2026-07-28 — 📦 **Bundled Proton 9 DROPPED — APK ~103 MB smaller; first run now installs a Proton from the catalog** (branch `feat/drop-bundled-proton9` @ `761a91ae`, run `30363048862` green ×3) ✅ **DEVICE-VERIFIED**
+
+> **The bundled `proton-9.0-arm64ec` never launched.** User report: a new container on the bundled layer fails, while the same Proton downloaded from our catalog works. Dialog = "Failed · Launching Windows / The game exited before rendering / exit code 5"; `wine_debug.log` = `_r_debug not found in ld.so` then `c0000005` (EXCEPTION_ACCESS_VIOLATION) in `kernelbase.dll+0x29E98` during `loader_init` — **identically for both `wineboot.exe` and `start.exe`**, i.e. every PE process dies at DLL init.
+>
+> **Ruled out, one at a time (device-checked):**
+> - ❌ **The `-N` suffix naming** (user's hypothesis: catalog entries are `Proton-10.0-arm64ec-0`, bundled is `proton-9.0-arm64ec`). 🔑 It works the OPPOSITE way: `WineInfo.fromIdentifier:129` chops the last 2 chars **only for installed ContentProfiles** then lowercases, so `Proton-10.0-arm64ec-0` → `proton-10.0-arm64ec` → matches the regex, and the bundled name matches as-is with no chop. Both resolve. ⚠️ **Latent landmine though: a CATALOG entry named WITHOUT the `-N` suffix would get `ec` chopped off `arm64ec`, fail the regex, and silently fall back to MAIN_WINE_VERSION.** So the suffix IS load-bearing for catalog names.
+> - ❌ **Truncated/incomplete asset** — 727 aarch64-windows DLLs, 29 aarch64-unix `.so`, 786 i386, all four guest EXEs present.
+> - ❌ **Prefix/version mismatch** — xuser-2's `kernelbase.dll` = 2461696 B = P9's own install exactly (P11's is 2293760).
+> - ❌ **FEXCore pairing** (my hypothesis: bundled P9 has ZERO `load_unixlib_by_name` vs P11's 3, so it can't serve a `-unix` FEX). **Disproved by experiment:** the failing container was on the BUNDLED FEX `2508`, not the `-unix` nightly; swapping it to `2601-Denuvo-0` and relaunching gave the **identical** crash. → it's the P9 layer itself.
+> - 🔎 Likely origin: `app/build.gradle` fetched it from `star-emu/contents` at **`refs/heads/main` — an unpinned moving branch on a third party**, the exact risk the inert `base-assets-v1` was created to fix.
+>
+> **Change (user chose "drop it" over "pin the source"):** removed `proton-9.0-arm64ec.tar.zst` (96 MB, build-time download), `proton-9.0-arm64ec_container_pattern.tzst` (10 MB, git-tracked), and the `downloadProton` gradle task; `preBuild` now depends on `downloadImageFS` directly. **`wine_entries` emptied** — `ImageFsInstaller.installWineFromAssets()` iterates that array, so it becomes a no-op with no code change. Downloaded Protons were already covered: `ContainerManager.extractContainerPatternFile:349` falls back to the layer's own `prefixPack.txz`. `EvshimPatcher` reads `winebus.so` from that tree but has **zero callers** (dead code). **New guard:** creating a container with no Wine installed now refuses with `no_wine_version_installed` — saving would otherwise write `wineVersion=""`, which resolves only to a non-existent fallback path (a container that looks fine and dies at launch).
+>
+> **📉 APK 584 MB → 476 MB (~103 MB smaller).** Staged `/sdcard/Download/bannerlator-noproton-761a91a-ludashi.apk`, sha256 `2459f157…e437d71` (host==device). ✅ **USER DEVICE-VERIFIED: "works fine, added p10 Arm, no issues"** — fresh-install path (no bundled Wine → catalog download → working container) confirmed end-to-end.
+
+## 2026-07-28 — 🔺 **Vulkan version clamp + 1.4 default + non-Adreno wrapper default** (all merged to main; upstream sync pass over WinNative/GameNative)
+
+> Three merges to main today after the GPU-turbo work, all CI-green all 3 flavors, **no release cut, no vc bump**.
+>
+> **1. Vulkan minor clamp (`42569e22`) + 1.4 as the default (`3a1807dd`), merged `eb8f63e5`.** Ported from **WinNative PR #669** (Xnick417x). Our own Vulkan-1.4 work back in June (`785fe2b0`) was a ONE-LINE `arrays.xml` add — 1.4 became selectable but the default stayed 1.3 and nothing validated the pick. 🔑 The bug that exposed: `XServerDisplayActivity` appends the DRIVER's patch level to the USER's chosen minor, so picking 1.4 on a 1.3.289 driver exported `WRAPPER_VK_VERSION=1.4.289` — advertising a Vulkan minor the ICD does not implement to DXVK/VKD3D. Now clamps the chosen minor down to the driver's when lower (logged as `XServerVulkan: Clamping Vulkan …`), with parsing guarded so an odd version string skips the clamp instead of failing the launch. **The clamp is what makes the 1.4 default safe** — a 1.3-only driver is walked back down at launch, so defaulting to 1.4 costs nothing on old drivers and stops DXVK 3.0 users hunting for the setting. Four defaults moved 1.3→1.4: `Container.DEFAULT_GRAPHICSDRIVERCONFIG`, the launch-time null fallback, the container editor fallback, `WrapperSettingsDictionary`. ⚠️ Clamp only ever goes DOWN — it never auto-upgrades a 1.3 container on a 1.4 driver — and existing containers keep their saved value. Their third change (dropping duplicated pl/hi `vulkan_version_entries`, which index-based selection would pin to 1.1) **does not apply** — we have a single `values/arrays.xml`.
+>
+> **2. Non-Adreno default graphics driver (`41c461b0`), merged `0027883d`.** Ported from **GameNative PR #1736**. New containers on Mali/Xclipse/PowerVR now default to `wrapper-gamenative` instead of the Adreno-targeted plain `wrapper`. Two deliberate differences from theirs: (a) **falls back to plain wrapper when wrapper-gamenative isn't installed** — our `identifierToDisplay` silently degrades an unknown id to entry 0, which on a Mali device would land somewhere arbitrary rather than on "wrapper"; (b) resolved in the **create path only** (`ContainerDetailViewModel.defaultGraphicsDriverForNewContainer()`), matching the existing `defaultDrivesForNewContainer()` precedent, because the static constant has no Context and initialises a field on every Container loaded from disk. New `Container.GRAPHICS_DRIVER_GAMENATIVE`. The editor is the only creation path, so one seam covers it. ⚠️ **NOT device-verified — the Pocket FIT is Adreno and takes the unchanged branch.** Needs a Mali tester (ties into the 2.9 Mali report board).
+>
+> **3. ❌ Container-duplication bug — investigated, WE DO NOT HAVE IT (device-tested).** WinNative PR #654 fixes duplicated containers failing to boot: their copy callback chmods every entry to 0771 and wineserver refuses to start unless its dir is 0700. We chmod 0771 identically (`ContainerManager.java:248`), so this looked like a match. **Device test says no:** duplicated "P11 GE Arm" (2.5 GB) → the copy **booted clean** (Wine desktop, drives C:–G:+Z: mounted, taskbar, no wineserver errors in logcat). 🔑 Reason: **our `copyContainer` never copies `.wine/.wineserver` at all** — it holds sockets and gets skipped by the skip-unreadable path — so there is nothing for the chmod to break, and wineserver recreates the dir itself at `drwx------` on first boot. Verified on device. The other half of their PR (copy the full config instead of 14 hand-picked fields) we had **already fixed independently**; the duplicate carried Proton-11.0-3-arm64ec-4 / DXVK 2.4.1 / Turnip v26.3.0 / VKD3D 3.0.1 / FEXCore identically. Duplicate removed after the test.
+>
+> **Still on the table from the upstream sweep (not done):** WN #661 Unix/Windows Zink toggle for arm64ec · WN #649 pin services to small cores + 32-bit fix · WN #646 alternative fps limiter (a latency/precision tradeoff, not an upgrade). **Already have:** WN #664 FM multi-select, #643 FPS-HUD true-rate, #639 artwork scraper, #642 container refresh rate. **Ours:** WN #631 ReShade. 🐛 Also spotted: the Performance blurb in `SettingsScreen.kt` still says "and — **coming soon** — root-only controls" (root tier shipped in 2.9); not fixed.
+
+## 2026-07-28 — ⚡ **"Lock GPU to max clock" now works WITHOUT root (Adreno KGSL turbo)** (branch `feat/gpu-turbo-nonroot` off main `10166979`)
+
+> 🔑 **The mechanism was already in the repo, unused.** `adrenotools_set_turbo()` (`app/src/main/cpp/adrenotools/src/driver.cpp:220`) ships in every APK — adrenotools is linked into the `winlator` target (`cpp/CMakeLists.txt:46`) — but had **zero callers** and no JNI binding. It issues `IOCTL_KGSL_SETPROPERTY(KGSL_PROP_PWRCTRL)` on a plain `open("/dev/kgsl-3d0")`, i.e. the same device node the Vulkan driver already uses and the app is already allowed to open, so **no su is involved**. This is the same trick Switch emulators expose as "Adreno turbo". Note the inverted flag in the vendored impl: `turbo ? 0 : 1` (0 = disable the driver's power scaling = clocks pinned).
+>
+> **Change: the GPU pin becomes DUAL-TIER and MOVES out of the root section.** `PerfRootApplier.applyGpuMaxClockLock` now branches — **root granted** → the existing sysfs pwrlevel pin (`min_pwrlevel` ← `max_pwrlevel`, `force_clk_on`), snapshot-reverted exactly as before; **no root** → `PerfGpuTurbo.apply()` (new). Only ONE path ever runs (the root branch clears turbo first), so there is only ever one thing to unwind. `applyEffective` now applies the GPU key at game launch even when root isn't granted. New `PerfRootApplier.ROOT_ONLY_KEYS` (= `ROOT_KEYS` − GPU) drives the UI's root grouping; **`ROOT_KEYS` and the `rootGpuMaxClockLock` key name are unchanged and FROZEN** — existing prefs, shortcut extras and shared community configs all carry that key, so renaming it would silently drop users' saved settings.
+>
+> **New files:** `cpp/winlator/perf_turbo.c` (one JNI export → `adrenotools_set_turbo`) + `perf/PerfGpuTurbo.kt` (support probe via `/dev/kgsl-3d0` existence, apply/revert, failure-isolated `loadLibrary` so a broken lib degrades to "unsupported" instead of killing Application startup).
+>
+> **Revert coverage:** the turbo property is a device-global driver property with **no sysfs node, so `PerfRevertRegistry`'s snapshot file can't cover it**. Handled two ways instead — (1) `revertAll()` calls `PerfGpuTurbo.revert()` so the always-on exit/background/crash paths clear it; (2) `onAppStartup` calls `clearOnStartup()` **unconditionally** (one cheap ioctl, no-op off Adreno) rather than trusting a hard-killed process to have unwound it.
+>
+> **UI:** row moves from "Root performance controls" → "Global defaults" in `PerformanceSettingsScreen.kt`, and above the `RootPerformanceSection` in the in-game drawer (new `GpuClockLockRow`). Enabled when `granted || PerfGpuTurbo.isSupported`; greys out with "Needs an Adreno GPU, or root on other GPUs." otherwise. **Help copy rewritten** (`PerfCopy.GPU_CLOCK`) to explain the no-root-on-Adreno path, the automatic upgrade to the system-level pin under root, that device thermal protection still applies, and the non-Adreno limitation; `explainAllBody()` regrouped so the GPU pin is listed under "No root needed".
+>
+> ✅✅ **DEVICE-PROVEN 2026-07-28 on the Pocket FIT** (installed sha `f62c6c55…2ecc81`, CI run `30342779747` green all 3 flavors). Forced the non-root path by flipping `root_granted_once` → false in `perf_prefs.xml` (backed up + restored after); app logged `probe -> AVAILABLE_NOT_GRANTED` with **no** silent re-acquire, UI showed "Root status: available (not granted)" + Grant-Root button + all 5 root rows greyed, while **"Lock GPU to max clock" sat enabled in the "Global defaults" card** — the move + the gating both confirmed visually.
+> - ✅ **THE PIN WORKS WITHOUT ROOT: 231 MHz → 1000 MHz**, steady across 6 samples of `/sys/class/kgsl/kgsl-3d0/gpuclk`, logcat `PerfGpuTurbo: turbo = true`. Same deterministic pin the root sysfs path produced, with zero su.
+> - ✅ **Toggle OFF reverts** — logcat `turbo = false`, clock back to scaling (500 MHz while the screen was live-redrawing, **231 MHz at idle** after HOME). The transient 500 was GPU activity, not a stuck pin.
+> - 🔑✅ **THE PROPERTY SURVIVES PROCESS DEATH — CONFIRMED, and it is the reason `clearOnStartup` exists.** Toggled ON → `am force-stop` (SIGKILL, no revert chance) → GPU **stayed pinned at 1000 MHz across 8 samples with the app dead**. This was open question (b) and the answer is the dangerous one: without the startup clear, a hard-killed app would leave the user's GPU pinned indefinitely. `PerfRevertRegistry.revertAll()` alone would NOT have covered this.
+> - ✅ **`clearOnStartup` repairs it** — relaunch → `PerfGpuTurbo: startup: cleared any stale turbo state` → clock back to **231 MHz**. Hard-kill recovery closed.
+> - ✅ JNI symbol present in the shipped `lib/arm64/libwinlator.so`; `libLoaded`/`isSupported` both true; native call runs at Application startup with no crash. `/dev/kgsl-3d0` is `crw-rw-rw-` on this device (world-writable) — hence no su.
+> - Device restored afterwards: prefs backup restored, root silently re-acquired (`GRANTED, no prompt`), GPU 231 idle, governor `performance`, temp files removed.
+> - ⏭️ **STILL UNTESTED: unknown (c) — interaction with Turnip-in-guest during an actual game.** No game was launched; every measurement above was app-idle. Also untested on a non-Adreno device (expected: `isSupported` false → row greys out with the "Needs an Adreno GPU" note).
+> - 🐛 **Unrelated stale copy spotted:** the Performance blurb in `SettingsScreen.kt` still reads "and — **coming soon** — root-only controls". The root tier shipped in 2.9. Not fixed (outside this change).
+>
+> ⚠️ (superseded by the device results above) **NOT device-tested — compiles/CI only at this point.** Specific unknowns for the on-device pass: (a) `adrenotools_set_turbo` returns **void**, so there is no success signal — effect must be proven by sampling `gpuclk`/`clock_mhz`, exactly like the root pin was proven (231MHz idle vs 1000MHz pinned on the Pocket FIT); (b) whether the property actually **survives process death** (drives whether `clearOnStartup` is doing real work or is just insurance); (c) interaction with our Turnip-in-guest setup. → [[project_bannerlator_perf_toggles_root_tier]]
+
+## 2026-07-28 — 🏁 **STABLE 2.9 SHIPPED — perf toggles + root tier + Virtual Controller Pro (#156) + Mali report board** (tag `2.9` → `283fe6e1`, vc52, run `30319026093`)
+
+> Cut 2.9 stable via `release.yml` (workflow_dispatch, make_prerelease=false, release_number=2.9). **✅ VERIFIED live:** isPrerelease=false, `releases/latest`→2.9, tag `2.9`→`283fe6e1` (**= built commit, clean** — held the README commit so `main`==built-commit during tagging, so the release.yml default-branch tag quirk was harmless), `update.json` **vc52** (all 3 flavor→APK mappings), all 3 APKs attached. Full rich release body set via `gh release edit` (logo/badges + Performance controls + Virtual Controller Pro w/ **arro000** credit + **Mali GPU report board WITH the report-form + browse-all links**). **✅✅ IN-APP UPDATER DEVICE-VERIFIED — user updated 2.8.x → 2.9 through the app's built-in updater successfully.** Version bumped vc51/2.8.2 → vc52/2.9 (`283fe6e1`).
+>
+> **2.9 contents:** power-user **Performance controls** — non-root (Sustained Perf / Priority Boost / Prefer Big Cores) + opt-in **root tier** (CPU governor→perf, lock CPU freq, all-cores-online, lock GPU clock, disable thermal throttling, fan max, free-memory — behind a "USE AT YOUR OWN RISK" Grant-Root gate; **exact snapshot-revert** on exit/bg/crash + disk-persist for hard kills; device-anchored **temperature watchdog**; **thermal/fan unlocked by default** via `harnessProven` after device-proving the harness on an AYANEO Pocket FIT/Adreno; two-way App-Settings↔in-game sync w/ per-game overrides + "?" help) · **Virtual Controller Pro** (PR #156 by arro000, merged — now an **official contributor**; ground-up controls-editor overhaul, up to 300% scale) · **Mali GPU issue report board**. **README** overhauled for 2.9 + all Full-Features/ReShade/Frontends/AMA/Credits sections made collapsible `<details>` (committed `102f0bc7`, AFTER the tag — README not in the APK). `fix/hud-under-controls` **DEFERRED** from 2.9 (user chose to ship without it). → [[project_bannerlator_perf_toggles_root_tier]]
+
+## 2026-07-27 — ⚡ **Power-user performance toggles + root tier — Phase 0/1 + App Settings mirror BUILT, pending CI** (branch `feat/perf-toggles-root` off main `9633de98`; 4 commits, +1383/22 files)
+
+> **✅ THERMAL + FAN UNLOCKED — harness fully device-proven (2026-07-27, Pocket FIT).** All 3 revert paths proven (toggle-off, force-close→disk-restore, background→revertAll live "reverting 8 node(s)"). Then verified the two DANGEROUS toggles apply+revert on-device: set globals ON + `harness_proven`, launched AIO → `thermal_zone*/mode` 73 zones → **disabled**, `hwmon0/pwm1` 30→**255**, `cooling_device39`(pwm-fan) cur 0→**3**; pressed HOME → `PerfRevert: reverting 149 node(s)` → thermal modes **enabled** again, fan control handed back (cur 0). **CODE: flipped `PerfRevertRegistry` `harnessProven` default FALSE→TRUE** (both the flow init + the `getBoolean(KEY_HARNESS, true)` startup default) — thermal/fan now ship unlocked; runtime safety = exact snapshot-revert (device-agnostic) + always-on exit/bg/crash revertAll + temp watchdog + root disclaimer. ⚠️ apply+revert device-proven on Adreno Pocket FIT only (cross-vendor fan/thermal node coverage unverified — but revert is snapshot-based so it restores whatever it captured). Committing → CI → install final.
+>
+> **CHECKPOINT 2026-07-27:** PR #181 CLOSED (superseded — branch continues, fresh PR when merge-ready). Latest tip `35ce1ef6` (checkpoint `35ce1ef6`), CI run 30314840127 building. Tasks done: #1 priority-boost, #2 big-cores live re-pin, #4 root-grant persistence, #5 per-game override transparency (all code + CI-green except #5's build in flight); PENDING #3 = background/exit revert test → flip `harnessProven` → unlock thermal+fan. Finishing all into one combined build for device test.
+>
+> **PER-GAME OVERRIDE TRANSPARENCY + INHERIT/RESET (2026-07-27, +1 commit `5aa0417f`).** User-confirmed model refinement (not a bug): App Settings = default for all games; a per-game toggle is saved+honored ONLY WHEN DIFFERENT. Root cause of the "in-game doesn't reflect globals" report = `persistPerfToggle` pinned a sticky override on EVERY tap (the AIO game had all 7 keys=0 from my verification toggling — cleaned). Now: override written only when value ≠ global default; setting back to match **removes** the shortcut extra (new `Shortcut.removeExtra`) → re-inherits; per-toggle + per-game **"reset to global"**; **"Per-game override / Using global default" indicator** in-game (`XServerDrawer`) + Shortcuts editor; the **6 root keys added to the static ShortcutsScreen editor**. Unified all 9 keys through `PerformanceSettings.globalDefault(key)` + one `overriddenKeys` StateFlow/`startPerfSync`. `resolvedPerfBool` unchanged (launch behavior identical). Agent JVM-simulated the persist/extraOrNull rule (all cases pass). → task #5.
+>
+> **ON-DEVICE VERIFICATION + 3 FIXES (2026-07-27, Pocket FIT, +2 commits `15412db8` priority-boost+big-cores, `9eb78361` root-grant persistence).** Drove the in-game Debug→Performance toggles via `input tap`, proved each via sysfs/proc; device restored EXACTLY to baseline after. ✅ VERIFIED WORKING w/ exact per-toggle revert: CPU governor→performance (schedutil→perf), Lock CPU freq to max (min 902400→2265600 / 480000→3302400), Keep all cores online (0-6→0-7), Lock GPU to max clock (steady 231→1000MHz, deterministic pin). ✅ Sustained Perf applied (fps 1422→1324 cap). ✅ Harness gate CONFIRMED in-game (thermal/fan greyed "locked until verified"); watchdog card fully renders (dynamic label, ⓘ, live temps, device trips). ✅ **Disk-dirty restore-on-launch VALIDATED LIVE** (logcat: "reverting 10 node(s) from persisted snapshot" on reopen). **BUGS FOUND+FIXED:** (1) Priority Boost was no-op/downgrade (render threads already nice −10..−20) → now never-downgrades + retargets guest box64/wine CPU-worker subtree; (2) Prefer Big Cores didn't re-pin a running game → now live-repins the running guest via WinHandler affinity path (snapshot+restore); (3) **root grant didn't persist** (probe→AVAILABLE_NOT_GRANTED every cold start; logcat-confirmed) → now persists `root_granted_once` flag + silently re-acquires the remembered Magisk grant on launch (no re-prompt), greyed root toggles still show saved-ON. 🟢 Settings persistence itself was FINE (perf_prefs verified saving/loading — the "reset" perception was the grant-greying). ⏭️ NEXT: push→CI→reinstall→device-verify all 3 fixes + run clean-background revert test → flip `harnessProven` to unlock thermal+fan. Optional: SCHED_FIFO on confirmed present-thread (graphics-engineer). → tasks #1-4.
+>
+> **WATCHDOG CONFIG + IN-APP HELP PASS (2026-07-27, +3 commits `019af0e2` device-anchored user-configurable thermal threshold · `dfb612c6` watchdog "What's this?" + live temps + device trips · `0157aef4` per-toggle "?" + "Explain toggles").** 🔑 Hardcoded 85°C was WRONG — Pocket FIT per-core sensors read 77–88°C at idle, device's own throttle trips are 95→108→110→115→125°C, so a flat 85 fires spuriously. Now `PerfNodeResolver.thermalTrips()` reads `thermal_zone*/trip_point_*_temp` (firstTrip/topTrip over hottest watched CPU/GPU zone; 40–200°C filter; fixed-85 fallback if none). `TempWatchdog` mode enum `CONSERVATIVE|BALANCED|AGGRESSIVE|MANUAL` (default BALANCED): Conservative=firstTrip(~95), Balanced=topTrip−10(~115), Aggressive=topTrip−3(~122), Manual=slider(60→topTrip). Shared `WatchdogControls.WatchdogSection()` used by BOTH surfaces (one singleton ⇒ auto-synced): dynamic label "Thermal auto-revert (~115 °C · Balanced)", per-preset info dialogs w/ real °C, **ⓘ What's-this explainer** (watchdog ≠ device throttling), **live CPU/GPU temps** (~1.5s HudMetrics poll), **device default trips** line. App-Settings-ONLY (`PerformanceSettingsScreen.kt`): a **"?" info button on every toggle** (3 non-root + 6 root + Free-memory, `PerfCopy`) that stays live even when the toggle is locked, + an **"Explain toggles"** bottom button → one scrollable dialog grouped No-root/Requires-root. New keys `temp_watchdog_mode`/`temp_watchdog_manual_c`. Uses `PerfInfoDialog` (soft OK, scrollable). ✅ **DONE: CI-green run `30305390081` (all 3 flavors, headSha `7e30ef6a`); INSTALLED + STAGED on Pocket FIT — `/sdcard/Download/bannerlator-perf-help-7e30ef6-standard.apk`, installed base.apk sha `47075587…6094a662` host==device (root granted, same sig, data preserved). Awaiting user on-device test; thermal+fan still harness-locked until revert verified.** 📋 **Draft PR #181** opened (base main). ⏸️ **PAUSED (user left work 2026-07-27) — RESUME:** user device-tests the installed `perf-help` build → confirm auto-revert/watchdog holds (incl. hard-kill self-repair) → flip `PerfRevertRegistry.setHarnessProven(true)` to unlock thermal+fan → mark PR ready + merge to main. Open TODOs: Mali GPU-MHz readout, AYANEO EC fan nodes, background-app-freeze, 6 root overrides in static ShortcutsScreen editor.
+>
+> **PHASE 2-4 (ROOT TIER) BUILT (2026-07-27, +2 commits `27d276ae` grant gate + root toggles + `PerfRootApplier` + App Settings, `1edcd616` in-game root section + live readouts + watchdog).** Grant gate bound to `RootManager.state` (UNAVAILABLE msg / Grant button / GRANTED unlock / DENIED retry) with the scroll+checkbox "USE AT YOUR OWN RISK" disclaimer (`PerfDisclaimerDialog.kt`). Six root toggles via `PerfRootApplier.kt` (governor→performance, CPU lock-to-max, all-cores-online, GPU max-clock+force_clk_on, thermal-disable, fan-max) each snapshot→apply→per-toggle revert; `freeMemoryNow` (drop_caches) action; nothing writes unless GRANTED. **HARNESS GATE confirmed:** thermal+fan gated on `PerfRevertRegistry.harnessProven` (persisted, DEFAULT FALSE, only `setHarnessProven(true)` flips it — never auto) → both rows disabled + applier no-ops until I flip it after the Pocket FIT crash-revert proof. Governor/freq/cores/GPU-clock unlock on grant. In-game (`XServerDrawer.kt`) Root Performance sub-section mirrors all six (enabled only when GRANTED, else 🔒→App Settings) with live governor/GPU-MHz/temp/fan-RPM readouts (~1.5s poll) + watchdog toggle whose OFF path shows the "DISABLING THERMAL SAFETY / stays-off-until-rearmed" disclaimer. Root resolution same 2-level chain: shortcut override → global default. New keys: `global_root*`/`root*` (6) + `harness_proven`. ⚠️ TODOs (non-blocking): Mali GPU-MHz readout shows "—" (KGSL-only), AYANEO EC fan nodes (generic hwmon path for now, harness-gated anyway), background-app-freeze deferred, six root overrides not yet in the static ShortcutsScreen editor (in-game + launch path honor them). **NEXT: push → CI.**
+>
+> **STATUS UPDATE (built, not yet device-tested).** Commits: `f74f03dd` Phase 0 safety core · `a6f57840` Phase 1 non-root toggles · `acca5cf8` shared global-default store + collapse to the locked two-level model · `a9b8a6e1` App Settings Performance menu. Delivered: (1) safety core — `RootManager` (single su path, libsu 6.0.0), `PerfRevertRegistry` (verbatim per-node snapshot + disk dirty-flag + restore-on-launch + exit/bg/crash revert), `TempWatchdog` (default-ON, stays-OFF-until-rearmed, 85°C), `PerfNodeResolver`, pure unit-tested `PerfCmd`/`CpuTopology`; (2) three non-root toggles `sustainedPerfMode`/`perfPriorityBoost`/`preferBigCores` in the in-game Advanced/Debug tab; (3) `PerformanceSettings` shared source-of-truth + **App Settings → Performance** full-screen Dialog (bottom of `SettingsScreen.kt` by the lsfg-vk block) with two-way live sync; (4) resolution collapsed to exactly **shortcut-override → global-default** (per-container level deleted). Root tier + watchdog shown greyed "unlocks with root — coming soon". **NEW app-wide change:** `BannerlatorApp` = the app's FIRST `Application` subclass (manifest `android:name`) for startup restore-if-dirty + ProcessLifecycleOwner bg-revert; failure-isolated. ⚠️ REVIEW: (a) that `Application` subclass across all flavors; (b) **Priority Boost boosts HOST render threads by NAME-match on /proc/self/task** — present-thread identity is renderer/vendor-dependent, needs graphics-engineer + on-device confirm; (c) settings uses a full-screen Dialog (no NavHost exists); (d) saving a game's settings pins all three per-game keys (existing override idiom — no inherit/unset tri-state). **NEXT:** push branch (feature only) → CI build (watch libsu/jitpack resolution + new Application compile) → review → then Phase 2 (root grant gate + disclaimers). Original kickoff details below folded into this entry.
+
+## 2026-07-27 — ⚡ **Power-user performance toggles — kickoff (superseded by the BUILT entry above)** (branch `feat/perf-toggles-root` off main `9633de98`)
+
+> New feature line: expose CPU/GPU/thermal performance controls to power users, split by privilege. **Non-root tier** (ships to everyone) = Sustained Performance Mode (`Window.setSustainedPerformanceMode`), thread-priority boost on our own render/emulation threads, a "Prefer big cores" preset over the existing `cpuList`/`ProcessHelper.getAffinityMask` affinity path. **Root tier** (greenfield — app has ZERO `su`/privileged-write code today) = CPU governor + min/max freq lock, cores-online, GPU max-clock/`force_clk_on`, thermal-zone disable, **fan max (per-device, AYANEO first)**, `drop_caches`, background-app freeze — all grayed/locked until a Settings → Advanced **"Grant root"** gate (libsu, Magisk/KernelSU/APatch) with a scroll-to-bottom **"USE AT YOUR OWN RISK"** disclaimer.
+>
+> **Safety core (Phase 0, lands FIRST):** single `RootManager` = the only `su` path. **Exact auto-revert** — per-node snapshot captured lazily on first write (governor string, min/max freq, thermal mode, fan mode, cores-online, GPU clocks) and restored **verbatim**, never assumed defaults; a node we never touch we never write. Snapshot **persisted to disk + dirty flag** so a hard `SIGKILL`/OOM is repaired on next launch. Revert fires on game-exit / background (`ProcessLifecycleOwner`) / crash (uncaught-handler + shutdown hook). **Temp watchdog** = a user toggle (default ON) that rolls thermal/governor back at a conservative ceiling; turning it OFF needs its own hard disclaimer and **stays OFF across restarts until manually re-armed** (stated in the disclaimer). Kernel hardware critical-trip remains regardless. Thermal + fan toggles stay non-tappable behind an internal `harnessProven` flag until the revert harness is device-proven on the AYANEO Pocket FIT.
+>
+> **In-game home:** the existing **ADVANCED = "Debug" tab** (`XServerDrawer.kt:2768`, `icon_debug`) gets a Performance section of live `ToggleRow`s mirroring the gate state, with live readouts (governor / GPU MHz / temp / fan RPM) reusing `HudMetrics`. **Decisions locked:** libsu · full set incl. thermal+fan in first cut · prove on AYANEO Pocket FIT first. Build via CI (not local). → [[project_bannerlator_perf_toggles_root_tier]]
+
+## 2026-07-27 — 📮 **Mali reports portal — public bug-report form + login-gated triage dashboard (LIVE, device-verified)** (main `dcfa9f49`, `docs/mali-reports/`)
+
+> Mali users were sending useless "game doesn't work" reports, so we built a proper intake pipeline. **Public form** (`docs/mali-reports/index.html`) → POSTs to a new **Cloudflare Worker `bannerlator-mali-reports`** → commits each submission to the **public** Bannerlator repo at `docs/mali-reports/<id>/` (`report.html` rendered, `report.json` structured, `logs/<files>` user attachments) + updates `docs/mali-reports/index.json`. **Login-gated dashboard** (`dashboard.html`) for maintainers: list / view / open logs / mark **New→Read→Fixed** / triage notes / **Delete** (purges the folder). Served via **GitHub Pages from main /docs** (added `docs/.nojekyll`).
+>
+> **Worker** (`~/bannerlator-mali-reports/worker.js`, ES module; KV `bannerlator-mali-reports-kv`): routes `/submit` (public — honeypot + per-IP daily cap 6 + 3MB/file·8MB/total), `/login` (PBKDF2-SHA256 100k → HMAC Bearer token, 12h), `/me`, `/admin/list`, `/admin/status`, `/admin/delete`, `/health`. Commits via GitHub Contents API. Deploy = CF REST multipart PUT (no wrangler) + subdomain enable; secrets rotated via `PUT .../scripts/<name>/secrets`.
+>
+> **Security:** `GITHUB_TOKEN` = **fine-grained PAT (Bannerlator-only, Contents R/W)** — swapped in from the temporary env full-scope token and device-proven. `SESSION_SECRET` random HMAC. Dashboard logins in KV: `the412banner` + `isygold`. Login uses Bearer-in-localStorage (no third-party cookies). ⚠️ **Storage is PUBLIC by the user's explicit choice** (privacy tradeoff flagged & accepted) — form carries a "this is public" notice.
+>
+> ✅ **Full round-trip device-proven:** submit → files land on main → dashboard list/status/delete → folder 404 + index `[]`; PAT commit verified; **user confirmed dashboard login works** on-device. URLs: form `https://the412banner.github.io/Bannerlator/mali-reports/`, dashboard `…/mali-reports/dashboard.html`. Older plain-text template still at device `/sdcard/Download/Bannerlator-Mali-Report-Template.txt`. ⏭️ Optional follow-ups: new-submission Discord/email ping, Turnstile anti-spam, per-device grouping. → [[project_bannerlator_mali_reports_portal]]
+
+## 2026-07-26 — 🔋 **Battery watts `0.0W` on HONOR was a CURRENT-UNIT bug, not voltage — auto-detect mA vs µA** (branch `fix/battery-watts-current-unit`, vc50)
+
+> The HONOR user's OTHER emulator (`squalle0nhart/winlator_ludashi_plus`, Ludashi-plus `WinlatorHUD.java`) shows `PWR 11.9W` where ours showed `0.0W`. Reading its source **corrected our earlier root-cause**: it uses `EXTRA_VOLTAGE` (so **voltage works fine** on that device — not blocked as we'd assumed) × current from `getBatteryCurrentAmps()`, which **auto-detects the current unit**: `raw < 20000 ? raw/1000 (mA→A) : raw/1000000 (µA→A)`. `BATTERY_PROPERTY_CURRENT_NOW` is *nominally* µA but many OEMs (this HONOR) report **mA** — a small number. Our watts assumed µA always → came out ~1000× too small → rounded to `0.0W`. Our runtime estimate still worked because it's a **ratio** (chargeCounter/current), unit-independent — which is why only watts broke and misled us.
+> **Fix (`HudMetrics`):** new `currentRawToAmps(raw)` (the `<20000 ⇒ mA` heuristic + `Long.MIN_VALUE`/0 guard) and `batteryCurrentAmps(bm)` (framework property → sysfs `current_now` fallback). `collectBattery` (Fusion) + legacy `getBattery` now compute watts = `voltage × amps` with unit detection; **`currentMicroAmps` left as-is for the runtime ratio** (no regression). +31/−3. Also keeps the earlier `voltage_now`/`power_now` fallbacks (harmless; fire only if voltage truly 0). Note: GPU is `N/A` on Ludashi-plus too → GPU stays a genuine device wall. ⚠️ NOT yet device-verified — needs the HONOR user to test. → [[project_bannerlator_hud_accuracy_20260726]]
+
+## 2026-07-26 — 📄 **GL/DirectDraw FPS vs benchmark — investigation closed + documented** (`docs/HUD_FPS_OPENGL_DIRECTDRAW.md`, main, vc50)
+
+> User noticed OpenGL/DirectDraw read a LOWER HUD FPS than the AIO benchmark's own counter (HUD ~90 vs "OpenGL 300 FPS"), while D3D/Vulkan match. **Root-caused definitively** with a throwaway `presentPixmap`/`copyArea`/`putImage` probe build (branch `tmp/present-rate-probe`, now deleted) run on-device with a GL cube rendering ~100s continuous: **PPRATE=0, CARATE=0, PIRATE=~8/s** (the benchmark's own FPS-text overlay, not the 3D frames). So **guest GL emits NO per-frame X present** — it renders into a shared GL texture/AHB that the host GLSurfaceView compositor samples at ~display rate; the true loop rate (~300) lives only in Wine's SwapBuffers. D3D/Vulkan present explicitly per-frame via `presentPixmap` (so they read correctly). **Not host-fixable** (would need guest-side Wine/Zink instrumentation; benefits only uncapped GL benchmarks) → **intentionally not pursued**. Committed a user-facing explanation doc; the same blurb is queued for the FusionHUD submodule README + the 2.9 release notes. All this session's HUD-accuracy branches merged to main (`7550ce42`) and their feature branches deleted. → [[project_bannerlator_hud_accuracy_20260726]]
+
+## 2026-07-26 — 🔗 **HUD FPS reads 0 on every AIO cube after the first — let a real render window reclaim the binding from the fallback** (branch `fix/hud-follow-active-window`, vc50)
+
+> Device sweep: the first AIO cube read a correct ~538 fps, every cube after it read 0.0. Cause was my own follow-active-window fix: the HUD binds to a render window only when it sees `_MESA_DRV` AND `frameRatingWindowId == -1`, but the fallback parks the binding on the static menu (never -1) after a cube closes — so the NEXT cube's `_MESA_DRV` never rebinds, and the FPS counter keeps ticking the non-presenting menu → 0. **Fix (`changeFrameRatingVisibility` property branch):** also **upgrade** the binding to a real `_MESA_DRV` render window when currently parked on a non-`_MESA_DRV` *fallback* window (`boundToFallback = frameRatingWindowId != -1 && !mesaDrvWindowIds.contains(frameRatingWindowId)`). Don't steal from another real render window, so single-window real games are unchanged. Restores FPS on the Vulkan + all D3D cubes. (Pure OpenGL/GLX cubes have no `_MESA_DRV` at all, so they stay on the focused-window fallback; their fps may still under-read — a GL-present-signal issue, separate.)
+
+## 2026-07-26 — ↩️ **REVERTED the Zink-label swap — DLL-mapping can't distinguish native-Vulkan from Zink-GL** (branch `fix/hud-follow-active-window`, vc50)
+
+> The opengl-before-vulkan swap (entry below) **regressed the native-Vulkan label**: device sweep showed the AIO **Vulkan cube reading "Zink"**. Root cause: `opengl32.dll` is resident **proactively** (Wine desktop / app startup, not only while GL renders), and Zink-GL *also* maps `vulkan-1.dll` — so BOTH APIs map BOTH DLLs and opengl-first paints everything non-D3D as "Zink". Reverted to **vulkan-first**: native Vulkan reads "Vulkan" (common case correct), OpenGL/Zink reads "Vulkan" too (underlying-accurate — Zink runs on Vulkan). The "Zink" label is effectively unreachable via module scanning and is left as-is. A truly correct GL-vs-Vulkan split would need an active-render signal (per-focused-window render API), not DLL presence — deferred. D3D detection unaffected throughout (Dragon Sword D3D12 etc. stay correct).
+>
+> Also confirmed from the sweep: the **FPS decay works** (no more frozen/stale value — idle reads 0), but the AIO cubes read **0.0 fps** because their present path doesn't tick the bound window's counter (the separate undercount issue). Real games tick fine.
+
+## 2026-07-26 — ⏱️ **HUD FPS freezes on a stale value (idle menu / AIO cube switch) — decay to 0 when no present arrives** (branch `fix/hud-follow-active-window`, vc50)
+
+> User: FPS "stops reading" after changing API in the AIO test, and shows a "random stuck FPS" at the idle menu. Root cause: `FpsCounter.getCurrentFPS()` returns `lastFPS` forever once `tick()` stops — and every present tick (compositor copyArea + Vulkan-AHB + GL-native + ASR) is gated on `wid == frameRatingWindowId`, so when the bound window stops presenting (static menu — kept bound by the follow-active-window fix — or an AIO cube whose present path doesn't tick this window) the number just sits frozen. **Fix:** `getCurrentFPS()` returns **0** when no frame has been presented within `STALE_FPS_MS` (1.5 s) — `lastFrameTime` made `volatile` for the lock-free staleness check. Clears well below 1 fps yet never flickers at normal rates; recovers instantly when presents resume. Fixes all HUDs (shared `FpsCounter`).
+>
+> Note: this makes the idle HUD honestly read 0 fps rather than a frozen value; the API label at the idle AIO menu still reads "Vulkan" because the menu app itself is a Vulkan client (correct, not stale). ⏭️ Undercounting of the AIO cubes' own fps (their present path barely ticks the bound window) is a deeper compositor-signal issue, separate.
+
+## 2026-07-26 — 🏷️ **HUD engine label: OpenGL/Zink games mislabeled "Vulkan" — check OpenGL before Vulkan** (branch `fix/hud-follow-active-window`, vc50)
+
+> User AIO-test sweep: every non-D3D GL path (OpenGL cube, DirectDraw) showed **"Vulkan"** instead of **"Zink"**. Root cause: `detectActiveDxApi` native path checked `vulkan` before `opengl`, but a **Zink-backed GL** app maps BOTH `opengl32.dll` (GL frontend) AND `vulkan-1.dll` (Zink's Vulkan backend) — so vulkan-first always won and the "Zink" branch was unreachable. **Fix:** swap the order — `if (opengl) return Zink/OpenGL; if (vulkan) return "Vulkan"`. A native-Vulkan app maps `vulkan-1.dll` but NOT `opengl32.dll`, so it still resolves to "Vulkan" (AIO Vulkan cube stays correct). D3D detection is unaffected (checked first). Fixes all HUDs. Verified from the sweep: Vulkan cube ✓, D3D8→D3D9·DXVK ✓, D3D11 ✓, D3D12·VKD3D ✓ — only the GL paths were wrong.
+>
+> ⏭️ NEXT: idle "stuck FPS" — the follow-active-window fix keeps the HUD bound to the static AIO menu after a cube closes, freezing the FPS at the last value (the menu never produces frames). Plus the HUD FPS reads wrong on the AIO cube windows themselves (their present path doesn't tick onUpdateWindowContent). Both are the same "fps counter fed by X content-updates" gap — separate fix.
+
+## 2026-07-26 — 🪟 **HUD vanishes on the OpenGL cube (AIO test) — follow the focused window when no `_MESA_DRV` window remains** (branch `fix/hud-follow-active-window`, vc50)
+
+> User: the HUD flashes then disappears ONLY on the AIO Graphics Test's **OpenGL** cube — every other cube (Vulkan, D3D8–12, DirectDraw) keeps the HUD. So it's not a generic new-window issue.
+>
+> **Root cause:** all HUDs bind to one X window via `frameRatingWindowId`, set when a window gets the **`_MESA_DRV`** property (`changeFrameRatingVisibility`). `_MESA_DRV` rides the **Vulkan surface**, so D3D*/Vulkan render windows carry it and the HUD stays bound. A **GL/Zink** title (the OpenGL cube) recreates its render window for GLX; the initial window (with `_MESA_DRV`) **unmaps** → HUD unbinds → and the new GL drawable **never gets `_MESA_DRV`** → the existing rebind loop finds no `_MESA_DRV` window → `frameRatingWindowId = -1` → HUD hides, even though the live cube window is focused right there. (The green "OpenGL 345 FPS" still visible is the AIO test's OWN overlay, not ours.)
+>
+> **Fix (`changeFrameRatingVisibility`, unmap branch):** when the `_MESA_DRV` rebind yields nothing, fall back to `xServer.windowManager.getFocusedWindow()` if it's a mapped **application window** — so the HUD **follows the focused window** instead of vanishing. **Strictly additive** — only fires when the existing `_MESA_DRV` rebind already failed, so D3D*/Vulkan cubes and real games (which keep `_MESA_DRV`) are untouched. Fixes ALL HUDs (shared binding). One file, ~+9 lines.
+>
+> ⚠️ Not yet device-verified — needs the AIO OpenGL cube re-test.
+
+## 2026-07-26 — 🎯 **HUD accuracy: live engine-API label (fixes "Zink" mislabel on D3D12 games) + per-core % frequency fallback** (branch `fix/hud-engine-label-live`, vc50)
+
+> Two user-reported HUD accuracy bugs, fixed centrally so ALL HUDs benefit (FrameRating h/v, PerfHud, GameNative HUD, Fusion HUD — they all read the one shared label).
+>
+> **1. Engine-API label mislabeled `Zink` on a D3D12 game.** Repro: "Dragon Sword Awakening" (`DSClient-Win64-Shipping.exe`, UE) showed `Zink` on every HUD. **Verified from the live process `/proc/5062/maps`: `d3d12.dll` + `d3d12core.dll` (VKD3D-Proton) mapped → it's really D3D12 · VKD3D.** Root cause: `startDxApiDetection` scanned once and **latched the first result, then stopped** (`return`). UE maps `opengl32.dll` early (GL probe) before `d3d12core.dll` loads, so the first scan returned `Zink` and froze. **Fix:** made detection a **continuous ~2s live loop** (background thread, off the render path) that re-pushes the label only when the API changes and never latches — so it upgrades past a transient GL to the real API. Added **early-exit** to `detectActiveDxApi` (`break` on the top-priority `d3d12` hit) so the /proc/maps scan of a multi-GB game stays cheap. Never downgrades (closed API DLLs stay resident) → the multi-API **AIO Graphics Test** shows the highest API loaded, a documented limit of module-scanning. Detection already fed all 5 HUD surfaces; `stopDxApiDetection` is called on stop+destroy so the forever-loop can't leak the Activity.
+>
+> **2. Per-core CPU % showed `—` (`?` in the diag).** Same HONOR/Android-16 firmware where `/proc/stat` is restricted (the aggregate CPU% already falls back to a scaling-freq estimate; per-core had NO fallback → `-1`). **Fix:** `readPerCorePercent()` now fills any core `/proc/stat` couldn't give from `scaling_cur_freq / cpuinfo_max_freq` (a load proxy, per-core clocks ARE readable) — mirrors the aggregate's fallback, also seeds the first sample. Cores with a real `/proc/stat` delta keep it → no regression.
+>
+> +35/−10, two files. Independent of the battery branch (`fix/hud-battery-watts-voltage-fallback`). vc50 / 2.8.1.
+
+## 2026-07-26 — 🔋 **Fusion HUD: battery watts stuck at 0.0W on HONOR (EXTRA_VOLTAGE=0) — voltage_now/power_now fallback + diag power_supply probe** (branch `fix/hud-battery-watts-voltage-fallback`, vc50)
+
+> User report (HONOR Magic 7 Pro, PTP-N49, SM8750 / Adreno 830, Android 16) via a HUD diagnostic export. HUD showed `BAT 23% 44°C 0.0W` — %, temp, current, runtime all populate but wattage was stuck at 0.
+>
+> **Root cause:** `HudMetrics` computes watts as `current × voltage`, gating on `voltageMv > 0`. On this HONOR firmware `BatteryManager.EXTRA_VOLTAGE` returns 0 (current comes from `BATTERY_PROPERTY_CURRENT_NOW`, which works — the runtime estimate proves it), so the guard zeroes watts. No voltage fallback existed.
+>
+> **Fix (`collectBattery` = Fusion path, + legacy `getBattery`):** when `voltageMv <= 0`, fall back to power_supply sysfs `voltage_now` (µV→mV) via new `VOLTAGE_CHANNELS`; `collectBattery` additionally uses `power_now` (µW) directly as a last resort via `POWER_CHANNELS` + shared `readLongFromChannels()` helper. **Strictly additive / no regression** — the fallback only fires where watts is already 0 today; devices with a working `EXTRA_VOLTAGE` never touch it. Pack-level nodes used (Magic 7 Pro is dual-cell ~8V, so `I×V` at the pack is correct).
+>
+> **Diagnostic (`buildDiagnosticsReport`):** added `appendPowerSupplyDump()` — the "Exists" section now lists each `/sys/class/power_supply/*` node's readable `voltage_now`/`current_now`/`power_now`. The prior report dumped thermal/kgsl/devfreq but NOT power_supply, so we couldn't confirm sysfs readability. A re-run from this user will show whether `voltage_now` is app-readable (→ fix lands) or SELinux-blocked like kgsl (→ battery also needs root).
+>
+> **GPU %/clock (`—`) NOT fixed — device limitation.** kgsl nodes (`gpubusy`/`gpu_busy_percentage`/`devfreq/gpu_load`/`clock_mhz`) exist but are SELinux-labeled `vendor_sysfs_kgsl`; the `untrusted_app` domain is denied, so every candidate path MISSes. Adding paths can't help (same blocked label). GPU **temp** works (thermal zones ARE app-readable). Also noticed **per-core % shows `—`** (per-core clocks work) — separate `/proc/stat` per-cpu gap, not addressed here.
+>
+> **GPU no-root recon (root toggle deferred — user's device likely NOT rooted).** Key asymmetry: `/dev/kgsl-3d0` is labeled `gpu_device` (`crw-rw-rw-`) and IS app-openable (rendering needs it) — only the `/sys/class/kgsl` *sysfs mirror* is blocked. So the real no-root path is reading GPU busy via **KGSL perf-counter ioctls on the device node** (not sysfs) — native/JNI, needs a proof-of-concept spike (perfcounters may be kernel-gated or conflict with Turnip/DXVK). Middle ground = Shizuku (shell can often read kgsl sysfs). Ruled out: DRM fdinfo (Adreno uses kgsl not `/dev/dri`), Vulkan (no busy% query), compositor-timing estimate (can't see guest GPU work). **Added `appendGpuNoRootProbes()` to the diagnostic** — probes (1) `Os.open(/dev/kgsl-3d0, O_RDWR/O_RDONLY)` reachability and (2) any app-readable `/sys/devices/platform/**/kgsl-3d0/devfreq/*` node — so the user's next export tells us if the ioctl route is viable BEFORE we write native code.
+>
+> +63 lines, one file. ⚠️ NOT verifiable on our Adreno-750 test device (different device) — needs the HONOR user to run the new build + re-export the diagnostic.
+
+## 2026-07-26 — 🎛️ **Fusion HUD (Mega): DX version off the engine row, stacked below the graph with the wrapper** (branch `feat/hud-mega-version-below-graph`, vc50)
+
+> User-driven layout tweak, **Mega size only** — Full/Tiles/Pill/Minimal untouched. On the shipped 2.8.1 Mega HUD the engine row read `D3D9 · DXVK 2.4.1-1-gplasync-pre-reg-0` (API value + long DX version) and the graphics wrapper (`Original`) was a lone dim line below the frametime graph. That long version string sat in the right column's shared label column and shoved every right-column value (RAM %, FPS, ms) to the far edge.
+>
+> **Change (`FusionHudView.buildMega`):** engine/FPS row now shows just `apiLabel()` (the API value, e.g. `D3D9 · DXVK`) — version stripped off. Below the graph there are now **two** subtle band-style lines, version first then wrapper: `DXVK 2.4.1-1-gplasync-pre-reg-0` (new `dxVersionLabeled()` helper = engine name + version, gated by the existing **DX ver** chip / `showDxVer`) then `Original` (gated by **Wrapper** / `showWrapper`, tight `sp(1f)` gap when both show). Replaced the now-unused `engineLabelWithDx()` with `dxVersionLabeled()`; `apiLabel()`/`dxVersion()` unchanged, other sizes unaffected (they never used `engineLabelWithDx`). `showDxVer` now gates the bottom version line instead of the engine-row suffix — same chip, moved target.
+>
+> Iterated against an HTML before/after preview the user reviewed (final: API value kept on engine row, labeled DX version + wrapper stacked at bottom, panel width left alone). +21/−17 one file.
+>
+> ⚠️ **NOT yet device-verified** — CI build pending, then on-device Mega HUD check on Adreno 750.
+
+## 2026-07-24 — 🎮 **Big Picture: per-game Community configs opened the WRONG (all-games) menu + BP menus were touch-only** (branch `feat/bigpicture-community-configs`, vc stays 49)
+
+> Reported on the current build (installed APK sha `fb51bde2…` == run `30135691692` @ `db1b1767`, standard flavor — verified). In Big Picture, a game's **Options → "Community configs"** opened the same **all-games** `CommunityCatalogBrowser` the top-rail globe opens (`onCommunityConfigs` just did `showCommunity = true`) instead of a menu scoped to the selected game. The top globe is correct and stays.
+>
+> **Fix:** new BP-local `GameCommunitySheet(vm, shortcut, onApply, onImport, onDismiss)` — the couch-mode counterpart of the phone Games screen's per-shortcut community dialog. Auto-matches the game (`vm.matchCommunityConfigs`), lists that game's uploaded configs (`vm.fetchGameConfigs`, device-ranked + "Matches my device" filter), applies a pick via BP's shared `applyCommunityPick` (so the missing-component/driver install + re-apply flow still fires). Share (`exportShortcutConfig`→FileProvider `${applicationId}.tileprovider`), Import (new BP JSON picker → `importConfigFile`), Upload (`uploadShortcutConfig` + replace-confirm) all reuse the phone VM one-shots. **DEFERRED:** "My uploads" manager (couch-mode TODO; still reachable via globe→account). Widened 6 phone composables `private`→`internal` for reuse (`CommunityConfigEntryCard`/`CommunityCard`/`CommunityStoreBadge`/`rememberGameConfigs`/`deviceHeaderLabel`/new `DpadHighlight`); phone dialog body untouched.
+>
+> **Controller/D-pad:** every BP menu is now navigable (Up/Down move highlight, A activate, B/Back close). Sheets are their OWN windows, so the root `onPreviewKeyEvent` can't see their keys — each sheet owns a single focus target (`bpSheetDpad`/`BpSheetScaffold` for the static Game options/Tools/Power sheets; a flat index model in `GameCommunitySheet`; game-list + drilled-config traversal in `CommunityCatalogBrowser`, gated to consume only D-pad/A/B so phone touch + soft-keyboard are unaffected).
+>
+> ⚠️ **NOT yet device-verified** — the load-bearing runtime assumption is that `ModalBottomSheet`/`Dialog` content can grab window focus for controller keys via `focusRequester`+`onPreviewKeyEvent` (mitigated with a first-frame `runCatching { requestFocus() }`). Couch smoke test pending: Game options → Community configs, D-pad moves highlight + A applies.
+
+## 2026-07-24 — 🤝 **PR #96 (@clintOnSky) triaged & closed — fixes already on `main`, contributor credited**
+
+> Downstream fix-pack from **@clintOnSky** (first-time contributor). Verified each of its 7 commits against `main`; closed the PR (not merged) since the wins already landed individually.
+>
+> **✅ Already on `main`:** bionic-fg present-path bounded fence wait (replacing `vkQueueWaitIdle`) + FIFO-pacing guard — landed via upstream `xXJSONDeruloXx/bionic-fg#6`, baked into the submodule, patch step retired in `build-bionic-fg.yml`; Xiaomi `libjpeg.so` symlink-shadow removal (`24d64ea0`, `ImageFsInstaller.java`); sign-agnostic battery wattage for Xiaomi/MTK positive-discharge (`1276f306`, `HudMetrics.java`); `WOWBOX64` content-type for arm64ec Box64 + live version-list refresh after the download sheet (`ShortcutsScreen.kt`).
+>
+> **➖ NOT taken (candidate future work):** HUD CPU% process-tree summation (main kept `/proc/stat` + scaling-freq fallback deliberately); Flow Scale **preset chips** Eco/Flow/Balanced/Boost/Max (main has the slider only); persist in-game frame-gen session multiplier across launches; drawer toggle to **hide store integrations**.
+>
+> Added `@clintOnSky` to README Credits, flagged **🌱 first-time contributor** (`b797ba01` + `02383090`). vc stays 49; README-only, no release.
+
+## 2026-07-24 — 🎯 **New containers start with Motion Aim OFF** (branch `fix/gyro-default-off`, merged to main)
+
+> `Container.GYRO_ENABLED_DEFAULT` was `true`, so a freshly created container began feeding gyro motion input to games without anyone asking for it. Motion aim is a deliberate choice — defaulted off.
+>
+> 🔑 **Checked before flipping, because this constant is NOT only a creation-time default** — it's the fallback for `isGyroEnabled()` whenever the `gyroEnabled` extra is absent, so changing it could have silently switched gyro off for anyone relying on the default. It can't: `ContainerManager.migrateGyroPrefsToContainers()` (one-time, guarded by `gyro_migrated_to_container`) wrote an **explicit** `gyroEnabled` onto every container, verified on-device (xuser-4 `"0"`, xuser-5 `"1"`). So only genuinely new containers see the new default. vc stays 49.
+
+## 2026-07-24 — 🛡️ **ASurfaceTransaction null-guard hardening** (`fix/asurface-transaction-null-guards`, off main `5f495eff`, vc stays 49)
+
+> **Defensive only — fixes no reported symptom.** Audit of every `ASurfaceTransaction_create` call site found the two host-renderer files inconsistent with themselves: some sites checked the result, most didn't. A null return (resource exhaustion) is passed straight into `ST_SETGEO`/`ST_SETBUF`/`ST_SETVIS` → native SIGSEGV, app dies and takes the running game with it. **10 sites fixed across 2 files.**
+>
+> **Scope — NOT the default renderer.** `VulkanRendererContext.cpp` (default `renderer = "vulkan"`, `Container.java:101`) never touches these APIs: **zero** call sites, nothing to fix. Only `ASurfaceRendererContext.cpp` (the opt-in `"surfaceflinger"` renderer) and `scanout/ScanoutContext.cpp` (GL renderer with `rendererNative`, default **false**) were affected. Most users run neither.
+>
+> **🔑 Three sites needed more than a one-line guard:**
+> - `scanoutSetCursorImage` — the guard must land **BEFORE** `int fence = scanoutCursorFence; scanoutCursorFence = -1;`. That pair hands ownership of the `AHardwareBuffer_unlock` fence fd to the transaction. Guarding *after* it orphans the fd (one leaked fd per failure); guarding *before* leaves it owned by the object, closed on the next upload or teardown. The obvious placement is the wrong one.
+> - `applyCursorGeometry` — `scanoutSetCursorPos` records `lastRawCursorX/Y` as applied *before* calling it, and dedupes identical positions. A bare `return` would let the dedupe suppress the retry and strand the cursor at its old position. Guard invalidates the dedupe cache (`SHRT_MIN`) so the next motion event re-issues.
+> - `ScanoutContext` init paths ×2 — `scanoutGameTx`/`scanoutTx` are **paired persistent** transactions. If one succeeds and the other fails, a bare return leaks the survivor, and `scanoutActive` must not go true holding only one. Both paths now delete the survivor, release both SurfaceControls, and (sibling path) fall back to `initFromWindow()`.
+>
+> Also: `updateWindow`'s `currentTx ? currentTx : ST_CREATE()` ternary only ever guarded a null `currentTx`, never `ST_CREATE`'s own result — now guarded. `destroy()`'s best-effort hide is wrapped so teardown still runs (never early-return out of `destroy()`). Added explicit `#include <climits>` — `INT_MAX` at `:183` had been riding a transitive include.
+>
+> **Origin:** comparing against pipetto's `winlator_bionic` DisplayX work, where [`cc4ac7d`](https://github.com/Pipetto-crypto/winlator/commit/cc4ac7d0c5d6db25a5a0d7501ccabcbf4e4ec9e8) fixed the same bug class in his cursor path. His other three DisplayX fixes do **not** apply to us — our ASR has no rendering thread/state machine (his [`bcc5e80`](https://github.com/Pipetto-crypto/winlator/commit/bcc5e804c7b01cd64e79bddc3748217a7e407084), which he partly reverted a day later), our `computeWindowRect` + `adjustRectLT` already handle the fullscreen src/dst case he got backwards, and we `dlsym` the whole `ASurfaceTransaction_*` API at `minSdk 26` so his 284-line Android 10 compat scramble is moot. Our `retireSurfaceControl` already defers release to the transaction-complete callback, which is stronger than his thread hand-off.
+>
+> ⚠️ **COMPILE-VERIFIED ONLY — not device-proven, and not meaningfully device-testable:** transaction-creation failure can't be forced on demand. Treat as hardening, not a repair.
+
+## 2026-07-24 — ✅ **Game-name mangling fixed + a never-passing test corrected** (merged to main)
+
+> **Bug:** `EXE_SUFFIX_RE` was unanchored, so `cleanName()` stripped `win64|shipping|client|launcher|game|x64|…` from ANYWHERE in a title, not just off the end. Device-proven on the real library: folder `Game Controller Test` resolved to **"Controller Test"** — the word "Game" eaten out of the middle. Only affects the fallback naming path (no Steam appid / GOG manifest / usable PE name), which is exactly what repacks and DRM-free copies take — and the new bulk folder import runs it across a whole library at once.
+>
+> **🔑 THE SECOND BUG, found ONLY by device-testing:** anchoring the regex fixed stripping but silently broke a *different* job the same regex was doing. `preferFolder = EXE_SUFFIX_RE.containsMatchIn(exeBase)` asks "does this exe name look like engine boilerplate, so trust the folder instead?" — that question wants **unanchored** matching. Anchoring it meant `GameConTest.exe` stopped preferring its folder and the game would have become **"GameConTest"**. The unit test passed and the diff read correctly; only a real folder on disk exposed it. **Split into two regexes sharing one word list: `EXE_NOISE_RE` (unanchored, boilerplate test) + `EXE_SUFFIX_RE` (anchored, stripping).**
+>
+> **Test 2:** `GameIdentifierTest` asserted `"The Witcher 3: Wild Hunt"` while `normalizeName():108` deliberately converts `:` to `" - "` (illegal in a Windows filename) — the code was right, the test had never passed. Expectation corrected.
+>
+> **✅ DEVICE-VERIFIED against 13 real games:** exactly one name changed (`Controller Test` → `Game Controller Test`), the other 12 byte-identical, same detection/flags/art. Installed APK sha verified as the fix build before testing.
+>
+> Both fixes originate with **arro000**, found buried in the merge commit of draft PR #156 where they were invisible to the diff and unreachable; the regex split is additional. vc stays 49.
+>
+> ⚠️ **NOT included, deliberately:** wiring `gradlew test` into CI. Doing so surfaced **4 pre-existing `ConfigExporterTest` failures** unrelated to this work, so it was pulled back out to keep this branch to the two fixes. Test wiring + those 4 failures are their own job. 🔑 Nothing has EVER run the unit tests in CI.
+
+## 2026-07-24 — 🗂️✅ **File Manager overhaul MERGED to main** — multi-select · real moves · archive extract · search/sort · grid + compact views
+
+> Merged from `feat/fm-multiselect`. **vc stays 49, no release cut.** User confirmed on device: multi-select and bulk ops, instant same-volume moves, merge-on-conflict, zip/7z extraction, search/sort/hidden, cancel, and the path-bar rework ("everything works great", "the path bar works great"). ✅ **Grid view, compact rows and the pinned free-space figure were device-confirmed too** (checked after the merge — an earlier note in this entry wrongly recorded them as untested). So the whole overhaul is device-verified.
+>
+> **🔑 Cut was always copy-every-byte-then-delete.** No `renameTo` fast path existed, so moving a 60 GB folder *within* internal storage rewrote 60 GB the filesystem could have relinked instantly. `moveWithProgress` tries `renameTo` first — **its returning false IS the cross-filesystem signal, so it doubles as the check** — falling back to copy+delete. Only when the destination is free: renaming *onto* an existing directory doesn't merge.
+>
+> **🔑 Merge needed no new copy logic.** `copyWithProgress` already recurses into an existing directory and truncates existing files, so Overwrite and Merge resolve to the same call and differ only in wording (chosen per item type). Previously every paste auto-renamed, so dropping an updated game folder over an existing one gave `DiRT 3 (1)` beside the original.
+>
+> **🔑 Archive extract was wiring, not new capability** — `commons-compress`, `xz` and `zstd-jni` were already in the build. New `core/ArchiveExtractor.kt` (zip · 7z · tar+gz/xz/bz2/zst · bare compressors); `TarCompressorUtils` couldn't be reused (tar.xz/tar.zst only, asset/Uri-shaped). Always extracts to a **named subfolder** — a zip of 400 loose entries would otherwise carpet the folder irreversibly — and every entry goes through a **Zip Slip guard**, since an archive can carry `../../../` entries that a naive `File(dest, name)` writes outside the target. **RAR reported unsupported** rather than failing silently.
+>
+> **UI came from device screenshots, not guesswork:** the path bar ellipsised on the right, so it read `/storage/emulated/0/Winlator/Game…` — hiding the only part that says where you are. Folder name now sits in the bar; the path drops below and **elides from the LEFT** via `elidePathStart` (Compose's TextOverflow can only trim the tail). Free space is pinned right because it slid with path length. Sort keeps folders leading in **both** directions — a descending sort that buries folders isn't what "Z to A" means.
+>
+> **🐞 Self-inflicted build break worth remembering:** a global find-replace of `size(36.dp)` for the compact-row icon also rewrote `FavoriteCard`, which has no `compact` parameter → `Unresolved reference 'compact'`. **Scope find-replace to the function you mean, or verify every hit.**
+
+## 2026-07-24 — 🗂️ **File Manager overhaul: multi-select, real moves, archive extract, search/sort** (branch `feat/fm-multiselect` `838fe876`, CI GREEN ×3, STAGED, ⬜ awaiting device test)
+
+> User asked for the lot after a survey of what the File Manager does and what it lacks. Built as one branch, one APK to test: `/sdcard/Download/bannerlator-fm-all-838fe87-standard.apk`, sha `553f3b52…` host==device. vc stays 49.
+>
+> **1. Multi-select + bulk ops.** Every action was single-file. Long-press enters selection mode, tap toggles from there; Select All / Copy / Cut / Delete bar. Clipboard became a `List<File>` — cut/copy is a property of the batch, since a clipboard mixing both has no coherent meaning. Bulk delete names the first five victims before confirming so an accidental Select All is visible while still reversible.
+>
+> **🔑 2. Cut was ALWAYS copy-every-byte-then-delete.** `FileUtils.copyWithProgress` had no `renameTo` fast path, so moving a 60 GB folder *within* internal storage rewrote 60 GB the filesystem could have relinked instantly. New `moveWithProgress` tries `renameTo` first — **`renameTo` returning false IS the cross-filesystem signal, so it doubles as the check** — and falls back to copy+delete. Only attempted when the destination is free, because renaming *onto* an existing directory doesn't merge.
+>
+> **3. Paste conflicts asked, not silently renamed** (user chose Overwrite/Merge/Keep-both, recommended option): dropping an updated game folder over an existing one used to give `DiRT 3 (1)` beside the original. 🔑 **Merge needed no new copy logic** — `copyWithProgress` already recurses into an existing directory and truncates existing files, so Overwrite and Merge resolve to the same call and differ only in wording (chosen per item type). Apply-to-all for batches.
+>
+> **4. Archive extract — new `core/ArchiveExtractor.kt`.** zip · 7z · tar(.gz/.xz/.bz2/.zst) · bare compressors, on `commons-compress`/`xz`/`zstd-jni` **already in the build** (so this was wiring, not new capability). `TarCompressorUtils` couldn't be reused — it covers only tar.xz/tar.zst and is built around asset/Uri sources. Two deliberate calls: always extracts to a **named subfolder** (a zip of 400 loose entries would otherwise carpet the folder irreversibly), and every entry path goes through a **Zip Slip guard** — an archive can carry `../../../` entries and a naive `File(dest, name)` writes outside the target. **RAR is detected and reported unsupported** rather than failing silently; commons-compress can't read it.
+>
+> **5. Search / sort / hidden / free space.** Filter-this-folder search; sort by name/date/size with tap-to-flip; 🔑 **folders always lead regardless of direction** — a descending sort that buries every folder under the files is not what "Z to A" means; directory `length()` is meaningless so folders order by name inside the size sort. Dotfile toggle, free space above the list. Sort + hidden persist. Row sizes already existed via `StringUtils.formatBytes`, reused rather than adding a second formatter.
+>
+> **Cancel** now works on any long copy/move/extract — previously the only way out of a wrong multi-gigabyte paste was killing the app.
+>
+> **⬜ DEVICE TEST:** long-press → select several → Copy → paste elsewhere · Cut within the same volume (should be **instant**, that's the renameTo path) · Cut internal→SD (must still copy) · paste onto an existing folder → Merge, confirm it updated rather than duplicating · extract a zip and a 7z · search/sort/hidden toggles · cancel a large copy mid-flight. ⚠️ 7z on a big archive is slow (LZMA on ARM) — expected, not a hang.
+
+## 2026-07-24 — ✅ **File Manager "Add to Shortcuts" now identifies the game** (branch `fix/fm-add-shortcut-naming`, DEVICE-VERIFIED "works well", merged to main)
+
+> **The importer was never missing anything — the call site was under-feeding it.** `addShortcutInContainer` passed `file.nameWithoutExtension` and no appId, which silently disabled most of the pipeline: `ExeShortcutImporter.kt:62` skips Steam's 600×900 portrait without an appId, `:64` skips the SGDB-by-appId lookup, `:87` gates off the Steam authoritative rename — leaving only an SGDB-by-name search running on strings like `dirt3_game` or `SACGUI`, which finds nothing. Adding DiRT 3 this way produced a shortcut literally called `dirt3_game` with, at best, an icon scraped out of the PE.
+>
+> Now runs `GameIdentifier.identify(file)` first and passes the resolved name + appId, exactly as `ShortcutsViewModel.importExe` does, falling back to the exe basename when identification finds nothing. **All three entry points finally behave identically** — `+` button, bulk folder import, and File Manager. ✅ Device-verified by the user ("works well"). vc stays 49.
+
+## 2026-07-24 — ✅ **DEVICE-VERIFIED + MERGED: drive letters, games-folder import, exe override, card menus, SD badges**
+
+> **User: *"everything is working as intended"*** — the folder scan, the confirm screen, the manual exe override, importing in bulk, and launching the imported games. Merged to `main` from `fix/drive-letter-exhaustion` (tip `e778c18f`, 9 commits). **vc stays 49, no release cut.**
+>
+> **🔑 The ranking heuristic — the part no build could validate — was right on a real library.** It chose `dirt3_game.exe` over the `dirt3.exe` launcher, `GTAIV.exe` over GTA IV's launcher variants, and `Hades.exe`; it correctly flagged `re3.exe (folder root)` vs `re3.exe (_Windows 7 Fix)` as ambiguous rather than guessing. Every "check this one" badge fired on a folder that genuinely ships two plausible binaries — i.e. the flag marks *ask the user*, not *bad guess*.
+>
+> **Three UI rounds came out of device screenshots**, each from something only visible on a real screen: (1) menus were bare text on a screen made entirely of cards → new `MenuOptionCard` matching the File Manager rows, applied to Select container, Add games, the found-games list and the exe picker; (2) rows ran together → dividers, then superseded by cards (a border per row made both redundant); (3) at the platform default dialog width the titles and exe names truncated to `aio graphics t…` / `AIO-Graphics-Te…`, which defeats a screen whose only job is letting the user read them → both import dialogs now take 94% width.
+>
+> **SD badge** on games stored on removable media, in grid (over the art's top corner) and list (after the container/resolution line). Detection reuses `storageVolumeRootOf` from the drive-letter work — resolve the shortcut's `Exec` to a real path, take its volume root, treat anything not under `/storage/emulated` as removable.
+>
+> **▶️ KNOWN GAP, deliberately not fixed here (own branch):** the File Manager's *Add to Shortcuts* calls `ExeShortcutImporter.addToShortcuts(context, container, file, file.nameWithoutExtension)` — raw exe basename, **no appId**. That cascades: `ExeShortcutImporter.kt:62` skips the Steam CDN portrait, `:64` skips SGDB-by-appId, `:87` gates off the Steam authoritative rename, and the surviving SGDB-by-name search runs on `dirt3_game`/`SACGUI` rather than a real title. So the same importer produces a markedly worse result than the `+` button or the bulk import. Fix is ~4 lines at the call site (`GameIdentifier.identify` → pass `name` + `appId`), kept separate so it wouldn't invalidate the device testing of this branch.
+
+## 2026-07-24 — 📁 **Games folder import: add a whole library in one pick** (same branch `fix/drive-letter-exhaustion` `78972029`, CI GREEN, STAGED — since device-verified, see above)
+
+> **User ask:** the `+` button only ever added one game at a time. Most users keep every game under one parent folder (user's = `/storage/emulated/0/Winlator/Games`), so importing a library meant dozens of identical trips through the picker. After picking a container there is now a **choice of HOW to add**: *Add game EXE* (existing flow, untouched) or *Add games folder*.
+>
+> **Design decisions (user, via AskUserQuestion — all three "recommended"):** (1) the results screen is a **confirmation gate**, nothing is written until accepted; (2) on ambiguity **pick the best candidate but flag it** rather than skipping or prompting per game; (3) games already in the container are **detected and shown as "already added"**, not re-imported.
+>
+> **🔑 THE HARD PART — new `core/GameFolderScanner.kt`. `GameIdentifier` could not be reused for this: it takes an exe the user ALREADY chose and reasons upward. Here the exe is the unknown.** A real install folder holds installers, crash handlers, anti-cheat stubs and launchers beside the game, and the game may sit several levels down (`Game/Binaries/Win64/Game-Win64-Shipping.exe`). So candidates are collected with a **depth-bounded walk (≤4)** and **ranked**: exe named after its folder +100/+60 · `-Win64-Shipping` +70 · `Binaries/Win64` path +30 · launcher-name −40 · junk PE name −30 · depth −8/level · size bonus ≤+30. Skips `_CommonRedist`/`DirectX`/`EasyAntiCheat`/etc. dirs and `unins*`/`vcredist*`/`UnityCrashHandler*`/`dxsetup` names outright.
+>
+> **Confidence falls out of the ranking for free** — below a score threshold, or when the top two are within 15 points, the row is badged *"Check this one — <exe>"*. Deliberately badged, not hidden: the scanner still made its best pick, the user just gets told which are worth a second look.
+>
+> **Reuse, so bulk-added games are indistinguishable from hand-added ones:** naming via `GameIdentifier.identify`, importing via `ExeShortcutImporter.addToShortcuts` — same Steam-name upgrade, same cover-art chain. `isLauncherExe` → **`isLauncherExeName` (public)** so the scanner shares the launcher rules instead of growing a second copy that can drift.
+>
+> **🔑 Cover art on the confirm screen is a URL rendered by Coil, NOT a download.** `saveCoverArt` is coupled to an already-written shortcut, so resolving art pre-import would have meant temp files. Instead `SteamStoreSearch.coverUrl(appId)` gives a URL instantly and only confirmed games fetch/persist. Scanning 40 games pulls zero images into the container.
+>
+> **Duplicate detection** resolves each existing shortcut's `Exec` back through `WinePath.resolveAndroidPath` and compares canonical paths — dimmed, unticked, uncheckable, with "N already added" in the header.
+>
+> **Folder picker uses `InAppFilePicker.buildDirIntent`** (real absolute path, works on SD) — deliberately not SAF, which returns unusable `/mnt/media_rw/…`.
+>
+> **CI GREEN run `30088575796`** (3 flavors, headSha `78972029`). 📲 Staged `/sdcard/Download/bannerlator-folder-import-7897202-standard.apk`, sha256 `404840df…` host==device. vc stays 49. *(Built with the default `1.0-test` label so `stage-apk` works — see the drive-letter entry for why that matters.)*
+>
+> **⚠️ THE RANKING HEURISTIC IS UNPROVEN AND IS THE WHOLE FEATURE.** A green build says nothing about whether it picks the right exe. Only a real library answers that.
+>
+> **⬜ DEVICE TEST:**
+> 1. `+` → container → **Add games folder** → pick `/storage/emulated/0/Winlator/Games`. Every game should be listed, with the **right name and the right art**.
+> 2. **Check what it picked for each** — especially anything badged "Check this one". UE titles (Titanfall 2) and launcher-fronted ones (GTA V's `PlayGTAV.exe`, GTA IV) are the interesting cases.
+> 3. Already-imported games must appear **dimmed and unticked** (this container has 6 → expect all 6 skipped if scanning the same folder).
+> 4. Untick one, press **Add** → only the ticked ones appear, and they **launch**.
+> 5. Run it against the **SD** library too — that path exercises the drive-letter fix at the same time.
+> 6. *Add game EXE* must still behave exactly as before (regression check).
+
+## 2026-07-24 — 🗂️✅ **Drive-letter exhaustion: one letter per VOLUME, not per game — DEVICE-VERIFIED** (branch `fix/drive-letter-exhaustion` `df67a4dc`, CI GREEN, ✅ all six checks pass, awaiting merge decision)
+
+> **✅ DEVICE TEST PASSED 2026-07-24 — user: *"everything is working as intended"*.** All six checks green, including the one that could only fail at runtime: **a freshly-imported SD game launches**, which is what proves Part B computes the path relative to the coarser volume-root mount correctly (the old code returned the bare filename). Second SD game reused the drive with no new letter; internal storage unregressed; new containers get `D:`/`E:`/`F:` per volume; no `bannerlator_components` drive (Part C); dropdown ends at `Z:`.
+>
+> **Ready to merge to `main`. vc stays 49, no release cut.** Existing containers keep their per-game `G:`/`I:`/`J:` drives by design — growth stops, no migration.
+
+
+> **Bug:** every game imported from SD/USB claimed its own drive letter, and the pool is ~24, so a large SD library eventually could not import at all. `resolveWindowsPath` mounted the exe's **own parent folder**, and `bestDriveMatch` only reuses a drive that is an **ancestor** of the new path — one game's folder is never an ancestor of the next game's sibling folder.
+>
+> **🔑 DEVICE-PROVEN SCOPE CORRECTION (2026-07-24, from user screenshots + live dumps): internal storage was NEVER affected, and the user's "it happens on internal too" report did not hold up.** Container-6 dump: `F:`→`/storage/emulated/0` shared by **five** internal games (GTA V, Titanfall 2, The Crew 2, FlatOut 2, God of War — every `Exec` line reads `F:\Winlator\Games\…`), with per-game drives existing **only** for the two SD games. God of War was added live mid-session as the test and correctly reused `F:`, creating nothing. Why it looked otherwise: Container-6 happens to show **5 games and 5 drive rows**, and the Drives tab truncates `G:` and `I:` to the same `…/Winlator/Games/` text, so it reads as one-per-game when it isn't.
+>
+> **🐞 NEW BUG FOUND IN THE SAME SCREENSHOTS (not in the original spec) — the component installer burns a letter per container.** Every container on the device had a drive pointing at `…/.wine/drive_c/windows/temp/bannerlator_components`. Cause: `drivesIterator()` does **not** include `C:`, so any path under `drive_c` misses every drive and allocates. `resolveAndroidPath` has always special-cased `C:` (`WinePath.kt:59-61`) — the two directions were asymmetric. Became **Part C**.
+>
+> **Part A — per-volume defaults for NEW containers** (`ContainerDetailViewModel`): `D:` Downloads, `E:` internal root, `F:` onward per mounted removable volume. **Seeded at the editor seam (`:533`), NOT by changing `Container.DEFAULT_DRIVES`** — that is a `static final` with no Context, and it initialises a field on *every* `Container` object including ones loaded from disk, where the value is immediately overwritten by saved JSON. Two hardening choices beyond the spec: internal/Downloads come from `Environment` (deterministic), and only **genuine volume roots** are pre-declared, because `StorageRoots` deliberately degrades an unreadable volume to the deepest listable dir and would otherwise point `E:`/`F:` at an `Android/data/…` subfolder.
+>
+> **Part B — mount the storage VOLUME ROOT on a miss** (`WinePath`): new pure `storageVolumeRootOf()` handling `/storage/emulated/<n>`, `/storage/<uuid>`, `/mnt/media_rw/<uuid>`; anything else returns null and keeps the old parent-folder behaviour. ⚠️ **Named deliberately unlike `StorageRoots.volumeRootOf` (`StorageRoots.kt:157`), which is a DIFFERENT function** — it walks up from an app-specific dir looking for an `Android` folder. Same name, different job; do not conflate them.
+>
+> **🔑 THE TRAP, handled:** the miss branch used to return `"$letter:\\$fileName"` — the bare filename, correct **only** because the mount was the file's own parent. With a volume-root mount the exe is many folders deep, so it now returns the full path relative to the mount. **This compiles clean and fails only at runtime**, which is why the device test below leads with launching a freshly-imported SD game.
+>
+> **Also:** drive-letter dropdown capped at `Z` (it counted `MAX_DRIVE_LETTERS`=26 steps up from `'D'`, running three past `Z` and offering selectable `"[:"`, `"\:"`, `"]:"`; `addDrive()`'s guard now uses the real option count). Exhaustion throws a typed `NoFreeDriveLetterException` with an actionable message at both call sites instead of a raw `IOException`.
+>
+> **No migration by design.** Existing per-game drives (`G:` DiRT 3, `I:` GTA IV, xuser-4's `J:` DiRT Showdown) stay and keep resolving — `bestDriveMatch` prefers the longest match. Growth stops; collapsing them would mean rewriting every existing shortcut's `Exec`, which is a separate job with its own device test.
+>
+> **Recon confirmed before building** (re-run against current `main`, since Smart Game Import had merged): still exactly **3 writers** (`ExeShortcutImporter:182`, `FileManagerScreen:327`, `ComponentExecInstaller:246`) and **3 readers** (`ShortcutsScreen:883/:4495/:4501`); **only 2 references to `DEFAULT_DRIVES`** in the tree; **zero hardcoded `"F:"`/`"E:"`/`"D:"` literals**, so moving internal to `E:` on new containers breaks nothing.
+>
+> **CI GREEN run `30083172711`** (3 flavors, headSha `df67a4dc` verified). **📲 STAGED `/sdcard/Download/bannerlator-drive-letters-df67a4d-standard.apk`, sha256 `877e7a1e2057b135…` host==device.** vc stays 49. ⚠️ `stage-apk` could not be used — it hardcodes the default `Bannerlator-1.0-test-<flavor>` artifact name and this run was dispatched with `release_number=drive-letters`; staged by hand.
+>
+> **⬜ DEVICE TEST (order matters; #1 is the only one that can really fail):**
+> 1. **Import an SD game and LAUNCH it** — must use a game **not already imported**, since DiRT 3/GTA IV would hit their existing per-game drives and prove nothing.
+> 2. Import a **second** SD game → **no new drive**, and it launches.
+> 3. Import an internal game → still no new drive (God of War is the control).
+> 4. Create a **new** container with the card in → Drives reads `D:` Downloads / `E:` `/storage/emulated/0` / `F:` `/storage/7B7F-E3AA`.
+> 5. Install a component → **no** new `bannerlator_components` drive (Part C).
+> 6. Drive-letter dropdown → last entry `Z:`, no `[:` `\:` `]:`.
+>
+> Logcat marker: `Auto-added drive <X>: -> <path>` — on an SD import it should fire **once** with the bare volume root, and **not at all** on the second SD game.
+
+## 2026-07-22 — 🖥️ **In-game refresh rate unlocked** — RandR X-server extension + Max-refresh setting (branch `feat/randr-refresh-modes`, vc48→**49**)
+
+> **Every game that exposes a refresh toggle was locked to 60 Hz on a 144 Hz panel, and no client-side setting could change it — the cause was on our side.** The X server implemented BigReq, DRI3, MIT-SHM, Present and Sync but **no RandR at all**. RandR is how `winex11.drv` enumerates display modes; finding none it falls back to its NoRes settings handler (priority 1), whose `nores_get_modes()` returns exactly one mode with `dmDisplayFrequency` hardcoded to 60. That single synthetic mode is what reached the games.
+>
+> **Verified end-to-end before writing a line of the fix** (against fork `proton-wine` `proton_11.0`): `display.c` `nores_get_modes` hardcodes 60 and `nores_set_current_mode` literally logs *"ignoring mode change request"*; `xrandr.c` is present and installs the `xrandr10` handler at **priority 200** (beats NoRes), gated only on `usexrandr` (default on) + `XRRQueryVersion`; **`libXrandr.so.2` is already in the container** (`imagefs/usr/lib/`); no `UseXRandR` override anywhere in the app or the prefix `*.reg`.
+>
+> **The fix — new `RandrExtension.java`** (major opcode −105, registered in `XServer.setupExtensions()`). Implements the minimal RandR surface Wine's `xrandr10` handler actually calls: `QueryVersion`, `GetScreenInfo` (the one reply `XRRSizes()`/`XRRRates()` parse), `SetScreenConfig` (accepted and acknowledged but **not acted on** — the host surface owns the real present rate, and returning `DISP_CHANGE_FAILED` can make a game refuse its own setting), and `SelectInput` (no-op; we never send `RRScreenChangeNotify`).
+>
+> - **Version 1.1 is advertised deliberately.** 1.1 is the version that added refresh rates to `RRGetScreenInfo`, so it is the *minimum* that can carry them; advertising ≥ 1.4 would make Wine additionally install its 1.4 display handler and issue `GetScreenResources` / `GetOutputInfo` / `GetCrtcInfo`, none of which exist here. 1.1 keeps Wine on the path we implement.
+> - **Rates come from `Display.getSupportedModes()`** via `advertisePanelRefreshRates()` in `XServerDisplayActivity`, de-duplicated after rounding so a panel reporting 59.95 and 60.0 doesn't produce two identical "60 Hz" entries. One screen size only (the container resolution), matching what NoRes already did — this changes the refresh list, not resolution handling.
+>
+> **User control — Max in-game refresh rate (container default + per-game override, a ceiling).** `Container.getMaxGameRefreshRate()` (extra `maxGameRefreshRate`, 0 = unlimited) overridden by the shortcut extra of the same name, resolved at launch by `resolvedMaxGameRefreshRate()` and applied when advertising. The **lowest supported rate is always kept**, so a cap set below every mode can never produce an empty list. UI is a FilterChip row in `ContainerDetailScreen` (GENERAL tab, under the manual-refresh block) and a `LabeledDropdown` in the shortcut editor (next to Render scale / Frame Generation); both gated on the panel exposing more than one rate. 🔑 **A deliberately different axis from the existing `matchRefreshRate`/`manualRefreshRate`** — those drive the host Android panel, this bounds what the guest game may request.
+>
+> **versionCode 48 → 49** (`e11b0dd6`) — new baseline for dev/feature builds now that 2.9-pre2 has shipped at vc49; `versionName` stays "2.8". Can't be edited into a signed APK after the fact (it lives in the compiled binary manifest and re-signing needs the CI key), so the vc49 APK was rebuilt through CI.
+>
+> **Built + staged, NOT device-verified.** CI green ×3 flavours (`29965841707`). Staged `/sdcard/Download/bannerlator-randr-ui-vc49-e11b0dd-e11b0dd-standard.apk`, sha256 `61232619…` host/device match, `versionCode='49'` confirmed by aapt in the APK. Next: launch a game with a refresh toggle, confirm the dropdown lists 144/120/90/60, then set a per-game cap and confirm it truncates (relaunch — engines read modes only at startup). Watch logcat for `RandR advertising refresh rates [...]`.
+
+
+## 2026-07-22 — ⏱️ Frame-gen **present-path stall removed** — wait on the dispatch's own fence, not the whole queue (branch `feat/model3.1-layer`, vc stays 48)
+
+> **The layer called `vkQueueWaitIdle(computeQueue())` once per presented frame.** In single-device mode that queue is also the *application's* render queue on any GPU exposing a single universal queue family — the normal mobile/Adreno layout — so every present was draining the game's own in-flight work, not just the interpolation dispatch. **This is the last piece of clintOnSky's PR #96 still wanted;** its Xiaomi/HyperOS half already landed separately as `24d64ea0`, and its flow-preset chips were declined in favour of the continuous slider.
+>
+> **The fix:** track the fence of the most recent `present()` submission (`lastSubmitFence_`, aliasing one of the two `frames_[]` fences, nulled in `destroy()`) and wait on that alone, bounded by the existing `syncFenceTimeoutNs`. Timeouts get their own consecutive counter, `dispatchFenceTimeouts`, feeding the existing `noteFenceTimeout` / `kMaxFenceTimeouts` sticky-disable path alongside the copy and generated-frame counters.
+>
+> **Two deliberate deviations from PR #96 — each of them a bug in a naive port:**
+> - **No early `return` on timeout.** Returning straight to `queuePresent` from inside the framegen block skips `std::swap(st.prevAhb, st.currAhb)` and `st.frameCount++` at the end of the function, wedging the prev/curr rotation. The injection loop is gated instead (`for (int k = 0; dispatchReady && k < N; ++k)`) and control falls through to the normal real-frame present. The copy-fence path *may* early-return because framegen hasn't run yet at that point.
+> - **Output image layout/ownership bookkeeping is updated unconditionally,** before the wait rather than inside the success branch. The dispatch has already been *submitted*, so its transitions land whether or not the wait succeeds; leaving the tracker behind would barrier from a stale `oldLayout` on the following present.
+>
+> **⚠️ Every frame-gen number recorded so far was measured with this stall in place** — the whole parked 4-model sweep (Default 92.7 / Traced 97.5 / V2 96.5 / FSR3 134.7 fps). All four models are expected to move. **If FSR3 rises the least, part of its +45% lead was simply spending less time in the shared stall.** ⚠️ Precision caveat: the old wait drained `computeQueue()`, and whether that *is* the game's queue depends on the single-universal-queue-family assumption — normal on Adreno, still unconfirmed on this device.
+>
+> **Built:** fork `The412Banner/bionic-fg` `35e39f3` on `feat/model3.1-block-flow`, layer CI `29950660966` green, `.so` md5 `2aae71fe` / 6,573,808 B (was `238d2f45` / 6,572,168). App `d6838323`, CI `29950801448` green ×3 flavours; the size change moves the `versionCode:size` staging stamp, so the layer re-stages on device. Bundled layer **verified md5 `2aae71fe` inside the staged APK**, closing the "bundled layer never reached the device" failure mode. ⚠️ **NOT yet device-verified.** Next: re-run the parked sweep against the with-stall table, then the lateral-motion quality test neither model 3 nor model 4 has had.
+
+
+## 2026-07-22 — 🎞️ bionic-fg **model 4 "FSR3+"** — block-grid optical flow, sub-pixel, true bidirectional (branch `feat/model3.1-layer`, vc stays 48)
+
+> **Model 3's FSR3 optical flow reworked, added as a SEPARATE 5th model rather than replacing it.** Model 3 stays bit-identical so the two can be A/B'd live in the same scene — its own quality was only ever measured on a *parked* Dirt 3 scene (zero motion = a cost measurement, a worthless quality one), so replacing it in place would have destroyed the baseline before it was ever validated.
+>
+> **What model 3 got wrong:** flow searched **per pixel** with a 3×3 match window (441 texture fetches/pixel), integer-only matching, and `backward = -forward`. That is both expensive and weakest exactly where frame generation is most visible — occlusion boundaries and slow pans.
+>
+> **Four changes (fork `The412Banner/bionic-fg` `c4fc0ce`, branch `feat/model3.1-block-flow`, layer CI `29946023559`):**
+> - **Block grid** — one invocation solves one `kBlock`×`kBlock` block (`kBlock` = 4) as the FidelityFX SDK does, not one per pixel. Flow images are 1/4 of each level's extent; every consumer samples flow by normalised uv so the coarser grid **bilinear-upsamples for free**. Removes 16× the invocations, which pays for everything else. 🔑 Model 3 passes `kBlock = 1`, making `blockExtent == levelExtent` — that is how it stays unchanged through the now-shared builder. `kBlock` is 4 not the SDK's 8 because **FSR3 leans on game motion vectors for fine detail and a colour-only layer has none**.
+> - **Match window 3×3 → 5×5** — a 3×3 window is badly aperture-limited and locks onto the wrong candidate on low-contrast or edge-dominated blocks. The main accuracy fix.
+> - **Sub-pixel refinement** — parabola fit through the SAD either side of the integer winner, per axis, with a denominator guard so it only applies at a true minimum. Integer-only matching quantises slow pans to whole texels → judder.
+> - **True bidirectional flow** — forward in `.xy`, an independently searched backward field in `.zw`. `of3_expand_m4` gates on their disagreement relative to claimed magnitude: where the two fail to cancel, something was occluded or revealed, so flow is attenuated toward zero and the warp/blend degrades to a **cross-fade** instead of warping along a wrong vector. **A hard cut attenuates everywhere and cross-fades, so no separate scene-change pass is needed.**
+>
+> **Net search cost ~2.7× LOWER than model 3** despite searching both directions with a 25-tap window. Coarse-to-fine reach over 5 levels is ±SR·(1+2+4+8+16) = **±93 full-res px**, so keeping SR at ±3 costs no motion range.
+>
+> **🐛 Silent-clamp bug caught before it shipped:** `XServerDisplayActivity.writeBionicFgConfig` clamped `model` with `Math.min(3, model)` — selecting FSR3+ would have silently written `model = 3` to `conf.toml` and run **model 3 while the UI showed model 4**. Exactly the class of "test that looks like it ran and didn't" as the inert-`BIONIC_FG_MODEL` near-miss. **Five clamp sites** widened 3 → 4 in total: the conf writer, `Container.getFrameGenModel`, `XServerDisplayActivity.resolvedFrameGenModel`, `XServerDrawerState.setFrameGenModel`, `ContainerDetailScreen`'s dropdown.
+>
+> **App side:** 5th chip **"FSR3+"** in the in-game Controls drawer (`FgModelButtons`), new `frame_generation_model_fsr3_v2` string + entry in the container-detail dropdown. Registry grew 70 → 72 blobs (`shader_70` = `of3_flow_m4`, `shader_71` = `of3_expand_m4`); shaders 66-69 byte-identical. `tools/splice_spv.py` added to the fork so regenerating embedded SPIR-V is reproducible instead of a scratch script.
+>
+> **Verified:** all six model-3/4 shaders glslang-clean (Vulkan 1.1 / SPIR-V 1.3), all 72 blobs parse to an exact `OpFunctionEnd`, `framegen_context`/`session`/`vk_impl` pass `g++ -fsyntax-only` against real Vulkan headers, layer CI green (`.so` md5 `238d2f45`, 6,572,168 B, model-4 strings confirmed present in the binary). ⚠️ **NOT yet device-verified — no visual or perf result exists for model 4 yet.** The test that matters is the one model 3 never had: **fast lateral motion (tight corner, trackside fencing/posts) and occlusion edges**, model 3 vs model 4 back-to-back in the same scene.
+
+
+## 2026-07-21 — 📖 Graphics wrapper & driver selection guide `docs/graphics-wrappers-guide.md` (`41d5c706`)
+
+> **No user-facing wrapper doc existed** (only the internal `WRAPPER_MANAGER_PLAN.md`). Written from live sources: the **live catalog** `raw.githubusercontent.com/The412Banner/winlator-contents/main/wrappers.json` (**18 entries**, per the sync-repo rule — not a local clone), `bundled_wrappers.json`, `WrapperCatalog.kt`, `XServerDisplayActivity` driver-extraction + env gating, and `GPUInformation.isCompatLayerSupportedGpu`.
+>
+> Covers: what a wrapper is (DX→DXVK→wrapper→GPU chain, and that it's NOT the renderer) · **pick-by-GPU table** · all built-in drivers (Wrapper / Turnip / +bcn_layer / -gamenative / +compat+bcn / VirGL) · all 18 catalog entries grouped by upstream with author + GitHub links · **the BCn-layer slot is a layer, not an ICD** · import/update/delete · troubleshooting · credits.
+>
+> **Hardware gating documented exactly as coded:** Qualcomm `0x5143` → BCn emulation forced OFF (native BC; the pre-2.6.1 always-on bug is explained); bcn_layer activates on any non-Qualcomm; **compat_layer DX12 gated on the Valhall model allowlist** — G57/G68/G77/G78/G310/G610/G615/G710/G715/G720/G925 + Immortalis-G715/G720/G925, Bifrost/Midgard deliberately excluded.
+>
+> ⭐ **Most useful section — "Many of these are literally the same file":** the catalog's own descriptions record byte-identity across projects. Documented the 4 identical groups (default = WinlatorMali Wrapper = Ludashi Steven; original = WMali v2 = WinNative Wrapper; legacy = Pipetto Bionic; BL GameNative = WMali GameNative) and the ones that genuinely differ (3 distinct leegao builds, WinNative's GameNative, upstream GameNative 20260719, leegao BCn vs Fcharan fork) — so users stop A/B-testing identical bytes.
+>
+> **Linked from README twice:** a callout under "🎨 Graphics & translation layers" and on the Wrapper Version Manager Full-Features bullet. ⚠️ Fcharan / WinMali-Dev has **no recorded upstream URL** — credited by name only, deliberately not fabricated.
+
+## 2026-07-21 — 📖 Gyro guide `docs/gyro-controls-guide.md` + linked from README and the 2.8 release (`fe20174f`)
+
+> **312-line plain-English guide written from the CODE, not the changelog** — `GyroCalibrator.kt`, `WinHandler.updateGyroData` / `updateGyroOrientation` / `updateGyroMouse`, `Container.java` GYRO_* defaults, `InputControlsScreen.kt`, and the `gyro_*` strings.
+>
+> Covers: requirements (gyro + rotation-vector for Tilt to Aim) · the 4 setting locations · **Rate vs Tilt to Aim** (what each is for, why Rate is the default) · **3 targets — right / left stick / mouse** · activator (L1/L2/R1/R3/Always) + **Hold vs Toggle** · Sensitivity / Deadzone / Smoothing / Invert with a tuning order and defaults (2.0 / 0.05 / 0.5) · **calibration** (why bias is subtracted before the deadzone; per-device stamping; refuses to store while moving) · **Recenter** · the two intentionally-blocked combos (Mouse + Tilt to Aim; no rotation-vector) · troubleshooting · pipeline order · WinNative credit.
+>
+> **⚠️ Two release-note inaccuracies found and FIXED while writing it:** the notes said gyro drives "the right stick or the mouse" — **`GYRO_TARGET_LEFT_STICK` also exists and is exposed** (`gyro_target_left_stick`); and the two motion modes weren't explained at all. Both corrected in the live 2.8 body.
+>
+> **Linked from 3 places:** README What's New (callout under the gyro paragraph), README Full Features gyro bullet (also rewritten to list all 3 targets + both modes + activator choices), and the **2.8 release body** gyro section (absolute URL, verified 200 + present in the live body).
+
+## 2026-07-21 — 🏁 **2.8 STABLE RELEASED = LATEST** (vc48, tag `2.8` @ `5f63103b`, run `29833848658`) (vc48, bump `c8de4b5d`, run `29833269026`)
+
+> **Version bump + README committed and pushed to main; `release.yml` dispatched for tag `2.8`** (`release_number=2.8`, `make_prerelease=false`). The halted 2.7.2 prep was **retargeted to 2.8** on user instruction ("you talked me into 2.8") — the two uncommitted working-tree edits were rewritten from 2.7.2/vc48 to **2.8/vc48** (versionCode was already 48, so no further tick) and committed as `c8de4b5d`.
+>
+> **46 commits since tag `2.7.1`.** Three headline features:
+> - **🎯 Gyroscope motion aim — feature complete (all 6 phases).** Right-stick or mouse output, Tilt-to-Aim orientation mode, Hold/Toggle activation, device-level calibration + live bias, per-container/per-game persistence. Credit: WinNative.
+> - **📺 Big Picture — full Compose rebuild.** Fluid couch launcher, D-pad fixes (phantom focus ring, clipped Play buttons, pinned hero buttons), real per-game spec chips, no music.
+> - **🎮 PC-accurate controller vibration.** Dual-motor, per-container mode + intensity, winebus never-expire duration patch across Proton 10/11 on arm64ec **and** x86-64 + structural fallback. Credit: TideGear (#91) / GameNative (#1214).
+>
+> Plus: Controls drawer split into **Touch / Mouse / Vibration / Gyro** sub-tabs + 3-across chip grid; **Banner File Manager 1.1.0** bundled.
+>
+> **README updated** — version row → 2.8/vc48, TOC anchor, What's New in 2.8 (2.7.1 demoted into `<details>Previously in 2.7.1</details>`, the old 2.7 block retired), new Full Features entries for gyro, PC-accurate vibration, Big Picture and the Controls sub-tabs. Gyro/vibration credit tables were already landed by `97bb1d61` / `09e9891f`.
+>
+> **Release body staged** in the 2.7.1 layout (logo → badges → title → tagline → bold summary → `<details>` full feature list → What's New → `<details>` Previously in 2.7.1 → Community → Downloads → Credits → Notes), to be applied via `gh release edit --notes-file` once CI publishes. Live community counts refreshed: **249 games / 291 configs**. WinNative + TideGear added as lead credits.
+>
+
+> ### ✅ PUBLISHED — and one recovered mis-cut worth remembering
+> **Final: tag `2.8` → `5f63103b`, run `29833848658`, 3 flavor APKs + `update.json` (vc48/"2.8"), `prerelease=false`, API-confirmed `Latest`.** Body applied via `gh release edit --notes-file` in the 2.7.1 layout; live counts 249 games / 291 configs; WinNative + TideGear promoted to lead credits; TideGear #91 link corrected to `TideGear/GameHub-Vibration-Fix`; stale "Reports & requests this cycle" relabelled.
+>
+> ⚠️ **FIRST ATTEMPT (run `29833269026`) BUILT THE WRONG COMMIT — deleted and redone.** `git push && gh workflow run --ref main` in one command raced: the run's `headSha` was **`59bc9ea7`**, the commit *before* the bump. Result: **green CI, correct tag, but APKs + `update.json` advertising vc47 / "2.7.1"** — i.e. the in-app updater would have offered nothing to anyone. Caught only by curling the published `update.json`.
+> **Recovery:** re-dispatched from the corrected `main` → `gh release delete 2.8 --yes` (kept the tag, already correct) → in-flight run recreated the release with correct assets. Deleting reverted `releases/latest` to 2.7.1 so no user was served the broken build. (A `releases/latest` **404 right after deletion is transient** — GitHub recomputing; `gh release list` showed all 30 releases intact.)
+> **New standing rule → [[feedback_dispatch_after_push_race]]:** assert `run.headSha == git rev-parse HEAD` after dispatch, and **always curl `update.json` before calling a release done.**
+
+## 2026-07-21 — 🔴 VIBRATION NOT FELT — live diagnosis (UNRESOLVED, device reboot pending) + 2.7.2 release HALTED
+
+> **⏸️ 2.7.2 release halted mid-prep** on user request. **Nothing tagged, released or pushed — 2.7.1 is still Latest.** Two **uncommitted** edits remain in the working tree: `app/build.gradle` (vc 47→48, 2.7.1→2.7.2) and `README.md` (version row + contents link). Either finish the cut or `git checkout` those two files. (I recommended **2.8** — 45 commits, 3 headline features — user chose **2.7.2**; honour that.)
+>
+> **⭐ THE GYRO WORK IS EXONERATED — do not chase it.** User tested `bannerlator-main-09e9891-standard.apk` (main + Big Picture + PC-accurate vibration, **zero gyro code**) → **also no rumble**. Independently confirmed by diff: **all 116 vibration/rumble lines in `WinHandler.java` and all 28 in `XServerDisplayActivity.java` are byte-identical** between pre-gyro main (`2cca40e4`) and now.
+>
+> **Evidence gathered live over the bridge:**
+> - App gates all open: `vibration_master_enabled=true`, all 4 slots true. Live container `xuser-1 "P11 ARM"`, `vibrationMode=1` (Controller), `vibrationIntensity=65` (user believed 100; xuser-3 has 100). User later set **Both @ 100% → still nothing**.
+> - ✅ **winebus rumble patch IS applied** — byte-checked the live Proton 11 `winebus.so`: **2× `03 00 80 12`** (`mov w3,#-1`), **0×** unpatched. Delivery half is healthy.
+> - 🔑 **Vibrator calls by our app — TODAY: 0, YESTERDAY: 51.** With Both @100% today, `triggerVibration` never reached the system vibrator at all ⇒ rumble isn't arriving from the guest, upstream of every mode/intensity gate.
+> - 🔑 **All 51 yesterday: `status: forwarded_to_input_devices`, `scale: 0.00`.** Android `vibrate_input_devices = 1` hands app vibrations to connected input devices. The pad is an **X-Box 360 pad (`045e:028e`) on USB** (Bluetooth service not even running), and per **TideGear's own caveat** (author of the rumble patch we ship) *native-XInput pads rumble over Bluetooth only, NOT USB*. ⇒ nothing buzzes anywhere. **This explains "it worked before gyro" with zero code change** — the earlier dual-motor proof (2 vibrator ids) was the **Bluetooth** behaviour.
+> - `Evshim` never logged this session (checked `-b all`) despite the binary being patched — the patcher may not be running on this launch path.
+>
+> ▶️ **NEXT (post-reboot):** retest → if dead, **unplug the pad / pair over Bluetooth** and retest Device/Both (isolates the forwarding cause in seconds), or `settings put system vibrate_input_devices 0`. If still 0 vibrator calls with no pad attached, chase **guest→app rumble delivery** (`startVibrationListener` / `setFakeInputPath`) and the missing `Evshim` log. **Worth doing regardless: `triggerVibration` has NO logging** — that's why this needed a full device teardown; add a rate-limited dispatch log.
+>
+> Full detail → [[project_bannerlator_vibration_not_felt_diagnosis]]. ⚠️ Method-level `awk` range extraction gave FALSE diffs (matches call sites, not definitions) — content-diff grepped lines instead.
+
+## 2026-07-21 — 🎛️ In-game Controls tab → segmented sub-tabs (Touch / Mouse / Vibration / Gyro), main `df419afd`
+
+> **Merged `feat/controls-subtabs` → main (`--no-ff`).** Safety tag `subtabs-premerge-backup` = `43f05635`. CI green 3 flavors (run `29825610490`), staged `bannerlator-controls-subtabs-43f0563-standard.apk`. **vc STAYS 47.**
+>
+> **Why:** the Controls tab had accumulated **four separate feature areas in one scroll** — Input Controls (profile, 4 chips, opacity, accent, 2 buttons), Mouse & Cursor (3 chips), Vibration (enabled + 4 modes + intensity + 4 slots), Gyro (~10 controls + contextual hints) — roughly **35 interactive controls**. User reported it as cluttered. I mocked up **5 layout options as an interactive HTML preview** (`/sdcard/Download/controls-layouts.html`: segmented sub-tabs · accordion w/ state summaries · category rail · status-cards drill-in · quick+advanced) and the user picked the segmented sub-tabs.
+>
+> **Implementation:** the tab bar **reuses the existing `ModeChipGrid` at `perRow = 4`** rather than a new widget — it already renders equal-width accent-filled chips, so it reads as native to the drawer. Content is gated by a `when`; sections themselves are **byte-identical** (verified by diffing the body with whitespace/comments stripped — only the tab bar, the branch braces, and 3 now-redundant separator dividers differ). No control reordered, restyled, rewired, or pref-key changed.
+> - ⚠️ **Structural hazard handled:** `GyroSection()` used to be called from *inside* the vibration area. It is now a **top-level `when` branch, sibling to vibration** — had it landed under `vibrationMasterOn`, the whole gyro UI would vanish whenever rumble was switched off. Verified on main at `XServerDrawer.kt:2295`.
+> - Selected sub-tab persists in `XServerDrawerState` across drawer close/reopen (someone tuning gyro mid-game reopens repeatedly; snapping back to Touch each time would be worse than the clutter). Cleared in `reset()`.
+> - Input-section locals hoisted above the `when` so an in-flight profile edit isn't dropped by switching sub-tabs and back. Gyro's leading divider removed (it only separated it from vibration in the old scroll).
+>
+> 💡 **Observation worth acting on later:** **Gyro is now larger than the other three areas combined.** It may have outgrown living inside Controls and could deserve its own top-level rail icon.
+
+## 2026-07-21 — 📦 Banner File Manager **1.1.0** bundled (replaces 1.0.0) — merged to main `137cc75c`, vc47
+
+> **Merged `feat/bfm-1.1-bake` → main (`--no-ff`).** Only changed file is the asset; no code paths touched. Safety tag `bfm11-premerge-backup` = `1b8d3e41`. CI green 3 flavors (run `29822725563`). **vc STAYS 47 — this simply ships with the next stable.**
+>
+> **Where it lives:** the bundled `wfm.exe` is baked *inside* `app/src/main/assets/container_pattern_common.tzst` at `home/xuser/.wine/drive_c/windows/wfm.exe` — NOT a loose asset. That archive is the delivery path that persists: `applyGeneralPatches()` re-extracts it into the prefix on an **app or image version change**, which is why a binary staged into a container alone gets reverted to the bundled copy.
+>
+> **Was 1.0.0 (295936 B) → now 1.1.0 (299008 B).** Verified byte-identical to the `wfm.exe` published on the banner-file-manager **v1.1.0** release, and the binary self-reports `Version 1.1.0` (old one said 1.0.0) — confirmed via wide (UTF-16) strings, since it's a UNICODE build and plain `strings` finds nothing.
+> **`libcdio.dll` unchanged** between v1.0.0 and v1.1.0 (hash-compared) → deliberately left untouched.
+> **Repack preserved the archive layout exactly:** 102 entries, identical entry order, identical paths+modes (`rw-rw----`, root/root), and a full extracted `diff -rq` showed **only `wfm.exe` differs**. Tools: `tar --no-recursion --numeric-owner -T <original order>` piped to `zstd -19`.
+>
+> ⚠️ **Testing note:** the archive only re-extracts when the app/image version changes, so an EXISTING container may keep 1.0.0 until that trigger fires — a **freshly created container** is the clean check (or read the version in the File Manager's About).
+>
+> Also this session: the reported FPS drop turned out to be **a different emulator**, so that investigation is dropped (research stays in [[project_bannerlator_input_fps_drop]] if it ever resurfaces).
+
+## 2026-07-21 — 🎉 GYROSCOPE FEATURE 100% COMPLETE — P4 Tilt-to-Aim merged, main `fd2652f0` (vc47)
+
+> **Merged `feat/gyro-tilt-to-aim` → main (`--no-ff`), 10 files, +577/-37.** Safety tag `gyro-p4-premerge-backup` = `c575091c`. Artifacts CI on main = run `29822130104`. **vc STAYS 47.**
+>
+> **P4 = orientation sensing mode** — aim by absolute device tilt instead of rotation rate, so a held tilt sustains the stick deflection and returning to the captured centre recentres it. Per-game, **default Rate**.
+> - ⭐ **Rate mode is textually untouched.** Verified on main: the whole `WinHandler` diff vs `61bc20d3` has exactly **1** removed/modified line (the `applyGyroTuning` signature gaining a param) — everything else is insertion-only. The mode branches at **sensor-selection time only** and orientation samples arrive via a separate `updateGyroOrientation()`, so selecting Rate is a *provable* no-op.
+> - **`TYPE_GAME_ROTATION_VECTOR`** (no magnetometer) → `ROTATION_VECTOR` → unsupported (chip disabled with a reason; the resolver falls back to rate and does **not** rewrite the persisted setting).
+> - Pipeline on the angle offset from a captured zero: deadzone (a dead-cone here) → invert → sensitivity×gain 4.0 → low-pass → clamp. **Calibration bias deliberately NOT applied** (it's a rad/s rate offset vs an angle, and the zero-reference already cancels constants).
+> - **Display remap mandatory + dynamic** — cached `volatile int`, refreshed on config change **and** on display change (the latter catches a 90↔270 flip that never fires a config change). Preallocated `float[9]/[9]/[3]` + `float[4]` scratch for the **Samsung `values.length > 4`** crash; gimbal guard at `|pitch| > 1.3` rad.
+> - **Mouse blocked** in orientation mode in UI *and* via `sanitizeGyroMode()` at 3 call sites. **Recenter** auto on each activation edge + a drawer button that is the ONLY path under the `ALWAYS` activator (no edge exists there).
+> - **Sensor re-registration fix:** `registerGyroSensor()` compares the registered sensor *type*, so a mid-session mode switch re-registers instead of silently keeping the wrong sensor.
+> - ✅ **DEVICE-PROVEN incl. the 180° flip**, which exercises the second landscape remap case — that was the feature's single real technical risk (a wrong remap inverts axes in exactly one orientation) and it is now retired.
+>
+> **🎉 GYRO IS DONE: P1 ✅ P2 ✅ P3 ✅ P4 ✅ P5 ✅ P6 ✅.** Started the day as a vestigial `sensorManager` field with an empty init block; now: rate + orientation sensing, right/left stick + mouse targets, Hold/Toggle activation, device-level calibration, per-container/per-game persistence with three config surfaces (in-game drawer, container editor, shortcut dialog), and localized strings. WinNative credited in the README.
+>
+> ⚠️ **Still unverified on hardware:** the Hold/Toggle **un-latch fix** (latch on → tilt to full deflection → tap off → the stick must recentre immediately). ▶️ **Next up: the input-driven FPS-drop fix** → [[project_bannerlator_input_fps_drop]] — root-caused, plan ready, **Phase-0 measurement probe (0.5h) first**; the win is a ~15-line dirty-check, and notably nobody upstream has fixed this.
+
+## 2026-07-21 (morning) — 🔨 CHECKPOINT: gyro P4 Tilt-to-Aim IN FLIGHT, user offline (driving to work)
+
+> **Written mid-implementation, before the user went offline.** Main is `61bc20d3` (gyro feature complete except P4, vc47). **P4 is being implemented on branch `feat/gyro-tilt-to-aim` (off `61bc20d3`) — files were still being written when this was committed, so it is NOT reviewed, NOT built, NOT staged.** Only this file was staged in this commit; the P4 source changes are deliberately left uncommitted.
+>
+> **▶️ RESUME WHEN BACK ONLINE:** (1) review the P4 diff against the constraints below, (2) commit as The412Banner, (3) CI artifacts all 3 flavors, (4) stage the standard APK sha-verified to /sdcard/Download.
+>
+> **P4 review checklist (the constraints that matter):**
+> - ⭐ **`updateGyroData` must be TEXTUALLY UNTOUCHED** — the mode branches at *sensor-selection* time only, with orientation samples arriving through a separate `updateGyroOrientation()` entry point. That's what keeps device-proven rate mode a provable no-op at the default.
+> - Sensor is **`TYPE_GAME_ROTATION_VECTOR`** (not `ROTATION_VECTOR`); fallback chain then "unsupported" with a *disabled chip + reason*, and the launch resolver must NOT rewrite a persisted setting on an unsupported device.
+> - **Calibration bias must NOT be subtracted** in orientation mode (rad/s rate offset vs an angle; the zero-reference already cancels constants), and the calibration UI must stay visible.
+> - Display-rotation remap **cached in a volatile int** (never queried per sample), refreshed on config change + the VRR DisplayListener; all four rotations reachable (`sensorLandscape` + portrait containers).
+> - Samsung `getRotationMatrixFromVector` guard (preallocated `float[4]` when `values.length > 4`); gimbal guard at `|pitch| > 1.3`.
+> - **Mouse + Orientation blocked** in UI *and* forced to RATE in the resolver/setters (a held tilt would peg the pointer at a screen edge).
+> - **Recenter**: auto on the activation rising edge (hook in `updateGyroActivation`) **plus a manual drawer row — mandatory**, because the ALWAYS activator has no rising edge ever.
+> - The **sensor re-registration fix**: `registerGyroSensor()` guards only on "already registered", so a mid-session mode change would keep the WRONG sensor registered.
+> - Hot path allocation-free (preallocated `float[9]/[9]/[3]/[4]`); vibration + calibration + Hold/Toggle intact; **vc stays 47**.
+>
+> ⚠️ **Also still unverified on hardware:** the Hold/Toggle **un-latch fix** merged in `55eb19ca` (latch on → tilt to full deflection → tap off → the stick must recentre immediately). Staged build `bannerlator-gyro-toggle-08422bb-standard.apk`; revert tag `gyro-calib-premerge-backup` = `08422bbd`.
+>
+> **Other parked work:** the input-driven **FPS-drop fix** (Phase-0 probe first) → [[project_bannerlator_input_fps_drop]].
+
+## 2026-07-21 — ✅ GYROSCOPE FEATURE COMPLETE — merged to main `55eb19ca` (vc47)
+
+> **Merged `feat/gyro-calibration` → main (`--no-ff`), 12 files, +1219/-65.** Verified non-destructive: all vibration files unchanged vs pre-merge main, zero rumble lines removed from `WinHandler.java`, Big Picture intact, **vc STAYS 47**. Safety tag `gyro-calib-premerge-backup` = `08422bbd`; branch not deleted.
+>
+> **Three pieces landed together:**
+> - **Device-level bias calibration** — new `core/GyroCalibrator.kt` + a Gyroscope section in the app's **Input Controls** screen (gyro previously had ZERO out-of-game presence). Samples the sensor directly since that screen has no `WinHandler`. 1500ms window, two-tier motion rejection, **never writes a half-measured bias**, and the stored value carries a `Build.MODEL + sensor-name` stamp so **Android auto-backup can't restore one phone's bias onto another**. Subtracted **before the deadzone** (order: bias → deadzone → invert → sensitivity → smoothing → clamp), which is what makes a lower deadzone safe. Re-read on resume, so recalibrating no longer needs a relaunch. Reports honestly when bias is negligible — `TYPE_GYROSCOPE` is platform-calibrated on most SoCs.
+> - **P5 per-container / per-game persistence** + the in-app editor surfaces (container editor section + shortcut-dialog block). Scope is deliberately mixed: the 6 game-facing settings are per-game, **deadzone/smoothing are container-level** (device/person properties), **calibration bias stays global** (per-container would let a container copy or BannerHub config import carry another phone's bias). In-game edits write back to the **shortcut when one exists** — following the FPS limiter, NOT vibration's container-only write-back, which is exactly why the limiter used to "reset every time you close the game". One-shot migration seeds existing global tuning into containers instead of resetting it.
+> - **P3 Hold/Toggle activation** — tap to latch on, tap to release; per-game, **default Hold so existing behaviour is bit-identical**. The rising edge is evaluated exactly once, **inside `updateGyroData`, after the bias subtraction and before the deadzone**: in the gamepad-send path it would double-toggle (~6 call sites + gyro re-entry + raw/remapped split), and below the deadzone it would be **swallowed** (holding still zeroes both axes and returns early). ⭐ **Review caught a bug not in the plan or the WinNative reference:** the press that un-latches is injected by the event path while the latch is still set, so the game holds a **deflected stick** and the gated push can't fix it → added an ungated clear-push, and `resetGyroRuntimeState()` now clears the overlay *before* dropping the latch (other order gates away its own correction). All stuck-on paths covered incl. **latched-on then controller unplugged** (no button left to un-latch).
+> - Plus: in-game gyro strings moved to `strings.xml` (P6), and `ModeChipGrid` gained a default-valued `enabled` param so the mode row greys under "Always On".
+>
+> **Gyro status: P1 ✅ P2 ✅ P3 ✅ P5 ✅ P6 ✅.** ▶️ **P4 Tilt-to-Aim = the only remaining phase, SCOPED but NOT built** → [[project_bannerlator_gyro_p4_plan]] (verdict BUILD, gated on the S3 device milestone; ~3d). ⚠️ This build was merged **without an explicit device confirmation** of Hold/Toggle — the un-latch fix in particular is unverified on hardware. Also still parked: the input-driven **FPS-drop fix** → [[project_bannerlator_input_fps_drop]] (Phase-0 probe first).
+
+## 2026-07-21 — 🏁 SESSION CHECKPOINT — gyro MERGED to main; P3 / P5 / FPS-fix scoped and parked for tomorrow
+
+> **main = `058eda91`, vc STAYS 47, artifacts CI green all 3 flavors (run `29798211980`), staged `/sdcard/Download/bannerlator-main-058eda9-standard.apk` (sha `c31f9423…`).** Everything from this session is on main: **Big Picture** (full Compose rebuild), **PC-accurate controller vibration** (both merges), **gyro P1+P2** (incl. mouse mode), the **drawer chip restyle**, and credits for **TideGear / GameNative / WinNative**.
+>
+> ⚠️ The two GYRO entries below say "NOT merged" — that is now **STALE**. Both were merged via `feat/gyro-controls` → main at `058eda91` (`--no-ff`), after adding the **WinNative credit** (`97bb1d61`) — WinNative is GPL-3.0, same as us, so the port is licence-compatible. Merge verified non-destructive: all vibration files unchanged, zero rumble lines removed from `WinHandler.java`, Big Picture intact. Safety tags kept: `gyro-premerge-backup` = `97bb1d61`, `bp-premerge-backup` = `3d99fbf`. Branches `feat/gyro-controls` + `feat/bigpicture-compose-rebuild` NOT deleted.
+>
+> **Device-confirmed by user this session:** rumble works; gyro direction correct (no sign flip needed); gyro mouse mode works. So the axis mapping and `GYRO_MOUSE_SCALE = 12.0f` are both validated as shipped.
+>
+> **▶️ PARKED FOR TOMORROW — three implementation-ready plans, all in memory, no code written:**
+> - **FPS drop on mouse/touch** → [[project_bannerlator_input_fps_drop]]. ⚠️ **Earlier research was materially WRONG and is now corrected**: `GLSurfaceView.requestRender()` ALREADY coalesces, so it's the GL thread free-running (~3× host composite), not 100s of frames — **a fixed 120Hz cap is near-worthless on this 144Hz panel; the big win is an exact DIRTY-CHECK at `star/renderer/GLRenderer.java:371` (~15 lines, zero staleness risk by construction)**. Also: GL direct-scanout is hard-disabled on main (`XServerDisplayActivity.java:2461`) so the native-mode skip is dead code, and captured/relative mouse doesn't trigger the bug at all (absolute paths only). **Phase 0 measurement probe (0.5h) is mandatory first.** Do NOT port WinNative #538.
+> - **Gyro P3** (Hold/Toggle + bias calibration) → [[project_bannerlator_gyro_p3_plan]]. **WinNative has NO bias calibration to port** (their "Calibrate Gyroscope" is just a Subcard title) — part (a) is ours to design, gated on a step-0 measurement since `TYPE_GYROSCOPE` is usually platform-calibrated. **Do Hold/Toggle first (~4.5h).**
+> - **Gyro P5** (per-container/per-game persistence) → [[project_bannerlator_gyro_p5_persistence_plan]], ~9-10h. NOT all 8 settings per-game; calibration bias must stay global. Must follow the **FPS-limiter** write-back rule, not vibration's container-only one.
+>
+> **Suggested order tomorrow:** FPS Phase 0 probe → FPS Step 1 dirty-check → gyro Hold/Toggle.
+>
+> 🔎 **Debug lesson worth keeping:** a "nothing happens" gyro report cost a cycle and was NOT a code bug — the staged APK had never been installed. **Always verify the installed APK's sha256 (`bridge 'pm path <pkg>'` → `sha256sum`) against the staged build before debugging any device symptom.** Several Bannerlator APKs now sit in /sdcard/Download.
+
+## 2026-07-21 — ✅ GYRO P2 DEVICE-PROVEN + drawer chip restyle (branch `feat/gyro-controls`, NOT merged, vc47)
+
+> **User-confirmed on device: gyro DIRECTION is correct (no sign flip needed) and MOUSE MODE works.** Both flagged unknowns retired. Commit `9caa95e1`, CI-green 3 flavors (run `29797680278`), staged `bannerlator-gyro-p2b-9caa95e-standard.apk`.
+>
+> **Gyro section** in the in-game drawer Controls tab, below Vibration, with progressive disclosure (dependent controls only compose when enabled; whole section hidden on devices with no gyroscope): Enabled → Apply gyro to (Right stick / Left stick / **Mouse**) → Sensitivity → Activation (L1/L2/R1/R3/**Always**) → Deadzone / Smoothing / Invert X/Y. Pref-backed (`gyro_*`), wired through `XServerDialogState` mirroring the vibration master switch. Defaults reproduce P1 exactly so it can't regress.
+>
+> **Mouse mode is real injection and beats the reference:** absolute X pointer via `XServer.injectPointerMoveDelta` when the mouse isn't captured (works on the Wine DESKTOP — WinNative's gyro-mouse always uses the relative packet, so theirs does nothing there), relative motion via the winhandler packet when captured (mouse-look games). Proportional deltas with a carried fractional remainder; allocation-free coalescing via one preallocated Runnable (deliberate — input-path cost is implicated in the separate FPS-drop bug).
+>
+> **Chip restyle** — new `ToggleChipGrid` modelled on the existing `ModeChipGrid` (the scale/effect button look), to free vertical space in the Controls tab for gyro. Converted the plain on/off toggles (Controls, Mouse & Cursor, Vibration master + per-slot rows, Vulkan screen effects); toggles that gate a dependent slider/pane stay `ToggleRow` on purpose (13 callers remain). **Layout rule that worked: `perRow = 3`, every chip an identical 1/3 width, short final rows CENTRED (padding spacers split across both sides, not trailing-only), and labels shortened so none wrap to two lines** — the 2-line wraps were what made rows uneven. Presentation only, no behaviour or pref-key changes.
+>
+> **Vibration untouched throughout** (re-verified: no rumble lines changed in `WinHandler.java`). ▶️ REMAINING before merge: **WinNative attribution in the README Credits table** (the code is derived from their gyro implementation — same courtesy we just did for TideGear). Optional later phases: P3 calibration, P4 Tilt-to-Aim (`TYPE_ROTATION_VECTOR`), P5 per-container/per-game persistence, P6 localization.
+
+## 2026-07-21 — 🎯 GYRO P1 DEVICE-PROVEN (branch `feat/gyro-controls`, NOT merged, vc47)
+
+> **Motion-aim MVP works on device (Pocket FIT, GTA IV).** Hold **L1** + tilt → camera pans. Commit `7cf04b57`, CI-green 3 flavors (run `29795316889`), staged `bannerlator-gyro-p1-7cf04b5-standard.apk` (sha `3cc09922…`).
+>
+> **Architecture confirmed by recon + proven in practice: gyro is PURELY HOST-SIDE.** No guest `winhandler.exe` change, no wire-protocol change — the live gamepad path is evdev injection (`FakeInputWriter.java:232-295`); `GamepadState.writeTo` is dead code. Gyro is overlaid on the gamepad state at the three `writeGamepadState` call sites in `WinHandler.java` via `getOutputGamepadState()`, which returns the base state **by reference, unmodified**, unless gyro≠0 AND L1 held → normal controller path stays bit-identical, and a physical right stick is **added to, never clobbered**.
+>
+> **`XServerDisplayActivity`:** completed the long-vestigial `sensorManager` field — `TYPE_GYROSCOPE`, allocation-free listener at `SENSOR_DELAY_GAME`, register/unregister across onCreate/onResume/onPause/onDestroy, strict no-op without a gyro. **`WinHandler`:** `updateGyroData()` = deadzone → sensitivity → exponential low-pass → clamp (ported from WinNative rate-mode); sustained tilt re-pushes through the last active controller so panning continues between input events. Constants hardcoded this phase (become settings in P2). Zero per-event allocation (deliberate — input-path cost is implicated in the separate FPS-drop bug).
+>
+> ⚠️ **DEBUG GOTCHA (cost a test cycle):** "nothing happens" was NOT a code bug — the staged APK had never been installed; the running app hashed to the *previous* main build. **Always verify the installed APK's sha256 (`pm path` → `sha256sum`) against the staged build before debugging a device symptom.** Several Bannerlator APKs now sit in /sdcard/Download and it's easy to tap the wrong one.
+>
+> **Vibration untouched** (verified: zero vibration/rumble lines changed in `WinHandler.java`; `GuestProgramLauncherComponent` + `FakeInputWriter` not modified). ▶️ NEXT: tune axis sign/sensitivity from device feel, then P2 settings UI, P3 calibration + activation button, P4 Tilt-to-Aim, P5 per-game persistence. **Gyro→MOUSE mode is a separate target** (WinNative `mouse_gyro_enabled`) — needed for cursor control on a container desktop; right-stick mode does nothing there.
+
+## 2026-07-20 (later) — 🎮 BIG PICTURE MODE — full Compose rebuild (branch `feat/bigpicture-compose-rebuild`, NO vc bump)
+
+> **User ask: "totally revamp/rebuild Big Picture to be fluid and easy — no background music, easy access to app settings, features and games."** Design locked with the user: full Compose rebuild · clean **blurred-hero** background (no music, no WebView, no parallax bitmap loop) · nav rails for App Settings + Game features + Tools + Power/Exit.
+>
+> **Architecture change (the crux):** old Big Picture was a standalone Java `BigPictureActivity` launched *before* MainActivity's Compose shell — which is exactly why it could reach none of the app's screens. Rebuilt as a first-class **`Screen.BigPicture` NavHost route** inside MainActivity, so every rail is a plain `navController.navigate(...)`, game launch is unchanged, and it inherits the launch-progress overlay.
+>
+> **New** `ui/screens/BigPictureScreen.kt` (~787 lines): blurred cross-fading hero bg (selected cover, `Modifier.blur` + scrim), hero (big cover + title + playtime/play-count + spec chips driver/DXVK/audio/box64 + Play + Game-options), `LazyRow` cover carousel (focused item scales+glows, auto-centre), controller-first D-pad via root `onPreviewKeyEvent` + zone/index focus model (RAIL/PLAY/CAROUSEL; A=launch, B=stay, RB=Tools), covers via `StarLaunchBridge.sgdbFetchGridsJson` → `saveCustomCoverArt`, playtime from `playtime_stats` prefs. Sheets: Game options (Edit shortcut → reused `ShortcutSettingsDialogScreen` now `internal`; Container settings → `container_detail?id=`; change/remove cover via `InAppFilePicker`), Tools (File Manager / Manage Wrappers / Downloads), Power (Exit BP → Games; turn mode off; Quit).
+>
+> **Wiring:** `Screen.kt` +`BigPicture` (not in drawer); `AppNavGraph` route; `MainActivity` folds BP into `startRoute` (pref wins over default landing) + `AppShell` renders it full-bleed (no top bar / no drawer gestures / no padding / no update banner) + immersive system bars via `DisposableEffect` in the screen.
+>
+> **Teardown (music + jank gone):** deleted `BigPictureActivity` + `bigpicture/{BigPictureAdapter,CarouselItemDecoration,TiledBackgroundView}` (kept `bigpicture/steamgrid/`), the 3 `big_picture_*.xml` layouts, the manifest `<activity>`, `assets/default_music.mp3`, and **117 animation frames** (`ab_/ab_gear_/ab_quilt_####`, APK-size win) — `ic_stat_ab_gear_0011` + `cover_art_placeholder` preserved. Settings toggle left intact (now selects the route).
+>
+> **Verified pre-build (no local build per rule):** `material-icons-extended` dep present + all icons used elsewhere; `findActivity` (ContextExt), `InAppFilePicker.IMAGES`/`buildIntent`/`pickedUri`, `LocalLifecycleOwner` import all match real code; no lingering refs. NEXT: push → CI (3 flavors) → device couch-mode test via bridge. versionCode STAYS vc47.
+## 2026-07-20 (night) — ✅ x86_64 winebus rumble patch merged (completes PC-accurate vibration on BOTH arches)
+
+> **Merged to `main` `0a1d436d` (--no-ff, branch `fix/winebus-x86_64-rumble` @ `92abff37`, now deleted). vc UNCHANGED 47/2.7.1.** Follow-up to the arm64ec vibration merge: x86-64 (Box64) containers still expired rumble at ~3s because only aarch64 patterns were registered. x86-64 containers use a separate **Wine 10.0 x86_64** pack (`contents/Wine/10.0-X86_64-1/lib/wine/x86_64-unix/winebus.so`) — the launch hook already resolved `x86_64-unix`, only the pattern was missing. Derived from the real device binary (78504B, `-O0`): **ORIGINAL `8B 4D E4 0F B7 F6 0F B7 D2 FF D0`** (`mov ecx,[rbp-0x1c] ; movzwl si ; movzwl dx ; call *rax`) → **PATCHED `83 C9 FF ...`** (`or ecx,-1`), exactly 2 sites in `sdl_device_haptics_start`; stop-site (`xor ecx,ecx`) untouched. **+ x86_64 structural fallback** (masked `mov ecx,[rbp+disp8]` + the movzwl/call suffix as specificity anchor) surviving stack-slot shifts. **DEVICE-PROVEN: user confirms held rumble now holds on BOTH x86-64 AND arm64ec (no regression).** Also deleted the merged `feat/pc-accurate-vibration` branch. Full detail → [[project_bannerlator_pc_accurate_vibration]].
+
+## 2026-07-20 (night) — ✅ PC-ACCURATE CONTROLLER VIBRATION merged to main (GameNative #1214 + TideGear #91, "both")
+
+> **Merged to `main` `0a43d917` (--no-ff, feature branch `feat/pc-accurate-vibration` @ `15e08131`). vc UNCHANGED (47/2.7.1) — dev feature, no bump. DEVICE-PROVEN on Adreno750/Proton 11.** User asked to combine BOTH GameNative vibration efforts (BannerHub took only the TideGear half): **#1214 PC-accurate feature** (dual-motor + per-container mode/intensity) **+ TideGear #91 preload-free winebus rumble-duration patch** (the delivery). Two specialists (android-app + wine-compat) on one branch; wine-compat ran in an isolated `git worktree` to avoid the shared-tree race with the user's concurrent Big Picture rebuild agent (`feat/bigpicture-compose-rebuild`, left untouched).
+>
+> **Feature half (`9c7df8cd`):** `WinHandler.triggerVibration` rewritten — **dual-motor** via `VibratorManager`/`CombinedVibration` (API31+, strong→id0/weak→id1, blended fallback <31 or single-id), **per-container MODE** (Off/Controller/Device/Both, Container extra `vibrationMode` default 1) + **INTENSITY** 0-100 (extra `vibrationIntensity` default 100). Gate order: master kill → per-container mode → per-slot enable → dispatch. UI in in-game drawer (segmented "Rumble Target" + slider) + container editor "Vibration" section. Ported logic from BannerHub's proven `BhVibrationController.java`. Layers cleanly under the master switch + per-slot toggles from the 2.7.1 accumulator.
+>
+> **Delivery half (`83135760`+`bebf062a`+`15e08131`):** new `WinebusRumblePatcher` — idempotent runtime byte-patch forcing SDL rumble duration to never-expire (`mov w3,wN ; blr x8` → `mov w3,#-1 ; blr x8`, exactly 2 sites in `sdl_device_haptics_start`). **Re-derived per-build** (BannerHub's P9 pattern didn't match): exact patterns **Proton 9.0 = `mov w3,w20`**, **Proton 10/11 = `mov w3,w19`** (shared), **+ build-agnostic STRUCTURAL fallback** (masked `mov w3,w<any> ; blr x8`, ==2-site guard) so unknown/GE/user-imported Protons work WITHOUT pulling every layer's binary. Wired into `GuestProgramLauncherComponent.start()` (winebus path from `imageFs.getWinePath()`, version/arch-correct) — the pre-existing `EvshimPatcher.patchWineTree` was DEAD CODE (0 callers). Safety: exact-count-2 guard, skip on ambiguity, never partial-patch.
+>
+> **On-device proof (logcat):** first launch `Evshim: rumble: forced never-expire duration on 2 site(s) via exact pattern [Proton 10/11 (mov w3,w19)]`; relaunch `already patched (2 sites), no-op`. **Sustained rumble now HOLDS** (was dying ~1s) — user-confirmed. Dual-motor: a temp diagnostic build proved the user's **Xbox 360 pad exposes 2 vibrator ids → INDEPENDENT motors path** (strong=id0/weak=id1); user CONFIRMED they can feel it. Diagnostic log stripped before merge (`b71a593e` dropped via reset+force-push).
+>
+> **Follow-ups (not blocking):** Device/Both phone-vibrator path + intensity-low not explicitly user-tested (code-proven); x86_64-unix winebus pattern not derived (arm64ec-only assets — no binary to derive against; structural path would still try). Feature branch `feat/pc-accurate-vibration` retained (offer to delete). Full detail → [[project_bannerlator_pc_accurate_vibration]].
+
+## 2026-07-20 (night) — ✅ RELEASE 2.7.1 STABLE = LATEST (the post-2.7 accumulator, cut as a patch stable)
+
+> **Cut from `main`. vc47, tag `2.7.1`, API-confirmed `Latest`/not-prerelease; 3 flavor APKs + `update.json` (vc47, all flavors mapped). Release run `29785981112`; version bump `d84a502b`, README `a565e997`, PROGRESS_LOG this entry.** Patch stable (user asked "release 2.7.1"); plain numeric tag = stable per [[feedback_bannerlator_release_versioning_rule]]. **Post-publish doc touch-up (`ff29f417`): body re-applied + README updated to also mention the bundled leegao BCn+DX12 compat-layer composition fix (shipped in 2.7, surfaced in the 2.7.1 notes on user request). Main tip `ff29f417`.**
+>
+> **Contents (everything on main since 2.7 — 19 commits, all device-confirmed):** Wrapper Version Manager catalog/update suite — persistent **Installed ✓ / Update available** badges (imports AND bundled slots) + one-tap Update + "From catalog" chip; GameNative wrapper refreshed to July-20 build (32-bit support); bundled version labels; fixes (BCn-layer(leegao) slot detection, hide "Extra libraries", card truncation, slot_catalog cross-instance cache). **lsfg Performance Mode** toggle (#152, per-container + live in-game, no root). **Controller Vibration master switch** + per-slot reflect fix. **Banner File Manager** replaces WFM in the container template (new containers). **Menu-style sweep** (all dropdowns → outlined MenuStyle, new rule). Catalog side: winlator-contents GameNative→v2 + README maintenance ritual.
+>
+> **Release body** (2.7 layout via `gh release edit --notes-file` from `scratchpad/body_271.md`): What's-New-in-2.7.1 + "Previously in 2.7" collapsible + Community **248 games / 291 configs** + Downloads + Credits. **Credits:** @Tony57319 ([#152](https://github.com/The412Banner/Bannerlator/issues/152), lsfg Performance mode) + BrunoSX (Banner File Manager = MIT fork of his Winlator File Manager) alongside leegao / GameNative / WinlatorMali(#132/@6ui99uhkllj). README thoroughly updated to match (version line vc47, TOC, What's-New→2.7.1, Full Features +Performance-mode/+vibration, credits table +BrunoSX/+Tony57319, Banner File Manager section).
+>
+> **NEXT stable = 2.8/user's call.** ⚠️ versionCode STAYS vc47/2.7.1 for all dev/artifacts builds until the next cut. **Still deferred:** menu destructive-item red-vs-orange (Contents/Saves); catalog `versionLabel` build-stamp consistency; hide bundled wrappers; Step 4 Workbench.
+
+## 2026-07-20 (post-2.7) — 📌 CHECKPOINT: main accumulator since 2.7 (all artifacts-only, NO version bump — "fix main going forward")
+
+> **Main tip `039571ff` @ 2.7/vc46 (NO bump — user rule: never bump vc outside a stable/pre-release cut). 16 commits on main since tag `2.7`, all committed DIRECTLY to main (no lingering feature branches — all merged+deleted). NEXT stable = 2.8/user's call; big changelog piled up for it.**
+>
+> **Wrapper Manager (#132) polish + fixes (post-2.7):** `42539c9f` BCn-layer(leegao) slot detection fix (was "Vulkan ICD"/0 env → "BCn layer"/13 vars, scans libbcn_layer.so inside extra_libs.tzst); `b490c793` hide "Extra libraries" from manager list (shared-libs payload, not a wrapper); `25f5c0d9` "Update available" badge + one-tap catalog update for IMPORTS (catalogId/catalogVersion in .meta); `3186cb3b` **bundled wrapper-gamenative.tzst swapped to GameNative July-20 build (8b971ce3/745944B, #1743)**; `79dead20` bundled version labels via `bundled_wrappers.json` (+catalog mapping); `5ca20d35` persistent Installed state + slot-override provenance (slot_catalog.json); `76355225` bundled subtitle=file+version (notes→detail, fix truncation); `e9db0f9a` catalog-name for slot overrides + bundled-slot update badge (feature-c); `58c44261` **fix stale slot_catalog cache** (per-instance cache stale across manager/downloader instances → reset didn't clear "Installed" mark → now read/write file fresh); `7f046e69` wrapper ⋮ menus → File Manager MenuStyle. Full detail → [[project_bannerlator_wrapper_manager]].
+> **Catalog side (winlator-contents):** GameNative entry bumped v1→v2 (July-20 asset `gamenative-20260719.tzst`, commit `e55a435`); README documents the per-update MAINTENANCE RITUAL (`9b935bc`). GameNative 0719 confirmed latest (no newer). leegao bcn/compat = latest (50993a2/b249686); leegao ICD ~Oct2025 (slow-moving, not clearly behind).
+>
+> **`5eb7f042` MENU-STYLE SWEEP** — 7 more files / 15 menus → shared `MenuStyle` (`outlinedMenuCard()` + `MenuItemDivider()` + accent 18dp icons). NEW HARD RULE: all menus use this ([[feedback_menu_style_rule]]). ⚠️ OPEN: destructive items (Delete/Remove) in ContentsScreen+SavesScreen are accent-orange not red (agent kept them uncolored since they had no prior semantic color) — user to decide red vs orange.
+>
+> **`30eec868` #152 lsfg-vk PERFORMANCE MODE toggle** (per-container + live in-game drawer; new `Container` extra `lsfgPerformanceMode` default OFF; writeLsfgConfig parameterized; device-VERIFIED `performance_mode=true` in live DiRT3 conf.toml). Replied on #152 crediting @Tony57319 (issue left OPEN). bionic-fg has NO equivalent (its `model` 0/1 is inverse: 0=light fallback default, 1=heavy experimental — user said LEAVE IT). Full → [[project_bannerlator_lsfg_performance_mode]].
+>
+> **`438a7654`+`039571ff` CONTROLLER VIBRATION master switch + reflect fix** — in-game drawer Vibration section: (1) fixed per-slot ToggleRows snapping back (controlled by vibrationSlots list that wasn't updated on toggle → new `XServerDialogState.updateVibrationSlot`); (2) master "Controller vibration" kill-switch (`WinHandler.vibrationMasterEnabled` pref `vibration_master_enabled` default on; gates ALL of triggerVibration before the per-slot check → catches any/unmapped slot). Global persist. Both device-confirmed working by user.
+>
+> **▶️ DEFERRED (all in memory):** menu destructive-item color (red vs orange); catalog build-label consistency (`versionLabel` so catalog installs show "GameNative 20260719" like bundled); hide bundled wrappers to trim dropdown; Step 4 Workbench. **RESUME: user leaving work→home, will continue. Latest staged APK on device = `/sdcard/Download/Bannerlator-vib-master2-standard.apk` (039571ff) but that's the pre-merge branch build; main==039571ff identical content.**
+
+## 2026-07-20 (late) — ✅ RELEASE 2.7 STABLE = LATEST (feature release: Wrapper Version Manager + Mali DX12 driver)
+
+> **Cut from `main`. vc46, tag `2.7`, API-confirmed `Latest`/not-prerelease; 3 flavor APKs + `update.json` (vc46). Release run `29744573080`; version bump `9bf71e76`, README `485464ea`.** First versionCode bump since 2.6.2 — per the standing rule, vc bumps ONLY at a stable/pre-release cut, never for dev/artifacts builds ([[feedback_bannerlator_release_versioning_rule]]).
+>
+> **Consolidation (the day's arc):** two parallel efforts merged onto ONE trunk = main. (1) **Wrapper Version Manager #132** (branch `feat/wrapper-manager-step1`) — import/update/delete/tune `.tzst` wrappers, curated downloadable catalog (18 entries on `winlator-contents`, "Mali only" chips + update-from-catalog), getenv-grounded auto-detection (NUL-guard scanner + driver/system/debug env filter + ~34-key dictionary). (2) **Mali DX12 "Wrapper + compat + bcn" driver** (branch `feat/mali-ultimate-driver`) — opt-in 6th driver + GameNative-engine toggle. Test-merged via throwaway `feat/mali-on-main` (1 real conflict: `ContainerDetailScreen.kt` gate systems → kept BOTH), verified 0 main commits lost, ff to main. Then **picked up leegao's layer-composition fix** (compat `b249686` + bcn `50993a2` — missing `GETPROCADDR(GetDeviceProcAddr)` broke 2-layer device dispatch; user relayed leegao's note): refreshed `extra_libs.tzst` from leegao's CI, `EXTRA_LIBS_VERSION` 3→4.
+>
+> **Release body** (2.6.2 layout via `gh release edit --notes-file`): Wrapper Manager headline + Mali DX12 (framed experimental/opt-in) + community (235 games/274 configs, fresh). **Credits (user-directed):** WinlatorMali **Bionic 1.1** (GunaCharanTeja/Charan) for the wrapper-manager idea + #132 requester @6ui99uhkllj; leegao for bcn_layer + DX12 compat_layer. README updated to match.
+>
+> **Cleanup:** deleted old `mali-compat-test1` prerelease + tag (2.7 stable supersedes it as the installable Mali build) and the 4 merged branches (feat/mali-ultimate-driver, feat/mali-on-main, feat/wrapper-manager, feat/wrapper-manager-step1).
+>
+> **⚠️ Open (not lost):** Mali DX12 still needs real-hardware proof (apiVersion #140 open; leegao path won't DX12 — GameNative toggle is that route); composition fix byte-verified but not Mali-device-tested. Full detail → [[project_bannerlator_wrapper_manager]], [[project_bannerlator_mali_compat_bcn_driver]].
+
+## 2026-07-20 — 🧩 WRAPPER VERSION MANAGER (#132) — Steps 1–3 + Step 5 catalog BUILT; catalog readability + "Update from catalog" added. CHECKPOINT (context compressing)
+
+> **Branch `feat/wrapper-manager-step1` tip `07b0d666` (pushed); off `main`, NOT merged.** Full AdrenoTools-style wrapper import/update/delete/detect manager + a curated downloadable catalog. Not device-proven for actual wrapper *effect* (Adreno device = BCn/DX12 inert by design — needs a Mali/Exynos community tester); app mechanics are Adreno-testable.
+>
+> **What's built:** import/update/delete `.tzst` wrappers with a dynamic dropdown + delete cascade; ⋮ overflow menu (bundled slot = Update / Reset / Details; imported = Edit settings / Delete / Details); **capability + GPU + env-scan auto-detection** (replaces name-gating) → dynamic "Detected settings (advanced)" from `WrapperSettingsDictionary` (~28 keys) + generic XSDA env emission; `isDebugEnvKey` hides debug plumbing from settings; per-wrapper Edit-settings (hiddenKeys in `.meta`); detail view + pre-import inspection + nested read-only env-var list; **Step 5 "Download wrappers" catalog browser** (cards = manager style, tap-to-expand). Manager REMOVED from app drawer (reached via the cloud button in container/graphics settings). Two most-recent polish items: catalog dialog **widened (0.96f) + compact download icon** so names are readable (`862f161e`); **"Update from catalog"** — bundled-slot ⋮Update opens a "From file / From catalog" chooser, catalog pick → `WrapperCatalogDownloader.installToSlot` = slot override (marker-validated) not a free-form import (`07b0d666`).
+>
+> **▶️ COMBINED BUILD RUNNING = run `29733336929`** (build-artifacts.yml, release_number=wm-catalog-update) — readability fix + update-from-catalog in one APK. Triggered right before the user lost internet driving to work; CI runs cloud-side so it completes regardless. **RESUME: online → `gh run view 29733336929`; green → stage standard APK for the user.**
+>
+> **✅ LIVE CATALOG on `The412Banner/winlator-contents`:** `wrappers.json` = 18 entries (every wrapper from every Winlator-lineage project — Bannerlator×7, WinlatorMali×5, WinNative×3, GameNative×1, Ludashi/StevenMXZ×1, Pipetto-crypto×1; project-prefixed names, byte-identity verified cmp+sha256 & noted, credited per source), 11 unique assets in the `wrappers-v1` release. Attribution fix landed: `legacy` = Pipetto-crypto Winlator Bionic.
+>
+> **NEXT:** stage combined build → (deferred) Step 4 Workbench (preset→named wrapper / compose-from-parts / curate-card, planned in `docs/WRAPPER_MANAGER_PLAN.md`); grow the dictionary (full 15MB-`.so` env-scan TIMED OUT — do bounded/hand-curate); merge to main + versionCode bump when ready; Mali device test. Full state → [[project_bannerlator_wrapper_manager]].
+## 2026-07-18 — ✅ "Wrapper + compat + bcn" Mali DX12+BCn driver BUILT + prerelease `mali-compat-test1` PUBLISHED (community test)
+
+> **Branch `feat/mali-ultimate-driver` (base main `2db8d25c`), tip `68f2a4c6`. Scoped → built → prereleased this session. NOT merged to main; verification is community-tester-proven (user has no device — releases the test build themselves).**
+>
+> **Driver (`c89a72f1`):** new opt-in 6th graphics driver `wrapper-compat-bcn` = leegao all-modular stack (wrapper-leegao ICD + `bcn_layer` + `compat_layer`) → Mali **DX12 on top of BCn** in one dropdown pick. Valhall model-allowlist gate `GPUInformation.isCompatLayerSupportedGpu` (G57/68/77/78/310/610/710/615/715/720/925 + Immortalis); off-list warns + still runs BCn. **Adreno triple-gated off** (opt-in + `getVendorID!=0x5143` on the real host + implicit-layer enable-env). Existing "Wrapper + bcn_layer" unchanged; both selectable.
+>
+> **Binaries:** both pulled from leegao's OWN GitHub CI artifacts (no fork) — compat_layer @ `a32f0852` (run 29555337147), bcn_layer bumped to `c4755eef` (run 29110875609; Jul-10 FormatProperties2/3 fix DXVK2/3 need). Repacked `extra_libs.tzst` 8→10 members + `EXTRA_LIBS_VERSION` 2→3 (`2c20cfa6`); tzst 29.8→23.6 MB (zstd-19), so the APK doesn't grow. bcn is a SHARED binary → the proven path re-tests on Mali too.
+>
+> **Community-config carry (`4ea74a5f`):** the driver's one new per-game setting `bcnCompatSparse` ("Emulate sparse binding (DX12)") now round-trips through community configs. It's a `graphicsDriverConfig` SUB-KEY (an excluded string), not a scalar → can't ride `BL_EXT_KEYS`; narrow carve-out instead: ConfigExporter lift→`bl_ext`, ConfigTranslator route→`gdc`, CommunityConfigApply accumulate-merge (single commit, avoids the version/sparse double-commit clobber). Rest of `graphicsDriverConfig` (gpuName + BCn tuning) stays device-local. +2 round-trip tests (run in the JVM test task, not the APK CI).
+>
+> **CI 29629135064 GREEN (3 flavors) → 3 APKs staged to `/sdcard/Download/bannerlator-mali-compat-2c20cfa-{standard,ludashi,pubg}.apk` (~591 MB, host==device sha).** versionName `2.6.2`/vc45 (no bump; filename distinguishes).
+>
+> **Prerelease `mali-compat-test1` PUBLISHED** via `gh release create` (hand-written body, `--prerelease --latest=false --target feat/mali-ultimate-driver`, 3 APKs uploaded from Downloads, **NO `update.json` asset** so the in-app updater ignores it on BOTH channels — verified `/releases/latest`=2.6.2 untouched; `UpdateManager.checkViaApi` only picks releases carrying update.json). Body: prominent **bug-report CTA** (prefilled new-issue link tagged `[mali-compat-test1]`) + **"PLEASE include logs" + how-to-enable-logs** steps + tester-guide link + a `<details>` **partial preview of the next stable** (launch/shutdown UX, per-game Vulkan settings + their config-sharing, direct-scanout hardening, HUD-vanish fix, cleanup).
+>
+> **Tester report `docs/Bannerlator-Mali-DX12-BCn-Tester.html` → v0.4** (`68f2a4c6`, `7d85cbca`): matching bug-report CTA + logs how-to + the changelog dropdown; copied to `/sdcard/Download/`; hosted via the htmlpreview proxy (user's choice — branch-based, keep the branch alive). Full detail in memory [[project_bannerlator_mali_compat_bcn_driver]].
+>
+> **NEXT (after user's sleep):** await community tester results (@kylinzang G57 + Valhall Mali) — DX12 title launches, BCn DX11 no-regression, A/B vs "Wrapper + bcn_layer", Adreno unaffected. If good → distinct versionName + fold into next stable + merge to main. If bugs → iterate on the branch from their logs.
+
+## 2026-07-17 — 🟢 SCOPED (not built): "Wrapper + compat + bcn" ultimate Mali DX12 + BCn driver
+
+> **Branch `feat/mali-ultimate-driver`** off main `2db8d25c`; scoping docs at **`03c1daf7`**: `docs/MALI_COMPAT_BCN_BUILD_PLAN.md` + `docs/Bannerlator-Mali-DX12-BCn-Tester.html` (distributable tester report; also copied to `/sdcard/Download/`). **Read-only scoping only — nothing built.**
+>
+> **What:** a new, opt-in 6th graphics-driver entry for Mali = **all-leegao modular stack** (wrapper-leegao ICD + leegao `bcn_layer` [BCn transcode] + leegao `compat_layer` [DX12/VKD3D feature emulation → D3D FL 12.0]). Gives Mali **DX12 on top of BCn** in one dropdown choice. Existing "Wrapper + bcn_layer" **kept unchanged** (both selectable; keep-both-then-graduate — consolidate later via id-alias only if proven).
+>
+> **Verdict 🟢 GREEN, 2 caveats.** Key findings (2 subagents): compat_layer = implicit layer, enable via `ENABLE_DXVK_MALI_COMPAT_LAYER=1` (push/null-descriptor auto-detect; only opt-in knob `COMPAT_EMULATE_SPARSE_BINDING`); **no runtime profile assets** (spoof compiled into `.so`) → package just `.so`+manifest like bcn; layers **compose safely** (only overlap `Features2`, idempotent-additive; compat doesn't hook FormatProperties); GPU floor **r32p1+ Valhall**; both `.so`s **build-from-source** (NDK 27.0.12077973, no releases). Identifier `wrapper-compat-bcn`; ~10 exact-anchor edits + `extra_libs.tzst` repack + `EXTRA_LIBS_VERSION` 2→3.
+>
+> **Also found:** Telegram "Leegao Bcn Update.zip" = **Fcharan/WinMali-Dev FORK** (not leegao); its only delta over our shader-v3 (`GetPhysicalDeviceFormatProperties2` hook) is **already in leegao Jul-10 upstream** → rejected, use upstream. Our `wrapper-gamenative` July-5 binary **already has full DX12 machinery** + is NOT Adreno-gated (the "Adreno-only" note was stale) — it's the GN monolithic alternative (Path 3); we don't emit `WRAPPER_DRIVER_ID`/`WRAPPER_SAFE_CREATE_DEVICE`.
+>
+> **⏭️ OPEN DECISIONS before build:** (1) bump bundled `bcn_layer` to leegao Jul-10 `c4755eef` (Hades/DXVK2 FormatProperties2/3 fix — but shared binary → re-test the proven "Wrapper + bcn_layer" too); (2) GPU-floor gating (vendor `!=0x5143` gate insufficient — detect Mali arch/driver-version or rely on compat list); (3) keep-both vs graduate (default keep-both). Then wine-compat + graphics implement → pinned build → CI → stage `mali` APK → @kylinzang (G57) + Valhall testers. Full detail: memory [[project_bannerlator_mali_compat_bcn_driver]].
+## 2026-07-16 (night) — ✅ RELEASE 2.6.2 SHIPPED = LATEST (fixes-and-hardening; user chose the 2.6.2 label over 2.7)
+
+> **Cut from current `main` = the eve-session accumulator below. vc**45**, tag `2.6.2` @ version-bump `380cc90a`, API-confirmed `latest=2.6.2`, prerelease=false. Release build run **29551084664** ✅. Assets = 3 flavor APKs + `update.json` (vc45/2.6.2 — in-app updater offers it). Styled body applied + README updated (`ef5b4eac`).**
+>
+> **Contents:** triple HUD overlay + hardened device-complete metrics + GameNative-style 3rd overlay + chip UI + accent-border outline + FPS presets; background component downloads (#122); #113 DXVK/VKD3D 2.x filter; #111 WOWBox64 label + install-guard; run-as-admin toggle; short GPU name.
+>
+> **Release body:** fixes-and-hardening framing + evergreen feature block + What's-New + **Community section** (live badges: **166 games / 184 configs** from `bannerlator-game-configs/stats.json`; accounts framed "growing" — exact count NOT obtained, worker KV, local copy stale — + thank-you + links [github.com/The412Banner/bannerlator-game-configs · the412banner.github.io/bannerlator-game-configs/]) + **Credits section (user-requested):** **GameNative** ([utkarshdalal/GameNative](https://github.com/utkarshdalal/GameNative)) front-and-center for the ported HUD (`PerformanceHudView`) + metric coverage + present-path/FPS-limiter/SurfaceFlinger-colour lineage; reporters @kylinzang/@GmoLargey/@railexcatapangdiaz-ux; wider Winlator→cmod→Star lineage + DXVK/VKD3D/Box64/FEXCore/JavaSteam/leegao.
+>
+> **Versioning:** NEXT stable = 2.6.3 or 2.7 (user's call); everything after 2.6.2 now = `preN` (vc46+) until told to cut ([[feedback_bannerlator_release_versioning_rule]]).
+
+## 2026-07-16 (eve) — 🎛️ TRIPLE HUD OVERLAY + BACKGROUND DOWNLOADS + issue sweep (#111/#113/#114/#121/#122/#127) — all merged to `main` (2.7-preN)
+
+> **All app work on `main` (2.7-preN, NOT tagged; baseline stable = 2.6.1). Per-feature detail in the linked memory topic files. Main tip = `d725094f`.**
+>
+> **CI cleanup:** deleted the redundant compile-only workflow `main.yml` ("Any branch compilation") — `build-artifacts.yml` is now the branch build (compiles all 3 flavors + yields an APK), `release.yml` = stable only. Rule saved [[feedback_ci_workflows]].
+>
+> **✅ TRIPLE HUD OVERLAY — merged (`7592558e` feature, `18355daa` fixes batch).** [[project_bannerlator_hud_triple_overlay]]. Unified backend: single-source `FpsCounter` (all overlays read one number, ticked per present across GL/VK/ASR); hardened `HudMetrics` (device-complete GPU/CPU/thermal/battery discovery — fixes 0%-on-non-Adreno on ALL overlays); NEW 3rd overlay `PerformanceHudView` (GameNative-style, compact-pill/stacked-graphs). 3-way `hudStyle` selector (classic/gamehub/gamenative) in container dialog + in-game drawer; mode-button-style chips in an aligned grid. Then a device-tested fix batch: classic dual-orientation on live metric toggle, device-independent power reading (Xiaomi/Poco `current_now` sign), no-resize-on-toggle (unified `hudScale`=100 via `Container.DEFAULT_HUD_SCALE`), short GPU name via `GPUInformation.extractModelName` (no more "wrapper"/"zink"/"MESA_TURNIP"), outline redesigned to an accent box-border ("game-card style", `AppThemeState.getCurrentAccentArgb`, slider-scaled) + gray/accent color toggle. All DEVICE-PROVEN.
+>
+> **✅ BACKGROUND COMPONENT DOWNLOADS (#122, @kylinzang) — merged (`baaa34d2`).** [[project_bannerlator_content_download_background]]. Compat-layer downloads (Proton/DXVK/box64/FEX/rootfs) now continue when minimized/locked via the store foreground-service + shade notification (+ HTTP Range resume, process-lifetime scope). DEVICE-PROVEN (notification shows, download survives backgrounding).
+>
+> **✅ ISSUE SWEEP — 6 issues replied + closed:**
+> - **#113** (@GmoLargey) DXVK+VKD3D DX12 fail on non-2.x DXVK — FIXED (`ce9cb06e`): container DXVK dialog now filters to 2.x+ when VKD3D on (matches shortcut dialog). Proven by binary diff — `IDXGIVkInteropFactory1` present in DXVK 2.x `dxgi.dll`, ABSENT in 1.x → 1.x literally cannot back VKD3D-Proton.
+> - **#111** (@railexcatapangdiaz-ux) box64 "downloaded but not usable" — on-device repro (WOWBox64 0.3.6 install → landed correctly, showed in dropdown) DISPROVED the bot's 3-bug theory; real issue = shortcut editor labeled "Box64" not "WOWBox64" on arm64ec → FIXED (`d725094f`) + defensive missing `return` in `ContentsManager.finishInstallContent` (failed rename had also reported success). Cosmetic dropdown-name cleanup PARKED [[project_bannerlator_component_dropdown_display]].
+> - **#127** (relative-mouse cursor = by-design, use absolute), **#121** (D3D9-on-Mali / roadmap Q&A — WineD3D + `starengine.ini` config), **#114** (phone "blacklisting" = a `c0000005` game crash, reinstall + vcredist) — support/config answers, no code owed.
+>
+> **RELEASE-NOTES credits pending for next 2.7-preN/stable: #122/@kylinzang, #113/@GmoLargey, #111/@railexcatapangdiaz-ux** [[feedback_issue_fixes_in_release_notes]].
+
+## 2026-07-17 — 🧭 DIRECT-SCANOUT AUDIT: blast-radius scoping + 2-branch plan (still PARKED, ZERO code)
+
+> **Scoped the parked scanout backlog by blast radius (code re-verified). Full detail: [[project_bannerlator_direct_scanout_audit]] "🧭 BLAST-RADIUS SCOPING".**
+>
+> **Feature is walled off** — only runs when a container opts into Native Rendering; mutually exclusive with the compositor post-pass (FSR/CRT/FXAA/colour hard-reset, auto-off upscaler ≥3). Nothing changes for other renderers when native is OFF.
+>
+> **BRANCH A = `feat/scanout-hardening-safe`** (ZERO blast radius, all behind native flag/non-runtime): #1 fd-leak (the one real bug — TWO sinks: `ScanoutContext.cpp:174` + `directscanout_jni.cpp:63`), #2 stale docs, #4 GL fps→setFrameRate, #5 single-window gate, #10 gray inert dialog controls. Ship as one unit.
+> **BRANCH B = `feat/scanout-shared-render`** (crosses shared `GPUImage` JNI / both present loops — regression-test NON-native GL+Vulkan): #3 R/B auto-detect (do NOT touch shared `gpu_image.c:96` alloc — describe the guest pixmap instead), #6 setColorTransform Android-12+ fallback (scanout-only exec), #7 real fence hygiene (`gpu_image.c:139` + `VulkanRenderer.java:548` + `GLRenderer.java:729` — highest risk, do LAST isolated).
+> **DEFERRED:** #8 cursor dirty-skip, #9 colour-grade via SC.
+>
+> **✅ Resolved:** HUD renders fine under Native (`PerformanceHudView` is a ViewGroup overlay above the SurfaceView; `PresentExtension.java:315` "presentScanout drives the HUD"). **Suggested order:** Branch A first → Branch B, #7 last.
+>
+> **🔧 GL-NATIVE FOLLOW-UP (2026-07-17):** Device testing GL Native Rendering (Dirt 3 / Dirt Showdown, OpenGL) exposed that it's broken (frame freezes until touch). Diagnosed + FIXED the frame-pacing (parent GLSurfaceView never latched child SC under RENDERMODE_WHEN_DIRTY) on **`fix/gl-native-frame-pacing`** (`presentScanout`→`requestRender` per present) — device-proven ghosting-gone. BUT that exposed a brightness/colorspace issue (self-heals on bg/fg; surface-recreate related) + GL-native is bespoke (GameNative does native on Vulkan/ASurface only, NOT GL). **USER DECISION: keep the pacing fix branch parked (resume bookmark), and DISABLE GL Native Rendering for now** → **`fix/disable-gl-native`** (off main, CI 29579142056 green, TO MERGE): launch forces GL native off, `XServerDrawerState.nativeRenderingSupported` hides the drawer toggle on GL, runtime handler guards GLRenderer. Vulkan native UNCHANGED. Also fixes shipped-2.6.2 (GL native toggle was reachable+broken in prod). Full detail [[project_bannerlator_direct_scanout_audit]] "USER DECISION".
+>
+> **✅ BRANCH A DEVICE-VERIFIED (Dirt 3, this device):** #1 fd-leak PROVEN on BOTH renderers (Vulkan: 254→253 fds flat over 6-8 Native toggles, each confirmed `initScanoutFromWindows` in logcat, shared `ScanoutContext::setBuffer`; GL: 288-292≈baseline). #10 greyed present-mode dropdown PROVEN (screenshot). #4/#5 CI+logic (GL-path/multi-window not positively shown). **⚠️ Found a PRE-EXISTING GL-native ghosting bug (frame freezes until touch; DXVK HUD frozen but overlay FPS ticks) — A/B PROVEN pre-existing (shipped 2.6.2 ghosts identically) → Branch A EXONERATED. New backlog item #11 (GL-native frame-pacing: `presentScanout` setRenderingEnabled(false) + GLSurfaceView-driven present → buffers only advance on input requestRender). Vulkan native clean. Fix or gate GL native later — NOT Branch A scope.** Also ⭐ item #6 (greylisted setColorTransform) repros live on this device. Full detail in [[project_bannerlator_direct_scanout_audit]].
+>
+> **🚧 BRANCH A — all 5 items CODED (branch `feat/scanout-hardening-safe` off main `095e657d`), pushed to CI (run 29573898102 green), device-verified above.** #1 fd-leak (both sinks close fenceFd + `<unistd.h>` in JNI), #2 DORMANT→ACTIVE docs, #4 GL fps→setFrameRate VRR vote (real `fpsLimit` + `DirectScanout.setTargetFps` re-vote, mirrors Vulkan), #5 single-window soft-gate warning toast (`countMappedAppWindows()`), #10 grey inert presentMode dropdown under Native. All behind the native flag / dialog / docs — zero non-native blast radius. Full per-item file:line in [[project_bannerlator_direct_scanout_audit]] "🚧 BRANCH A".
+
+## 2026-07-16 — 🔬 DIRECT-SCANOUT ("Native Rendering") AUDIT — PARKED backlog for a future date (NO code changes this session)
+
+> **Investigation only — nothing applied. The direct-scanout FEATURE already ships in 2.6.1; this is a deferred improvement backlog on it. Full detail + file:line anchors: [[project_bannerlator_direct_scanout_audit]].**
+>
+> **Context:** "Native Rendering" (per-container `rendererNative`) = renderer hands each window's `AHardwareBuffer` straight to SurfaceFlinger via child SurfaceControls (game z=1 opaque + cursor z=2), zero-copy; guest transport = DRI3 `PIXMAP_FROM_BUFFERS`+AHB (`DRI3Extension.pixmapFromHardwareBuffer`→`setDirectScanout(true)`), keeps X Present. **This is OUR OWN impl** (GameNative AHB-present lineage + our P1–P5 work) — **NOT** from Pipetto's DisplayX (unrelated, incomplete, zero code taken).
+>
+> **Confirmed shipped in 2.6.1** (tag `87422089`): flag + `renderer_native` string + all 4 native libs (`vulkan_renderer`/`direct_scanout`/`asurface_renderer`/`ahbimage`) + Vulkan native path + GL path. **BOTH user controls exist in 2.6.1:** persistent per-container Switch `ContainerDetailScreen.kt:353-354` (Compose) + in-game drawer toggle `XServerDisplayActivity.onNativeRenderingToggle:544-571`. Vulkan path mature/proven; **GL path fully wired (P3/P4 live) but UNVERIFIED on device + carries STALE "DORMANT" self-docs** (`DirectScanout.java:26-29`, `directscanout_jni.cpp:6-15` — false).
+>
+> **✅ Strategic finding: guest IdleNotify FPS limiter IS preserved on scanout** (structural — all `PresentExtension` branches call `emitIdleNotify`; first-frame `setRenderingEnabled(false)` pauses only host redraw, not epoll X thread). This is the payoff of keeping X Present vs a DisplayX-style bypass.
+>
+> **DEFERRED backlog (value÷effort), NONE applied — pick up later:** (1) **fd LEAK HIGH/LOW** — `ScanoutContext::setBuffer` early-returns without `close(fenceFd)` → fd exhaustion over long session; (2) fix stale DORMANT docs HIGH/trivial; (3) **auto-detect R/B via `AHardwareBuffer_describe` = GN #1622 port**; (4) **GL fps→`setFrameRate` VRR vote = GN #1612 GL half** (Vulkan done); (5) gate Native to single fullscreen window (opaque top SC + parent freeze occludes secondary guest windows); (6) blocked `setColorTransform` reflection on Android 12+ → swapRB silent no-op; (7) real fence hygiene / tearing (CPU-unlock fence ≠ guest GPU render fence + no release-fence back-pressure) HIGH/Med-High; (8) cursor per-frame memcpy dirty-skip; (9) color-grade via SurfaceControl coexisting w/ scanout; (10) gray inert controls (presentMode/scaling) under Native in dialog. **Suggested first branch = #1 (fd leak) or bundle #1–4 as "scanout hardening" (#3/#4 already on GN port backlog [[project_gamenative_render_sync_202607]]).**
+
+## 2026-07-13 — 🍷 New Proton 10.0-4 (unixlib + fast-yield, stripped+zstd) shipped + in-app catalog; broken P11 x86-64 rows pulled
+
+> **Proton-layer work on `The412Banner/proton-wine` + `winlator-contents` (no Bannerlator app change). Full detail: [[project_fexcore_unixlib_transition]].**
+>
+> **✅ Proton 10.0-4 rebuilt for size + parity → release [`build-p10-20260713`](https://github.com/The412Banner/proton-wine/releases/tag/build-p10-20260713) (Latest).** Mirrored the P11 size recipe onto `proton_10.0` (tip `90130591f4`): `-g0 -O2` + `CROSSCFLAGS` + `llvm-strip --strip-all`, outer `.wcp`→zstd, ccache wired into both SDK CI workflows. Also cherry-picked P11's env-gated **fast-yield** (`WINE_FAST_YIELD`, dormant by default → full P11 parity: FEX-unixlib loader + `$PREFIX` search + fast-yield). Result: arm64ec `.wcp` **~88MB (was 269MB XZ)**, both SDKs. Assets (arm64ec only — x86_64 excluded, same box64 display bug as P11, user device-confirmed): `proton-10.0-4-arm64ec-sdk28.wcp` md5 `4c28af64…` + `-sdk35.wcp` md5 `5347177f…`. Marked **Latest** (P11 `build-p11-20260712` demoted); old 269MB pre-release `build-p10-20260710-sdk28` + tag deleted. arm64ec device-boot-verified working.
+>
+> **✅ `winlator-contents` catalog updated (in-app download list, serves from main):** ADDED `proton-10.0-4-arm64ec-sdk28` + `-sdk35` rows → build-p10-20260713 assets (commit `1ba89ad`, both URLs HTTP 200). REMOVED the broken `proton-11.0-1-x86_64-sdk28`/`-sdk35` rows (commit `a55883b`) — x86_64 Proton 11 never renders under box64 (GUI/games show no window). In-app Proton is now **arm64ec-only** across the board.
+>
+> **🔖 NEXT RELEASE NOTES (2.7) — MENTION (supersedes the stale 2.6-accumulator item #2 below, which pointed at the now-removed P11 x86-64 layers):**
+> 1. **New Proton 10.0-4 compatibility layer** downloadable in-app: **`proton-10.0-4-arm64ec-sdk28`** (Android 9 / SDK 28) + **`proton-10.0-4-arm64ec-sdk35`** (Android 15 / SDK 35) — bionic arm64ec, FEX-unixlib + fast-yield, ~3× smaller/faster install (stripped + zstd). Runs on FEXCore.
+> 2. **Removed** the two non-functional Proton 11 x86-64 catalog entries (didn't render under box64).
+
+## 2026-07-12 — ✅ COMMUNITY-CONFIG BACKEND BUGS: Bug B + B2 SHIPPED (worker+site deployed, round-trip verified); Bug A RECON-PREPPED for later
+
+> **Worker = `bannerhub-configs-worker` (CF). All changes to the shared config backend; app untouched.**
+>
+> **✅ Bug B — "My Uploads" showed duplicate/orphan configs (e.g. account `devaspe`: 5 Hades in web My-Uploads, repo had 1).** Root cause: per-account registry `blusertokens:<uid>` is append-only (dedup by sha only; every replace/re-tune = delete-old + upload-new-sha → new entry) and `handleUserDelete` never pruned it; login returned it raw. **Fix DEPLOYED:** B1 = login-time heal (`healUploads()`: validate each entry's sha against the live repo listing, prune orphans, write back; FAIL-SAFE 404→prune / any-other-failure→keep / never-throws; **ns TRAP avoided** — login has no `?ns=`, so heal uses `repoOf(e.ns ? e.ns : "bannerlator")`, NEVER `nsOf(url)`). B2 = `shaowner:<sha>→uid` reverse key at upload so `handleUserDelete` prunes immediately. Deployed `worker-patched-bugB.js`; round-trip 16/19 pass (3 "fails" = CF-KV eventual-consistency on external reads; B2 CONFIRMED after 75s settle: registry `[]`).
+>
+> **✅ Bug B2 follow-up — website My-Uploads didn't SHOW the heal until sign-out/in** (site renders `localStorage['bl_account'].uploads`, only refreshed on full `/account/login` w/ password). **Fix DEPLOYED (worker+site):** extracted heal into shared `healUploads()` + NEW `POST /account/uploads {session}` → `{success,uploads}` (session-only, no password, 401 on bad); site `index.html` +19 lines `refreshMyUploads()` wired into `restoreAccount()` (page load) + `showMyUploads()` (tab open), fail-soft. Worker `worker-patched-bugB2.js` deployed (byte-verified, node --check, 5 bindings intact); site pushed bgc-repo main `39a03a8` → GH Pages LIVE (confirmed serving ~20s). Round-trip **10/10** (endpoint heals, prunes only orphan across 2 games=separator OK, 401 bad session, login still heals). **Net for users incl. devaspe: My-Uploads self-corrects on next page LOAD — no re-login.**
+>
+> **BACKUP/ROLLBACK:** `scratchpad/worker-backup-20260712/` = pre-Bug-B `worker-deployed.js` + `meta-restore.json` (bindings) + all 195 `bluser*` KV values + `worker-pre-bugB2.multipart` + `RESTORE.md` (one-cmd restore code/one-acct/all-accts). Site rollback = `git revert 39a03a8`. Artifacts: `scratchpad/{worker-patched-bugB.js,bugB.diff,worker-patched-bugB2.js,bugB2.diff,rt2.mjs}`.
+>
+> **📋 Bug A — upload→/list TURNAROUND lag (≤3min), RECON DONE, patch NOT written/deployed — pick up later.** `handleUpload` busts `cache:games` (bugB2 line 286) but NOT `cache:list:<repo>:<game>` (lone omission; delete/admin at 677/742/784/856 all bust it) → `/list` serves stale 180s cache after an upload. Also `handleList:151` errors 502 on GitHub 5xx w/ NO stale fallback (live 504 observed). Fix pair: **A1** add `kvDelete(env.CONFIG_KV,"cache:list:"+repo+":"+safegame)` after line 286; **A2** read cache up-front + fall back to it on `!res.ok` in handleList (ship together — A1 alone widens the 502 window); **A3** optional app-side `&refresh=1` after own upload (`CommunityConfigWorker.kt`). Full prep + code + deploy/verify recipe: [[project_bannerlator_config_list_cache_bug_a]].
+
+## 2026-07-11 — ✅ RELEASE 2.6 SHIPPED = LATEST (user: "ready to release 2.6") — build GREEN, notes applied, verified live
+
+> **DONE + VERIFIED LIVE.** Release build **run 29172266636 = success**; `2.6` release published + marked **Latest**, NOT draft/prerelease, `targetCommitish=main` @ `adb9be6f`. Assets: `Bannerlator-2.6-{standard,pubg,ludashi}.apk` + **`update.json`** (in-app updater now offers 2.6). Full styled body applied via `gh release edit 2.6 --notes-file scratchpad/release_2.6.md` — confirmed contains Community Config Sharing + **guide link** (`blob/main/docs/community-configs-guide.md`) + Optional accounts + 🎨 config polish incl **PR #84 (isygold) VEGAS config-dialog + `[❤️ Sponsor isygold →](https://github.com/sponsors/isygold)`** (matches README format, user-requested). (⚠️ the bg verify cmd's `--json isLatest` field errored on this gh version → false exit-1; build+edit both succeeded — verified "Latest" via `gh release list`.) **NEXT stable=2.7; everything after=`2.7-preN` vc44+.**
+
+## 2026-07-11 — 🚀 RELEASE 2.6 CUT (user: "ready to release 2.6") — build DISPATCHED, notes swap pending
+
+> **Version bumped `2.5.2`→`2.6`, versionCode `42`→`43`** (`app/build.gradle` + README Information line), commit `adb9be6f` `[skip ci]` → **main tip `adb9be6f`**. Release workflow **"Nightly Manual Release Build" run 29172266636** dispatched on main: `release_tag=2.6`, `release_title=Bannerlator 2.6`, `release_number=2.6`, `make_prerelease=false` (→ `make_latest`, updates `update.json`). Builds all 3 flavors (standard/pubg/ludashi). Short plain-text `release_notes` (feeds `update.json` in-app prompt) dispatched; **full styled body** = `scratchpad/release_2.6.md` (mirrors 2.5.2 layout: centered logo + badges release-2.6/vc-43/app-side, `# Bannerlator 2.6`, `## ✨ What's New` → 🌐 Community Config Sharing (full 37/39 capture + **guide link** `blob/main/docs/community-configs-guide.md` like the README) / 👤 Optional accounts / 🎨 config polish, 🙌 community, 📥 downloads table) → applied via `gh release edit 2.6 --notes-file` after the run creates the release (bg task `bvg30mnpa`).
+>
+> **2.6 = the sum of today's main work:** Community Config SHARING (upload/browse-merge/My-uploads) + full-setup export schema + optional ACCOUNT system (username/password/recovery-key/avatar, all optional) + dxwrapper round-trip (VEGAS-safe) + device-model "Your device" header + PR#84 VEGAS cleanup + plain-English guide + README TOC. All app-side (no ImageFS reinstall).
+>
+> **▶️ AFTER GREEN:** verify release (tag `2.6`, isLatest, 3 APK assets), confirm full notes applied. Then per [[feedback_bannerlator_release_versioning_rule]] **2.6 becomes new STABLE baseline; everything after = `2.7-preN` (vc44+)**. Credits pass at [[project_bannerlator_steam_branch_release_credits]] still pending.
+
+## 2026-07-11 — ✅ CHECKPOINT: dxwrapper round-trip + device-model header MERGED TO MAIN; Community-Configs guide + README TOC. Main tip `291c9ffa` (still 2.6-preN, vc42, NOT tagged)
+
+> Four things landed on `main` today, all off the post-PR#84 tip `a69845d3`, plus the account/community-sharing/PR#84 work already there. **Main tip now `291c9ffa`.**
+>
+> **1. dxwrapper raw choice in `bl_ext`** (`3c285bc6`, merged remote-FF `a69845d3..3c285bc6`). Added `"dxwrapper"` to `ConfigExporter.BL_EXT_KEYS` + `ShortcutExporter` resolves it (shortcut-override-else-`container.getDXWrapper()`); translate overlay + apply already handled it. So EVERY wrapper choice — incl **VEGAS** and any non-inferrable one — round-trips in exported configs (pc_* only INFERRED it from versions before). Round-trip test asserts `dxwrapper=vegas` survives+overrides. CI 29170863313 green; APK `bannerlator-dxwrapper-roundtrip-3c285bc` (sha256 `048035c8…`). Main artifacts build 29171155368 dispatched. Detail [[project_pr84_vegas_review]] "FOLLOW-UP".
+>
+> **2. Device-model in "Your device" header** (`e2240ca1`, cherry-picked onto `3c285bc6` → linear main; feature branch `feat/device-model-label` deleted). New `DeviceIdentity.deviceModel()` (Build.MANUFACTURER+MODEL, de-duped, all-caps brands preserved → user's device = `AYANEO Pocket FIT`); `CommunityCatalog` gains display-only `deviceModel` field; `deviceHeaderLabel(model, hardware)` renders `<model> · <soc/gpu>`, substituting literal **"Unresolved"** for any undetected slot (both-missing collapses to a single "Unresolved") at all 3 "Your device:" sites. **MATCHING UNTOUCHED** — `hardwareLabel` (`userSoc ?: userGpu`) remains the SOLE match key; `deviceModel` never enters `GameMatcher.hardwareMatchesUser`/`hw.contains(d.soc)`. **Main artifacts build 29171493023 = ✅ SUCCESS (green).** APK `bannerlator-device-model-label-dce4389` (sha256 `37206e9a…`).
+>
+> **3. Plain-English guide** `docs/community-configs-guide.md` (`457a8239`, `[skip ci]`) — non-technical walkthrough of the WHOLE community-config + optional-account system (what a config is, find/apply/smart-install, detail page, share/upload, My-uploads, optional account + recovery-key, privacy, FAQ). **Every claim verified against actual code** (create=`{username,password}` no-email; reset=`{username,recovery_key,new_password}`; recovery key one-time + backed up to `Download/bannerlator/game-configs/my-account.json`; attribution `"by <username>"`/`"Anonymous user"`; anon upload = optional `session`; My-uploads inline desc-edit+delete; export EXCLUDES device-specific `graphicsDriverConfig`). README `### 🌐 Community Configs` got 3 brief bullets (share / optional-account / full-guide link).
+>
+> **4. README linked Table of Contents** (`291c9ffa`, `[skip ci]`) — `## 📖 Contents` after the Information table + "Contents" jump-link in top nav. Generated byte-exact with the REAL `github-slugger` (several emoji anchors carry an invisible VS-16, e.g. `#️-renderers`/`#️-building`; `ℹ️ Information`→`#ℹ️-information`). Also fixed 2 pre-existing broken nav anchors (`#building`→`#️-building`, `#credits`→`#-credits`). Round-trip validated: **all 31 in-page links resolve ✅**.
+>
+> **Config compatibility:** NO regeneration needed — device-model change doesn't touch export (`meta.device` already carried Build.MANUFACTURER+MODEL); dxwrapper `bl_ext` is additive (old/BannerHub-origin configs lack the key → old inference behavior, still valid).
+>
+> **🔒 Account security AUDITED (user asked "make sure username system is secure").** (a) Confirmed NO account secret leaks into a shared config — export writes only `uploader{username,avatarUrl}` + `upload_token`; recovery_key/password/session never in config content; upload `session` is a sibling request field, never inside `content`. (b) Worker auth is sound: salted PBKDF2-SHA256, **recovery key itself hashed** (not plaintext), CSPRNG, HMAC(AUTH_SECRET) sessions fail-closed, constant-time compare, timing-equalized no-enumeration login/reset, 5-fail/15min lockout. Offered 2 hardening items — (🟠) recovery key world-readable in `Download/.../my-account.json` (`setReadable(true,false)`, targetSdk28 legacy storage; in shared storage by design for reinstall-survival), (🟡) PBKDF2 100k+6-char-min → proposed pepper+longer min. **USER DECIDED GOOD AS-IS** (throwaway cred, nothing sensitive; blast radius = edit/delete your own shared configs). Do NOT implement unless account scope changes. Full audit+decision → [[project_bannerlator_bannerhub_config_crossuse]] "🔒 SECURITY REVIEW".
+>
+> **▶️ NEXT: user device-tests the accumulated builds (account + community-sharing + dxwrapper + device-model) → cut `2.6-pre2`.**
+
+## 2026-07-11 — 👤 ACCOUNT SYSTEM (all 4 phases) — ✅ MERGED TO MAIN (`dfd24263`), NOT tagged
+
+> Optional username+password account (isolated OUR worker/KV/R2) → cross-device recovery + identity + hosted avatar; accounts OPTIONAL (anon flows unchanged). Merged fast-forward (main tip `dfd24263`, +5 commits from `feat/account-system`). Worker `bannerhub-api/bannerhub-configs-worker.js` create/login/reset/avatar (+`/upload` session→registry) DEPLOYED + live-self-test all-pass (PBKDF2 100k ⚠️CF cap + HMAC AUTH_SECRET sessions + recovery-key, R2 bucket `bannerlator-avatars`); commits `91bc9f8`/`2d3bca5`/`2a0f860`. App: My-account sheet (globe 👤 + drawer synced via AccountUiBus; 🌐 globe stays globe, 👤+☰=avatar with versioned cache-bust URL), meta.uploader stamp, login-restore of My uploads (with delete/edit token). APKs `account-phase{2,3,4}-*`, final `bannerlator-account-phase4-dfd2426`. **▶️ NEXT: user device-tests account + community-sharing builds → cut `2.6-pre2`.** Full detail [[project_bannerlator_bannerhub_config_crossuse]] "👤 ACCOUNT SYSTEM".
+
+## 2026-07-11 — 🔀 PR #84 (isygold) VEGAS config-dialog — REVIEW RESOLVED, READY TO MERGE, ⏸️ DEFERRED
+
+> **`The412Banner/Bannerlator` #84 by isygold — "remove duplicate VEGAS DX wrapper entry + add delete/local-install/progress-bar to VEGAS config dialog". Base `main`, head `2c1ab8a`, +139/-21, 4 files, mergeable=CLEAN. Both of our review points are now RESOLVED and it re-verifies compile-clean against today's main. ⏸️ MERGE DEFERRED by user — pick back up AFTER the account-system feature + current community-game-configs work.**
+>
+> **Review loop closed.** Owner review posted (2026-07-11 14:45) raised: (#1 BLOCK) the DXVK_CONFIG_FILE guard also dropped `DXVK_FRAME_RATE` DXVK-wide, and (#3) `findActivity()!!` hard-assert. isygold replied 21:54 + fixed both in tip **`2c1ab8a`** ("separate DXVK_FRAME_RATE from config file guard + soft findActivity null check"). Diff confirms: `DXVK_FRAME_RATE` now `put` OUTSIDE the `!hasConfigFile` guard (only the inline `DXVK_CONFIG` vegas-defaults string is skipped for a custom `.conf` — deliberate, user's file owns those keys); `val activity = context.findActivity() ?: return`.
+>
+> **Re-verified compile-clean vs today's `origin/main`** (main moved since the Jul-8 PR; git-CLEAN only proves textual): all referenced symbols exist w/ matching sigs — `InstallFailedReason` = exactly the **8 values** the exhaustive `when` maps (no `else` → compiles); `Downloader.ProgressListener{onProgress(float)}`+3-arg `downloadFile`; `ContentsManager.getProfiles/removeContent/syncContents`; `DXVKConfigDialog.loadVegasVersionList/loadDxvkVersionList/parseConfig/setEnvVars`; `InAppFilePicker.WCP/buildIntent/pickedUri`; `ContentProfile.verName`+`CONTENT_TYPE_VEGAS`. New Kt adds no imports — all pre-exist in `ContainerDetailScreen.kt`; `LinearProgressIndicator` resolves via `material3.*` wildcard. **⚠️ NOT CI-compiled** (fork PR = no checks); static verification only — real compile fires on merge or via an in-repo staging branch.
+>
+> **Non-blocking minors left as-is** (fast-follow optional): install-launcher lacks the delete path's try/finally; install doesn't advance `selectedDxvk`; double `syncContents`; deprecated M3 `LinearProgressIndicator(progress=Float)`; orphaned literal-`VEGAS` containers show blank picker till re-saved (runtime unchanged).
+>
+> **▶️ WHEN RESUMED:** merge #84 → main (app-side only, folds into 2.6-preN) OR push head to an in-repo branch for a green CI build first, then merge; optionally sweep the 5 minors. Full detail: memory [[project_pr84_vegas_review]].
+
+## 2026-07-11 — 🌐 ONLINE SHARING FEATURE-COMPLETE — ✅ MERGED TO MAIN (`6843009d`), NOT tagged
+
+> **The whole "give back" half of community configs is built AND merged. ✅ MERGED TO MAIN (fast-forward, main tip `6843009d`, +8 commits from `feat/config-upload`). NOT tagged (still 2.6-preN). Main artifacts build dispatched: run `29166165248` (`release_number=1.0-test`). Latest APK `/sdcard/Download/bannerlator-my-uploads-v2-19e82c3-standard.apk`. User installed it, will device-test the newest UI (My-uploads v2 + 4b catalog visibility) after work. Full plan/arch: memory [[project_bannerlator_bannerhub_config_crossuse]].**
+>
+> **Asymmetric visibility (BannerHub NEVER sees Bannerlator configs; Bannerlator sees BOTH) — PROVEN.** Uploads → separate `bannerlator-game-configs` repo via worker `?ns=bannerlator`; BannerHub reads only its own repo (never passes ns).
+>
+> **✅ Step 1 — worker ns-routing DEPLOYED + live-verified.** `bannerhub-api/bannerhub-configs-worker.js` (additive; no-ns=BannerHub byte-identical), deployed via CF REST API (main_module=worker.js, keep_bindings retained CONFIG_KV/ADMIN_SECRET/AUTH_SECRET/GITHUB_TOKEN), backup in `bannerhub-api/.worker-backups/`, committed `b25242b`. Self-test proved isolation + GITHUB_TOKEN writes our repo. CF creds `/data/data/com.termux/files/home/cf-creds.txt` (⚠️ absolute path, `~` no-expand in bridge; never log/commit).
+> **✅ Step 2 — upload action, DEVICE-VERIFIED.** `CommunityConfigWorker.upload/deleteUpload/describe(ns)`, `UploadedConfigsStore` (SP `banner_config_uploads` + reinstall-proof manifest `my-uploaded-configs.json` in Download/bannerlator/game-configs/), VM `uploadShortcutConfig`, "Upload to community" button + replace-with-warning. Real DiRT 3 upload → landed in our repo, invisible to BannerHub, true-replace proven.
+> **✅ Step 4a — browse read-merge, DEVICE-VERIFIED.** `list(game,ns)`/`download(...,ns)`; `fetchGameConfigs` queries BOTH repos per folder + merges; per-shortcut sheet passes the shortcut's own folder name; `BANNERLATOR` badge on cards. Bug fixed same session: `CommunityConfigRef.ns` threaded through detail/apply download (was "Couldn't fetch"). Full loop proven: share→list→open→apply.
+> **✅ Step 4b — catalog coverage (index + app).** INDEX (bgc-repo): `canonicalize.py` now ingests our own `configs/` uploads → folds into `games_canonical.json`, MERGED by appid (DiRT 3 upload consolidated under existing "Dirt 3" 44500 via alias `dirt_3_Colin_McRae→44500`, folders/devices/config_count merged; unresolved uploads → own `name:` entry). Pushed bgc-repo `8bf0e12`; `configs/README.md` added (`900f6b8`, keeps repo root a single `configs/` folder). APP: catalog **index Refresh** button (raw CDN `games_canonical.json?t=` — NO API limit), device-fallback `fetchForDevice` HARDENED to the worker (removed the last `api.github.com/contents` call → zero API-limit paths in the read path). Commits `5b8c157d`.
+> **✅ AUTO-INDEX — uploads index in ~1min not 24h.** New 2nd workflow `bgc-repo/.github/workflows/trigger-on-upload.yml` (`721ad38`): on push to `configs/**` → `gh workflow run sync-from-bannerhub.yml` (workflow_dispatch fires with default GITHUB_TOKEN + actions:write, no PAT). Loop-safe (sync commits root files only, `[skip ci]`; trigger watches configs/** only). Daily cron stays as safety net.
+> **✅ Step 3 — My uploads manager.** v1 (`e60a81c3`): "My uploads" list (from manifest, reinstall-proof) + delete + edit-description + polish (replace-Cancel no longer parks the coroutine; button "Preparing…"→"Uploading…"). v2 (`19e82c32`): **globe catalog-browser entry point** (👤 person icon; top bar now ↻ Refresh · 👤 My uploads · ✕ Close — upload/import icon REMOVED from globe) + **expandable-list + summary redesign** (header `Shared N · ↓total · ★total`; tap a row to expand → inline description `OutlinedTextField` prefilled from `/desc`, Save inline, Delete; no separate edit modal). Same view opens from globe 👤 AND per-game dialog.
+>
+> **▶️ NEXT:** user device-tests My-uploads v2 (globe 👤 → expand → inline edit) + 4b catalog visibility (globe → Refresh → DiRT 3 shows the config) + auto-trigger workflow (next real upload fires it). THEN cut **`2.6-pre2`** (versionCode bump + tag prerelease + `update.json`). Merge to main = DONE. Commit trail on branch: `8b0eea95`(2)→`571c65ee`(4a)→`945c092a`(ns-fix)→`aa5a600d`(docs)→`5b8c157d`(refresh+fallback)→`e60a81c3`(My-uploads v1)→`19e82c32`(My-uploads v2). 2.6 release notes drafted in topic file.
+
+## 2026-07-11 — 🌐 STEP 3 ONLINE SHARING: worker ns-routing DEPLOYED+VERIFIED + client upload action BUILT
+
+> **Online config sharing (the "give back" half). Asymmetric visibility: BannerHub users NEVER see Bannerlator configs; Bannerlator users see BOTH. Full plan + arch in memory [[project_bannerlator_bannerhub_config_crossuse]] "🚀 STEP 3 PLAN".**
+>
+> **✅✅ (1) WORKER ns-routing DEPLOYED + LIVE-VERIFIED.** Modified the EXISTING config worker `bannerhub-api/bannerhub-configs-worker.js` (additive; NOT a new worker) — every GitHub call resolves its repo from `?ns=`: no-ns → `bannerhub-game-configs` (byte-identical to before, BannerHub untouched), `?ns=bannerlator` → `bannerlator-game-configs`. `source:<sha>` records ns (delete/purge route correctly); list cache repo-namespaced. Deployed via CF REST API `PUT /workers/scripts/bannerhub-configs-worker` multipart (module worker **main_module=worker.js**, compat 2024-01-01, `CONFIG_KV` re-declared + `keep_bindings:["secret_text"]`). **Pre-deploy worker backed up in `bannerhub-api/.worker-backups/`.** Committed `bannerhub-api` `b25242b`. **LIVE-VERIFIED:** all 4 bindings intact (CONFIG_KV/ADMIN_SECRET/AUTH_SECRET/GITHUB_TOKEN); BannerHub unaffected (2125 games, Megabonk 7 cfgs); ns=bannerlator routes to our repo; **GITHUB_TOKEN CAN write bannerlator-game-configs** (self-test upload succeeded → no new secret needed); **ASYMMETRIC ISOLATION PROVEN** (self-test cfg via ns=bannerlator=1, invisible to no-ns=0); token-gated /delete works; self-test cleaned up. CF creds `/data/data/com.termux/files/home/cf-creds.txt` (Termux; ⚠️ `~` no-expand in bridge → absolute path; never logged/committed). Recipe [[reference_bannerhub_api_imagefs_and_worker_deploy]].
+>
+> **✅ (2) CLIENT UPLOAD ACTION BUILT + STAGED (device-verify pending).** Branch `feat/config-upload` off main `f440f3c8`, tip `8b0eea95`, CI run 29158038287 green (3 flavors), APK `/sdcard/Download/bannerlator-config-upload-8b0eea9-standard.apk`. `CommunityConfigWorker.upload/deleteUpload/describe(ns="bannerlator")`+`UploadResult`; new `UploadedConfigsStore.kt` (object, Context-per-call; write-through SharedPreferences `banner_config_uploads` + manifest `my-uploaded-configs.json` in Download/bannerlator/game-configs/ = reinstall-proof token backup, hydrates SP from manifest on fresh install; `add/remove/all/forGame`); `ShortcutsViewModel.uploadShortcutConfig(shortcut,onExisting,onResult)` (IO; parses upload_token/soc/device from meta; same-game→replace-flow parked on a CompletableDeferred until UI confirms → upload new, best-effort delete old, update store); "Upload to community" button in the per-game Community-configs dialog + replace-confirm AlertDialog + progress spinner + result toast. `describe` method in place, unused until step-3 My-uploads. **⚠️ minor: Cancel leaves the coroutine parked on the deferred (harmless, GC'd w/ ViewModel scope) — fold a complete-on-cancel fix into step 3.** Uploads OPEN (no gating); same-game-same-device REPLACES with warning.
+>
+> **▶️ NEXT:** (a) DEVICE-VERIFY step 2 — real upload → bridge-confirm lands in bannerlator-game-configs + invisible to BannerHub + manifest written + replace-warning fires; (b) merge `feat/config-upload`→main; (c) **step 3** = "My uploads" tab (list + live votes/downloads + delete + edit-description via `describe`) + hydrate-from-manifest on reinstall + the Cancel-coroutine fix; (d) fold `configs/` into the canonicalize index so uploaded games appear in browse + polish (app_source on cards, 409 already-voted, cache-refresh). Ship `2.6-pre2`.
+
+## 2026-07-11 — 📤 Config export schema widened (bl_ext) + new save path + community/settings outlines — NOT MERGED
+
+> **Branch `feat/config-export-schema` (off main `8b7526ca`), tip `e8df4a1a`. NOT merged, NOT tagged — still `2.6-preN`.** Latest staged APK `bannerlator-settings-outline-e8df4a1-standard.apk`. Two threads on this branch: (A) export-coverage widening, (B) round-2 UI outlines.
+>
+> **(A) EXPORT SCHEMA — coverage 8/39 → ~36/39.** Additive, BannerHub-SAFE `bl_ext` namespace: pc_* output byte-identical (BannerHub still reads our configs, component-install resolution unchanged, BannerHub-origin configs with no bl_ext translate exactly as before). `bl_ext` = one nested `settings.bl_ext` object holding the Bannerlator-only fields under their native shortcut-extra key names; `translate()` overlays it straight back onto scalars (round-trip = identity). Commits: `b6b6673d` (bl_ext ~28 scalar fields + async), `e9d63a2e` (widened to carry the FULL `dxwrapperConfig` comma-list — version/vkd3dVersion/async/vulkanVersion/any DXVK sub-key; apply keeps version+vkd3dVersion on the component-resolution path, merges every OTHER sub-key surgically). `graphicsDriverConfig` deliberately NOT widened (device-specific gpuName/BCn stay preserved-on-target). Files: `ConfigExporter.kt`, `ShortcutExporter.kt`, `ShortcutConfig.kt` (ConfigTranslator), `CommunityConfigApply.kt`, test `ConfigExporterTest.kt`. **✅ EXPORT half DEVICE-PROVEN** — `Megabonk-…-1783770615.json` carries a populated `bl_ext` (24 fields: screenSize/renderer/sfCompatMode/fullscreenMode/frameGenEngine/fpsLimiterEnabled/sharpness×3/reshadeMode+Effect/emulator/box64Version+Preset/fexcorePreset/cpuList/startupSelection/exclusiveXInput/simTouchScreen/numControllers/wincomponents/lc_all/autoCloseOnExit/async) — that export predates the full-dxwrapperConfig commit, so a FRESH export on `e8df4a1a` is needed to see `bl_ext.dxwrapperConfig`. **⚠️ IMPORT/apply round-trip NOT yet device-verified** (delete→re-add→import→diff `[Extra Data]`). **⚠️ Round-trip UNIT TEST written but NEVER EXECUTED** — no JVM test runner under proot (AAPT2 won't start), CI "artifacts only" compiles but doesn't run unit tests; proof is the device round-trip.
+>
+> **(A2) NEW EXPORT SAVE PATH** (`00450fd2`, `ShortcutsScreen.kt` `saveExportToDownloads`): configs now save to `Download/bannerlator/game-configs/` (both folders auto-created), not Downloads root. ✅ device-proven (file landed there). Share action still uses private cacheDir (unchanged).
+>
+> **(B) UI OUTLINES round 2** — community-config popups + settings sections now read as bordered cards. `28ecc9c5` (per-game AlertDialog surface dropped to surfaceContainerLow so its config-card outlines read), `d0c88d6f` (catalog-browser `Dialog`→`Surface` gets a 1dp outline, both orientation variants), `4358bce0` (per-game AlertDialog box gets a shape-matched `Modifier.border` 1dp outline — AlertDialog has no border param), `e8df4a1a` (every Settings section outlined via the shared `FieldSet` composable — one edit covers all sections). **✅ box outlines device-checked by user ("beautiful").**
+>
+> **▶️ NEXT:** (1) fresh export on e8df4a1a → confirm `bl_ext.dxwrapperConfig` full comma-list; (2) IMPORT round-trip device-verify (export→delete→re-add→import→bridge-diff `[Extra Data]` before/after, incl. full DXVK config); (3) then merge branch→main (artifacts-only, stays 2.6-preN) or roll into a `2.6-pre` cut; (4) step 3 = ONLINE upload (`POST /upload` app_source=bannerlator into `bannerlator-game-configs`). Contract: [[reference_bannerhub_config_worker_contract]]; full detail [[project_bannerlator_bannerhub_config_crossuse]].
+
+## 2026-07-11 — 🎨 UI: flat menus → outlined-card style (download sheet + all app dropdowns) — MERGED TO MAIN
+
+> **✅ MERGED TO MAIN (fast-forward, tip `d4c79808`). NOT tagged — artifacts-only build auto-fired on main push. Still `2.6-preN` (vc unchanged); folds into next `2.6-pre`.** Branch `feat/download-sheet-cards` (5 commits: `f9f16067`→`4f992cfc`→`5c635900`→`ee1189bd`→`d4c79808`). Device-verified across every menu.
+>
+> **What shipped — the whole "flat menu → file-manager card" pass:**
+> 1. **Download sheet** (`ContentDownloadSheet.kt`, all components DXVK/VKD3D/FEXCore/Box64/WOWBox64/Wine/Proton): version rows → outlined `Card` (rounded + `outline` border + `surfaceContainer`, matches FileManager `FileCard`); install spinner → **content-card dialog** (`InstallCardState`/`InstallCardPhase` → Type/Version/Code/desc + live 0→100% `LinearProgressIndicator`), for BOTH local-file and catalog installs; long install-dialog titles wrap (`weight(1f)`+`maxLines=2`+ellipsis).
+> 2. **Shared helper** `ui/screens/MenuStyle.kt` — `Modifier.outlinedMenuCard()` (`clip`+`background(surfaceContainer)`+`border(1.dp,outline)`) + `MenuItemDivider()` (`HorizontalDivider(outline.copy(alpha=.5f))`). Every restyled dropdown routes through it → guaranteed identical.
+> 3. **All flat dropdowns restyled** via the helper: download-sheet folder menu (Browse/Pick-via-system); Containers ⚙ gear menu (`ContainersScreen.kt`); FileManager drive/storage picker (`FileManagerScreen.kt`); Games per-game ⋮ overflow (`ShortcutOverflowButton` in `ShortcutsScreen.kt`, 8 items); **all field-selector pickers** on container editor + shortcut editor via the two shared composables `LabeledDropdown` + `CompactDropdown` (`ContainerDetailScreen.kt`) — one edit each covers Renderer/Render-scale/Audio/Emulator/Fullscreen/Frame-Gen + DXVK/VKD3D/graphics-driver dialogs + external-controller screen.
+>
+> **M3 caveat (compose-bom 2024.02 → M3 1.2.0):** `DropdownMenu`/`ExposedDropdownMenu` have no `shape`/`border`/`containerColor` params → styled via `modifier` on menu content. Popup Surface keeps its own ~4dp corners under our 10dp bordered content (consistent across all menus; cosmetically fine). **▶️ NEXT:** fold into a `2.6-pre` cut, or sweep for any remaining flat dropdowns if more surface. Last staged APK `bannerlator-game-menu-pickers-d4c7980-standard.apk`.
+
+## 2026-07-11 — 🧪 Proton 9 + FEX-unixlib: loader compiles on wine 9.0 (but no installable wcp yet)
+
+> **Continuation of the P10/P11 FEX-unixlib work onto Proton 9.** Full memory: [[project_fexcore_unixlib_transition]].
+> **✅ VERIFIED `proton_9.0` = latest Valve P9** (our branch == GameNative upstream, just past Valve final `proton-9.0-4`; no 9.0-5, line ended).
+> **✅ Loader compiles on wine 9.0 arm64ec (feasibility proven).** Plain `proton_9.0` has no build tooling; arm64ec base = GameNative `proton_9.0_arm64ec_add_steam` (pipetto-crypto arm64ec wine-9 tree, 2026-07-08, **committed-to-tree, NO android/patches overlay**, different build system than 10/11). Brought into our fork as **`feat/p9-fexunixlib`** (`97c332ecfe`), re-anchored the loader source onto 9.0 ntdll (enum **1002** confirmed). Build run **29139177186** SUCCESS; artifact `arm64ec/ntdll/ntdll.so` **binary-verified** `nm load_unixlib_by_name` @0x61d78 + PREFIX/`/lib/wine`. ⇒ FEX-unixlib loader ports cleanly 4 major versions back.
+> **⚠️ BLOCKER for shipping P9+unixlibs: NO installable `.wcp`.** That branch's only CI (`build-steam-targets.yml`) builds Steam components + (agent-added) ntdll/wow64 only — no `make install`/prefix/wcp. **▶️ NEXT (to make P9 installable): wire a full install+wcp-packaging step into the branch CI** (port 10/11 `build-step-arm64ec.sh --install`). Also: full P9 arm64ec ntdll never proven green before this, so treat runtime as untested. Nothing published, nothing on device.
+>
+> **⛔ UPDATE (2026-07-11): wired the packaging (commit `ff16570e99`, workflow `build-proton-p9-arm64ec.yml`, run 29145940665) — BUT found a DECISIVE deeper blocker.** GameNative's P9 arm64ec branch is **INCOMPLETE**: no `android/` dir exists yet `build-step-arm64ec.sh` `git apply`s from `./android/patches/` (all failed silently in the earlier "green" run → that green only meant lsteamclient + our loader compile, NOT a bootable build). The bionic arm64ec patch set (address-space/preloader/esync-fsync/thread-suspension/wow64-syscall/winex11-bionic) is in NO accessible repo; P10's set is NOT portable (57/70 fail vs wine-9). **⇒ any P9 .wcp we build now is under-patched near-stock wine-9 → NOT expected to BOOT on bionic. NOT device-ready.** The loader-compiles-on-9.0 result stands; the blocker is GameNative-branch incompleteness, not our unixlib work. **To get a bootable P9 arm64ec: find the wine-9 bionic patch set (pipetto-crypto origin?) or hand-rebase 57 P10 patches onto wine-9 (real effort). DECISION PENDING — may not be worth it (P9 niche; P10/11 cover most).**
+>
+> **✅✅ RESOLVED (2026-07-11) — pessimism was WRONG, we have a complete bootable-candidate P9 wcp.** Surveyed Pipetto-crypto: authoritative base = **`Pipetto-crypto/wine` @ `proton-9.0-arm64ec`** (Wine 9.0, bionic adaptations committed IN-TREE — virtual.c 251KB w/ FexStatsShm/kernel_writewatch, esync.c present, Android dnsapi/clipboard/browser/rawinput/iphlpapi/winex11). The "missing patches" were just the *overlay* dir; the functionality is in-source (P10 patches failed b/c pipetto did it differently in-tree, not because it's absent). Packaging run **29145940665** SUCCESS → **`proton-9.0-arm64ec.wcp`** COMPLETE (493 arm64ec + 492 i386 DLLs + 21 unix .so + prefixPack; 88MB = stripped wine-9), loader verified (`nm load_unixlib_by_name`), genuine bionic arm64ec (`bin/wine` interp linker64 NDK r27d). md5 `74eb999e…`, staged `/sdcard/Download/`. **▶️ NEXT = device boot test** (fresh arm64ec container + FEXCore + FEX -unix component; /proc/maps for libarm64ecfex.so). First bionic arm64ec Proton 9 we've built.
+
+## 2026-07-10 (night) — 🍷 CHECKPOINT: Proton 10 FEX-unixlib + Coffin Colors controller-fix rebuild
+
+> **Session on `The412Banner/proton-wine` (proton layers for Bannerlator). Resume tomorrow; also queued: the 10.0-4 shell32 copy bug.** Full memory: [[project_fexcore_unixlib_transition]], [[reference_coffincolors_proton10_controllerfix]], [[reference_bannerlator_repackage_wcp_proton]].
+>
+> **✅ DONE today:**
+> 1. **Repacked 2 WinNative unixlib Proton wcps** (name-only + a NEW gotcha: `prefixPack.tzst`→must be XZ `.txz`, ContainerManager hardcodes it): `Proton-10-arm64ec-unix-FIXED.wcp`, `Proton-10.0-4-arm64ec-steam-unix-FIXED.wcp` (both on device `/sdcard/Download`).
+> 2. **Ported FEX-unixlib loader (`MemoryWineLoadUnixLibByName`=1002 + `$PREFIX/lib/wine` search) to Proton 10** → branch `feat/p10-fexunixlib`, built (run 29133576088), **binary-verified** (`nm` `load_unixlib_by_name` in ntdll.so) + **DEVICE-VERIFIED** (`libarm64ecfex.so` mapped w/ r-xp = FIRST successful end-to-end unixlib load). Published pre-release **`build-p10-20260710-sdk28`** (arm64ec, prerelease so P11 stays Latest). **MERGED to `proton_10.0`** (merge `32ce676bc`; auto-fired sdk28+sdk35 runs CANCELLED, no unwanted publish). 2c variant NOT merged.
+> 3. **Identified Nightlies `proton-10.0-arm64ec.wcp` (+`proton-10-arm64ec.wcp.xz`) = Coffin Colors' Proton 10 controller-fix = Valve Proton 10.0-2c base** (built 2025-07-28 = frozen July-22 wine tree; 2c cut July-24; airtight via the July22→29 commit gap). **Controller fix = ONE file: a patched `winebus.so` (Aug-8)** dropped on the 2c base.
+> 4. **Rebuilding it exactly + unixlibs:** winebus.so is ABI-version-locked (2c `winebus.sys/unixlib.h` structs differ from 10.0-4 → can't swap into our 10.0-4 build). So re-ported the WHOLE GameNative bionic base onto 2c: branch **`feat/p10-2c-fexunixlib`** `276f94fc06e`, **66/66 patches apply clean** (re-ports: winex11 raw-xinput2, services.c re-authored env-whitelist keeping PROTON_*_HIDRAW+FEX_* passthrough, wineboot aarch64 branch, nsiproxy; winepulse dropped; 2 trivial rebases). versionName `10.0-2-arm64ec`.
+>
+> **✅ 2c BUILD GREEN + LOADER VERIFIED (2026-07-10 night):** run **29136936208** SUCCESS (build aarch64 ✓, release skipped). Artifact `proton-10.0-2-arm64ec.wcp` — `nm ntdll.so` confirms `load_unixlib_by_name` @0x5fbe8 + PREFIX/`/lib/wine` search strings; profile type Proton, versionName `10.0-2-arm64ec`, prefixPack.txz. So the risky re-port compiled clean w/ the unixlib loader. (⚠️ tar entries have NO `./` prefix — extract as `profile.json`/`lib/...`.) Local: `~/scratchpad/p10-2c-verify/`.
+> **✅ WINEBUS SWAP + DELIVERED + DEVICE-CONFIRMED (2026-07-10 night):** swapped Coffin's `winebus.so` (md5 `3242ebe8…`) into the artifact (loader still intact), repacked → **`/sdcard/Download/proton-10.0-2-arm64ec-controllerfix-unixlib.wcp`** (md5 `770468b2…`, → dropdown `proton-10.0-2-arm64ec-2`). = Valve 10.0-2c + FEX-unixlib loader + Coffin controller winebus. **USER-CONFIRMED: installs + creates container + BOOTS.** (CI did NOT bake the controller fix — only Coffin's compiled winebus.so exists, not source → deliberate post-build binary swap.) ⏳ still to confirm at runtime: unixlib maps (`libarm64ecfex.so`) + controller live (container closed before probe; re-boot w/ controller+game). **⚠️ copy D→C bug reproduces on 2c too** → shell32 NULL-deref is version-independent across P10, NOT our build; clean captured repro deferred to tomorrow's shell32 session ([[project_bannerlator_wfm_shell32_copy_crash]]).
+> **▶️ NEXT (tomorrow):** (a) 2c build green → download artifact, **swap in Coffin's `winebus.so`** (`~/scratchpad/whichp10/edit/lib/wine/aarch64-unix/winebus.so`), verify (nm loader + winebus=Coffin's), repack, stage to device → **boot + controller test**; if the 2c build succeeds it lives on its **OWN branch** (never merge to proton_10.0, user decision). (b) **10.0-4 shell32 copy-paste bug** — `wfm.exe` D:→C: copy crashes = NULL-deref in Wine `shell32`→`ucrtbase` wide-string path; **pre-existing Wine bug, NOT our unixlib build** (proven: our diff never touches shell32; crash frames have no FEX). Fix = guard shell32 copy NULL or wfm `pFrom/pTo` build. [[project_bannerlator_wfm_shell32_copy_crash]].
+
+## 2026-07-10 — 🔜 Phase 3 (Community Configs SHARING) — local slice ✅ MERGED TO MAIN
+
+> **✅ MERGED TO MAIN `c0b6e669` (2026-07-10, via `feat/config-export`, --no-ff; file list verified clean). NOT tagged/released — artifacts-only build run `29137673954`. Still `2.6-preN` material (vc unchanged at 42); cut a real `2.6-pre1` later. Device+runtime-verified end-to-end (export→import→running game). Continuing tomorrow: on-device sanity of the merged build, then online upload (step 3).**
+> **(pre-merge branch was `feat/config-export` off main `d0284651`.) The "share your own configs" half committed to in the 2.5.2 release notes.**
+> **Step 1 ✅ (CI-green, round-trip=IDENTITY):** `ConfigExporter` (pure JVM core = reverse of `ConfigTranslator`) + `ShortcutExporter` (adapter: shortcut `[Extra Data]`+container defaults → `{meta,settings,components}` pc_* JSON, `app_source="bannerlator"`) + round-trip unit test. `commit 8c0c5f7a`.
+> **Step 2 ✅ (DEVICE-VERIFIED end-to-end incl. running game + hardest missing-components path):** LOCAL export/import — Share (FileProvider chooser / Save-to-Downloads) + Import (.json picker → translate → existing apply engine + smart-install result screen). Device round-trip: export Megabonk → file → delete game → re-add clean → import → surgical apply → **game launches & runs** (DXVK 2.6.2-1-gplasync + VKD3D 3.0.1 load, swapchain 1080p presenting, clean exit); + deleted-ALL-components path → "Needs a component" correctly flagged DXVK/VKD3D → smart-installed exact builds → ✓✓ → write-back confirmed on disk. `commit 54511137`.
+> **Polish fixes on branch:** Proton "change it" advisory now **suppressed when the container already runs the same base Proton** (`ConfigTranslator.protonKey()` normalizes both sides; `commit 363be8da`, device-verified). Graphics **wrapper-selection capture** — config now round-trips the `graphicsDriver` scalar (`pc_ls_GRAPHICS_WRAPPER`, plain string) so a shared config reproduces the wrapper (`wrapper-bcn_layer` etc.), not just the driver version (`commit cd20341b`, CI + mirror-verified). **NOTE: earlier "Turnip fell back to stock" was a MISDIAGNOSIS** — the `Winlator_Renderer adrenotoolsHandle=0x0` line is the host compositor (stock by design); the guest game DOES load the A8XX driver from `graphicsDriverConfig.version`.
+> **▶️ NEXT:** stage the wrapper-fix APK → verify on launch (capture early `GraphicsDriverExtraction` lines: wrapper + A8XX both load for the guest) → then MERGE `feat/config-export` → main + cut `2.6-pre1` (local sharing). Then **step 3 = online upload** (`?ns=bannerlator` into `bannerlator-game-configs`, "My uploads" describe/delete) as `2.6-pre2`. Full detail [[project_bannerlator_bannerhub_config_crossuse]].
+
+## 2026-07-10 — 🚀 2.5.2 STABLE (Community Configs) — ✅ SHIPPED = LATEST
+
+> **✅ SHIPPED: https://github.com/The412Banner/Bannerlator/releases/tag/2.5.2 — tag `2.5.2` @ `53f2197c`, release run 29128582611, prerelease=false, `Latest` (2.5.1 no longer latest), 4 assets (3 flavor APKs + update.json vc42/2.5.2 → 2.5.1 users offered it). Styled body set via `gh release edit --notes-file` after the build (short plain notes went to the workflow for update.json/backtick-safety).**
+> **2.5.2 = the Community Configs release.** vc42 / `2.5.2`, cut from main (community-configs merged + version bump). Stable (prerelease=false, make_latest=true → update.json vc42 offered to 2.5.1 users), 3 flavors, via release.yml (`Nightly Manual Release Build`). Headline: **Community Configs** — browse/apply community per-game/per-device tuning configs in-app (catalog browser, per-uploaded-config cards w/ votes/downloads, Matches-my-device, one-tap surgical Apply, smart inline install of DXVK/VKD3D/FEXCore + Turnip drivers, config detail page w/ live upvotes/downloads/description/comments + upvote & comment). Also: **two new Proton 11.0-1 x86-64 compat layers** (`proton-11.0-1-x86_64-sdk28`/`-sdk35`) published to `winlator-contents` → downloadable in-app. App-side, NO imagefs reinstall. README + release notes updated. Full feature detail in the entry below + memory [[project_bannerlator_bannerhub_config_crossuse]]. **Release-body pattern: dispatch release.yml with SHORT plain-text release_notes (drives update.json, backtick-safe) → then `gh release edit` to set the full styled markdown body (matches prior releases; sidesteps the inline-`${{ }}` backtick trap).** Run id + final status appended after CI. Baseline was 2.5.1 (vc41).
+
+## 2026-07-10 — 🌐 Community Configs: browse/apply BannerHub configs in-app (Phase 1 device-verified + Phase 2 CI-green)
+
+> **✅ MERGED TO MAIN (2026-07-10, `4a8f7807`; tip now `694a58ed`). NOT tagged/released — next stable=2.6, everything=`2.6-preN` until told to cut.** Artifacts built on main (CI Build artifacts-only, dispatch `release_number=1.0-test` so `stage-apk` resolves the artifact name). Latest APK: `/sdcard/Download/bannerlator-fex-yymm-match-694a58e-standard.apk`. Full detail [[project_bannerlator_bannerhub_config_crossuse]] + backend contract [[reference_bannerhub_config_worker_contract]] (repo doc `docs/bannerhub_config_system_reference.md`).**
+>
+> **🔖 NEXT RELEASE NOTES (2.6-pre1 / 2.6) — MUST MENTION (user, 2026-07-10):**
+> 1. **Community Configs** — browse/apply community game-configs in-app: catalog browser + per-uploaded-config cards (votes/downloads) + Matches-my-device, one-tap Apply (surgical merge), smart inline install of missing DXVK/VKD3D/FEXCore + Turnip drivers, config detail page with live upvotes/downloads/description/comments (+ upvote & comment). First-party worker-backed; BannerHub untouched.
+> 2. **Two new Proton 11 x86-64 compatibility layers** now downloadable in-app from the `winlator-contents` catalog: **`proton-11.0-1-x86_64-sdk28`** (Android 9 / SDK 28) and **`proton-11.0-1-x86_64-sdk35`** (Android 15 / SDK 35) — both Proton 11.0-1, x86_64, via `The412Banner/winlator-contents` release `proton-11.0-1-x86_64`.
+>
+> **✅ DEVICE-VERIFIED (2026-07-10):** match/search, catalog browser, landscape two-column, Matches-my-device (matcher fix — normalize HW strings, match user SoC/GPU vs ALL device fields since config `soc`=GPU-renderer string), source label by app_source, per-uploaded-config cards, **multi-folder aggregation** (`fetchGameConfigs` queries ALL folders), **APPLY + component smart-install** (via the FEX flow below), and **Turnip GPU-driver smart-install + apply** (Adreno 5-repo → install → `graphicsDriverConfig.version` write-back — user confirmed "install and apply correctly").
+>
+> **✅ THREE FEX INSTALL FIXES — DEVICE-VERIFIED ("worked out perfect"):** (1) `c1b24b72` **already-installed** component (finishInstallContent `ERROR_EXIST`) → treat as SUCCESS + apply (was a bare "install failed"); also log real `InstallFailedReason` (was swallowed). (2) `f5a68928` **closest-build** install → apply the NEWEST-installed build of the type (`InstalledComponents.newestToken`) not the un-matchable wanted string — covers inline + Browse-all. (3) `694a58ed` **FEX YYMM matching** — GameHub/community label FEX builds as 4-digit `YYMM` (year last-two + month); a config's full date `Fex-20260103`→`2601` for both `InstalledComponents.resolve` (already-installed) and `versionKey` (smart-install ranking → `FEXCore-2601` at distance 0 vs 2607=6); month validated so a DXVK build code `1624` is never a false tag. Diagnosed on-device: valid ZSTD archive pulled, `finishInstallContent` ERROR_EXIST confirmed via profile.json compare.
+>
+> **BACKEND DISCOVERY (2026-07-10): the whole community-config system is FIRST-PARTY user-owned — one Cloudflare worker (`bannerhub-configs-worker.the412banner.workers.dev`, the SAME one Bannerlator already uses for /steam/search) + KV + the GitHub repo. Upvotes/comments/uploads/downloads all live there (NOT XiaoJi). `app_source` tags each upload (`bannerhub`/`bannerhub_lite`/ours→`bannerlator`) and `/admin/purge` deletes by it → Bannerlator reuses the SAME worker, no new backend/repo. Full endpoint+format contract in the repo doc.**
+>
+> **NEWEST (this session, all on the branch, CI-green, device-UNVERIFIED unless noted):** worker-wired detail page (live ★votes/↓downloads/description/comments + upvote + add-comment); whole-row-tappable **thin outlined cards** (match FileManager look) for game + config lists; **per-uploaded-config cards** (worker `/list`, sorted by votes, each `★votes ↓downloads · device · soc · date`; tap→chooser→apply/detail THAT file; offline fallback = per-device rows); **"Matches my device" toggle** on the config-list screen; **source label** by `app_source` (BannerHub / BannerHub Lite / Bannerlator). **DEVICE-VERIFIED fixes:** landscape two-column browser; **"Matches my device" matcher fix** (`GameMatcher` — normalize hardware strings, match user SoC/GPU against ALL device fields since config `soc` is a GPU-renderer string; user confirmed configs now show); source-label rename.
+>
+> **▶️ REMAINING PLAN (updated 2026-07-10 — CONSUME SIDE 100% DONE + VERIFIED). Only these 4 buckets remain; only ONE is a feature:**
+> **✅ A DONE — worker social WRITES verified (2026-07-10):** HttpUtils.post correct (POST/json/UTF-8); worker round-trip proven via fabricated `__bannerlator_selftest__` target (non-polluting) — /vote→{success,votes}, re-vote→409 already_voted (dedup 24h/IP), /comment→success + GET /comments reads it back; device-side curl POST also succeeds. Final genuine confirm = user taps upvote/comment in-app (legit, low-risk). [Turnip + apply + component install + all 3 FEX fixes also ✅ verified.]
+> **➡️ TRACK 3 (= "Phase 3") — THE ONE REMAINING FEATURE: uploads (the "give back" half).** Export a Bannerlator shortcut → `pc_*` config (reverse `ConfigTranslator`) → `POST /upload` with **`app_source="bannerlator"`** (+ describe/delete own uploads) + local export/import. Zero new backend (worker already does uploads).
+> **B. Polish (small/optional, NOT a phase):** 409 already-voted handling (app `vote()` returns null on non-2xx → cross-app already-voted reads as failure); mark already-installed builds "Installed ✓" (not re-offered; harmless now); **Box64/WOWBox64 install gap** (smart-installer only auto-installs DXVK/VKD3D/FEXCore + Turnip — confirm box64/wowbox64 handled/advisory); app_source label on cards; browser drill-position; cache-refresh affordance (index=in-mem+disk+24h → needs force-stop).
+> **D. Ship (release action, not build work):** cut **`2.6-pre1`** (versionCode bump + tag prerelease + `update.json`) — the consume side is ready to ship to the beta channel NOW.
+> **E. Separate infra (not the feature):** CI **matrix** rework (prepare job + flavor matrix + `flavors: standard|all` input + `org.gradle.caching=true`).
+> **Recommended order:** cut `2.6-pre1` (D) now → Track 3 as `2.6-pre2` (folding B in) → E anytime.
+>
+> ---
+> _(original 2026-07-10 Community Configs entry — superseded above, kept for detail)_
+>
+> **The initiative:** consume the community BannerHub game-configs (per-game/per-device tuning) inside Bannerlator. Built a **separate isolated repo** `The412Banner/bannerlator-game-configs` (reads BannerHub read-only, writes only itself — zero upstream impact; PR #1 on the orig repo = fallback). Index: 2116 folders → **1261 canonical games merged by identity**, **config-coverage 92%** (namespaced key: numeric Steam appid | `name:<slug>` non-Steam like PES). HTML catalog + Artifact published.
+>
+> **In-app consumer (this branch):**
+> - **Phase 1 — DEVICE-VERIFIED:** per-shortcut ⋮ → "Community configs" sheet — fuzzy-match shortcut name → canonical game, per-device configs (your-SoC ranked first), + a **manual search box** fallback. Screenshots confirm Crysis 3 + DiRT 3 match correctly.
+> - **Phase 2 — CI-green, on-device UNVERIFIED:** **globe button in Games header** → `CommunityCatalogBrowser` (search · "Matches my device" + Steam/Title filters · Configs/Name/Devices sort · "Your device: <SoC>" chip) → game → per-device configs → **"Apply to game…"** → shortcut picker (**apply-any-to-any, warns on game mismatch**). Apply engine: `CommunityConfigFetcher` (GitHub contents-API → device-token filename match → raw) → `ConfigTranslator` (pc_ls_* → `[Extra Data]`, mirrors `bgc-repo/tools/translate.py`) → `InstalledComponents` (reads `filesDir/contents/{DXVK,VKD3D,Proton,FEXCore,adrenotools}`, minor-aware Match/Missing) → **SURGICAL sub-field merge** (only version/vkd3dVersion/async in dxwrapperConfig + driver version in graphicsDriverConfig; PRESERVES BCn/vulkanVersion/HUD/everything else) → `Shortcut.putExtra`. **wineVersion/Proton = advisory-only**. Per-shortcut sheet's Apply now runs the same engine. Export-ready via reversible `ShortcutConfig` (Phase 3 = export/import/contribute).
+>
+> **Bugs found/fixed on real device:** (1) **matcher scoring** rewritten coverage-based (`0.7·covGame + 0.3·covQuery + 0.001·inter`) — subset formula diluted short names, DiRT 3 lost to Fallout 3 / the DLC; now "Dirt 3" wins 0.82. (2) **index**: DiRT 3 → 44500 "Dirt 3" (delisted, hardcoded) + re-homed `Colin_Mcrae__Dirt_2`→`name:dirt-2` to kill the DiRT-Rally-2.0-DLC false-positive; validated ArmA2/CS/L4D2/Divinity-OS-EE/Walking-Dead-S2 aliases. (3) name-derivation must NOT stylize "DiRT" (breaks camelCase tokenizer→di+rt). (4) CI red once = `/*` inside a KDoc `{@code files/contents/*}` (Kotlin nests block comments→swallowed file); fixed `712dfaad`.
+>
+> **⚠️ Gotcha:** index cache is in-memory (`cachedGames`)+disk+24h → server fixes need app FORCE-STOP or 24h. **TODO: refresh affordance / ETag.**
+>
+>
+> **Install flow (evolved through on-device testing, 2026-07-10):** (a) Apply screen's missing-component advisories (DXVK/VKD3D/FEXCore) got **Install buttons** → version-list picker → install → auto-apply → checkmark (CI 29097942831, APK `install-buttons`). (b) **Dialog-stacking fix** (CI 29099460009, APK `install-fix`): the download sheet (`ContentDownloadSheet` = ModalBottomSheet) rendered *behind* the community `Dialog` windows — user couldn't see it until closing them; fix gates ALL community dialog layers (browser / apply-picker / per-shortcut / result) on `installSheetFor==null`. (c) **Smart inline install** (branch `d08dabac`, CI 29101574597): Install now resolves the wanted version vs the catalog — **exact** → "Install `<ver>`?" confirm → **inline** download+install+auto-apply+checkmark (no menu); **no-exact** → ~3 closest versions + "Browse all" fallback. Proton/Turnip stay advisory-only.
+> **Turnip/adrenotools GPU-driver smart-install (`9f7ed579`, CI 29105237641 green) — CI-green, on-device UNVERIFIED:** Turnip is no longer advisory-only on the Config-applied screen — it now installs like DXVK/VKD3D/FEXCore but routed through the adrenotools **5-repo** driver subsystem (NOT a `ContentProfile.ContentType` — the enum ends at VEGAS; drivers = `DriverSources.ALL` {Kimchi, Maxes MTR, Banners-Turnip, StevenMXZ, whitebelyash} + `RemoteDriverRepository` + `AdrenotoolsManager.installDriver`→driverId + existing `AdrenoDriverDownloadSheet`). The config's ask is `graphicsDriverConfig.version = "Mesa Turnip vX.Y.Z"` (from `ConfigTranslator.turnipVer()`). **Engine (CommunityConfigApply.kt):** new `MissingDriver(wanted,current)` + `missingDrivers` on `ConfigApplyResult`; `apply(...)` gains `isAdreno: Boolean` — unresolved driver → structured `MissingDriver` (Adreno) or plain advisory (Mali/other, so we never offer an Adreno driver off-Adreno); new `applyResolvedDriver(shortcut, driverId)` = surgical `;`-merge of the installed id into the version sub-field; new `rankDrivers(wanted, entries)`/`DriverShortlist` reusing existing `versionKey`/`versionDistance`. **Match:** parse `\d+\.\d+\.\d+` from wanted + each entry `displayName`; **`exactMatches` = EVERY entry at the same X.Y.Z across all 5 repos (not `firstOrNull`)** so repo-variants of one version each show as a distinct quick-install labeled `<source> · <displayName>` (user picks the build — repo builds of same mesa ver behave differently on-device); dedup by `downloadUrl` only; `closest` = 3 nearest other versions; then Browse-all fallback. **VM (ShortcutsViewModel.kt):** `isAdrenoGPU()` probe passed to `apply`; `fetchDriverShortlist(wanted,onResult)` fans out all 5 sources in parallel (`async`/`awaitAll`)→flatten→rank. **UI (ShortcutsScreen.kt):** `SmartDriverInstallRow` + "Needs a GPU driver" section; `driverSheetFor` state + combined `communityDialogsGated` flag now gates ALL four community dialog layers so the `AdrenoDriverDownloadSheet` ModalBottomSheet isn't drawn behind them. **▶️ DEVICE-VERIFY:** row lists all repo-variants of wanted ver distinctly → quick-install one → download+install+write-back `graphicsDriverConfig.version=<driverId>` (other sub-fields intact) → checkmark; Browse-all opens ON TOP; Mali stays advisory.
+> **Landscape layout fix (`491688fa`, CI 29103436519 green) — ✅ DEVICE-VERIFIED ("looks great"):** `CommunityCatalogBrowser` + `CommunityDevicePanel` made responsive via `BoxWithConstraints` (`maxWidth >= 600.dp` = wide). Landscape = two-column `Row`: fixed 320dp scrollable controls/header LEFT + list at `weight(1f).fillMaxHeight()` RIGHT (game-list AND per-game detail views); portrait = unchanged single Column. Controls/list/header factored into local composables to avoid dup. Rotation-persist: `query`/`matchesMyDevice`/`storeFilter`/`sort` → `rememberSaveable`, `selectedGame` → `selectedIdentity:String?` re-resolved by identity. Per-shortcut sheet untouched.
+> **▶️ NEXT:** on-device verify APPLY (DiRT 3/Crysis 3 → shortcut; surgical merge preserves settings; component resolution; FEX date-ver flags "install") + smart inline install (real download+install+auto-apply). Then refresh-affordance TODO, then Phase 3 export/import. NOT merged — awaiting on-device sign-off.
+
+## 2026-07-08 — 🚧 2.6-pre: port GameNative #1620 (+#1644) — ASR SurfaceFlinger crash + BGRA→RGBA color fix
+
+> **Branch `feat/asr-gn1620` off main `0ff4df95` (clean post-2.5 base). NOT yet CI-verified/device-tested. 2.6-preN material.**
+>
+> **What:** ported GN's consolidated ASR hardening PR #1620 (+#1644) — fences on CPU images (fixes the SurfaceFlinger CPU-image crash + tearing), `R8G8B8A8_UNORM` + GPU_FRAMEBUFFER/CPU_READ_OFTEN AHB flags, and a GPU BGRA→RGBA converter (GLES3.1 compute / GLES3.0 fragment fallback, dedicated EGL thread) that fixes ASR's swapped red/blue colors.
+>
+> **Renderer-split reconciliation (the delicate part):** GN split `GPUImage extends Texture` → new abstract `NativeTexture` base with two concretes — `GPUImage` (GL/Vulkan/DRI3/Present, our socket-present buffer) and new `AHBImage` (fenced 3-buffer CPU scanout swapchain). **We deliberately did NOT adopt GN's DRI3-→-AHBImage change:** socket/present buffers stay `GPUImage`, so every `(GPUImage)` cast in `VulkanRenderer` (:494/:540), `PresentExtension`, `DRI3Extension:156` is untouched → **Vulkan present path unchanged, GL unchanged.** Only ASR CPU chrome (gated on `Drawable.DRAWABLE_FOR_ASR`, default false) now uses AHBImage. Game frame under ASR = still GPUImage, presented direct; converter transiently imports it so BGRA→RGBA still applies.
+>
+> **Files:** native `cpp/asurfacerenderer/` += `blit_converter.{cpp,h}`, `ahbimage.c` (own `libahbimage.so`), rewritten `ASurfaceRendererContext.{cpp,h}` + `asurface_jni.cpp`, `GPU_CONVERTER_README.md`; CMake += blit_converter into `asurface_renderer` (+EGL/GLESv3) and new `ahbimage` lib. Java `com.winlator.star.renderer` += `NativeTexture`, `AHBImage`; `GPUImage` now `extends NativeTexture` (minimal); `ASurfaceRenderer` (AHBImage vs GPUImage routing + `setSfCompatMode` toggle, default true=convert + #1644 half-rate HUD tick); `xserver/Drawable` (ASR-mode → AHBImage, `instanceof GPUImage`→`NativeTexture`, additive/gated). Built from source (no prebuilt .so copied). Removed GN's unused `asurfacerenderer/drawable.c` (swap handled in the converter).
+>
+> **Color toggle hook (for UI wiring, TODO):** `ASurfaceRenderer.setSfCompatMode(bool)` (default true) → last arg of `nativeSetWindowBuffer` → `ASurfaceRendererContext::setWindowBuffer(...)`. true=converted RGBA (glitch-free), false=direct BGRA. Wire at `XServerDisplayActivity` :2268 `instanceof ASurfaceRenderer` block, mirroring `container.getRendererSwapRB()` pattern (:2216/:2249). Plan: relabel to "Color channels: Auto/RGBA/BGRA". Pair with SurfaceFlinger native-toggle grey-out.
+>
+> **Watch on device (all THREE renderers, not just ASR):** Vulkan present (the shared-GPUImage regression risk), ASR first-frame timing (`future.get()` synchronous per game frame), low-RAM AHBImage swapchain memory (4 AHBs/Drawable). Commits: `e58aa517`, `b4a7f7e1`, `f4084713`, + drawable.c removal.
+>
+> **✅ DEVICE TEST 2026-07-08 (user's Adreno 750, ASR renderer, AIO Graphics Test + D3D11 cube) — HEALTHY:** (1) ASR inits clean — libahbimage loads, AHBImage buffers w/ correct #1620 flags (CPU_READ_OFTEN/GPU_FRAMEBUFFER/COMPOSER_OVERLAY), format=5(BGRA). (2) **Vulkan-native cube colors CORRECT** (LunarG teal/grey, no R/B swap) → color fix validated on native path. (3) **DXVK D3D11 cube renders** (blue/magenta/green faces, red channel present → no gross swap; user didn't flag wrong colors). (4) **No hard crash** — app pid stayed alive throughout, only tombstone on device = unrelated `rs.media.module`; the SIG19 seen = normal drawer-pause, NOT a crash. (5) **FPS limiter:** works on DXVK path (54–61 around 60 cap, GPU 12% = throttling real) but LOOSE ±10%; NOT capped on native-Vulkan-no-DXVK (473) = pre-existing (limiter is DXVK-side), not a #1620 regression. **ONE flagged issue: D3D11 cube FAILED on FIRST launch, worked on retry** — likely DXVK cold shader-cache (`No state cache file found`) warmup, possibly the flagged ASR first-frame `future.get()` race; needs a clean repro to pin. No baseline for ASR-limiter behavior in 2.5 (user never used ASR past original impl). **VERDICT: port working on Adreno; no Vulkan/GL regression observed. Remaining: pin the first-launch DX11 failure; device-test needs Mali (kylinzang) + a real game; then UI wiring (Task3).**
+>
+> **✅ FOLLOW-UP (same session) — DiRT 3 crash + renderer-picker BOTH resolved as NON-bugs:** (a) **DiRT 3 "crash on ASR" = the device MediaProvider/FUSE bug, NOT us.** Log caught `vold: Sending Interrupt to pid <n> (dirt3_game.exe)` right after `FuseDaemon rs.media.module SIGABRT` (mediaprovider::fuse::NodeTracker::CheckTracked → pf_opendir). DiRT 3 streams `.nfs` assets off `/sdcard/Winlator/Games` (FUSE); heavy opendir trips the phone's MediaProvider daemon → `vold` tears down `/storage/emulated/0` + kills every referencing proc (also killed unrelated `com.community.oneroom` same instant). Renderer-independent; our process had NO tombstone (killed, not crashed). **Fix = move game to internal ext4 (C:) to bypass FUSE.** DiRT 3 later ran fine on ASR (intermittent). (b) **Renderer picker VERIFIED CORRECT (not a bug).** User saw container=OpenGL yet game ran SurfaceFlinger → suspected per-game override ignored. Live-tested via `/proc/<pid>/maps` + renderer-init logs: container=GL→ran ASR, container=ASR→ran ASR, **container=ASR + SHORTCUT=GL → ran GL** (positive proof: `GLThread` spawned, only libEGL/libGLESv2/3 mapped, zero libasurface_renderer/libahbimage/BlitConverter). ⇒ the DiRT 3 **shortcut** had renderer=surfaceflinger and was correctly **overriding the container** all along = per-game override working as designed. `resolvedRenderer()`→`shortcut.getExtra("renderer")`→`initRenderer()` chain + the `.desktop` first-`=`-split parser (isolates host `renderer=` from the one inside `dxwrapperConfig=`) all confirmed correct in code too. (c) **FPS-limiter jitter (54–61 @ cap 60) is NOT renderer-specific** — it's the standalone host pacer (paces X11 Present/IdleNotify, ABOVE all renderers, `applyFpsLimit()` no renderer branch), untouched by #1620; native-Vulkan-no-DXVK 473 = limiter is DXVK-side (pre-existing). **NET: #1620 device test PASSED on Adreno 750; renderer picker verified; no regressions. Next open = Task3 UI wiring (color toggle Auto/RGBA/BGRA + native-toggle grey-out) + Mali (kylinzang) verify.**
+>
+> **✅ Task3 DONE (color-toggle UI) — CI GREEN (run 28964403662), staged to device (`bannerlator-asr1620-colortoggle-*`).** Added per-container + per-game **"Correct SurfaceFlinger colours"** switch (default ON) wired to `ASurfaceRenderer.setSfCompatMode()` — new `Container.rendererSfCompatMode` (serialized in renderer-config, backward-compat=ON), read-only `resolvedSfCompatMode()`, launch call in ASR block, Compose switch in VulkanSettingsDialog + per-game row in ShortcutsScreen (shown when renderer=surfaceflinger), strings. **swapRB + all renderer/native code untouched** (GL/Vulkan can't regress). Commits `e36ab389` + follow-up. Tip after this checkpoint. **NOT yet device-verified that OFF-state flips colours (optional pre-merge check). Per user: skip Mali + versionCode bump; branch is merge-ready by their criteria — merge whenever.** **Side-investigations this session (all NON-bugs, informational): Crysis3 launch ~15s = CryEngine init under box64/FEX x86-translation (CPU-bound), NOT emulator/shaders/storage — warm relaunch identical; Mesa shader cache (9MB) DOES persist compiled shaders; DXVK `.dxvk-cache` "missing" = expected (GPL active) + gplasync persistent cache is opt-in via "Async Cache" toggle (asyncCache=0 default). Noted but unchased: possible `xuser` vs `xuser-1` prefix mismatch (shortcut path under xuser-1, WINEPREFIX/cache under xuser).**
+>
+> **✅ FOLLOW-UP FIX (color-toggle placement) — CI GREEN, staged, DEVICE-VERIFIED.** User caught it: the "Correct SurfaceFlinger colours" toggle was buried in the renderer-settings **gear**, and that gear only renders `if (selectedRenderer == "Vulkan")` (`ContainerDetailScreen.kt:544`) — so selecting SurfaceFlinger (the only renderer the toggle affects) made it **unreachable**. FIX (`df4a43a6`): moved the toggle **inline directly under the Renderer dropdown, shown only when SurfaceFlinger is selected** (mirrors the per-game shortcut editor), and removed it from the mislabeled "Vulkan Settings" dialog (dialog still round-trips the value via its config so Vulkan users hitting OK don't drop it — `sfCompatMode` var@335, output@404, preserve@249). Bound to `viewModel.rendererSfCompatMode` (var mutableStateOf(true), load@318/save@627,670). **Device-verified across all 3 renderers: OpenGL=no toggle/no gear ✓, SurfaceFlinger=inline toggle appears ✓, Vulkan=gear→dialog w/o SF-colour row ✓.** (Note: default is ON for new containers; user's "P11 Arm" container showed it OFF = stored from earlier poking, not a default bug.) **Branch `feat/asr-gn1620` tip `df4a43a6`, 10 commits ahead of main, CI green (run 28969989710), staged `bannerlator-asr1620-toggle-fix-df4a43a-standard.apk`. AWAITING USER BUILD REVIEW before merge. Per user: skip Mali + versionCode bump; merge-ready otherwise.**
+
+## 2026-07-08 — 🧹 CHECKPOINT: post-2.5 branch cleanup (mali branches deleted, cloud-saves preserved)
+
+> **2.5 is out and stable (see entry below). This checkpoint = branch housekeeping. main unchanged at `981cb657`; 2.5 release intact (tag `2.5`, Latest).**
+>
+> **Deleted (local + remote) — all content shipped in 2.5:** `release/2.5-mali` (the clean merge source), `feat/mali-bcn-v4` (mali-v4/v5/v6 pre-release branch), `feat/mali-bcn-layer`, `feat/wrapper-gamenative-bcn`, plus stale local `worktree-agent-*` leftovers.
+>
+> **Full merged-branch sweep (2nd pass):** deleted **42 fully-merged branches total** (2.4/2.5-era features: download-manager + all 4 storefront producers, dlc-picker/ownership, fullscreen, inapp-file-picker, filemanager-thumbnails, all reshade-* that shipped, ui-rebuild, theme-centralize-drawer, drawer-rebuild-p1, goldberg-patcher, steam-qr, store-log-redaction, magnifier/wallpaper/rail-scroll fixes, …). Each verified **0 unique commits vs main on BOTH local AND origin** (patch-id `git cherry`, not naive ancestry) before deletion. SHAs recorded for reversibility → `~/scratchpad/deleted_branches_20260708.txt`. Also removed 6 stale git **worktrees** (`wt-*`, `.claude/worktrees/agent-*`) that were pinning some merged branches — repo now has a single worktree (`main`).
+>
+> **KEPT (13 branches — unmerged/in-progress or explicit):** `main`; `feat/steam-cloud-saves` (re-anchored, above); `feat/save-backup-restore` (actionable ITER-2); and 10 with unique unmerged work — `feat/sgsr2-gate0-depth-receiver-stub`, `feat/bionic-fg-shader-pool`, `feat/depot-size-resolver` (origin ahead by 1), `feat/gl-scanout-overlay-fix`, `exp/gl-scanout-composer-overlay-ahb`, `exp/gl-scanout-prerotate-panelres`, `feat/reshade-mes-patch`, `spike/vkbasalt-reshade`, `test-lsfg-so-ludashi-swap`, `docs/reshade-step3-plan`. (`test` remains on remote — separate/unrelated history.)
+>
+> **Preserved first:** the shelved **Steam cloud-saves** foundation commit (`6fcf27e7`) turned out to live **only** on `feat/mali-bcn-v4` (the `feat/steam-cloud-saves` branch had drifted to a docs commit). Cherry-picked it cleanly onto main → **`feat/steam-cloud-saves` now = main + the cloud-saves foundation** (`6d86f277`), ready to resume in a future version.
+>
+> **Note:** the `mali-v5` / `mali-v6` pre-release **git tags are mislabeled** (they point at main commits, not the build branch — `release.yml`'s tag defaults to the default-branch HEAD). The pre-release **APKs are correct**; only the tags are cosmetic. For future pre-releases off a non-main branch, set `target_commitish`.
+>
+> **Kept:** `main`, `feat/steam-cloud-saves` (re-anchored), `feat/save-backup-restore`. Other merged 2.4-era feature branches remain and could be swept separately.
+
+## 2026-07-08 — 🎉 RELEASE: Bannerlator 2.5 (stable, LATEST) — the Mali hardening release
+
+> **2.5 SHIPPED STABLE — `versionName 2.5`, `versionCode 40`, tag `2.5` (make_latest=true → offered to 2.4 users via the in-app updater). Release run `28911581500` GREEN, 3 flavors + update.json. main tip `34a43924`.**
+>
+> **2.5 = the Mali support hardening release.** Makes BC-texture (BCn) games work on **Mali / Xclipse** GPUs, with a full sign-off on real Mali-G57 (Helio G99) hardware, plus an in-game logging overhaul. Entirely app-side — no ImageFS reinstall; existing containers pull the new driver assets automatically.
+>
+> **Shipped (all from #70, now closed):**
+> - **`Wrapper + bcn_layer`** graphics driver — primary Mali BCn path (leegao **bcn_layer shader-v3**); transcodes BC textures on the GPU. Device-proven: *MiSide* went from crashing → ~34 fps, 0 buffer errors on Mali-G57.
+> - **`Wrapper-gamenative`** — experimental (Adreno-only) secondary driver.
+> - Wrapper bumped to **bionic-vulkan-wrapper ETC2-Milestone-2** (kills `wrapper_DestroyBuffer` spam).
+> - **BCn Layer Settings** dialog (force-decode, ETC2/ASTC transcode, image-view mode, debug logging).
+> - **In-game logging overhaul**: Copy-logs button (pinned on-screen; the mali-v6 layout fix), selectable log location (Settings › Logs), co-located DXVK/DXGI/VKD3D logs, scrollable Wine debug-channels dialog.
+> - release.yml notes hardened against backticks. bcn_layer `.so` kept **unstripped by design** (ongoing Mali debug).
+>
+> **Merge hygiene:** merged via `release/2.5-mali` (clean branch) after excising a stray shelved Steam-cloud-saves commit (`6fcf27e7`) that had drifted onto the mali branch from an earlier shared-worktree session — caught by scanning the merge file list before pushing.
+>
+> **Credits:** **leegao** (bcn_layer shader-v3 + bionic-vulkan-wrapper ETC2-Milestone-2). Testers: **@kylinzang** (Mali-G57, #70 — drove the whole effort + full sign-off), **@rizky2-crypto** (Mali-G610, #30). Experimental gamenative driver base: **GameNative** (utkarshdalal).
+>
+> **Follow-ups:** "Import .so" self-update button → 2.6 (needs its own issue). rizky2 (#30, G610) still open. Shelved Steam cloud-saves parked off main. Release notes also footnote the new [Proton 11.0-1 bionic build](https://github.com/The412Banner/proton-wine/releases/tag/build-p11-20260707).
+
+## 2026-07-06 — 🔧 CHECKPOINT: dev-environment tooling + bridge knowledge corrected (no repo code change)
+
+> **Session tooling/infra work (lives in `~/.local/bin` + memory, not the app repo). Main unchanged at `34cf6249`. Mali v3 build re-staged & awaiting Mali testers.**
+>
+> **Root-bridge knowledge CORRECTED (was hobbling us):** live-tested the logcat-bridge daemon (`~/logcat-bridge/module/system/bin/logcat-bridge-handler`) — its `exec|sh` verb runs `/system/bin/sh -c "$cmd"` and PRESERVES the command, so **pipes / grep / redirects / `$?` DO work ON-DEVICE**. The long-standing "never pipe / bare-verbs-only" rule was WRONG (a local-shell-quoting artifact, not a daemon limit). Real rule: pass the whole remote command as ONE quoted string. The daemon already exposes full root + safe verbs (`tail`/`pkg` logcat, `tomb`, `ps`, `props`, `proc`, `cat`/`ls`/`sql`, binary `write` preserving uid:gid:mode) — **no module change needed**. (Shizuku/no-root backend = separate future idea for the non-root community; the module needs on-device dev for that.)
+>
+> **3 persistent CLI helpers added to `~/.local/bin` (on PATH, survive every session):**
+> - **`bridge '<cmd>'`** — run a root command on the device; auto-syncs the token (kills boot-drift "auth failed"), pipes run on-device. Bare verbs (`bridge ping|tomb|ps|pkg <pkg> -d|cat …`) pass through.
+> - **`ci-watch <branch>`** — dispatch "CI Build (artifacts only)" → auto-capture run id → watch → GREEN/RED + failing-log tail. **Refuses to build main/master implicitly** (footgun guard — a bare test-run accidentally dispatched+was cancelled `28838588161`, hence the guard).
+> - **`stage-apk <run-id|branch> <label> [flavor]`** — download the test APK → stage `/sdcard/Download/bannerlator-<label>-<sha7>-<flavor>.apk` → **host+device sha256 match** via `bridge`. Live-proven: `stage-apk 28837058621 mali-v3` → match ✓.
+> - Chain: `ci-watch <branch> && stage-apk <branch> <label>`. Env overrides BANNER_REPO/WF/DIR/STAGE_DIR. All recorded in [[reference_logcat_bridge_root_access]] + MEMORY always-hot.
+>
+> **Mali v3 status (unchanged, awaiting testers):** branch `feat/mali-bcn-layer` `e3f4f90b`, CI `28837058621` GREEN, staged `bannerlator-mali-v3-e3f4f90-standard.apk` (600,577,679 B, sha `184b71ad…`). @kylinzang (G57/MiSide) + @rizky2-crypto (G610/CODMW, #30) invited on #70.
+
+## 2026-07-06 — 🟢 CHECKPOINT: Mali BCn layer DEVICE-PROVEN + shader-v3 swap done (branch `feat/mali-bcn-layer` `e3f4f90b`, CI green, in testing)
+
+> **NOT on main — on branch `feat/mali-bcn-layer` (rebased onto 2.4 main `15c7186c` → shader-v3 swap `e3f4f90b`), CI `28837058621` GREEN. Test build handed to Mali testers on #70. Merges as 2.5-preN once confirmed.**
+>
+> **✅ Mali device-proof (issue #70):** @kylinzang tested our earlier "Wrapper + bcn_layer" build on **Helio G99 / Mali-G57 MC2** — **MiSide** (BCn Unity game, previously crashed / black-purple textures) now **runs + renders correctly**. First real Mali proof (we can't test on the user's Adreno). Perf heavy (16-24fps, GPU 98-100%) but playable. He flagged 3 bugs: (1) BCn debug-log toggle DEAD (shipped `.so` had no logger), (2) `wrapper_DestroyBuffer: null buffer` batches per scene-load (non-fatal), (3) `BCN_MAX_TEXTURE_SIZE` unverifiable. And requested leegao's **shader-v3** (~3.5× faster ASTC).
+>
+> **✅ shader-v3 swap (this session):** rebased branch onto 2.4 main (1 trivial import conflict), then:
+> - Swapped `app/src/main/assets/graphics_driver/extra_libs.tzst` → `usr/lib/libbcn_layer.so` to leegao's **shader-v3** Release asset (arm64-v8a, NDK r29, kept **UNSTRIPPED** per user's debug-symbols call → tzst 18.8→29.8MB, **STRIP before merge**). Layer manifest identical, unchanged.
+> - **Env-var reconcile:** kept `ENABLE_BCN_COMPUTE`/`BCN_COMPUTE_AUTO`/`BCN_TRANSCODE_TO_ETC2`/`BCN_TRANSCODE_TO_ASTC`/`BCN_COMPUTE_IMAGE_VIEW`; **dropped** `BCN_LF`/`BCN_LL` (v3 logs to **stderr**→Wine debug log) → replaced with `BCN_LAYER_LOG_LEVEL=info,error` (debug-log toggle now works); **dropped** `BCN_MAX_TEXTURE_SIZE` (removed upstream) → removed its dropdown + array + string. v3 ASTC needs `VK_KHR_8bit_storage`+`shaderInt8` (Valhall Mali have it; self-disables gracefully otherwise).
+> - **✅ ADRENO-SAFE (confirmed, triple-gated):** bcn_layer block only runs on the "Wrapper + bcn_layer" driver + hardcoded `getVendorID() != 0x5143` (Qualcomm) gate + Vulkan-loader `enable_environment` → `ENABLE_BCN_COMPUTE` NEVER set on Adreno. Only cost to others = ~11MB APK from the unstripped `.so`.
+>
+> **Issues consolidated:** #70 = single Mali/BCn tracking issue (retitled; roadmap checklist). #54 closed into it; #53/#63/#64 already closed. #30 (@rizky2-crypto, Dimensity 8200 / **Mali-G610** / CODMW loading-screen crash) invited as 2nd Mali tester — kept OPEN until BCn confirmed to fix it. Both testers have the direct Actions build link (run `28837058621`).
+>
+> **CREDITS:** leegao already in README (line 382); **explicitly credit shader-v3 in the 2.5 release notes** (BCn ships in 2.5, not 2.4) — user asked. **NEXT:** await Mali test results (kylinzang before/after fps + working debug log; rizky2-crypto CODMW) → strip `.so` → merge 2.5-preN.
+
+## 2026-07-06 — 🚀 RELEASE CHECKPOINT: BANNERLATOR 2.4 SHIPPED (stable, latest) — main `c4010ce0`, vc39
+
+> **2.4 is LIVE and marked latest:** https://github.com/The412Banner/Bannerlator/releases/tag/2.4 — built by `release.yml` run `28834510336` (3 flavors standard/pubg/ludashi ~589 MB + `update.json` vc39 so the in-app updater offers it to everyone). versionCode 38→39, versionName 2.3→2.4. Release body = polished markdown (logo banner + shields.io badge chips + feature blocks + issue links + credits); README thoroughly updated (What's New in 2.4, 2.3 nested to history, Full Features refreshed, new "Community reports & requests" credits block). **NEXT stable = 2.5; anything built from here = 2.5-preN, vc40+ until told to cut.**
+>
+> **Everything in 2.4 (all merged to main this session, all device-proven):**
+> - **Stage 2 fullscreen (#71)** — FILL (crop-to-fill, no bars/no distortion = `ViewTransformation.aspect = max(sx,sy)`) + INTEGER (`max(1,floor(min))`, pixel-perfect centered), on top of Stage-1 Off/Fit/Stretch. Centralized in `ViewTransformation.update(...,mode)` → all 3 renderers (GL/Vulkan/ASurface) + TouchpadView inverse-map; STRETCH stays the only renderer-special-cased mode. Live-recompute on toggle/setter. **5-button SEGMENTED drawer selector** (applies live, drawer stays open; new `onSetFullscreenMode` IntConsumer → `applyFullscreenMode()`). GL device-proven (Titanfall2 screenshots) + user-confirmed all fullscreen.
+> - **In-app file picker (#73)** — reuse the REAL File Manager (`FileManagerScreen` pick-mode) via new themed `FilePickerActivity` for ALL imports (WCP/assets, ICP, wallpaper, icons, saves, settings, shortcuts, adrenotools, BigPicture); SAF kept as secondary "Pick via system…"; picked path wrapped `Uri.fromFile` so downstream import code unchanged; large imports show determinate **percent+ETA** (`ImportEtaTracker`, reuses download `formatEta`). New: `FilePickerActivity.kt`, `util/InAppFilePicker.kt`, `util/ImportEtaTracker.kt`. Device-proven.
+> - **File Manager image thumbnails** — image files (jpg/jpeg/png/webp/bmp/gif) render real thumbnails (Coil, 36dp decode, cached, async, generic-icon fallback) instead of the generic file icon. Device-confirmed on the Select-wallpaper screen.
+> - **Per-game persistence** — scaling mode (was session-only, reverted to base filter; now saved on pick Vulkan `onUpscalerApply`+GL `onGlUpscalerApply`, restored via `resolveScalingMode()`, restored preset≥3 forces Native OFF at seed), fullscreen mode, and FPS-HUD drag position (all 3 overlays fire `onMovedListener` → keys hudPosCV/CH/GH, one-shot layout-listener restore, clamped).
+> - Earlier in the session (also 2.4): DLC picker + DepotSizeResolver true-size install fix + detail-page size breakdown + download ETA/speed; container wallpaper picker (#66); Vulkan magnifier cursor-follow + no-dim (#44); save backup/restore; help-button crash fix; list-view scrape cover.
+>
+> **Issues:** **#73 CLOSED** (shipped) + **#75 CLOSED** (Soft Stretch ≈ our Fill; upscalers already present; DLSS not feasible on Adreno/Mali — replied w/ real ReShade effect list) — both linked to the 2.4 release. Left open (not shipped): #74 (DRS/presets), #70+#54 (Mali/BCn), #68 (iQOO crash), #65/#61/#56/#30.
+>
+> **Credits handed out** (release notes + README): @kylinzang (#71, #73), @SombraShadow (#66), @abdogm (#44), @Devaspe (install-blocker), + upstream stack. Upstream-source triage done earlier (5 sources, nothing to adopt; GameNative Turnip driver eval DROPPED per user). 2.4 release-notes HTML preview artifact published + saved to device (`/sdcard/Download/bannerlator-2.4-release-notes.html` + `-release.md`).
+
+## 2026-07-06 — ✅ EOD CHECKPOINT: DLC picker + download ETA/speed + fullscreen aspect-ratio ALL MERGED (main `c9d8df84`); #71 closed; Stage 2 deferred
+
+> **main = `c9d8df84`, combined artifacts build `28822949633` GREEN. Still vc38 → next stable 2.4-preN (vc39+). No release cut.** Everything from this session is now on main:
+> - **DLC picker** (`feat/dlc-picker` merged `37b0ac32`) — detail page "Choose DLC" → ModalBottomSheet of owned DLC checkboxes (scrollable + Done); uncheck → `SteamPrefs.excludedDlc` → dropped from the real download via explicit `AppItem.depot`/`manifest` list + sizes update live (`recomputeSizeDisplay`). Completion guard + progress denominators made exclusion-aware (else an opt-out DL would false-fail). **Device-proven** (JC3: all DLC unchecked → only 3 base depots fetched). Stage-2 unowned/locked rows DROPPED per user (keep list clean).
+> - **Download ETA + speed** (`8b371817`) — EMA-smoothed compressed-byte rate → `etaSeconds=(dTotal-dDone)/rate`, shown on detail page, download-manager row, AND FGS notification (`… 45% · 12.4 MB/s · ~8 min left`). `formatEta`/`formatDownloadSpeed` in DownloadModels; `DownloadEntry.speedBps/etaSeconds`. Hidden when paused/queued. Green, not device-tested.
+> - **Fullscreen aspect-ratio modes (issue #71)** (`c9d8df84`) — Off/Fit/Stretch replacing the stretch bool. `Container.fullscreenMode` int + JSON migration; all 3 renderers (GL/Vulkan/ASurface) branch on `isStretch()` (STRETCH→fill, OFF/FIT→ViewTransformation letterbox); TouchpadView letterbox mapping for FIT; per-container dropdown + per-game shortcut override + live drawer cycle **remembered per game**. **Device-proven on BOTH GL and Vulkan** (Titanfall 2 @1024×768 4:3 on 16:9 Pocket FIT: Off/Fit=pillarbox correct, Stretch=distorted wide). FILL/INTEGER enum-stubbed. Note: DXVK HUD stretches in Stretch mode = expected (baked into guest frame); app's own HUD is a host overlay and doesn't. **Issue #71 commented (commits+build+next-release+confirm-invite) and CLOSED.**
+>
+> **🔜 ONLY OPEN ITEM — Stage 2 fullscreen (FILL crop + INTEGER scaling): DEFERRED, build ONLY after the user is home on Wi-Fi** (he lost internet leaving work). FILL = ViewTransformation `max` instead of `min` (fill+crop, no distortion); INTEGER = floor(fit scale) (pixel-perfect, retro-only). Stage-1 plumbing done → incremental: VT math + each renderer's mode branch + touch mapping (fill crops / integer centers) + expose in the 2 dropdowns + drawer cycle. Will build, then ping kylinzang on #71 to test.
+
+## 2026-07-06 — ✅ CHECKPOINT: DLC-ownership fix + size breakdown + magnifier no-dim MERGED (main `29d5006`); DLC picker on branch
+
+> **main `29d5006`, CI `28806902047` (artifacts-only) GREEN. Still vc38; next stable = 2.4-preN (vc39+). No release cut.** Everything below merged this session on top of the DepotSizeResolver line:
+> - **Detail-page size breakdown** — headline on-disk FOOTPRINT (block-rounded per-file `ceil(size/4096)*4096`; real measured `du` once installed) + `Download` (compressed) + `PICS estimate (Steam)` (labeled) + `Free space`/"won't fit". DB v4→v5 `real_disk_bytes`, v5→v6 reset (a v5 build skipped every file via `linkTarget "" != null` → footprint == content; fixed with `isNullOrEmpty()`). REALITY: for VPK-packed games (HL2) block slack is tiny (~5.6 MB) so footprint ≈ content; the extra ~2 GB "on disk" is install-time overhead (staging/prefix/emulator) NOT in the manifest — user accepted "best it's going to get".
+> - **Magnifier whole-screen dim FIX** (`59e2e20`) — `MagnifierOverlay` is a Compose Dialog → `FLAG_DIM_BEHIND` dimmed the whole game surface. `clearFlags(FLAG_DIM_BEHIND)` + `setDimAmount(0f)` (mirrors PauseBoxOverlay). Renderer-independent → fixes GL AND Vulkan in one place.
+> - **Unowned-DLC-depot fix** (`29d5006`) — an owned game's PICS depot list includes its DLC depots; selecting an UNOWNED one made the engine try a keyless depot → 0 bytes → false "incomplete" on the owned game (devaspe's **See No Evil 313830**: soundtrack DLC depot **320210** he doesn't own; the 131 MB game downloaded 100% but was rejected). Detection: NOT `config/dlcappid` (Steam doesn't tag it — verified: Just Cause 3's owned DLC depots had no dlcappid) but **`extended/listofdlc` + depot_id == DLC appId**. Skip DLC depot if `!licensed`; `pruneDepots` drops stale ones on re-sync. `getLicensedAppIds()` = ownership.
+> - **"Includes DLC:" line** — owned DLC bundled with the game, shown on the detail page (DB v6→v7 `included_dlc`; `getIncludedDlcEntries`). Confirmed on device: JC3 shows its 11 owned DLC.
+>
+> **🔨 DLC PICKER — branch `feat/dlc-picker` head `bfd4847c`, CI `28810646828` GREEN, NOT merged.** Tap **"Choose DLC"** (OutlinedButton) → **ModalBottomSheet** (scrollable + nav-bar inset + "Done") of OWNED DLC checkboxes (default checked). Uncheck → `SteamPrefs.excludedDlc` → dropped from download via explicit `AppItem.depot`/`manifest` list + **sizes update live** (`recomputeSizeDisplay` sums depots minus excluded). **Stage 2 (unowned/locked rows) DROPPED per user** — owned-only, no clutter, no store-API name fetch. Device-UX-proven (button prominent, sheet scrolls); NOT yet proven that uncheck removes DLC from a real download → device-verify then merge.
+>
+> **NOT device-tested:** magnifier no-dim; See No Evil unowned-DLC fix (not owned on our account — logically certain from devaspe's log, needs library re-sync); picker actual opt-out.
+
+## 2026-07-06 — ✅ MERGED TO MAIN: DepotSizeResolver — true sizes + executor fix + detail-page size breakdown (main `38cc00b`)
+
+> **Fast-forwarded `feat/depot-size-resolver` onto main (`9f5bf74`→`38cc00b`), CI run `28797042366`. No release cut, versionCode still 38 (=2.3); next stable = 2.4-preN (vc39+).** Five commits, all device-proven except where noted:
+> - **`26f22f5`** DepotSizeResolver — fetches TRUE depot sizes from the CDN manifest (no depot key/auth token) → the install-completion guard compares written bytes vs manifest-true instead of the over/under-reporting PICS estimate. Device-proven: two full downloads (Brawlhalla 291550, "the static speaks my name" 387860) completed, guard logged `Complete: 64.1 MB of 67.8 MB manifest-true (≥90%)`, zero false "incomplete".
+> - **`d3fc902`** fix: don't `cdn.close()` the shared OkHttpClient — closing it shut down the dispatcher executor the real downloader reuses → every download hung at 0% with `executor rejected` (device-repro Brawlhalla; fixed + device-proven).
+> - **`0b70e7b`** detail-page size breakdown: headline on-disk FOOTPRINT (block-rounded per-file estimate; real measured `du` once installed) + `Download` (compressed) + `PICS estimate (Steam)` (labeled) + `Free space`/"won't fit". DB **v4→v5** additive `real_disk_bytes`. Also adds `SteamDatabase.onDowngrade` (rebuild-not-throw) — fixes the v→older rollback crash that bricked the Steam screen.
+> - **`4e153f9`** backfill footprint for games resolved pre-v5.
+> - **`38cc00b`** fix: footprint skipped EVERY file — `FileData.linkTarget` is a protobuf string (`""`, never null) for regular files, so `!= null` skipped all → fell back to content size; use `isNullOrEmpty()`. DB **v5→v6** zeros the bad values to force recompute. Device-DB-proven (HL2 depot 234 3175→4096 rounded).
+>
+> **Footprint reality (user-accepted "best it's going to get"):** for HL2 the block-rounding adds only ~5.6 MB (HL2 packs assets into big .vpk files → ~2800 large files, minimal block slack) → headline stays ~8.4 GB. The ~10.6 GB seen on disk before = INSTALL-TIME OVERHEAD (download staging / Wine prefix / Goldberg emu) OUTSIDE the manifest, unpredictable pre-install. Pre-install shows honest content estimate; post-install shows real `du`. Meaningful gap only for many-small-file games.
+>
+> **STILL OPEN (not blocking merge):** the ORIGINAL Greyfox (appId **341310**, one word — NOT 313830=See No Evil) over-report install-blocker never reproduced on device. GameNative lead: their same-class bug (#928 Black Desert 791GB vs 93) is DEPOT OVER-INCLUSION (unlicensed region/platform + systemDefined depots), so Greyfox may be a depot-SELECTION issue, not per-depot sizing. Installed-`du` footprint path also not yet device-verified (HL2 not installed).
+
+## 2026-07-06 — ✅ CHECKPOINT (pre-reboot): DepotSizeResolver green + INSTALLED + PARTIAL device-test; install-blocker not yet reproduced
+
+> **Resolver APK `1f262e3` (CI `28784305760` GREEN) STAGED + INSTALLED + verified** (installed base.apk sha256 = `6f47720791a02e5164547e14d2677ea2c35922043ac544724ea8d70d496d10d4` = `bannerlator-depotsize-1f262e3-standard.apk`, 589,648,938 B). branch `feat/depot-size-resolver`, NOT merged, no version change.
+> **✅ On-device findings (steam.db pulled to /sdcard/Download/steam_dump.db — sqlite3 absent on device, queried locally):**
+> - **⭐ THE #1 RUNTIME UNKNOWN IS RESOLVED:** CDN manifest fetch works with **no depot key / no auth token** on real hardware. HL2 (appId 220) `depot_manifests.real_size_bytes` populated for all 4 depots after opening its detail page → `downloadManifestFuture` returns real sizes for real depots. Resolver functioning (login-gated, on library worker).
+> - **HL2 real == PICS exactly** (sum 8,990,704,030 = both `size_bytes` and `real_size_bytes`). HL2's PICS was already accurate at CONTENT level; the "10.66 GB" was on-disk `du` footprint (block rounding), NOT manifest content. So HL2's detail number does NOT visibly change — only the `~` drops once resolved. Detail-page async behavior confirmed (user's 06:28 `~8.4 GB` = pre-resolve window; re-open drops the `~`).
+> - **⚠️ NOT yet proven — the actual install-blocker fix.** HL2 = cosmetic under-report only. Reproduce the OVER-report failure with **appId `313830` / depot `313831`** (devaspe's game — appid visible in his Discord log screenshot: "=== Download complete: appId=313830 ===" → "INCOMPLETE: only 130.0 MB of 181.4 MB (<90%) — refusing to mark installed"). Own/install 313830 → confirm it marks **Installed**, not "Download incomplete."
+> - Left `/sdcard/Download/steam_dump.db` on device (harmless).
+> **🔁 USER REBOOTING DEVICE** → logcat-bridge token rotates; may need re-sync (`cp /data/data/com.termux/files/home/.logcat-bridge.token ~/.logcat-bridge.token` then `python3 ~/scratchpad/getlog.py ping`) before driving the device again.
+> **NEXT:** post-reboot → reproduce 313830 install (fail→pass). If proven → rebase `feat/depot-size-resolver` onto current main + FF-merge (no release cut) + reply to devaspe. Detail: memory `project_bannerlator_true_size_resolver`.
+
+## 2026-07-06 — 🔨 CHECKPOINT: DepotSizeResolver built (branch `feat/depot-size-resolver`); help-crash fix MERGED to main `cbfc0d6`
+
+> **Help-button crash fix ✅ MERGED to main `cbfc0d6`** (rebased+FF, no version change). File Provider `?` NPE resolved (`null`→`View(context)`).
+> **🔨 DepotSizeResolver BUILT — branch `feat/depot-size-resolver` off `cbfc0d6`, commit `1f262e3` (native-steam-engineer, lead-reviewed), CI `28784305760` building. NOT device-tested. No versionCode change.**
+> **Why:** devaspe (Discord) hit a device-proven install-blocker — PICS OVER-reports a game's size (appId 313830/depot 313831: PICS 181.4 MB vs ~130 MB real content) → the false-complete guard `SteamDepotDownloader.kt` compares on-disk (130) vs PICS (181.4) at a 90% threshold → rejects a FULLY-DOWNLOADED game as "Download incomplete". Mirror of the HL2 UNDER-report (8.4→10.66, cosmetic, band-aided `b8e9e5b`).
+> **Fix:** NEW `store/DepotSizeResolver.kt` fetches TRUE per-depot manifest sizes via base-JavaSteam CDN (`SteamContent.getManifestRequestCode` + `getServersForSteamPipe` + `cdn.Client.downloadManifestFuture`); manifest `totalUncompressedSize`/`totalCompressedSize` come from `ContentManifestMetadata` INDEPENDENT of filename decryption → **no depot key, no CDN auth token needed** (verified by decompilation; runtime-unverified for real depots = device-test only). The guard now compares vs the manifest-true total (2-tier; genuine depot-skip catch preserved — a SELECTED depot delivering 0 bytes still fails). ADDITIVE DB v3→4 (`ALTER ADD COLUMN`; pre-v3 keeps legacy recreate → **no library wipe** for current users). Strict CM-pump discipline (gated on `!isLoggedIn||isDownloadActive()`, single library worker, watchdog bumps `bumpPendingJobTimeouts(60s)`, degrade-never-throw). 5 files: `DepotSizeResolver.kt`(new), `SteamDatabase.java`, `SteamDepotDownloader.kt`, `SteamGameDetailActivity.kt`, `SteamRepository.java`.
+> **LEAD decisions:** kept the relaxed unresolved-guard branch (dropping it reintroduces 313830 false-fail pre-resolve). Known-not-done: DL-card/library-seed download denominator still PICS (install bar + guard use real).
+> **NEXT — device-test `1f262e3`:** (1) open 313830-type detail (resolver runs)→Install→marks Installed not "incomplete"; (2) HL2 detail shows real ~10.66GB (no `~`) + genuine skip still fails; (3) no ANR; (4) resolver skipped during active download; (5) offline/not-logged-in degrades to `~est`; (6) v3→v4 no library wipe. If proven → rebase onto current main + FF-merge, no release cut. Detail: memory `project_bannerlator_true_size_resolver`.
+
+## 2026-07-06 — 🐞→✅ CHECKPOINT: File Provider help-button crash fixed (branch `fix/settings-help-crash`)
+
+> **Morning device-test of the main APK (`636f0ea`) surfaced a crash.** Settings → Experimental → *Enable File Provider* **`?` help button crashes the app.** Root cause (from on-device crash buffer, 07-06 05:10:57, `com.winlator.banner`): `java.lang.NullPointerException: …View.getContext() on a null object reference at AppUtils.showPopupWindow(AppUtils.java:168) ← at SettingsScreen.kt:808`. `SettingsScreen.kt:808` called `AppUtils.showHelpBox(context, null, R.string.help_file_provider)` — **null anchor**; `showPopupWindow` immediately does `anchor.getContext()`. It was the ONLY 1 of the app's 9 Compose help buttons passing `null`; the other 8 (ContainerDetailScreen ×4, cds/payload ×4) pass `View(context)`.
+> **Fix:** `null` → `android.view.View(context)` (fully-qualified, no import change), matching every other call site. The button itself is intentional — a help popup for the File Provider setting (`R.string.help_file_provider`); only the anchor was wrong.
+> **Branch `fix/settings-help-crash`** off main `5a583bc`, commit **`26b364b`**, pushed. **CI `28780961908` building.** On green → stage APK + offer FF-merge to main. NOT device-tested yet.
+> **State:** main = `5a583bc` (= `636f0ea` features + 2 docs commits). Combined main APK `bannerlator-main-636f0ea-standard.apk` (589,640,156 B, sha `c43660c2…`) staged. Everything since 2.3 still unreleased (vc38); next cut = 2.4-preN (vc39+).
+
+## 2026-07-05 — 🌙 CHECKPOINT (end of day): ALL issue-session features MERGED to main `636f0ea`; main APK building; user testing in the morning
+
+> **main = `636f0ea`.** Everything on main SINCE 2.3 (vc38, unreleased — versionCode still 38): Save Backup/Restore v1+per-game+caution (`bc7d4dc`/`a8ddf7d`/`b46f174`/`da62916`/`0c2930a`/`53f528a`, restore device-proven, per-game backup untested); Scrape-cover-in-list (`087a8ca`); Vulkan magnifier cursor-follow #44 (`36b1962`+`0df8984`, device-proven, **#44 CLOSED**); container wallpaper picker + per-container/global + symlink fix #66 (`2420dbe`+`db27d1c`+`636f0ea`, device-proven, **#66 CLOSED w/ commit links**). Both issues closed on GitHub, each ships in 2.4-preN.
+> ✅ **Artifacts-only build of main `28763213229` (headSha `636f0ea`) GREEN → STAGED `/sdcard/Download/bannerlator-main-636f0ea-standard.apk`** (589,640,156 B, sha256 `c43660c2baa354c5154c8ff95fe7b69bc9eff63899e7c0adce24dfefdbc29601`) = combined "everything since 2.3" APK, ready for morning device-test.
+> **🌙 User AFK (bed) — will device-test the new main APK in the MORNING.** ⚠️ Wallpaper migration note: existing containers show DEFAULT wallpaper until user re-picks the global wallpaper once. Morning test targets: (1) magnifier follows cursor windowed+fullscreen; (2) wallpaper global→relaunch all containers show it, per-container isolates; (3) save-backup per-game round-trip; (4) scrape-cover in list menu.
+> **NEXT release cut = 2.4-preN, bump versionCode → 39+ (per versioning rule).** Not on main: Mali/BCn-layer (branch `feat/mali-bcn-layer`, handed to @kylinzang, awaiting Mali results).
+
+## 2026-07-05 — ✅ CHECKPOINT: issues session — magnifier MERGED, scrape-cover MERGED, wallpaper in-flight
+
+> **State of main = `0df8984`.** Merged to main THIS session (all clean FF, NO release cut, still vc37/2.2.2):
+> - **`53f528a`** — Save Backup/Restore + "not foolproof" caution advisory (caution card made theme-fluid after a black-slab bug).
+> - **`087a8ca`** — `fix(shortcuts)`: **Scrape cover** now in the LIST-view overflow menu too (was grid-only; shared `scrapeCoverFor()` lambda).
+> - **`36b1962` + `0df8984`** — `fix(vulkan)`: **magnifier follows the cursor** (issue #44), fullscreen THEN windowed. GL applies cursor-follow with no fullscreen gate; Vulkan only had fullscreen, so windowed containers didn't track. Guest-space `magOff` composed with the scene transform. **BOTH device-proven on Adreno.** Issue #44 commented + CLOSED (ships in 2.4-preN). Known limitation left: nativeMode direct-scanout magnify (documented, not fixed). Detail: memory `project_bannerlator_vulkan_magnifier_cursor`.
+>
+> **🖼️ IN-FLIGHT — branch `fix/container-wallpaper-picker` (issue #66), rebased ONTO main `0df8984` (clean, no overlap w/ magnifier's VulkanRenderer.java):**
+> - `e256b7c` picker (Image bg had no picker — Compose `GetContent()` + preview) — **device-proven** (user: "picker works").
+> - `d106bf8` per-container vs global scope (`BackgroundScope{GLOBAL,CONTAINER}`, back-compat theme str, "Apply wallpaper to" dropdown).
+> - `8973700` **the real bug**: "global" was NOT global. `ImageFs.CONFIG_PATH=/home/xuser/.config` and `home/xuser` is the PER-CONTAINER symlink → the wallpaper saved under whatever container was active during editing (device proof: only 2/3 containers had the file). Fix = **relocate sources to fixed non-symlinked `home/.wallpapers/`** + **launch-time staleness gate** (`wallpaperNeedsRegen`: regen bmp when source newer than `CACHE_PATH/wallpaper.bmp`) OR-ed into `XServerDisplayActivity:1857`. ⚠️ Migration: old wallpapers orphaned → containers show DEFAULT until user re-picks global once.
+> - **CI `28762849516` (headSha `8973700`) building.** Scope + propagation NOT yet device-tested. On device-proof → already-rebased → clean FF to main (magnifier preserved as base) → close #66. Detail: memory `project_bannerlator_container_wallpaper`.
+>
+> **Staged APKs (all this session):** magnifier fullscreen `bannerlator-magnifier-cursor-36b1962`, magnifier windowed `bannerlator-magnifier-windowed-0df8984` (sha `a8709b6e…`), wallpaper `bannerlator-wallpaper-scope-c7ad800` (superseded by the 8973700 build once green).
+
+> **🗄️ CHECKPOINT (2026-07-05) — branch `feat/save-backup-restore`: PER-GAME SAVE BACKUP built + CI-green + staged (NOT device-tested).**
+> Iteration 2 on top of shipped v1 container-scoped Backup/Restore (`bc7d4dc` + phantom-shortcut fix `a8ddf7d`, restore device-proven).
+> **What shipped this session (2 commits):**
+> - **`b46f174`** `feat(save-backup): per-game save discovery, confirm checklist, and layout chooser` — implemented by android-app-engineer per spec `docs/spec_per_game_save_backup.md`. CI `28758354015` GREEN (~8m28s). APK `bannerlator-pergame-save-b46f174-standard.apk`.
+> - **`da62916`** `fix(save-backup): relabel whole-container scope to "All game saves (whole profile)"` — user asked to disambiguate the scope label (was "This whole container", read like a full-prefix clone). CI **`28758786986` GREEN**. **APK STAGED** `/sdcard/Download/bannerlator-pergame-save-da62916-standard.apk` (589,632,642 B, sha256 `92c756df510938fec54c285dac2049ece45f7239d3e00b10e6e78a4f88f5b9c0`, matches artifact). **← current head, test this one.**
+> **Feature (resolution = heuristic + confirm + remember, user-locked):** overflow → Backup/Restore save → Back up → **scope picker** {All game saves (whole profile) | A specific game ▸} → GamePicker (from `loadShortcuts`, cover art) → discovery spinner → **confirm checklist** (candidate save folders + per-folder sizes + manual-add + re-scan) → **format/layout chooser** {GameHub `/drive_c/users/steamuser/…` (default) | Winlator-native `drive_c/users/xuser/…`} → backup. Remembered games skip discovery via sidecar `<container>/app_data/save_maps.json` (keyed wmClass else lnk name).
+> **Files:** NEW `core/SaveLocator.kt` (6 roots, depth 1&2 scan, scoring exact100/contains70/token≥50%→50/Levenshtein≥.85→40, keep ≥50, nested de-dupe, sizes, sidecar); EDIT `core/GameSaveBackup.kt` (`enum BackupLayout{GAMEHUB,WINLATOR}` + scoped `backup(…,roots,gameName,layout)`, `roots==null`=whole profile); EDIT `ui/screens/ContainersScreen.kt` (BackupScope/GamePicker/GameSaves/format states) + `ContainersViewModel.kt` (`shortcutsFor`); +25 strings.
+> **Scope clarification (user Q):** "whole profile" backs up **`.wine/drive_c/users/xuser/**` only** (all game saves in the user profile) — NOT the full prefix/registry/Program-Files. Games that save into their install dir or registry are out-of-scope this iteration.
+> **⚠️ 1 deviation:** manual "add folder…" uses an in-app folder browser rooted at xuser, NOT SAF `OpenDocumentTree` (SAF can't enumerate app-private internal storage); same canonical-prefix escape guard applies.
+> **NEXT — user device-test (`da62916`):** per-game backup GameHub fmt → `unzip -l` roots `/drive_c/users/steamuser/…`, only that game's folders; Winlator fmt → `drive_c/users/xuser/…`; wipe save → restore → returns, others untouched; re-open → pre-ticked from sidecar. If proven → `2.4-preN` candidate (vc39+), NO stable cut. CI-GREEN ONLY, not device-proven.
+>
+> **⏸️ CURRENT STATE (2026-07-04) — on `feat/download-manager-stores`: Amazon wired into DL manager (delivered, awaiting device test) + ⬇ button on all store headers (delivered); NOW restyling all non-Steam store pages to follow the app theme.** Base: Download Manager v1 MERGED TO MAIN (`ef717fb`, fast-forward), all device-proven, still vc37/2.2.2, NO release cut.
+> **🎨 THEME/RESTYLE JOB IN FLIGHT (user req): make EVERY non-Steam store screen follow the app theme + refresh the outdated detail pages to match Steam.** Problem: Amazon/Epic/GOG pages had 13–25 hardcoded `0xFF…` colors each (Steam detail=0, the reference) → ignored theme presets. Scope (confirmed): **(a) 3 DETAIL pages** → full Steam-layout restyle via NEW shared `StoreDetailComponents.kt` (StoreDetailHeader/StoreHero+gradient/InfoChip/StoreBadge/StoreProgressBar/StoreStatusText/StoreActionButton/StoreActionRow/StoreSection, all theme-token) + keep a SUBTLE per-store badge (Epic blue/GOG purple/Amazon orange via StoreStyle); **(b) 4 LIST pages** (Amazon/Epic/GOG games + Epic free-games) → de-hardcode literals → theme tokens (layout kept). Mapping keeps DEFAULT look byte-identical; preserves installed-green + store-brand accents + all logic/sections (Updates/DLC/CloudSaves). Steam NOT touched. **Progress: ✅✅ ALL 4 TRACKS DONE + COMMITTED `220b95e`. First build `28721491746` RED (GOG detail missing MaterialTheme import) → fixed `7ec2b50` → REBUILD `28721728991` GREEN → APK DELIVERED** `/sdcard/Download/bannerlator-store-restyle-7ec2b50-standard.apk` (589,556,080 B, sha256 `c31b8458e47583c2…381872`, verified vs CI, media-scanned); NOT yet installed — **⏳ PRE-TEST CHECKPOINT, user about to device-test. Nothing on this branch device-proven yet; NOT merged. Full pre-test resume anchor in memory `project_bannerlator_download_manager_stores`.** **Device-test:** change theme → all store list+detail recolor; 3 detail pages match Steam layout + store badge; actions still work; + the pending Amazon DL-manager end-to-end (⬇ button/badge/live rows/cancel/kill/uninstall) carries onto this build. Rendered UI fully theme-compliant (residual `0xFF` only on dead write-only color fields). On green → deliver APK → device-test theme switch across every store list+detail + eyeball the 3 restyled detail pages vs Steam.
+> **→ NEW ACTIVE BRANCH `feat/download-manager-stores` (off main `ef717fb`):** route Amazon/GOG/Epic into the SAME `DownloadRegistry` as live producers, wired at the Activity callback seam (engines untouched). Order Amazon→GOG→Epic (lowest risk first). Recon plan done + saved to memory. **✅ Phase A (Amazon) BUILT + DELIVERED — commit `bc6d27c`, CI `28719688616` GREEN:** new `StoreDownloadHooks.kt` shim + `AmazonLibrarySync.kt` seeder + wired BOTH Amazon install entry points (detail + games-list) with real byte progress + `DownloadRegistry.init()`/seed in onCreate. **Standard APK DELIVERED** `/sdcard/Download/bannerlator-amazon-dlmgr-bc6d27c-standard.apk` (589,563,204 B, sha256 `d0ad8a2e094dcb94…c6448`, verified vs CI, media-scanned) — **⚠️ SUPERSEDED, do NOT test on `bc6d27c` (no ⬇ button on Amazon screens → can't open the DL manager from Amazon).** **➕ Then user req: ⬇ DownloadsButton + GLOBAL active-count badge added to ALL store headers** (Amazon/Epic/GOG games+detail + Epic free-games = 7 files), commit `8f01d81`, **CI `28720297597` GREEN → APK DELIVERED** `/sdcard/Download/bannerlator-stores-dlbtn-8f01d81-standard.apk` (589,563,301 B, sha256 `0f0367cd86507ced…04cb8fa`, verified vs CI, media-scanned); NOT yet installed. UI-only, badge global. **⏳ TEST ON THIS APK — user device-tests Amazon end-to-end:** ⬇ button + badge present on Amazon screens; (1) fresh install → LIVE row + byte bar on BOTH entry points (detail + games-list); (2) Cancel clears row; (3) INSTALLED survives app kill (Library seed); (4) Uninstall clears Library row. Then Phase B GOG. Parked: DepotSizeResolver true-size spec (memory).
+> - **✅ Verified uninstall (spinner + confirmation) DEVICE-PROVEN** (`f561252`): blocking `UninstallProgressDialog` during the verified recursive delete, then a confirmation. Replaced the old fire-and-forget delete.
+> - **🎉 SAME-SESSION UNINSTALL→REINSTALL WEDGE = FIXED (device-proven).** Uninstalled HL2 → immediately reinstalled same session → **10.65 GB → `is_installed=1`, NO wedge.** Cause of fix: the blocking spinner serializes delete-before-reinstall (= the reinstall-guard, for free) + cleared the orphaned `queued` row.
+> - **🐞→✅ Black-box confirmation FIXED (`eb7dd55`) + DEVICE-PROVEN (user, latest screenshot).** System `Toast` rendered as an empty black box on this ROM (targetSDK 28) → replaced the 3 Steam uninstall Toasts with **`UninstallResultBar`** (themed auto-dismiss ~2.2 s snackbar bar). **Installed + confirmed on device: the bar shows real text, no black box.** All Steam-side uninstall feedback now works end-to-end.
+> - **🐞→✅ Bug-1 (>100% size TEXT) FIXED (`b8e9e5b`).** The *percent* was already clamped everywhere; only the byte-count text could read done>total when PICS under-reports size (HL2 8.99 GB estimate vs 10.66 GB real). Fix: grow the install denominator when `installDone>iTotal`, mirroring the existing download-bar guard (`SteamDepotDownloader.kt:~510`); corrected total flows to both the detail page + DL card. **CI build `28717970189` GREEN → standard APK DELIVERED** `/sdcard/Download/bannerlator-size-text-fix-b8e9e5b-standard.apk` (589,559,803 B, sha256 `f773616a212b8b2e…0dc4d68`, size+sha verified vs CI, media-scanned). **✅ DEVICE-PROVEN:** full HL2 download to completion — total grew past the 8.4 GB estimate and the reported size tracked reality (no >100% byte-text overshoot). Evidence: HL2 install dir = 10 GB on disk. **→ ALL branch items device-proven; branch CLEAN, ready for the merge decision (user's call; verify fast-forward at merge; no release cut).**
+> - **🐞 Bug-2 (DL card stale-100% on reused entry) — DEFERRED by user (not recurred since blocking-uninstall).** Root cause found: `SteamDepotDownloader.kt:396` gates the counter-reset on `get(dmKey)==null`, so reinstalling a previously-INSTALLED game keeps stale counters; fix if it resurfaces = gate reset on `attempt==0`.
+> - Steam/Goldberg merged to main (`c89dc03`, no release, vc37/2.2.2). PARKED: Epic/GOG/Amazon registry wiring.
+> **NEXT:** build `28717970189` green → deliver standard APK → user glances at a download's size text (never overshoots) → branch is clean → **merge decision (branch→main; check fast-forward vs merge commit).** No release cut planned. Detail below + memory `project_bannerlator_download_manager`.
+
+---
+
+## 2026-07-05 — ✅✅ Restore DEVICE-PROVEN + 🐞→✅ phantom-shortcut fix (rebuild in flight)
+
+> **RESTORE PROVEN END-TO-END on device** (user, build `bc7d4dc`): restored the GameHub Titanfall 2 zip via ⋮→Backup/Restore save→Restore→GameHub backup→pick zip→confirm → launched TF2 → **campaign continued from the restored save.** On-disk: `xuser-1/.wine/drive_c/users/xuser/Documents/Respawn/Titanfall2/profile/savegames/savegame.sav` = 27,160,835 B — the steamuser→xuser remap landed it in the real profile the game reads. Backup direction still un-tested.
+> **🐞→✅ Phantom "FlightCore" game card FIXED (`a8ddf7d`).** Faithful restore also wrote the zip's Desktop launcher shortcut `users/steamuser/Desktop/FlightCore.lnk` → remapped to `users/xuser/Desktop/FlightCore.lnk`; **`ContainerManager.loadShortcuts()` scans the container Desktop dir and auto-imports every `.lnk` as a game card** (ContainerManager.java:226) → a FlightCore card (TF2/Northstar mod launcher) appeared in Games on its own. Fix = new `GameSaveBackup.isFrontendShortcut()`: skip `proton_shortcuts/` + Desktop `*.lnk/*.desktop/*.url` on restore (never save data). Existing phantom cleaned on device via root bridge (rm'd the 2 Desktop files + proton_shortcuts on xuser-1; **bridge CAN write/delete /data/data as uid=0**; grid drops the card on next loadShortcuts refresh). Pushed; **rebuild `28757508619` in flight** → stage updated APK on green. No release cut (2.4-preN candidate).
+
+## 2026-07-05 — ✅ Backup / Restore game save — BUILT GREEN + APK STAGED (checkpoint)
+
+> **New feature: "Backup / Restore save" on the container overflow (⋮) menu.** Two-way, GameHub-compatible. Branch **`feat/save-backup-restore`** off post-2.3 main `f7905be`; committed The412Banner **`bc7d4dc`**, pushed. CI build **`28756937615` GREEN** (compiles clean). Standard APK STAGED **`/sdcard/Download/bannerlator-save-backup-restore-bc7d4dc-standard.apk`** (589,592,834 B, md5 `79a7a4938ddf4a1fcbf2063509633b8a`, bit-identical to CI). **⚠️ Code-proven only — NOT device-tested yet. No release cut** (2.4-preN candidate if proven, per versioning rule).
+> **Why the remap matters (device-verified):** GameHub runs Proton as user `steamuser`; our containers run Wine as `xuser` (`…/imagefs/home/xuser-<id>/.wine/drive_c/users/{xuser,Public}` — no steamuser). A verbatim extract lands the save in a dead folder the game never reads → silent no-op. Engine translates both ways: **restore** `users/steamuser/…`→`users/xuser/…`; **backup** `users/xuser/…`→ zip `/drive_c/users/steamuser/…`.
+> **GameHub zip format** (verified from `Titanfall® 2_1772195654303.zip`, 23.6 MB): drive_c snapshot, every entry rooted `/drive_c/...`; real save = `users/steamuser/Documents/Respawn/Titanfall2/profile/savegames/savegame.sav` (27 MB) + cfgs; plus incidental junk (VC redist Package Cache, Temp logs). No manifest/appid — game name only in the filename.
+> **Impl — 2 files:** NEW `core/GameSaveBackup.kt` (threaded restore w/ Zip-Slip guard + backup zipping the xuser profile minus Temp/CrashDumps → `Downloads/Winlator/Backups/GameSaves/<name>_<millis>.zip`); MOD `ui/screens/ContainersScreen.kt` (SettingsBackupRestore menu item → SaveFlow: Fork → RestoreSource/BackupFormat → SAF `GetContent("application/zip")` picker + confirm → themed progress + reused `UninstallResultBar`). Locked design (user): restore FAITHFUL (all entries), OVERWRITE-with-warning; backup default = GameHub `steamuser` layout; "other sources/formats" stubbed for later.
+> **Preview delivered:** interactive HTML mock `/sdcard/Download/bannerlator-restore-preview.html` + artifact `claude.ai/code/artifact/dfd01d27-1b4d-4564-9fde-8ebf5874e574`.
+> **NEXT (device-test):** (a) ⋮→Backup/Restore save→Restore→GameHub backup→pick Titanfall zip→confirm→"Restored 43 files"→launch TF2, save loads (can root-verify `savegame.sav` under `users/xuser/Documents/Respawn/…` first); (b) Back up→GameHub-compatible .zip→appears in Downloads/Winlator/Backups/GameSaves. Watch: SAF picker may need `*/*` if it hides the zips (one-line change); storage-permission prompt on first backup. Memory: `project_bannerlator_save_backup_restore`.
+
+## 2026-07-05 — 🤝 Mali/BCn-layer test build handed off to @kylinzang
+
+> Mali/BCn-layer feature (branch `feat/mali-bcn-layer`, `79ee0ae`, CI run `28748542841` green, 3 flavors, artifacts expire 2026-07-12) **handed off for Mali device testing**: posted the build link + how-to (new "Wrapper + bcn_layer" driver + BCn Layer Settings mapped to his #54 env-var spec) on kylinzang's issue #54 → https://github.com/The412Banner/Bannerlator/issues/54#issuecomment-4887015807. Asked him to confirm the driver loads, a BC-texture game that crashed now runs, ETC2-vs-ASTC, and the debug log. **NOT merged, NOT in 2.3.** If it works → rebase onto post-2.3 main + bump `2.4-pre1`/vc39 (merge or public prerelease). Offered a prerelease APK if he can't pull CI artifacts. Awaiting his results — ball in his court.
+
+## 2026-07-05 — ✅ STABLE RELEASE 2.3 (versionCode 38) — PUBLISHED + LATEST
+
+> **✅ LIVE:** https://github.com/The412Banner/Bannerlator/releases/tag/2.3 — tag `2.3` (→ `4c50df4`; APKs built from `fa488af`, app code identical, the tag just sits one docs(log) commit ahead), prerelease:false, **make_latest:true → releases/latest resolves to 2.3**. Release run **`28749102771`** SUCCESS. Body overwritten with polished `release_2.3_body.md` via `gh release edit`. **update.json verified: versionCode 38 / versionName 2.3**, per-flavor APK map correct. Assets attached: `Bannerlator-2.3-standard.apk` (589,576,141 B), `-ludashi` (589,576,164 B), `-pubg` (589,576,122 B), update.json (885 B). All caches hit (warm build). No release_notes double-quote trap (notes were single-line, clean).
+> Credits handed out (release body + README): JavaSteam (Longi94 + joshuatam), Goldberg/gbe_fork (Mr_Goldberg/Detanup01), Pluvia (oxters168), GameNative (expanded: session-hardening + speed tiers), The412Banner (2.3 original engineering); no AI credited — satisfies [[project_bannerlator_steam_branch_release_credits]].
+
+## 2026-07-05 — 🚀 STABLE RELEASE 2.3 (versionCode 38) — CUTTING (superseded by PUBLISHED above)
+
+> **The storefronts release.** Bump commit `fa488af` (versionCode 37→38, versionName 2.2.2→2.3), release.yml run **`28749102771`** RUNNING (make_prerelease=false → plain tag `2.3`, make_latest, all 3 flavors + update.json vc38). Changelog range `d837036..5d324a6` (2.2.2 was ReShade; ALL of this landed after it). **Entirely app-side — NO ImageFS reinstall** (verified: zero bundled-asset changes since 2.2.2).
+> **Ships:** built-in **Steam store** (JavaSteam depot engine, username/password OR QR login, session hardening/CM-logoff recovery, GameNative-style 4-tier speed, status pill, depot OOM fix, "Log debug session" toggle); **Goldberg auto-patch** (Regular/Experimental/ColdClient, use-at-own-risk); **cross-store Download Manager** (Steam/Epic/GOG/Amazon, background downloads + shade notif via FGS, two-bar progress, single-source install-state, verified uninstall, Default-screen setting); **Epic + Amazon stores** added, **GOG** wired in, all non-Steam pages M3-restyled; **security hardening** (StoreLog.redactUrl scrubs signed URLs/OAuth codes/GOG client_secret+refresh_token/identity IDs from logcat + diagnostic files) + **third-party-login/use-at-own-risk/share-logs-carefully disclaimer**; **Steam QR re-enabled** + advisory.
+> **README updated** (What's New 2.3, all-4-stores + DL Manager section, new 🔒 Security Hardening section, Disclaimer extended) + **credits** added JavaSteam (Longi94 + joshuatam depotdownloader), Goldberg/gbe_fork (Mr_Goldberg/Detanup01), Pluvia (oxters168); expanded GameNative (session-hardening + DownloadSpeedConfig speed tiers) + The412Banner (2.3 original engineering); no AI credited. Release body drafted `/home/claude-user/scratchpad/release_2.3_body.md`, updater note `release_2.3_notes.txt` (double-quote-safe).
+> **PENDING on build green:** `gh release edit 2.3 --notes-file release_2.3_body.md --latest` (polished body) → verify tag `2.3` + update.json vc38 + 3 APKs + releases/latest→2.3 → record run/SHA/md5s → hand out credits (done in notes/README). **NOT on main:** Mali/BCn-layer (`feat/mali-bcn-layer`, awaiting Mali tester). QR is code-proven, verified-in-the-wild per user.
+
+---
+
+## 2026-07-05 — 🎮 Re-enable Steam QR sign-in + fallback advisory (BUILDING)
+
+> **Branch `feat/reenable-steam-qr`** (off main `75ba43c`, commit `483b88c`, CI build `28747478670` running). QR login had been UI-gated OFF (`SteamLoginActivity.kt` `TextButton enabled=false`, "temporarily unavailable") over a concern that QR-originated sessions get dropped by the Steam CM after ~1h. **Verified the disable's stated precondition ("re-enable once the logoff-recovery path is device-proven") is now met at code level:** QR success calls `SteamQrAuthManager.saveSession(username, refreshToken)` — the SAME session shape as a password login — so it's recovered by the SAME path (`SteamRepository.onLoggedOff`/`reconnectNow`/`loginWithToken(username, refresh_token)`, bounded `MAX_LOGOFF_RECOVERY=3`/`MAX_RECONNECT_ATTEMPTS=5`). Recovery is refresh-token-based and agnostic to how you first authed → a QR session recovers like a password one.
+> **Change = UI-only** (no auth/session logic touched): `SteamLoginActivity` button re-enabled + label back to "Sign in with QR Code"; NEW on-screen advisory on `QrLoginActivity` — "if downloads or your session keep dropping after signing in with QR, sign out and use Username + Password instead (the more reliable sign-in)". ⚠️ **code-proven, NOT yet device-proven for QR specifically** (recovery was device-proven on the password path; needs QR→wait ~1h/force-logoff→confirm reconnect on-device).
+> **Also in flight:** main build `28747347502` (log-redaction complete build off `75ba43c`). **User decision: HOLD staging/merge until BOTH builds finish, then decide.** No release cut (vc37/2.2.2).
+
+---
+
+## 2026-07-05 — 🔒 Store logcat credential-leak audit + redaction fix (BUILT + STAGED)
+
+> **✅ CI build `28746951190` GREEN** (~8m, cached; SHA `2a2c5a96`). **Standard APK STAGED** `/sdcard/Download/bannerlator-log-redaction-2a2c5a9-standard.apk` (589,575,792 B, sha256 `4a80c30f…941c992b`, bit-identical to CI, on-device). ONE combined build = 4-store Download Manager COMPLETE + log redaction. **⏳ Awaiting user device-test:** all 4 store logins still work + a game download still works (confirms redaction-only), then diff logcat before/after to see credentials/signed-URLs now redacted. Then merge `fix/store-log-redaction`→main (clean FF off `a0ef2ee`), no release cut (vc37/2.2.2).
+> **UPDATE:** fix implemented (18 files + NEW `StoreLog.java`), diff reviewed = redaction-only (logins/downloads/token-refresh/cloud-save unaffected — real url/token/accountId/userId vars still flow to the network/login code; `CLOUD_SAVES_NOT_SUPPORTED` control flow preserved), grep-sweep clean. Committed The412Banner `2a2c5a96`. Bonus fix: closed a `GogLoginActivity` redirect-URL leak (auth code in query). Residual/optional follow-up: ~20 bare `Log.x(msg, throwable)` network-catch sites + `SteamRepository.testUrl` (lower risk, not done).
+>
+> **Branch `fix/store-log-redaction`** (off main `a0ef2ee`). User asked whether any of the 4 stores emit credentials/tokens/username/email to logcat. 4-agent parallel audit (read-only) → then a REDACTION-ONLY fix (log-string edits, ZERO behavior change: login/downloads/token-refresh/cloud-save untouched; only what's WRITTEN to the log changes).
+> **Audit verdict:** across all stores, passwords/emails/usernames/access+refresh tokens are NEVER directly logged (WebView/OAuth logins; tokens in Authorization headers). No HTTP logging interceptor anywhere. **Steam = CLEAN** (`SteamLogRedactor` wired into logcat sinks + secrets registered pre-log + JavaSteam firehose gated behind off-by-default debug toggle; only 5 raw-Throwable logs bypass it = LOW hardening, kept per user). **Leaks (Amazon/Epic/GOG, no redactor/gating):** signed CDN/manifest URLs (auth in query) — Amazon `AmazonDownloadManager.java:112` unconditional every install, + error paths across Amazon/Epic/GOG; OAuth code via whole-page dump (`EpicLoginActivity.kt:71` HIGH, `AmazonLoginActivity.kt:67`); **GOG `GogTokenRefresh.java:78` can print `client_secret`+`refresh_token`** via the error URL (highest-value payload); identity ids (EpicAccountId, GOG userId); Amazon `credentials.json` echo via JSONException.
+> **Fix:** new `StoreLog.redactUrl()` (strips query/userinfo → scheme+host+path); exception logs → class-name-only; page/redirect dumps → static strings; drop accountId/userId/body snippets; Steam Throwables → `SteamLogRedactor`. Impl by native-steam-engineer agent.
+> **NEXT:** review diff (redaction-only) → commit (The412Banner) → push → CI `build-artifacts.yml` on the branch → verify green+sha → stage ONE combined standard APK to `/sdcard/Download/` (user HOLDING all staging until this build is ready) → device-diff logcat before/after → merge decision. No release cut (vc37/2.2.2). Main build `28746137017` GREEN + untouched.
+
+---
+
+## 2026-07-05 — 🎉 EPIC MERGED TO MAIN → Download Manager COMPLETE (all 4 stores)
+
+> **✅ `feat/epic-download-producer` MERGED TO MAIN** (user-instructed) — clean fast-forward `17f58ae..0ab3475`, main now `0ab3475`. Carries Epic Phase C (`4cf2b8f`) + the GOG/Epic list-card cold-start install-state fix (`0ab3475`). **Cross-store Download Manager is now COMPLETE across all 4 stores (Steam/Amazon/GOG/Epic).** NO release cut — stays vc37/2.2.2 (a future stable still needs a monotonic versionCode bump). Pre-merge, verified install-state on device against disk-truth (per-store prefs + `steam.db` is_installed + on-disk dirs): Epic=Brawlhalla, GOG=ELDERBORN, Steam=HL2+FlatOut, Amazon=0 — matched the DL-manager Library exactly. Branch kept. Open follow-ups: DepotSizeResolver true-size; release credits at next stable.
+
+---
+
+## 2026-07-05 — 🐞→✅ Store-list cold-start install-state (GOG confirmed + Epic latent) FIXED
+
+> **Device report (user, 6 screenshots on Epic build `4cf2b8f`): Epic Phase C WORKING end-to-end** — Brawlhalla shows on the detail bar (10%), the DL-manager card *with cover art* (44%), AND the FGS shade notification (59%). Epic inherited the shared StoreDownloadHooks→FGS→notif→DL-manager plumbing correctly. **🐞 BUG spotted: GOG Library LIST shows "Install" on an already-installed game** (ELDERBORN) while the GOG *detail page* and the *cross-store DL-manager* both correctly show it Installed.
+> **Root cause:** the GOG list card is driven purely by the in-memory `downloadStates` map, only written by a LIVE download this session; it's NEVER seeded from disk-truth on cold start. `GogLibrarySync.seed()` seeds the DownloadRegistry (DL-manager) but not this Activity's local map → prior-session install = null entry → falls to "Install". Detail was correct because it reads `gog_exe_`/`gog_dir_` prefs directly.
+> **Epic audit found the IDENTICAL latent bug** (not the assumed "already fine"): `EpicGame.isInstalled` is only ever set from cache/refresh-merge, never re-derived from `epic_exe_` on cold start (install-complete only updates the live map), so the old `?: GameDownloadState(installed = game.isInstalled)` fallback was always false.
+> **Fix (mirror across both, disk-truth fallback):** new `GogInstallState.isInstalled(ctx,id)` = `gog_exe_ != null && gog_dir_ != null`; new `EpicInstallState.isInstalled(ctx,appName)` = `epic_exe_ != null` (exact records the detail pages read). List/grid/poster cards fall back to a synthesized installed state when the live map is empty. GOG **must** also set `buttonText="Add to Launcher"` (card reads `downloadState.buttonText` before the isInstalled fallback, ~line 1099); Epic drives label off its single `installed` field so no buttonText coupling. Uninstall→`purge` clears the keys → flips back to "Install". Files: `GogInstallState.kt`, `EpicInstallState.kt`, `GogGamesActivity.kt` (+LocalContext import, dead `val isInstalled=false` removed), `EpicGamesActivity.kt` (+LocalContext import, 3 fallback sites). Engine/DownloadRegistry/DL-manager/versionCode untouched. Known pre-existing edge (not introduced): install→detail-uninstall in the SAME session leaves a stale live-map entry that wins over disk until Activity recreate; cold-start (the target) fully covered.
+> **NEXT:** commit (The412Banner) → push branch `feat/epic-download-producer` → CI build → deliver APK → user device-test: cold-restart GOG list shows ELDERBORN Installed + "Add to Launcher"; Epic list same for an installed Epic game; uninstall flips both back. On pass → merge Epic branch→main (clean FF) = Download Manager COMPLETE across all 4 stores.
+
+---
+
+## 2026-07-04 — ✅ GOG live-% device-proven → GOG merged to main; 🎮 Epic Phase C built + building
+
+> **GOG live-% DEVICE-PROVEN** (user screenshot: GOG ELDERBORN detail shows "Downloading… 49%" under the bar, matches manager + notification). **→ GOG Phase B fully done + MERGED TO MAIN** (fast-forward `180c2c8..17f58ae` via push, non-disruptive to the Epic branch/build; NO release cut, still vc37/2.2.2). main now `17f58ae`.
+> **🎮 EPIC PHASE C implemented + committed `4cf2b8f` (build `28728770633` running):** new `EpicInstallState`(purge) + `EpicLibrarySync`(seed+self-heal+cachedDetail); producer hooks both Epic entry points, DownloadScope.io+appContext (Amazon-shaped blocking install()), no-dialog completion, `observeRegistry()` live "$pct%" label, uninstall→purge+markUninstalled; DownloadManagerActivity last 2 `Store.EPIC` branches filled → **all 4 stores live producers, no stubs.** WEAK CANCEL (Epic engine has no checker): UI freezes immediately, transfer runs to completion then discarded (documented).
+> **✅ Epic build `28728770633` GREEN 8m18s → APK DELIVERED** `/sdcard/Download/bannerlator-epic-4cf2b8f-standard.apk` (sha `4f3cae6b…fb0c1801`, bit-identical, on-device); ⏳ user device-testing all 4 stores. Then merge Epic branch (stacked on GOG) → main (clean FF) = Download Manager COMPLETE. 🗑️ Dropped (user 2026-07-05): vc38 pre-release, GOG installed-build cosmetic, dialog accent; Goldberg all tiers proven.
+
+---
+
+## 2026-07-04 — 🔧 Live percentage on GOG/Amazon detail pages during download
+
+> Device-test of `2ab915c`: GOG all-works + uninstall→re-download→install works, BUT the detail page showed the bar+Cancel with **no percentage text** (DL manager + notification show "Downloading… 57%"). The detail-sync collector set the bar but never `progressLabel`. **Fix `c1be52b` (build `28728512650` running):** GOG+Amazon `observeRegistry()` collector now drives a live `progressLabel="Downloading… ${pct}%"` (Amazon adds "(done/total)" when it has bytes) + visible; GOG local onProgress label switched from engine-msg to "$pct%" (no flicker).
+> **✅ live-% build `28728512650` GREEN 6m55s (warm) → APK DELIVERED** `/sdcard/Download/bannerlator-gog-livepct-c1be52b-standard.apk` (sha `22bc87cd…530f9cf3`, bit-identical, on-device); ⏳ user device-testing live-%. **✅ Epic Phase C BEGUN in parallel:** spec rescoped (live-% items 9-10), new branch `feat/epic-download-producer` off GOG-branch `17f58ae` (off GOG not main, to inherit its DownloadManagerActivity changes), Epic agent dispatched. Epic = last store (Amazon-shaped, weak cancel, launch already fixed). Merge Epic branch (=GOG+Epic) → main when both device-proven.
+
+---
+
+## 2026-07-04 — Goldberg risk warning + warm build confirmed
+
+> Added a user-facing caveat to the Steam Emulator (Goldberg) section (`2ab915c`, error-color Text under the subtitle): "Please note: this is not a fix for all Steam games that require a Steam client to run. It is not a guaranteed fix-all — use at your own risk!"
+> Detail-sync build `28727937666` (72dbed1) GREEN **8m14s** — first fully-warm build off main's populated caches (~16min→8m14s, ~48% faster; confirms the caching). Combined build `28728128024` (detail-sync + warning, sha 2ab915c) **GREEN 8m13s (warm) → APK DELIVERED** `/sdcard/Download/bannerlator-gog-warn-2ab915c-standard.apk` (sha `9a197a39…642c8b1ba`, bit-identical, on-device). ⏳ user device-testing GOG detail sync + Goldberg warning.
+
+---
+
+## 2026-07-04 — 🐞 GOG (+Amazon) detail page not synced with download-manager progress
+
+> GOG device-test: card + notification work, but the **GOG detail page shows "Install" during a live download** (ELDERBORN: card 55%+Cancel, notif 58%, detail = Install). Cause: `GogGameDetailActivity.refreshActionState()` (and `AmazonGameDetailActivity.refreshActionState()` — same latent bug on main) read install PREFS only, never the DownloadRegistry → opening the detail mid-download (or list-started) shows Install, not progress+Cancel. +card showed "0 KB / 0 KB" (GOG pct-only).
+> **Fix (dispatched):** both GOG+Amazon detail pages observe `DownloadRegistry.entries` for their game key → reflect DOWNLOADING as progress+Cancel (live pct), Cancel wired to the registry entry (works for list-started DLs); DL card suppresses the byte pair when `installTotal==0`. Epic folded into its Phase C spec (items 9-10).
+> **✅ FIXED `72dbed1`, build `28727937666` running (warm off main caches):** GOG+Amazon detail added `observeRegistry()` collector (DownloadRegistry.entries → progress+Cancel live, Cancel routes to registry entry w/ recursion-guard); card gates bar+byte-text on `hasBytes` (fixes GOG 0KB + latent bar-stuck-at-0). NEXT: green → deliver `bannerlator-gog-detailsync-72dbed1-standard.apk` (watcher `bly53jgay`) → re-test GOG detail sync (list-started DL → open detail → live progress+Cancel; card shows just %). Epic Phase C spec ready (waits: GOG proven → merge → Epic).
+
+---
+
+## 2026-07-04 — 🎮 GOG Phase B implemented (producer wiring) + parallel cache-warm on main
+
+> On `feat/gog-download-producer`. **GOG wired into the cross-store Download Manager** (`70ebfef`, mirrors Amazon; `GogDownloadManager.java` untouched): new `GogInstallState` (purge) + `GogLibrarySync` (seed + self-heal + cachedDetail); producer hooks in `GogGameDetailActivity` + `GogGamesActivity` (both download entry points); `DownloadManagerActivity` openDetail + purgeNativeInstall GOG branches. Cover `//`→https normalized. **Deviation (correct): no DownloadScope — GOG engine spawns its own thread, so FGS+appContext give background survival.** update-available=false (GOG check is network-only). Verified compile-critical refs exist + imports/Kotlin-Java direction clean.
+> **Parallel:** cache-warming build `28727169152` on `main` (cold, populates main-scope caches for all future runs); GOG build `28727381558` dispatched alongside (cold this once, warm off main afterward).
+> **NEXT:** builds green → deliver GOG APK → device-test → Phase C (Epic, last; also fix its LandscapeLauncher launch crash).
+> **⏸️ CHECKPOINT (2026-07-04): main cache-warm build `28727169152` GREEN 16m54s (main-scope caches now populated — all future builds warm). GOG build `28727381558` GREEN 10m47s (faster than ~16min baseline — partial cache benefit) → APK DELIVERED `/sdcard/Download/bannerlator-gog-70ebfef-standard.apk` (sha `a021e232…d27f91dab`, bit-identical, on-device). ⏳ user device-testing GOG. GOG code committed `70ebfef` on `feat/gog-download-producer`.**
+> **✅ EPIC PHASE C SCOPED + PREPPED AHEAD (spec `/home/claude-user/scratchpad/epic_phase_c_spec.md`):** pure producer wiring (Epic's launch crash already fixed in Phase A). Epic is Amazon-shaped (synchronous blocking `install():boolean` on lifecycleScope → needs DownloadScope move), single-bar, **WEAK cancel** (no cancel arg → best-effort only). Branch when greenlit: `feat/epic-download-producer` off main-after-GOG-merges. After Epic, all 4 stores are live producers (no stubs). Detail in memory `project_bannerlator_download_manager_stores`.
+
+---
+
+## 2026-07-04 — ✅ MERGED Amazon Phase A → main + cached both CI workflows + branched for GOG
+
+> **Toast sweep DEVICE-PROVEN** (user "toast sweep good") → all of Amazon Phase A + shared infra is device-proven. **Merged `feat/download-manager-stores` → `main`** (merge `88e2360` + cleanup `180c2c8` removing the redundant `build-artifacts-fast.yml`). **No release cut** (stays vc37/2.2.2). Merged content: Amazon DownloadRegistry producer, non-Steam store restyle, ⬇ button, notification + background-download foreground service, install-state one-source-of-truth (uninstall purge + self-heal), launch/detail-routing/dialog fixes + Epic launch-crash fix, full black-box Toast sweep.
+> **CI caching adopted:** folded into `build-artifacts.yml` (`6ffc374`) AND `release.yml` (Nightly Manual Release Build, `55f9caa`) — setup-java (drop apt JDK), setup-gradle dep+build cache, NDK+cmake cache, JavaSteam-JAR cache (keyed on upstream commit), LSFG `.so` cache. Validated ~28% faster warm (16min → 11m41s), green, all 3 valid APKs. First run on a new scope is cold, warm after.
+> **➡️ New branch `feat/gog-download-producer`** off main `180c2c8` for **Phase B (GOG)** — spec ready at `/home/claude-user/scratchpad/gog_phase_b_spec.md`.
+
+---
+
+## 2026-07-04 — ⚙️ CI build-speed: cloned cached workflow under test (build-artifacts-fast.yml)
+
+> User asked about speeding up the ~13-16 min CI build (zero caching today). Decided: **ALWAYS build all 3 flavors** (no standard-only), so speedups = caching + drop redundant JDK only. Built a PARALLEL cloned workflow to validate WITHOUT touching the primary `build-artifacts.yml`.
+> **New `.github/workflows/build-artifacts-fast.yml`** (feature branch `8cae1e7`; registered dispatch-only on `main` `2df37ab` because `workflow_dispatch` requires the file on the default branch): same 3-flavor output/artifact names + adds `setup-java` (drop apt JDK), `setup-gradle` (dep+build cache), NDK+cmake cache (key=version), JavaSteam-JAR cache (key=upstream commit via `git ls-remote`), LSFG `.so` cache (key=source+script hash). Each cache guarded so a miss still builds.
+> **Cache invalidation:** JavaSteam(upstream commit)/LSFG(source hash)/Gradle(build-file hash) auto-detect changes → rebuild+recache, else use cache; NDK version-pinned (re-downloads only when we bump the version). Est. warm build ~8-10 min (3× APK packaging is the uncacheable floor).
+> **✅ MEASURED: baseline ~16min | cold `28726206582` 16m38s (green, fills caches) | warm `28726606412` 11m41s (green, caches hit) → ~28% faster (~4m40s). Both fast runs built all 3 valid APKs = cached path proven correct.** Remaining ~11.5min is dominated by the uncacheable 3× APK R8+packaging floor. Next (user's call): device-test a fast-build APK for parity, then adopt/merge the caching or keep as-is. See memory `project_bannerlator_ci_build_speedup`.
+
+---
+
+## 2026-07-04 — 🐞→✅ Black-box Toast on Amazon uninstall (device-test of 6e089ce)
+
+> **`6e089ce` device-tested: all 5 launch/routing/dialog fixes WORK.** Last bug: uninstall shows an unreadable **black box** at the bottom (screenshot = Amazon detail page). Same ROM/targetSDK-28 issue Steam already fixed — system `Toast` renders as a black box; Steam uses the themed `UninstallResultBar` (`StoreUninstaller.kt:65`).
+> **Fix (`4b8d28b`):** `AmazonGameDetailActivity` + `AmazonGamesActivity` — added `resultBarMsg` state + `UninstallResultBar` overlay; uninstall confirmations (both entry points) + the detail "No .exe found" launch message now render through the themed bar instead of Toast. Also refresh `loadUpdateStatus()` on uninstall so the stale "Installed: v…" line clears. CI `28725198746` running → deliver `bannerlator-toast-fix-4b8d28b`.
+> **✅ SWEEP DONE (`71590ab`, CI `28725602812` GREEN → APK DELIVERED `/sdcard/Download/bannerlator-toast-sweep-71590ab-standard.apk`, sha `6479e7f3…48c6611`, bit-identical, on-device confirmed; ⏳ user device-testing):** 63 Toasts across 15 files converted — 58 Compose→`UninstallResultBar`; GogLogin(WebView)+FolderPickerActivity.java→themed `AlertDialog(StoreAlertDialogDark)`. Finding: `StarLaunchBridge.showToast()` was already a readable custom dark Toast (not black-box), left as-is. Verified no stray Toasts, bars wired, R/style refs resolve, braces balanced. Combined build (uninstall fix + sweep) → deliver `bannerlator-toast-sweep-71590ab`.
+> **✅ GOG Phase B TEED UP** (spec ready `/home/claude-user/scratchpad/gog_phase_b_spec.md`) — mirror Amazon exactly; dispatch on user greenlight after they device-test `71590ab`. Then Phase C = Epic.
+
+---
+
+## 2026-07-04 — 🐞×4 Amazon launch/completion/routing/dialog (device-test of cceba57)
+
+> **`cceba57` device-tested. ✅ WINS:** cover art on DL card, detail progress label "68% (2.7 GB / 3.9 GB)", **shade notification works** ("Downloading — Dread Templar — 82% (3.2 GB / 3.9 GB)"). **4 NEW bugs (crash captured via `getlog.py exec logcat -b crash`):**
+> 1. **DL-manager cards don't open the store detail page** — `DownloadManagerActivity.openDetail(:186)` routes only STEAM, else no-op. Fix: route AMAZON → `AmazonGameDetailActivity`, hydrate extras (entitlement_id/dev/pub/product_sku) from `amazon_library_cache` by productId; GOG/Epic TODO.
+> 2. **Launch from Amazon DETAIL page CRASHES** — `ActivityNotFoundException` at `pendingLaunchExe:480` (hardcodes stale `com.xj.landscape.launcher.ui.main.LandscapeLauncherMainActivity`, absent in `com.winlator.banner`). Fix: delete it, use `StarLaunchBridge.addToLauncher(this,title,exe,artUrl)` (the working list path).
+> 3. **Container-picker dialog unthemed** ("old menu style" white) — `StarLaunchBridge.java:129` uses default-light `AlertDialog.Builder`. Fix: dark+pink themed dialog (shared infra → fixes all stores).
+> 4. **Download hangs at 100% + auto-exe-picker on completion** — `AmazonGameDetailActivity:330-350` shows the exe picker on completion when >1 exe, gating `markInstalled`; if user isn't on the detail page the dialog queues on the stopped Activity → card stuck at 100%. Fix: completion auto-records best-scored exe + markInstalled (NO dialog, both entry points); move exe picker to the **Launch** flow (before the container picker).
+>
+> All 4 = one coherent Amazon completion→launch flow fix + DL routing + dialog theme. **✅ FIXED + COMMITTED `6e089ce`, CI `28724462856` running.** `openDetail`→AMAZON via new `AmazonLibrarySync.cachedDetail`; `AmazonGameDetailActivity` launch reworked to `StarLaunchBridge.addToLauncher` + completion auto-finalizes (no dialog); `AmazonGamesActivity` completion same; dark `StoreAlertDialogDark` picker. **+ fixed the IDENTICAL Epic detail-launch crash** (`EpicGameDetailActivity.kt:367`, same hardcoded `LandscapeLauncherMainActivity`) — Epic detail is reachable today; GOG detail was already correct. **Known nit (deferred):** dialog accent = legacy blue, not preset pink (framework dialog can't read the Compose preset). **CI `28724462856` GREEN → APK DELIVERED** `/sdcard/Download/bannerlator-launch-fixes-6e089ce-standard.apk` (589,562,460 B, sha256 `56dd4431f67335be…f155e9ad`, bit-identical to CI, on-device confirmed). ⏳ USER DEVICE-TESTING all 5. **🛑 HOLD Phase B (GOG) until user device-tests `6e089ce`.** ⚠️ Clarified (verified in code): Epic & GOG are NOT yet wired to the notification/DL-manager — only Amazon + Steam call `StoreDownloadHooks`; no Epic/GOG seeders. Their downloads today have no shade notif / no DL-manager card / no background survival; they inherit all of it once wired (Phase B GOG → Phase C Epic). Launch now works on all 4 stores.
+
+---
+
+## 2026-07-04 — 🐞→✅ Install-state = one source of truth (uninstall left Amazon list "Installed")
+
+> **Device-test of `3ad879a` surfaced a bug:** user uninstalled Amazon "Dread Templar" from the DL manager. **Files WERE deleted** (device-verified: `/data/data/com.winlator.banner/files/Amazon/` empty), but the Amazon store list still showed "✓ Installed". **Cause:** cross-store uninstall cleared the registry row + Steam DB but never Amazon's native record; the Amazon list reads install-state solely from pref `amazon_exe_<id>` (`AmazonGamesActivity.kt:1014,1245`), which survived. Latent 2nd bug: `AmazonLibrarySync.seed()` treated `exe!=null` as installed → would resurrect a zombie INSTALLED row on next cold start.
+>
+> **User decisions (AskUserQuestion):** install-state = ONE source of truth across detail/card/list for ALL of {install-state, update-available, cover/metadata}; generalize seam for GOG/Epic.
+>
+> **Fix (native-steam-engineer) → committed `cceba57`, pushed, CI `28723445905` running:**
+> - NEW `AmazonInstallState.purge(ctx,pid)` — single owner of Amazon's native record (clears `amazon_exe_`/`amazon_dir_`/`amazon_manifest_version_`/`amazon_size_`); called from ALL 3 uninstall paths (list, detail, cross-store Manager). Amazon-side so `download` pkg stays engine-free.
+> - `DownloadManagerActivity.purgeNativeInstall(entry)` — generalized `when(store)` seam (AMAZON wired; GOG/EPIC TODO-stub; STEAM via DB); + seeds Amazon in `onCreate` so opening the Manager directly self-heals; + amber "● Installed — Update available" on the card.
+> - `AmazonLibrarySync` **self-heal**: install-truth now requires bytes on disk (`isInstalled(dir) || (exe!=null && File(exe).exists())`), else purge prefs + `removeLibraryEntry`. `isActive` guard moved BEFORE the heal so in-flight downloads are never purged. → auto-fixes the user's current orphaned Dread Templar prefs on next launch.
+> - `DownloadEntry.updateAvailable` (transient, not persisted) — amber card marker matching the store list's language; sourced from cached `versionId` `_UPDATE_AVAILABLE` suffix at seed; `markInstalled` clears it; Steam=false.
+> - cover parity: seed cover = `artUrl.ifEmpty{heroUrl}` (matches list). Installed cards show no size line (Steam parity — flagged, can add if wanted).
+>
+> Compile-verified (`Store` imported, `isActive`/`get` exist, same-package helper). **CI `28723445905` GREEN (conclusion re-verified) → STANDARD APK DELIVERED** `/sdcard/Download/bannerlator-state-sync-cceba57-standard.apk` (589,560,894 B, sha256 `ff7b29e910452a4a…42efd0ab`, bit-identical to CI, on-device confirmed). **⏳ USER DEVICE-TESTING.** DEVICE-TEST: uninstall from Manager → Amazon list flips to NOT installed; force-close+reopen → uninstalled game stays gone AND current orphaned Dread Templar auto-heals; update-available amber marker on card; cover/title match detail.
+
+---
+
+## 2026-07-04 — 🔔 Cross-store download NOTIFICATION + background survival (device-test feedback on restyle build)
+
+> **Restyle+Amazon build `7ec2b50` device-tested by user (3 screenshots, Dread Templar / Amazon).** ✅ Restyle solid (detail page matches Steam layout + orange Amazon badge); ✅ Amazon→DownloadRegistry end-to-end PROVEN: ⬇ header "1" badge lit on download start, Downloads&Library shows live Amazon row `20% (810.2 MB / 3.9 GB)` + Cancel, library seeded (FlatOut + HL2). **Gap the user flagged:** Amazon downloads don't appear in the **system notification shade like Steam does**, and (root-caused) don't survive backgrounding.
+>
+> **Diagnosis:** Steam downloads run *inside* `SteamForegroundService` + call `SteamForegroundService.setStatusText(...)` each tick → ongoing shade notification + process kept alive. Amazon ran on `AmazonGameDetailActivity`'s **`lifecycleScope`** (dies with the Activity) with progress only into the in-app registry — **no FGS, no notification**. Two gaps: notification AND process-liveness. Also the "level23" label leak = detail page showed the raw archive filename (`progressLabel = name`) instead of `$pct%`.
+>
+> **User decisions (AskUserQuestion):** (a) **generalize at the shared `StoreDownloadHooks` seam** so GOG/Epic inherit it; (b) bundle all 3 polish fixes (level23→%, add %/size to detail bar, fix blank cover art).
+>
+> **Built (native-steam-engineer) → committed `3ad879a`, pushed, CI `28722689070` dispatched/RUNNING:**
+> - NEW `download/DownloadForegroundService.kt` — store-agnostic FGS, own "Downloads" channel (`downloads_channel`, IMPORTANCE_LOW), NOTIF_ID `9002` (≠ Steam's 9001), ongoing progress notif, tap→`DownloadManagerActivity`, `dataSync` type, `ConcurrentHashMap<key,Active(text,seq)>` source of truth (1→"Downloading", N→"N downloads"+most-recent line), self-stops when active set empties, sticky-restart-with-empty-map self-stops.
+> - NEW `download/DownloadScope.kt` — `object DownloadScope { val io = CoroutineScope(SupervisorJob()+Dispatchers.IO) }` process-lifetime scope.
+> - `StoreDownloadHooks.kt` — register/tick push `DownloadForegroundService.setProgress(key,line)`; markInstalled/Failed/Cancelled call `finish(key)`. Line built from registry entry via shared formatter.
+> - `DownloadRegistry.kt` — `appContext()` accessor (app ctx captured in `init`, leak-safe).
+> - `DownloadModels.kt` — promoted shared `formatDownloadSize(Long)` (manager's GB/MB/KB tiering) so card + detail label + notif read identically.
+> - `AmazonGameDetailActivity.kt` — download moved `lifecycleScope`→`DownloadScope.io`, `applicationContext` into `AmazonDownloadManager.install`, UI writes guarded `!isDestroyed&&!isFinishing`, exe-picker auto-picks best-scored exe if Activity gone (BadToken guard), `onBackPressed` no longer aborts download, error Toast uses app ctx; polish 4a/4b (`"$pct%  (done / total)"`, "Downloading…" at 0%).
+> - `DownloadManagerActivity.kt` — new `DownloadCoverArt` (Steam=appId loader, others=Coil URL, graceful placeholder) fixes blank Amazon cover (4c); `fmtSizeDm`→shared formatter.
+> - `AndroidManifest.xml` — `FOREGROUND_SERVICE_DATA_SYNC` perm + `<service DownloadForegroundService dataSync>`.
+>
+> Compile-sane review passed (`DownloadRegistry.get` exists; Kotlin/Java call direction clean — Java engine never calls the Kotlin object). **Committed `3ad879a` as The412Banner, pushed. CI `28722689070` GREEN (conclusion re-verified) → standard APK DELIVERED** `/sdcard/Download/bannerlator-dl-notif-bg-3ad879a-standard.apk` (589,559,791 B, sha256 `e1910b4841d21e2d…bbf2a01c`, bit-identical to CI artifact, filesystem-visible; note: bridge has no `am` verb so no MediaStore scan — file is browsable directly like prior builds). **⏳ USER DEVICE-TESTING NOW.** NEXT: device-test the shade notification + background survival + cover + label polish (checklist below).
+>
+> **Device-test checklist:** (1) Amazon install → live ongoing shade notif "Downloading … — X% (…/…)", no sound; (2) tap notif → opens Downloads&Library; (3) Home mid-DL → keeps progressing; (4) Back off detail page mid-DL → continues (used to abort); (5) Cancel from Manager stops it + clears notif; (6) Cancel from detail page still works; (7) complete → INSTALLED row + notif auto-dismiss; (8) Amazon cover renders (no white box); (9) detail label = `20% (810.2 MB / 3.9 GB)`, never "level23"; (10) Steam notif still independent (channel 9001).
+
+---
+
+## 2026-07-04 — ✅ Black-box fix device-proven + 🐞→✅ Bug-1 (size-text >100%) fixed
+
+> **Black-box fix (`eb7dd55`) DEVICE-PROVEN (user, latest screenshot):** installed the delivered APK, uninstalled a game, and the `UninstallResultBar` renders real text — no more empty black box. Last open verification on the branch is cleared; all Steam-side uninstall feedback works end-to-end.
+>
+> **Verified the two "known cosmetic bugs" against live code before touching anything:**
+> - **Bug-1 (>100%):** the *percent* is already clamped everywhere — producer caps at 99 (`SteamDepotDownloader.kt:515`), both display surfaces `.coerceIn(0,100)` (`DownloadManagerActivity.kt:474`, `SteamGameDetailActivity.kt:284/285/754/755`), all since `ad4887f` (2026-07-01). The only live residual was the byte-count **text** reading done>total when PICS under-reports install size (`installTotal` self-corrected only when `!hasPicsSize`, `:503`).
+> - **Bug-2 (reinstall stale-100%):** NOT fixed — root cause is the `get(dmKey)==null` gate at `SteamDepotDownloader.kt:396` (reinstall of an INSTALLED game keeps stale counters). **User deferred it** — hasn't recurred since the blocking-uninstall serialization; fix if it comes back = gate the reset on `attempt==0`.
+>
+> **Fix (`b8e9e5b`):** grow the install denominator when `installDone>iTotal`, mirroring the existing download-bar guard, so the corrected total flows to both the detail page (`emitProgress`) and the DL-manager card (registry). One file, +4/-3. Committed as The412Banner, pushed, **CI build `28717970189` dispatched** → deliver standard APK on green.
+> **NEXT:** green build → APK to device → user eyeballs a download's size text → merge decision.
+
+---
+
+## 2026-07-04 — 🐞 DIAGNOSIS: uninstall→reinstall-same-session wedge + 🔨 uninstall feedback (toast + verify)
+
+> **Test report (user):** uninstalled Half-Life 2, immediately reinstalled → **detail page stuck `Downloading… 0% (0 KB / 8.4 GB)`, DL-manager card showed `100% (8.4/8.4 GB)`, Steam Library stuck "Fetching app records (23/372)".** Landing-screen toggle confirmed working; couldn't test the two-bar progress (no DL started).
+>
+> **Investigation (screenshots `Screenshot_20260704-142841/142849/143107.png` + device logcat + pulled `steam.db`):**
+> - `steam_games`: HL2 (220) `is_installed=0`, `install_dir=''` → **uninstall was clean.**
+> - `steam_downloads`: HL2 `status='queued', bytes_downloaded=0, bytes_total=8990704030`, added 14:28 → **download queued but NEVER started** (0 bytes).
+> - `imagefs/steam_games/` contains only `FlatOut/` → **no HL2 dir ever created** (never reached pre-allocation).
+> - ActivityManager: no crash, no lmkd/OOM — stuck process pid 15684 was **externally force-stopped 14:30** ("from pid 19129", adj 50), relaunched 20905.
+> - Release APK + debug toggle OFF ⇒ engine logged nothing to logcat, no `steam_debug.txt` → **cause of the CM stall not directly observable.**
+>
+> **Conclusions — two distinct bugs:**
+> 1. **DL-manager "100%" = stale in-memory byte counters.** DB proves 0 bytes moved, yet the reused `DownloadEntry` kept the prior install's full `installDone/downloadDone` (the "start hook just flips state, keeps counters" behavior). Detail page renders live `DownloadProgress:` → correctly 0%. **Fix (planned, not yet done):** zero the byte counters when an entry transitions from terminal/INSTALLED back into DOWNLOADING.
+> 2. **Real failure = Steam CM/netThread wedge on same-session uninstall→reinstall.** The queued download and the library PICS `ProductInfo` fetch both ride the shared CM callback thread; after the uninstall→immediate-requeue, neither progresses (download stuck `queued`, library stuck 23/372). Same class as the earlier PICS-netThread/LogonSessionReplaced saga, re-triggered by this specific flow.
+>
+> **Repro requested from user (to capture engine logs):** (1) fresh start, sign in, let Library fully load 372; (2) uninstall HL2, immediately reinstall **with "Log debug session" TICKED** → produces `steam_debug.txt`; (3) note if it sticks at queued + library sticks ~23/372; (4) **control:** same uninstall but **fully restart app first**, then reinstall — if that works, it's a same-session teardown-state bug (points fix at the uninstall path).
+>
+> **🔨 Uninstall feedback implemented (uncommitted) — the user-requested toast + verification.** Root problem: all 3 uninstall sites did `Thread { File(dir).deleteRecursively() }.start()` fire-and-forget + flipped DB/UI to "uninstalled" instantly + gave no confirmation — a multi-GB delete ran invisibly after the UI claimed done, and that async delete plausibly races an immediate reinstall (contributes to bug #2).
+> - **NEW `StoreUninstaller.kt`** (pkg `com.winlator.star.store`): `run(installDir, mark, onResult)` runs `mark()` (store DB bookkeeping) + recursive delete off the UI thread, **verifies `!dir.exists()`**, posts `onResult(success)` to the main thread. Plus `@Composable UninstallProgressDialog(name)` = blocking, non-dismissable M3 spinner "Uninstalling <game>…".
+> - **Wired into all 3 sites:** `SteamGamesActivity.onUninstall`, `SteamGameDetailActivity` (installed branch of onInstallClicked), `DownloadManagerActivity.uninstall` — each sets `uninstallingName` (shows the spinner), and on the verified callback clears it + **Toasts** `"<game> uninstalled"` or `"Couldn't fully remove <game>"`, then refreshes (`loadGames`/`loadGame`/`removeLibraryEntry`). Added `android.widget.Toast` import to `SteamGamesActivity` (others already had it). Same-package, no new deps.
+> - **Deferred #3 (reinstall guard):** block re-queue of the same app until its delete completes — HOLD until the repro confirms the delete/reinstall race is the trigger.
+> - **✅ COMMITTED `f561252` (The412Banner) + pushed `feat/download-manager`. CI Build `28716153990` GREEN → standard APK DELIVERED** `/sdcard/Download/bannerlator-verified-uninstall-f561252-standard.apk` (589,557,110 B, sha head `3d4ca6b6a12f`). **INSTALLED (device build now vc37/2.2.2 @ 15:06:45).**
+> - **✅ FRESH-SESSION HL2 DOWNLOAD PROVEN (on the new build + clean-slate DB):** HL2 (220) downloaded to completion with NO wedge — status went `downloading` 19%→55%→66%→83%→98%→**`is_installed=1`**; `steam_downloads` row **cleaned up on completion (no orphan)**; on disk `Half-Life 2/` = **10 GB** real (`hl2.exe`, `hl2/`, `ep2/`, `episodic/`, `lostcoast/`, `bin/`, `platform/`); final `size_bytes=10,661,054,253`. Confirms the earlier wedge is specific to **same-session uninstall→reinstall**, not downloading in general.
+> - **🎉 SAME-SESSION UNINSTALL→REINSTALL REPRO: WEDGE DID NOT REPRODUCE — effectively FIXED.** On the new build (`f561252`) + clean slate, with "Log debug session" TICKED: uninstalled HL2 (verified-uninstall spinner+toast fired) → **immediately reinstalled in the same session** → went `queued`→`downloading` (no stick) → 443MB→2.2GB→…→**`is_installed=1` @10.65 GB, full 10 GB on disk.** DL-manager card correctly showed live `5% (553 MB / 9.9 GB)` — **stale-100% bug (a) did NOT recur** (fresh entry on clean slate). **Likely cause of the fix:** the new **blocking `UninstallProgressDialog` serializes delete-before-reinstall** (user can't tap Install until the 10 GB delete is verified complete) → kills the teardown/re-queue race = the deferred #3 reinstall-guard achieved for free; plus the cleared orphaned `queued` row. Full 6 MB `steam_debug.txt` captured (toggle on) if ever needed. **Old wedge (0-byte queued + library stuck 23/372) = gone in this flow.**
+> - **🐞→✅ BLACK-BOX BUG IDENTIFIED + FIXED (build running).** User confirmed the black box was at the **bottom/toast position** → the **system `Toast` renders as an empty black box on this ROM** (app targets SDK 28). Fixed `eb7dd55`: replaced the 3 Steam uninstall-result Toasts with **`UninstallResultBar`** — a themed, auto-dismissing (~2.2 s) snackbar-style bar (`Surface` `inverseSurface`/`inverseOnSurface`, non-interactive so it doesn't block touches) drawn inside the app's Compose theme; each Steam activity shows it via a new `uninstallResult` state. `UninstallProgressDialog` spinner unchanged (it worked). **Amazon/GOG/Epic uninstall confirmations still use Toast (same ROM issue) — deferred to the Epic/GOG/Amazon phase.** CI build `28717094726` running on `eb7dd55` (note: first dispatch `28717085524` was cancelled — dispatched before push, would've built old sha). On green → deliver APK.
+> - **🐞 COSMETIC BUG (logged): download progress can OVERSHOOT >100%.** Mid-download HL2 read **114.4% (10,283,164,180 / 8,990,704,030 B)** — `bytes_downloaded` exceeded `bytes_total` because `bytes_total` is a depot-manifest ESTIMATE (8.99 GB) while the real install is 10.66 GB. Display-only (final state correct); affects the Steam detail two-bar progress AND the Download Manager card. Same family as the earlier depot-byte-log mis-count. **Fix later** (clamp % to ≤100, or use a better total): bundle with bug (a) the stale-100% counter fix.
+>
+> **🧹 DB CLEAN SLATE (done, per user) — for the repro.** Currently-installed device build is **vc37/2.2.2 = the `52e7e38` (two-bar+landing) APK** (installed 14:25; NOT yet the uninstall-feedback build). Verified installed games via `steam.db`: **FlatOut (6220) is the ONLY `is_installed=1`** (1.2 GB real on disk, `FlatOut.exe`/`data.bfs` present); HL/HL2/Portal2 all uninstalled during testing; DB knows 229 games. Found + removed **one orphaned `steam_downloads` row** (HL2 220 `status='queued', 0/8.99 GB` — leftover from the wedged reinstall, could have re-triggered the CM wedge on reconnect). **How:** force-stopped app → backed up (device `/data/local/tmp/steam.db.bak` + local `~/scratchpad/steam_before_clean.db`) → deleted only that row locally + vacuum → **overwrote the existing file in place** (preserves inode owner `u0_a493`/mode `660`/SELinux `app_data_file` context) → verified round-trip: `steam_downloads` empty, FlatOut still installed, HL2 `is_installed=0/install_dir=''`, 229 games, `integrity_check=ok`. App left force-stopped (user reopens normally). **So the repro now starts from a genuine clean slate: FlatOut only, zero pending/queued downloads.**
+
+---
+
+## 2026-07-04 — ⏭️ NEXT FEATURE: cross-store Download Manager (Steam-first, Compose M3) — UNBLOCKED, ready to start
+
+> The gate is met (Steam work merged to main), so the **cross-store Download Manager** is now the active feature. **Design is locked** (spec + exact UI tokens + HTML preview already delivered — see memory `project_bannerlator_download_manager`). Template = BannerHub 3.8.0's `BhDownloadService`/`BhDownloadsActivity`/`⬇ badge`, ported to **Jetpack Compose M3 / WinlatorTheme**. v1 scope = **Downloads + Library** (active/paused downloads on top, persistent installed-game library w/ Launch/Uninstall below, Clear), Steam-first.
+> **Phasing (agreed):** (0) ✅ finish+merge Steam — DONE. (1) build store-agnostic **`DownloadRegistry`** (observable StateFlow) + normalized **`DownloadEntry`**(store,id,name,cover,state,pct,installDone/Total,downloadDone/Total,pause?,cancel) = the `BhDownloadService` role. (2) route `SteamDepotDownloader` into it (already has the data via its listener; keep the `DownloadProgress:` event). (3) Compose **`DownloadsButton`** (M3 IconButton+Badge) + **`DownloadManagerScreen`** (Scaffold/TopAppBar "Downloads & Library", LazyColumn of cards matching the games/container card idiom, **two-bar byte progress** like the Steam detail page, store-colored badges, Clear). (4) wire ⬇ into Steam library+detail headers + tap-card→correct-store-detail routing. (5) LATER: Epic/GOG/Amazon report into the same registry (cancel-only where no pause). Each phase = own CI build + device test + memory/log checkpoint.
+> **Start:** branch off `main` (e.g. `feat/download-manager`). No release tie-in.
+>
+> **✅ PHASE 1 BUILT (`2476995`, branch `feat/download-manager`):** store-agnostic data layer in new subpackage `com.winlator.star.store.download` (3 files, 368 lines) — `DownloadModels.kt` (`Store`/`DownloadState` enums, `DownloadEntry` w/ two byte pairs + transient pause/cancel lambdas + `key`/`isActive`, `LibraryEntry`), `DownloadRegistry.kt` (object: `entries`/`activeCount`/`library` StateFlows, `init`/`upsert`/`update`/`remove`/`clear`/`get`/`isActive`/lib ops, thread-safe CAS, INSTALLED-only durable `bh_library` persistence), `StoreStyle.kt` (store accent colors). Zero Steam imports; Phase 2/3 seams documented in KDoc. Compile-check CI `28713214632` running (no local build available). **NEXT = Phase 2: route `SteamDepotDownloader` into the registry.**
+>
+> **✅ PHASE 2 BUILT (`6826c93`):** Steam is now a live PRODUCER into `DownloadRegistry`. `SteamDepotDownloader.kt` gets additive hooks — start→`upsert(DOWNLOADING, pause/cancel from DownloadControl)`, progress→`update{copy(pct,bytes)}`, complete→`copy(INSTALLED, installPath)` (auto-persists to library), pause/cancel/fail→state transitions at existing finally points (fail centralized in `emitFailed`). NEW `SteamLibrarySync.kt` seeds `is_installed=1` games into the library; `DownloadRegistry.init` + seed wired in `SteamForegroundService.onStartCommand`. Existing `DownloadProgress:`/`DownloadComplete:` emits unchanged (detail page still works); registry still imports zero Steam types. **NEXT = Phase 3: Compose UI (⬇ badge + DownloadManagerScreen) → combined build → deliver.**
+>
+> **✅ PHASE 3 BUILT (`b25f891`) — v1 UI COMPLETE (Steam-first):** NEW `DownloadManagerActivity.kt` (screen + cards) + `download/DownloadsButton.kt` (⬇ badge). Screen = "Downloads & Library" Scaffold, LazyColumn of `entries` (`collectAsStateWithLifecycle`), Downloading/Library sections, cards matching `SteamGamesActivity.GameListItem` with two-bar byte progress; Cancel/Pause (active), Launch/Uninstall (installed, reusing the existing shortcuts + `markUninstalled` flows), tap→detail. ⬇ button added to `SteamGamesActivity` + `SteamGameDetailActivity` headers; `GameCoverArt` `private`→`internal`. **⚠️ Added dep `androidx.lifecycle:lifecycle-runtime-compose:2.7.0`** (combined build must confirm resolution). Not yet compiler/device-proven (no local builds).
+>
+> **🚧 v1 FEATURE-COMPLETE — combined build running.** All 3 phases on `feat/download-manager`; Phase 1 compile-check `28713214632` was GREEN; **combined CI build `28713882981` RUNNING** (Phase 2+3 + new lifecycle dep). On green → deliver standard APK to device Downloads + device-test (badge live-updates during a Steam DL, two-bar progress, Launch/Uninstall round-trip, Library seeded). If red → fix (likely the new dep/import) + rebuild before delivering. **Branch stays open; NO merge to main until device-tested + user sign-off.**
+>
+> **❌ combined build `28713882981` FAILED → ✅ fixed (`c826c79`) → rebuild `28714157849`.** Cause was NOT the new dep (`lifecycle-runtime-compose` resolved fine) — one missing import: `DownloadsButton.kt` (pkg `...store.download`) referenced `DownloadManagerActivity` (pkg `...store`) without importing it → Unresolved reference. Added the import; verified all other cross-package refs resolve (DownloadManagerActivity imports the .download classes; both Steam headers import DownloadsButton). Rebuild running → deliver on green.
+>
+> **✅ REBUILD `28714157849` GREEN → APK DELIVERED.** Standard flavor in device Downloads: `bannerlator-download-manager-v1-c826c79-standard.apk` (589 MB, sha `092494f5c8c1`). New dep `lifecycle-runtime-compose:2.7.0` resolves. **v1 Download Manager is now testable on device.** NEXT = device-test: ⬇ opens "Downloads & Library"; start a Steam DL → live badge + two-bar progress + Cancel/Pause → completes into Library w/ Launch/Uninstall; installed games seed into Library. **NO merge to main until device-tested + sign-off.**
+>
+> **✅✅ DEVICE-TESTED (user screenshots) — v1 WORKS END-TO-END:** ⬇ in Steam Library + detail headers; badge live-count "1" during DL; "Downloads & Library" screen renders (game-card idiom, Steam badges, covers, Downloading/Library sections); **FlatOut DL live 2%→15%→61%** w/ progress + Cancel/Pause; installed HL/HL2/Portal2 auto-seeded into Library w/ Launch/Uninstall; FGS notif "Steam — Downloading FlatOut — 61%". Minor cosmetic: two-bar reads as single bar on fresh DL (byte pairs close) — numbers correct, polish-only. **v1 DEVICE-PROVEN → awaiting user sign-off to MERGE `feat/download-manager`→main.** Then Epic/GOG/Amazon into same registry (later).
+>
+> **🔧 POST-TEST POLISH:** (1) **Two-bar progress made distinct** (`524d4e5`, build `28714838409`) — both bars were `primary` (solid vs 40% alpha) → blended; download fill now uses themeable `LocalAccentDim`, install stays `primary`, bar 6→8dp; both theme-aware. (2) **Theme Q verified:** `WinlatorTheme` observes `AppThemeState.colorScheme` live; ALL store screens (Steam/Epic/GOG/Amazon) + `DownloadManagerActivity` wrap in it → they honor theme presets; only store-brand badges + installed-green stay fixed by design. **Epic/GOG/Amazon wiring PARKED (user testing more first).** NEXT = build green → deliver → more testing → sign-off → merge. NO merge until sign-off.
+>
+> **➕ FEATURE (bundled on this branch per user, `52e7e38`): choose default landing screen.** New Settings option "Default Screen on Launch" (RadioButton **Game Shortcuts** / **Containers**) → pref `default_landing_screen` (default `"games"` = historical). `MainActivity.kt:162` startRoute fallback now reads it (only when no deep-link/menu/edit-controls override; Big Picture untouched). `SettingsScreen.kt`: state (near bigPictureMode) + save + UI before Big Picture Mode; added `RadioButton` import. Unrelated to DL manager but rides this branch → will merge to main together. **Two-bar-only build `28714838409` superseded → combined build `28715078107`** (two-bar distinctness + landing screen) running → deliver on green.
+
+---
+
+## 2026-07-04 — 🎉 MERGED TO MAIN: `feat/steam-goldberg-patcher` → main (fast-forward, NO release cut)
+
+> All 3 merge-prep tasks done → **merged the whole Steam/Goldberg branch to `main`** via fast-forward (main was a strict ancestor). `main`: `cd7082c` → **`c89dc03`**. Pushed.
+> - **What landed on main:** the entire multi-week arc — Steam store M3 restyle, Goldberg auto-patch, session-hardening saga, Batch 1/2/3 download fixes (library-sync batching, wakelock, the OOM fix), GameNative-style 4-tier download speed, the per-download debug-log toggle, redactor hardening + UI warning, Steam/Epic/GOG logcat PII cleanups, and the cosmetic depot-byte log fix.
+> - **⚠️ NO release/pre-release cut (per user):** versionCode **stays 37**, versionName **2.2.2** (unchanged). vc38 pre-release deferred to a later, explicit decision.
+> - **Artifact-only build on main dispatched:** run `28712845487` (per user — build only, no tag/release).
+> - `feat/steam-goldberg-patcher` branch left in place (not deleted).
+> **NEXT:** cross-store **Download Manager** feature ([[project_bannerlator_download_manager]]). When a release is eventually cut, **hand out credits** (upstream OSS: JavaSteam/GameNative/Pluvia/Goldberg-gbe_fork + our own work → GitHub release notes + repo credits).
+
+---
+
+## 2026-07-04 — 🔧 MERGE PREP #1: per-download "Log debug session" toggle (gate verbose diagnostics)
+
+> First merge-prep task done (`89b90b8`). Verbose Steam logging (the ~33k-line `steam_debug.txt` firehose + JavaSteam `LogManager` bridge + engine `debug=true`) was always-on for every user; now gated behind **one switch**: `verbose = BuildConfig.DEBUG || debugLog`, where `debugLog` = a new **per-download checkbox** on the speed-picker dialog ("Log debug session", unchecked by default, not persisted).
+> - **Off (release default):** `steam_debug.txt` never created, JS bridge not wired, engine `debug=false` → no firehose, no per-line file I/O during download.
+> - **On (debug builds or ticked box):** full `steam_debug.txt` as before.
+> - **Never silent:** `dlogError` now WARN-logs regardless, `emitFailed` ERROR-logs, `steam_session.txt` always-on → a failed DL always leaves a trace. Redactor untouched (verified strips tokens/user/email — the only "password" hits in the blazing log were HL asset filenames like `SteamPasswordDialog.res`).
+> - `debugLog` threads through install/resume/buildControl/runInstall + retry, same path as `speedTier`. Files: `SteamDepotDownloader.kt`, `SteamGameDetailActivity.kt`. No gradle change (buildConfig already on). Session/login/wakelock unchanged.
+> **Known small gaps (by design):** resume (no picker) runs with logging off unless debug build; "log location" UI shows "(not initialized)" when off.
+>
+> **🔒 SECURITY PASS (`c333008` + follow-up) — audit of the debug logs before shipping the toggle:**
+> - **Redactor gap FOUND + FIXED:** the pattern backstops missed Steam's REAL tokens — Steam refresh/access tokens base64 their `{ ` prefix to **`eyA`**, but the JWT regex anchored on canonical `eyJ` (no match), and the 88-char long-token regex is broken by the JWT's dots (segments 43/25/86, all <88). So token safety rode ENTIRELY on exact-match registration timing, no net for an unregistered/mid-download-minted token. Fix: anchor JWT pattern on `ey` (catches `eyA`+`eyJ`); add SteamID64 redaction `76561\d{12}` (prefix-anchored, won't clobber ~19-digit manifest/gid or 40-hex chunk). Verified in python: catches real token + steamID, leaves manifest/chunk ids intact.
+> - **Primary guarantee intact:** exact-match strip of username + refresh_token (`registerSecret` at connect 322-323 / login 1150-51,1265-66 / cleared on sign-out 1297); both `dlog` (steam_debug.txt) + `slog` (steam_session.txt) redact every line. Empirically both real logs scanned clean (0 email/user/steamID).
+> - **UI warning added:** ticking "Log debug session" now shows red text — share the log only directly with the developer or someone you trust, not publicly, unless self-debugging.
+> - **Logcat username leak fixed:** `SteamRepository` lines 500/678 (`Auto-login as`/`Logged in as <username>`) now wrapped in `SteamLogRedactor.redact()` (were raw → logcat only, not shared files, but closed anyway).
+> - **Other-storefront logcat findings — now FIXED (all logcat-only, never in a shared file):** `EpicAuthClient.java:90` logged the raw token-endpoint HTTP **error-response body** (CORRECTION: earlier called a "token leak" — overstated; it only fires on error and success/token bodies are NOT logged, so it leaked error/correlation context, not credentials) → now logs status code only; `EpicLoginActivity.kt:92` logged Epic displayName → removed; `GogLoginActivity.kt:171` logged GOG username → removed. **Amazon audited clean** (only status strings + a value-less exception; never username/token). Steam `SteamRepository:500/678` already redacted above.
+> CI: superseded `28711420383`+`28711598449`+`28711848519` (cancelled) → complete build **`28711995714` GREEN** (toggle + redactor hardening + warning + Steam/Epic/GOG logcat fixes). **Standard APK delivered to device Downloads: `bannerlator-steam-debug-toggle-301719f-standard.apk`** (589 MB, sha `77e3327af17d`). Not yet device-verified — optional spot-check: box off → no `steam_debug.txt`; box on → log + red warning shown.
+> **✅ MERGE-PREP #2 DONE (`c0f8de5`):** reconciled main's 4 commits by merging `origin/main` into the branch. All 4 were **AMA bot** commits (PRs #60/#62 — ama-agent Q&A + no-preamble fixes) touching ONLY `.github/workflows/ama-answer.yml` + `.opencode/agent/ama-agent.md`; zero app code, zero conflicts. `origin/main` is now a strict ancestor of the branch → **branch→main merge will fast-forward.**
+> **✅ MERGE-PREP #3 DONE (`e1acb56`):** fixed the cosmetic `Depot N complete: X KB` under-report. Root: `onDepotCompleted` printed the engine's per-depot callback args, which undercount (blazing HL1: depot 2 logged 47.5 MB for a ~575 MB depot). Now prints our OWN cumulative tracking (`installByDepot`/`downloadByDepot` from `onChunkCompleted` — accurate, drives the progress bar + DB) via `maxOf(engineArg, tracked)`; added an accurate grand-total line at `onDownloadCompleted`. Log-text only, no behavioral change, only shows when verbose logging on.
+>
+> **🎯 ALL 3 MERGE-PREP TASKS DONE. Branch is merge-ready** (`origin/main` is a strict ancestor → **branch→main fast-forwards**). **NEXT = the actual MERGE `feat/steam-goldberg-patcher` → main** (awaiting user go-ahead — consequential/outward). Consider **vc38 pre-release** at merge (branch stuck at vc37 == released 2.2.2). **THEN cross-store Download Manager.** At stable release hand out credits (upstream OSS + our own work → GitHub release notes + repo credits). NOTE: the delivered APK (`301719f`) predates #3 but #3 is log-cosmetic only, so it's behaviorally identical — no re-test needed.
+
+---
+
+## 2026-07-04 — ✅✅ BATCH 3 DEVICE-PROVEN: fresh FULL Half-Life download on BLAZING, zero OOM → merge-to-main gate MET
+
+> Second device test — the heavy one. Uninstalled HL1 first (verified gone: no `steam_games/Half-Life` dir, `steam.db` appId 70 `is_installed=0`, `steam_downloads` empty), then fresh-downloaded Half-Life (appId 70) on **Blazing**. Evidence: `~/scratchpad/steam_debug_hl1_blazing.txt` (32,865 lines).
+> - **Blazing tier confirmed:** `Constructing DepotDownloader(tier=32, cores=8, maxDownloads=19, maxDecompress=6, maxFileWrites=6)` — max concurrency = the real memory stress.
+> - **Genuinely fresh (not resume/validate):** 0 `Resume seed`, **0 `Validating`**, **4,493 `Pre-allocating`** lines.
+> - **ZERO OOM** — no `OutOfMemory`/`Failed to allocate`/`growth limit`/`Parent job is Cancelling`. On the heaviest tier. This is the proof.
+> - **Full download verified on disk:** 4,492 `File done`, depot 1 → `pct=100%`, real full-size files (`valve/halflife.wad`=37.9 MB, `xeno.wad`=6.5 MB, `maps/`≈219 MB); `steam.db` now `is_installed=1`, size 603 MB. ~600 MB in **57 s** (~10.5 MB/s).
+> - **⚠️ Cosmetic bug to clean up later:** the `Depot N complete: X KB uncompressed/Y compressed` summary line **under-reports** (showed Depot 1 = 31 KB while 4,492 files / ~600 MB actually landed). Harmless — download is correct — but the per-depot byte accounting is wrong; fix when we gate diagnostics.
+> **→ MERGE-TO-MAIN GATE MET.** All 3 batches done + device-proven (fresh full DL, both Medium and Blazing tiers, no OOM). **NEXT: reconcile main's 4 commits + gate the verbose diagnostics behind a debug flag → MERGE `feat/steam-goldberg-patcher` to main → THEN cross-store Download Manager.** At the stable release, hand out credits (upstream OSS + our own work → GitHub release notes + repo credits).
+
+---
+
+## 2026-07-04 — ✅ DEVICE TEST PASSED: OOM gone, tiered speed confirmed (HL1) — heavier stress test still pending
+
+> Installed `ad9a4bd` standard APK, ran a Steam download on device (`com.winlator.banner`). **Result: clean, no OOM.** Evidence pulled via root bridge → `~/scratchpad/steam_debug_hl2_tiered.txt` (4 MB / 32,685 lines) + `~/scratchpad/steam_session_hl2_tiered.txt`.
+> - **OOM ELIMINATED:** zero `OutOfMemory` / `Failed to allocate` / `growth limit` / `Parent job is Cancelling` — the Batch-2 crash signatures are all absent.
+> - **Tiered config fired correctly:** picked **Medium** → log `Constructing DepotDownloader(tier=16, cores=8, maxDownloads=9, maxDecompress=3, maxFileWrites=3, ...)` — exact `cores × ratio` math; `maxFileWrites=3` vs the old crash-causing 100.
+> - **Clean completion:** `=== Download complete: appId=70 ===` → `getCompletion() returned` → `=== runInstall() finished ===`; no false-complete trip, wakelock acquired 11:21:06 → released 11:23:32, session stayed ONLINE (no `LogonSessionReplaced`/reconnect during DL). The "42 errors" grep = false positives (HL filenames `error.wav`/`failed.wav`/`containfail.wav`).
+> **⚠️ Caveat — this was a LIGHT load:** appId **70 = Half-Life 1** (not HL2/220), and the log shows mostly a **validation pass of already-present files + a ~48 MB delta** (Depot 2 = 47.5 MB), done in ~2.5 min — lighter than the fresh ~8.4 GB HL2 download that originally OOM'd, and on **Medium** not **Fast/Blazing**. Proves the decompress/write pipeline completes with zero OOM, but not yet the sustained high-concurrency case.
+> **NEXT (user will run):** one fresh LARGE download on a HIGH tier — HL2 (220) fresh, or delete+re-pull, on **Fast/Blazing** — watching peak RAM. If clean → Batch 3 device-PROVEN → merge-to-main gate.
+
+---
+
+## 2026-07-04 — ✅ OOM fix shipped + GameNative-style 4-tier download speed → standard APK delivered, awaiting device test
+
+> Two commits on `feat/steam-goldberg-patcher`:
+> - **`d02b0de` — the OOM fix (conservative):** capped `maxDecompress`/`maxFileWrites` at the call site + added `android:largeHeap="true"`. Root cause was NOT our engine — `app/libs/steam` is empty, we use the same maven `in.dragonbra:javasteam-depotdownloader:1.8.0` as GameNative; the bug was a **mislabeled ctor arg**: the 7th slot is `maxFileWrites` (not `progressUpdateInterval`, which is a hardcoded 500L inside the engine), and we passed **100** → ~100 concurrent write stages × multi-MB buffers → 256 MB heap blown ~15s in.
+> - **`ad9a4bd` — upgraded to GameNative's tiered model:** new `DownloadSpeedConfig(tier)` mirroring GameNative — tiers **8/16/24/32 = Slow/Medium/Fast/Blazing** (default **Fast=24**), `{download,decompress}` ratios `.6/.2, 1.2/.4, 1.5/.5, 2.4/.8`, `maxDownloads`/`maxDecompress` derived as **cores × ratio** (adapts to device). `maxFileWrites = maxDecompress` (GameNative omits the arg and takes the engine default; our positional ctor requires it, so we bind it to decompress to keep peak live buffers ≈ decompress+filewrites bounded). Picker expanded **3→4 tiers** (`SteamGameDetailActivity` `DownloadSpeedPickerDialog`), `threads`→`speedTier` plumbed through install/resume/runInstall. Session/login/wakelock untouched; no dependency swap.
+> **On an 8-core phone:** Slow 4/1/1, Medium 9/3/3, Fast 12/4/4, Blazing 19/6/6 — vs the old `maxFileWrites=100`. Now matches GameNative on downloads+decompress at every tier.
+> **CI:** run `28710061779` GREEN. **Standard APK delivered** to device Downloads: `bannerlator-steam-speed-tiers-ad9a4bd-standard.apk` (589 MB, sha `ae8c962690…`).
+> **NEXT = device-test HL2 (appId 220):** open normally → 4-tier picker (Fast default) → expect full ~8.4 GB, **no OOM** (~15s was the old death). Optionally stress **Blazing** watching peak RAM. **If clean → Batch 2/3 done → merge-to-main gate** (reconcile main's 4 commits + gate verbose diagnostics behind a debug flag). Then Download Manager.
+> **📌 Release note:** at the stable release merging this branch, hand out credits — upstream OSS (JavaSteam, GameNative, Pluvia, Goldberg/gbe_fork) **+ our own original work** (session hardening, wakelock, library-sync batching, OOM fix, adapted speed tiers, Goldberg auto-patch, store restyle) — in **GitHub release notes + repo credits**. (User instruction 2026-07-04.)
+
+---
+
+## 2026-07-04 — ✅ OOM ROOT-CAUSED + FIX APPLIED (Option B) → committing for CI build
+
+> **The batch-3 "add a Semaphore to DepotDownloader.kt" plan (entry below) was WRONG and is retracted.** native-steam-engineer investigation (compared us to GameNative, decompiled the shipped jar, `javap`'d the ctor):
+> - **We do NOT vendor a DepotDownloader.** `app/libs/steam` is EMPTY (`.gitkeep` only — the "built-from-source JavaSteam JAR" note was stale). We pull the SAME maven engine GameNative uses: `in.dragonbra:javasteam[-depotdownloader]:1.8.0` (`app/build.gradle:197-198`). The `DepotChunk.kt:89`/`DepotDownloader.kt:1782` lines are inside that read-only jar, not our source. That engine ALREADY bounds its pipeline, uses ~1 MB chunk-sized buffers (not fixed 8 MB), and lazy-opens files.
+> - **REAL cause = a mislabeled constructor arg at our call site** `SteamDepotDownloader.kt:359-369`. The 9-arg ctor is `(client, licenses, debug, useLanCache, maxDownloads, maxDecompress, maxFileWrites, androidEmulation, parentJob)`. We passed the 7th arg `100` commented `// progressUpdateInterval` — but that slot is **`maxFileWrites`** (progressUpdateInterval is a hardcoded 500L INSIDE the engine, not a param). So the write stage ran ~100 concurrent chunks each holding a multi-MB decompressed buffer, and `maxDecompress = threads` too → ~100 live buffers → 256 MB heap blown ~15s in. GameNative runs the identical engine with tiny caps → never OOMs.
+> **✅ FIX APPLIED (Option B — call-site tuning, no engine/dependency change, zero contact with session-hardening/wakelock code):** (1) `SteamDepotDownloader.kt` — `maxDecompress = (cores/4).coerceIn(1,2)`, `maxFileWrites = 2` (were `threads` and `100`); `maxDownloads` stays `threads`. (2) `AndroidManifest.xml` — added `android:largeHeap="true"` (safety margin). Option A (swap to `io.github.joshuatam` `-SNAPSHOT` fork) rejected for the OOM: same engine family, non-reproducible dep + full session re-validation for ~zero payoff.
+> **NEXT:** CI artifacts-only build → deliver APK → device-test HL2 (appId 220) opened NORMALLY → expect full ~8.4 GB, no OOM, correct Installed size. If clean → both batches done → reconcile main's 4 commits + gate verbose diagnostics behind debug flag → MERGE to main → THEN Download Manager. See [[project_bannerlator_steam_session_hardening]].
+
+---
+
+## 2026-07-04 — ⚠️ Batch 2 DEVICE-TESTED: session fix PROVEN, new OOM wall → Batch 3 queued for tomorrow
+
+> **Batch 2 (`3e68a93`) device-tested — its own goals MET, but download now dies on a NEW cause: OutOfMemoryError.** Evidence: `~/scratchpad/steam_debug_batch2.txt` (5727 lines, pulled from device `.../files/steam_debug.txt`, written 00:51). App updated 00:39, test run 00:51 — **opened NORMALLY, no Force Stop.**
+> **✅ What batch 2 fixed (both confirmed on-device):** (1) `WAKELOCK: acquired (partial, held=true)` at 00:51:19 — wakelock works. (2) **ZERO `LogonSessionReplaced`** — the OEM kill/restart/self-collision is GONE; app opened normally, no Force Stop needed (the whole point of batch 2). (3) Download got FURTHER than ever — actively pulling + **decompressing real depot chunks**, writing `valve/sound/holo/*.wav`. No CM timeout, no session death. So the 60s-AsyncJob/session/PICS-netThread saga is behind us.
+> **❌ NEW failure — `OutOfMemoryError` at 00:51:34 (~15s in):** `Failed to allocate a 8388624 byte (8 MB) allocation ... target footprint 268435456, growth limit 268435456` (= **256 MB, DEFAULT heap → app has NO `android:largeHeap`**). Stack: `DepotChunk.process(DepotChunk.kt:89)` ← `DepotDownloader.processFileDecompress(DepotDownloader.kt:1782)`. The subsequent flood of `Parent job is Cancelling` chunk errors is the collapse, NOT the cause. **Root cause: the depot downloader fans out too many concurrent 8 MB chunk-decompress buffers while simultaneously PRE-ALLOCATING many files** (log shows a burst of `Pre-allocating`/`Allocating file` for the many small `holo/*.wav` at once) → all 8 MB buffers live together → 256 MB heap exhausted.
+> **🛠️ BATCH 3 (prep for tomorrow — DO BOTH):** (1) **`android:largeHeap="true"`** in `AndroidManifest.xml` — raises heap ceiling to ~512 MB+ (safety margin; alone it may only delay OOM on a bigger depot). (2) **Bound decompress/pre-alloc concurrency** in JavaSteam `DepotDownloader` — cap in-flight 8 MB chunk buffers + file pre-allocations with a `Semaphore` around `processFileDecompress` / the chunk-processing flow (`DepotDownloader.kt:276`, `createChunkProcessingFlow`). This is the REAL fix. Verify JAR is our built-from-source JavaSteam (`app/libs/steam`, built in CI step) so the DepotDownloader change is buildable. **Owner: native-steam-engineer subagent.** After impl → commit on `feat/steam-goldberg-patcher` (The412Banner) → CI artifacts-only build → deliver APK → device-test HL2 (appId 220) opened NORMALLY → expect full ~8.4 GB, no OOM, correct Installed size. If clean → both batches done → reconcile main's 4 commits + gate verbose diagnostics behind debug flag → MERGE to main → THEN Download Manager feature.
+> Batch 1 was already device-proven (full 10 GB HL2 E2E). See [[project_bannerlator_steam_session_hardening]], [[project_bannerlator_steam_download_login_guard]].
+
+---
+
+## 2026-07-04 — 📥 Download Manager: full spec locked + HTML preview delivered (impl deferred until Steam work merges)
+
+> Cross-store in-app Download Manager, **Steam-first**, Jetpack **Compose M3 / WinlatorTheme**. Template = **BannerHub 3.8.0** (`BhDownloadService` + `BhDownloadsActivity` + ⬇ badge, source at `~/BannerHub/extension/`), ported to Compose. **Implementation begins ONLY AFTER the current Steam download work (Batch 1+2) is device-proven + merged** (user was explicit).
+> **User decisions:** v1 = **Downloads + Library** (active DLs + persistent installed library w/ Launch/Uninstall + Clear); progress = **match the Steam detail page's two-bar byte progress**; other stores are ALREADY Compose M3 (verified) so **only the DL manager needs M3 — leave existing store screens as-is**; ⬇ badge (count of active, hidden at 0) in every store library+detail header; tap card → correct-store detail page.
+> **Card idiom (must match games/container cards):** the `SteamGamesActivity` list card (L451, "Containers/Shortcuts list idiom") — `RoundedCornerShape(12) · surfaceVariant · 1dp outline · 60×80 rounded cover tile · bodyLarge title · Launch(filled)/Uninstall(outlined-error) buttons`. Cover = `library_600x900.jpg`. Two-bar progress from the detail page (solid install + lighter download + bytes).
+> **Build phasing:** (1) store-agnostic `DownloadRegistry` (observable) + normalized `DownloadEntry`; (2) route SteamDepotDownloader in; (3) Compose `DownloadsButton` + `DownloadManagerScreen`; (4) wire ⬇ + routing into Steam headers; (5) later Epic/GOG/Amazon report into the same registry. Each step = own CI build + device test + memory/log checkpoint.
+> **DELIVERED (design only):** faithful HTML mockup from the real theme tokens — artifact `claude.ai/code/artifact/42dcfc0e-284a-42e2-a77f-e71efaba2d95`; saved to device `/sdcard/Download/Bannerlator-DownloadManager-preview.html`; source `~/scratchpad/dl-manager-preview.html`. See memory `project_bannerlator_download_manager`.
+
+---
+
+## 2026-07-04 — ✅ Batch 2 build GREEN + APK delivered (CI 28694533713, SHA 3e68a93)
+
+> CI `28694533713` SUCCESS on `3e68a93`. APK byte-verified (589,506,517 B) + scanned → `/sdcard/Download/Bannerlator-standard-batch2-28694533713.apk`. **Awaiting device test — the goal: open app NORMALLY (no Force Stop) → HL2 Install just works** (wakelock stops the kill/restart/self-collision). Verify `WAKELOCK: acquired/released` pairs, FGS "Downloading N%", stall auto-recovers via reconnectAndRelogin; + exe-picker scroll portrait/landscape + Launch HL2. If clean → both batches done → reconcile main's 4 commits + gate verbose diagnostics behind debug flag → MERGE to main.
+> **NEW FEATURE SCOPED (post-merge): cross-store Download Manager (Steam-first), Compose M3.** Template = BannerHub 3.8.0 (`BhDownloadService`+`BhDownloadsActivity`+⬇badge). User decisions: v1 = **Downloads + Library** (active DLs + persistent installed library w/ Launch/Uninstall + Clear); progress = **match Steam detail's two-bar byte progress**; other stores already Compose M3 → **only the DL manager needs M3** (leave existing store screens as-is). Build store-agnostic unified registry now, wire Steam only in v1. Cards must match existing games/container card layout+theme. HTML preview requested next. See [[project_bannerlator_download_manager]].
+
+---
+
+## 2026-07-04 — ✅ Batch 2 committed, build started (CI 28694533713, SHA 3e68a93)
+
+> **Commit `3e68a93`** on `feat/steam-goldberg-patcher`. Combined build **`28694533713`** in_progress on HEAD `3e68a93` (~16 min) — carries Batch 2 + the exe-picker responsive-scroll fix (picker-only build 28694272626 cancelled/superseded). Diff reviewed — clean + compile-correct (`row.name` in scope, interop verified).
+> **What shipped:** (1) partial WAKE_LOCK held only while downloading (acquire at setDownloadActive(true), release in finally; ref-counted, 6h cap) — keeps the process alive vs the OEM killer so it can't churn into a 2nd process/self-collision. (2) `SteamRepository.reconnectAndRelogin(ms)` — tears the CM session down + rebuilds it; runInstall retry uses it when no depot progress (0%/60s appinfo-no-reply signature) or on a repeat attempt, else keeps lightweight ensureLoggedIn for the ~1h-logoff case. (3) FGS notification wired to real state via process-static `setStatusText` (Online/Connecting/… + 'Downloading N%' throttled; reverts on finish) — makes the FGS truthful + legitimately ongoing.
+> **Deferred (documented in code):** dedicated `:steam` single-owner process.
+> **Next (checkpoint 3 on build finish):** watch CI green → deliver APK → device-test: open app (NO Force Stop this time) → HL2 Install should just work; verify wakelock held/released log pairs, notification shows Downloading N%, and a stall auto-recovers via reconnectAndRelogin. Also confirm exe-picker scrolls portrait+landscape + Launch HL2.
+
+---
+
+## 2026-07-04 — 🛠️ Batch 2 lined up (session/process hardening) — native-steam agent implementing
+
+> After merge-gate #1 (full HL2 download) proven, user approved Batch 2. A native-steam-engineer subagent is implementing it now (not yet committed/built).
+> **Batch 2 (scoped pragmatic):** (1) **partial wakelock while downloading** (+ WAKE_LOCK perm) — root-cause fix for the OEM kill→restart churn that spawns a 2nd process and self-collides (LogonSessionReplaced); (2) **force reconnect+relogin before a retry** — new `SteamRepository.reconnectAndRelogin(ms)` (ensureLoggedIn no-ops when it *thinks* it's logged in, so a stale/masked session never recovered); retry now runs on a genuinely fresh session; (3) **wire the FGS notification to real state** (Online / Downloading N%) — the existing `updateNotification` was dead code; makes the FGS legitimately ongoing (less killable) + honest.
+> **DEFERRED (documented follow-up, not in Batch 2):** the heavyweight dedicated `:steam` single-owner process refactor — with the wakelock stopping the churn, the practical collision should be gone; Force Stop stays the fallback.
+> **Also queued polish (not started):** exe-picker should filter/rank OUT bin/*.exe SDK tools (surface hl2.exe); grow install denominator past the low PICS estimate.
+> **In flight:** exe-picker responsive-height build CI `28694272626` (HEAD 20e08f1) — deliver when green so user can confirm picker scroll + Launch HL2.
+
+---
+
+## 2026-07-04 — 🎉 MERGE-GATE #1 MET: full HL2 download completed E2E (Batch 1 device-proven) + exe-picker scroll fix
+
+> **THE download saga is FIXED.** After Force Stop → single process → HL2 Install on Batch 1 (`6b91f13`): library-sync pause worked, appInfo/depot-keys landed (no 60s timeout), all depots pulled real bytes. Log: `Total downloaded: 5,967,673,520 B (10,684,397,022 uncompressed) from 8 depots` → `Download complete`. **On-disk HL2 = 10 GB** (was 822 MB). UI "100% (8.5 GB / 8.4 GB) · Installed". False-complete guard correctly did NOT trip.
+> **Minor/cosmetic:** (a) bar went past 100% — PICS `SizeOnDisk` 8.4 GB underestimates the real ~10 GB; polish = grow the install denominator past the PICS estimate. (b) depots: 221(main)/222(materials)/340(Lost Coast bonus) real; 233/234/380/389/420 = 0 B (other-OS/other-language, filtered).
+> **NEW UI BUG FIXED (`c298534`→responsive `20e08f1`, CI `28694272626`; fixed-420dp build 28694211242 cancelled):** launch "Select executable" picker dumped HL2's dozens of `bin/*.exe` SDK tools in a non-scrollable Column → couldn't reach hl2.exe. Fixed both pickers with `heightIn(420dp)+verticalScroll` (scrolls portrait+landscape).
+> **Follow-up polish (not done):** picker should filter/rank OUT the bin SDK tools (surface hl2.exe); install-denominator underestimate.
+> **NEXT:** deliver `c298534` build → confirm picker scrolls + Launch HL2 → **BATCH 2** (single Steam session across the app's own processes; appInfo-no-reply→reconnect+retry; wakelock/keep-FGS-alive).
+
+---
+
+## 2026-07-04 — ✅ Batch 1 build GREEN + APK delivered (CI 28692248319, SHA 6b91f13)
+
+> **CI `28692248319` SUCCESS** on `6b91f13`. APK byte-verified (589,504,606 B) + media-scanned to `/sdcard/Download/Bannerlator-standard-batch1-28692248319.apk`. Awaiting device test.
+> **Test:** Force Stop app (self-collision is Batch 2, not yet fixed — swipe-close leaves the FGS process) → open → HL2 → Install. Capture `hl2_capture.py` still running. **Expect:** Install pauses the library sync → HL2 appInfo/depot-keys land fast (no 60s timeout) → real bytes → ~8.4 GB → correct Installed size → few/no CLEARTEXT errors. Success = merge-gate #1 satisfied → Batch 2.
+
+---
+
+## 2026-07-04 — ✅ Batch 1 committed, build started (CI 28692248319)
+
+> **Commit `6b91f13`** on `feat/steam-goldberg-patcher`. CI build-artifacts.yml run **`28692248319`** in_progress on HEAD `6b91f13` (~16 min). Native-steam agent implemented; diff reviewed — clean + compile-correct.
+> **What shipped:** (1) `SteamRepository.syncApps` → sequential batches of 25 (`requestNextAppBatch`/`finishAppSync`), PAUSE the app-sync while a download is active (`downloadActive`/`setDownloadActive`), resume on libraryWorker; queue confined to one thread; `LibraryProgress:2:processed:total`. (2) `SteamDepotDownloader`: `setDownloadActive(true/false)` around the CM work; false-complete guard — if `<90%` of PICS size on disk, refuse markInstalled, emit retryable failure (fixes 405 MB false-complete). (3) new `network_security_config.xml` cleartext-allow only steamcontent.com/steampipe.steamcontent.com + manifest ref. (4) `SteamGamesActivity` phase-2 progress label "Fetching app records (N/372)".
+> **Next (checkpoint 3 on build finish):** watch CI green → deliver APK → device-test — open app, tap Install (should no longer need a warm library; the sync pauses for the download), expect depot keys to land + full ~8.4 GB + no CLEARTEXT spam + correct Installed size. Then Batch 2 (single-session, reconnect-retry, wakelock/FGS).
+
+---
+
+## 2026-07-04 — 🛠️ Building Batch 1 hardening (library-sync fix) — native-steam agent implementing, build pending
+
+> **State:** user approved building the fixes in 2 batches. A native-steam-engineer subagent is IMPLEMENTING **Batch 1** right now (not yet committed/built). Branch `feat/steam-goldberg-patcher`.
+> **Batch 1 (make a full download work + be correct):** (1) `SteamRepository.syncApps` refactor — ONE 372-app `picsGetProductInfo` → sequential batches of 25; add `downloadActive` flag + pause the app-sync while a download is active so the DL's `requestAppInfo(220)` gets a clear CM connection; (2) `SteamDepotDownloader.runInstall` sets `repo.setDownloadActive(true/false)` around the CM work; (3) resume/false-complete guard — don't `markInstalled` if `finalInstall < iTotal*0.90` (fixes the 405 MB-of-8.4 GB false "Installed"); (4) new `res/xml/network_security_config.xml` cleartext-allow only `steamcontent.com`/`steampipe.steamcontent.com` + manifest ref (kills 500+ `alibaba:80` errors).
+> **Batch 2 (later, after Batch 1 proves a clean DL):** single Steam session across the app's own processes; appInfo-no-reply→reconnect+retry; wakelock + keep-FGS-alive.
+> **Architecture note (told user):** bottleneck = the SINGLE shared Steam CM TCP connection, not threads/CPU. Can't use a 2nd thread (no 2nd pipe to Steam) or a 2nd process/connection (Steam = one session/account; 2nd logon = LogonSessionReplaced). Downloads: CM control phase (shared session — starved by the sync) vs CDN chunk bytes (already separate parallel HTTP). Fix = time-share the one CM pipe (batch+pause).
+> **Next:** review agent diff → commit → dispatch CI → deliver APK → device-test. (User asked to checkpoint now / when build starts / when it finishes.)
+
+---
+
+## 2026-07-04 — 🗺️ PLAN: gated merge of `feat/steam-goldberg-patcher` → `main` (user-approved)
+
+> **Goal:** consolidate the Steam + Goldberg work into `main` so it stops getting lost (the old `feat/steam-detail-revamp` Steam fixes were abandoned on a local branch and had to be re-derived when the store was rebuilt here). **But gate the merge on quality — do NOT merge the not-yet-completing download flow.**
+> **Reassurance:** this branch is pushed to GitHub (35 commits ahead of main; main 4 ahead of branch), so the work is safe — merging is not required to preserve it. We can gate freely.
+> **Gate sequence (in order, likely this session):**
+> 1. **Prove ONE full download E2E on device** — pill+redaction build `28690582627` (HEAD `6cc4d28`): sign out of Steam elsewhere + set app protected/don't-optimize → HL2 (220) → Install → **100% + install**. The real gate — the headline feature has never once completed end-to-end.
+> 2. **Land hardening** — `network_security_config.xml` cleartext for `steamcontent.com` CDN (kills the 500+ `alibaba:80` errors) + WAKE_LOCK + keep FGS alive during downloads (OEM process-kill half).
+> 3. **Demote diagnostics behind a debug flag** — `wireJavaSteamLog()` (per-chunk JavaSteam bridge → steam_debug.txt) is too heavy for release; gate behind BuildConfig.DEBUG. **KEEP** the `bumpPendingJobTimeouts` 60s AsyncJob watchdog (a real fix).
+> 4. **Reconcile main's 4 commits** into the branch (rebase/merge, resolve conflicts).
+> 5. **Then merge.**
+> **Also outstanding for a clean main:** Goldberg auto-patch only Regular tier device-proven (Experimental/ColdClient/Off-restore untested).
+> **Immediate next action:** wait for build `28690582627` green → deliver APK → run gate #1.
+> **UPDATE:** build `28690582627` **GREEN** (SHA `6cc4d28`). APK delivered + byte-verified (589,502,775 B) + media-scanned to `/sdcard/Download/Bannerlator-standard-pill-redact-28690582627.apk`. (PRoot session has DIRECT /sdcard access — `cp` to Download, no socket transfer needed.) Awaiting user: sign out of Steam elsewhere + protect app → install → HL2 download. Crash-proof capture = on-device `steam_debug.txt` + persistent `steam_session.txt` (+ will start a device-side `logcat -f /sdcard/...` before the tap); local streamed capture NOT used (dies with PRoot session).
+> **🆕 GATE #1 RESULT (21:43): ENGINE + PILL PROVEN, but "complete" at 405 MB = stale-resume-state bug.** ✅ Pill `OFFLINE→CONNECTING→ONLINE` and stayed 🟢 Online through the WHOLE download (screenshot confirms); **ZERO LogonSessionReplaced during download** (signing out elsewhere worked); `steam_session.txt` clean + redacted. Download ran, `=== Download complete ===` 21:44:36. ❌ But UI shows "Installed · ~405.7 MB" while HL2 is 8.4 GB. On-disk `du`: HL2 = **822 MB** (`hl2/` depot 221 = 411 MB PARTIAL, `lostcoast/` depot 340 = 408 MB complete). Log: 7 of 8 depots (incl. main depot 221) reported `Downloaded 0 bytes … complete` and were SKIPPED. **Cause: polluted install dir — 411 MB attempt-1 leftover + persisted `.DepotDownloader` state fooled the resume check into treating depot 221 as already-complete.** Engine not at fault. **NEXT: Uninstall HL2 → Install fresh (clean dir) → expect ~8.4 GB.** **NEW HARDENING (merge-gate): fresh Install must hash-validate / wipe stale `.DepotDownloader` state, and not mark Installed unless bytes ≈ expected.** Also still: 270+ CLEARTEXT `alibaba:80` (net-sec-config). Run logs saved `~/scratchpad/hl2_run_20260703_2143_SUCCESS_partial.log`.
+> **🔑 BREAKTHROUGH (21:52–21:59): the `LogonSessionReplaced` is the app COLLIDING WITH ITSELF, not the user's other devices.** After the clean uninstall, fresh DLs died at 0%: 21:52 (8-thread) appInfo no-reply → 60s watchdog → FAILED; 21:57 (4-thread, after force-close+reopen) login OK 21:57:12 → LogonSessionReplaced 21:57:15 → stuck. **logcat proof:** PID 28305 (OLD process from 21:50) STILL ALIVE doing "Library sync complete: 229 apps" at 21:57:15 while the NEW process (506) had just logged in → two app processes, two Steam sessions, self-kick. `ps` confirmed 28305 lingering; FGS restarted 4× (14086→19569→21841→28305). User confirmed nothing else of theirs is logged in — consistent. **CAUSE:** swipe-close kills the UI but `SteamForegroundService` (dataSync/START_STICKY/main proc/no wakelock) keeps the old process + Steam session alive; reopen spawns a 2nd process that double-logs-in → collision. The 15s self-replace guard MASKS it (pill stays 🟢 = false-online, DL hangs). Only success (21:43) was a clean single-process first-launch. **IMMEDIATE FIX = Settings→Apps→Bannerlator→FORCE STOP then open once + download (swipe-close insufficient).** **NEW HARDENING (top priority, merge-gate): (1) one Steam session per account across the app's own processes; (2) if appInfo no-reply within N s while ONLINE → force reconnect+retry (don't let the guard mask a real kick + hang); (3) wakelock to stop FGS kill/restart churn. Supersedes "account live elsewhere" as PRIMARY cause.**
+> **🔑 CONFIRMED #2 BLOCKER (22:14, single clean process): LIBRARY SYNC STARVES THE DOWNLOAD (user's hypothesis, proven).** Self-collision fixed (LogonSessionReplaced:0) but HL2 install 22:14:41 → Blocking on getCompletion → 60s later CancellationException → FAILED, 0 keys. Screenshot shows "Fetching 372 app records…"; no "Library sync complete" (372-app sync not settling). Bulk library PICS sync monopolizes the single CM connection → download's requestAppInfo(220) gets no reply in 60s. 21:43 success worked because library was warm. **FIX (hardening #2, user-proposed): (1) pause/deprioritize bulk sync during a download + move PICS parse off pump/netThread; (2) LAZY per-game app-record fetch on detail-open/download (drop the upfront 372-app stampede).** Immediate workaround: open app → leave library untouched until "Fetching…" disappears → then download (warm=free connection).
+
+---
+
+## 2026-07-04 — 🔒 SECURITY: redact username/email/token from all shared diagnostic logs (commit `6cc4d28`, CI `28690582627`)
+
+> **Why:** `steam_debug.txt` + `steam_session.txt` are shared for support, so they must NEVER carry a Steam username, email, or auth/refresh token — including lines forwarded from the bundled JavaSteam library (uncontrolled). Empirical scan of the real 9081-line capture already showed 0 tokens / 0 email / 0 steamID64 (the "token" hits were PICS access-token COUNTS + HL2 asset filenames `refreshlogin.res`/`steampassworddialog.res`), but this makes it a permanent guarantee.
+> **Impl:** new `SteamLogRedactor.redact()`/`registerSecret()`/`clearSecrets()`, applied at the ONLY two file-write choke-points — `SteamDepotDownloader.dlog` (covers the JavaSteam bridge + `dlogError` stacks, all funnel through it) and `SteamRepository.slog`. Layer 1 = exact-match on registered secrets (username + refresh_token, registered in `initialize`/`saveSession`/`loginWithToken`, cleared on `logout`) — the only reliable way to strip a non-pattern Steam username. Layer 2 = pattern backstop: email→`[email]`, JWT `eyJ...`→`[token]` (Steam tokens are JWTs), `[A-Za-z0-9_-]{88,}`→`[token]` (bound kept high so it can't clobber 40-hex chunk ids / ~19-digit manifest gids the log needs).
+> **Superseded** the pill-only build `28690390977` (cancelled). Branch `feat/steam-goldberg-patcher` HEAD `6cc4d28` = `940902d` (pill) + `6cc4d28` (redaction).
+> **NEXT:** CI `28690582627` green → deliver APK → clean live device test (sign out elsewhere + protect app) watching the pill + `steam_session.txt`. Then (a) net-sec-config cleartext for `steamcontent.com` CDN, (b) WAKE_LOCK + keep FGS alive during downloads.
+
+---
+
+## 2026-07-04 — ✅ MANIFEST-HANG FIXED (device-proven); new dominant blocker = `LogonSessionReplaced` mid-download (account live elsewhere + OEM process-kill). Built in-app status pill + persistent session log.
+
+> **Diagnostic-build device result (build `28688995408`, HEAD `7e73811`, HL2 appId 220, 20:49–20:52):**
+> - **Attempt 1 (20:49:20): SUCCESS past the old failure.** `requestAppInfo(220)` returned in **~1.4s** (was the 10s `AsyncJobManager.cancelTimedOutJobs` CancellationException), depot keys 233/234/221/222/389/380 all OK, **real chunks downloaded — depot 221 → 4%, install 411 MB/8.4 GB, download 285 MB/4.5 GB, .vpk files written to disk.** The whole "stuck at 0% / manifest AsyncJob 10s timeout" saga is **RESOLVED** by the diag stack (watchdog 10s→60s + `4c49de5` pump-offload). Engine works.
+> - **Attempt 2 (20:51:10, the one the user saw at 0%): killed by `LogonSessionReplaced`.** Started `loggedIn=true` so `runInstall` SKIPPED `ensureLoggedIn` (posted NO logon of its own) → appInfo OK 20:51:11 → depot key 233 OK 20:51:13 → **20:51:14.090 `handleLoggedOff got LogonSessionReplaced`** → session dead → CM jobs stalled 60s → **20:52:13 watchdog-extended job cancelled → Download FAILED.** The replace landed OUTSIDE `SELF_REPLACE_WINDOW_MS` (we posted no logon) so the self-replace guard didn't fire; fell to the terminal branch → `emit("LoggedOut")`, no recovery.
+> - **Root cause (user-confirmed):** the Steam account **is signed in on another device** (real desktop/mobile Steam). Steam allows only ONE full PC-client session per account → the emulator's logon and the desktop client keep replacing each other (`LogonSessionReplaced`; same reason SteamCMD says "don't run while Steam is open"). Compounded by **OEM/AYANEO process-kill** — attempt-1's log ends abruptly mid-chunk at 20:50:40 (kill signature); app IS Doze-whitelisted but the FGS is `dataSync` with NO wakelock → still killable → restart → re-logon → collide again.
+> - New minor issue: **576× CLEARTEXT errors** to `alibaba.cdn.steampipe.steamcontent.com:80` (Android net-sec-policy blocks plain-HTTP CDN); DepotDownloader retries the chunk on an HTTPS host and recovers — non-fatal but wasteful. Repo has no `network_security_config.xml`. (TODO: permit cleartext for `steamcontent.com` — depot chunks are hash-verified.)
+> - UI 0% was the dead attempt-2 (never emitted progress); attempt-1 emitted 4% fine, so the progress plumbing works.
+>
+> **PRIMARY user action:** sign out of Steam on the OTHER device while downloading here + set the app "protected/don't-optimize" in OEM settings → the download should complete (engine proven to 4%).
+>
+> **SHIPPED THIS SESSION — in-app connection/login status pill (user's idea):** an always-visible indicator in the **top header of both Steam screens** (library + game detail), the honest replacement for the cosmetic never-updated FGS notification. While the app is foregrounded the CM connection lives in the `SteamRepository` singleton in-process, so the pill reflects real session state without depending on the notification. States: 🟢 Online / 🟡 Connecting… / 🟠 Signed in elsewhere (tap↻) / 🔴 Offline (tap↻) / ⚪ Signed out (tap↻); tap calls `reconnectNow()`. **Every transition is logged to a NEW persistent, append-only `steam_session.txt`** (survives across downloads, unlike the per-download `steam_debug.txt` which is truncated each install) AND mirrored into the active download log via `SteamDepotDownloader.mirrorSessionLine()`. On a genuine different-client replace we deliberately do NOT auto-reconnect (would start a logon tug-of-war with the live desktop) — pill shows "Signed in elsewhere", user taps once they've signed out there; the library no longer auto-`finish()`es on that replace so the pill stays tappable. Impl: `SteamRepository.java` `enum SteamStatus{CONNECTING,ONLINE,SIGNED_IN_ELSEWHERE,OFFLINE,SIGNED_OUT}` + `getStatus()`/`setStatus()`/`slog()`/`reconnectNow()`, `setStatus` wired into onConnected/onDisconnected/onLoggedOn(±)/onLoggedOff(4 branches)/loginWithToken/logout; new `SteamStatusPill.kt` composable; both activities add a `steamStatus` state + `SteamStatus:` event handler + pill in header. **NEXT: dispatch CI, deliver APK, device-test — verify pill tracks state live + `steam_session.txt` records the LogonSessionReplaced; then (a) add net-sec-config for cleartext CDN, (b) wakelock + FGS keep-alive during downloads.**
+> **Everything under this line predates the pill work.**
+
+---
+
+## 2026-07-04 — ▶️ diagnostic build delivered to device; awaiting user HL2 download re-run (session may crash on app-open)
+
+> **State:** CI `28688995408` **SUCCESS** (compiled clean — the Java→Kotlin-`internal` `getJobManager$javasteam()` call is valid). Branch `feat/steam-goldberg-patcher` HEAD `7e73811` (`e301ca4` JavaSteam LogListener + `7925db9` 60s AsyncJob-timeout watchdog). **APK copied to device:** `/sdcard/Download/Bannerlator-standard-diag-28688995408.apk` (589,497,172 B, byte-size verified vs artifact, media-scanned). Standard flavor = `com.winlator.banner`. User installs manually.
+> **The pending test:** install APK → open app → HL2 (appId 220) → Download → **let it sit ≥60s** (do not cancel early).
+> **⚠️ CRASH-RECOVERY RUNBOOK (user expects the PRoot session to die when the app opens):**
+> 1. The local capture `~/scratchpad/steam.log` (steamwatch.py) **dies with the session** — do NOT rely on it. The **crash-proof source is the ON-DEVICE debug file:** `python3 ~/scratchpad/getlog.py exec cat /storage/emulated/0/Android/data/com.winlator.banner/files/steam_debug.txt`. (Root bridge = getlog daemon `127.0.0.1:8765`, token `~/.logcat-bridge.token`; if absent, `cp /data/data/com.termux/files/home/.logcat-bridge.token ~/.logcat-bridge.token`.)
+> 2. This build's `steam_debug.txt` now carries `[JS/…]` JavaSteam-internal lines (TcpConnection send/recv, SteamApps.handleMsg, AsyncJobManager, manifest/CDN) + `bumpPendingJobTimeouts: raised N job(s) to 60000ms` watchdog lines — none of which existed before.
+> 3. **Read the window between `onDownloadStarted` and the outcome:** reply/frame lands LATE (~10–60s) and bytes then flow = **transient netThread head-of-line block** behind the ~229-app PICS parse (cause #1 — and the download should actually proceed now) → real fix = serialize/chunk library PICS off the download's netThread (or gate `installApp` behind a library-sync drain). NOTHING inbound by 60s = **genuine no-reply** (session-not-ready / stale socket, cause #2/#3) → real fix = always `ensureSessionReady` before the first depot job (drop the `!isLoggedIn` short-circuit `SteamDepotDownloader.kt:179`).
+> 4. **Do NOT** implement "give DepotDownloader its own dispatcher / don't block `.get()`" — that hypothesis is refuted (see entry below).
+> **Everything under this line is the diagnosis history that produced this build.**
+
+---
+
+## 2026-07-03 — 🔬 Deadlock hypothesis REFUTED by code-level analysis; real cause = download's first CM AsyncJob gets no reply in 10s (leading: netThread head-of-line block by JavaSteam PICS parse). Diagnostic LogListener build incoming.
+
+> **Correction of the entry below:** the "coroutine-dispatcher deadlock" call was WRONG. A native-steam-engineer pass over the *decompiled* JavaSteam 1.8.0 + depotdownloader 1.8.0 (the exact versions pinned in `app/build.gradle:197-198`) refuted it:
+> - DepotDownloader runs on the **shared 64-thread `Dispatchers.IO`** (`CoroutineScope(Dispatchers.IO + SupervisorJob)`), not a private/limited dispatcher — one blocked `.get()` can't starve 64 threads, and the app never shrinks the pool. The failure path itself (`onDownloadFailed`) ran on `Dispatchers.IO` at T+10s, proving it wasn't saturated.
+> - CM AsyncJob replies complete on the dedicated **`TcpConnection` netThread** (`SteamRepository.java:301` selects TCP; `TcpConnection.NetLoop` → `SteamClient.postCallback` → `jobManager.tryCompleteJob` at `SteamClient.java:387`), entirely off `Dispatchers.IO`/the pump.
+> - **The "zero CM traffic in the 10s gap" was an ARTIFACT, not a symptom:** the app never registers a JavaSteam `LogListener`, so *all* JavaSteam internal logging (`TcpConnection` send/recv, `SteamApps.handleMsg`, `AsyncJobManager`, manifest-request-code, CDN) is fanned only to an empty `LOG_LISTENERS` and discarded. The silence tells us nothing. The `AsyncJobManager.cancelTimedOutJobs` cancellation actually *proves* the request path ran (the job was constructed/registered).
+> **Real failure domain:** DepotDownloader's `Steam3Session` issues its first CM AsyncJob for app 220 (`picsGetAccessTokens`/`picsGetProductInfo`, `Steam3Session.java:594/622`; manifest code `:69`) and **no reply reaches the netThread within the 10 000 ms `AsyncJob` default** → `AsyncJobManager` timer cancels it → `CancellationException`. Ranked causes: (1) **netThread head-of-line blocking** — PICS product-info is parsed INLINE on the netThread (`SteamApps.java:441` `handleMsg`→`:447` `postCallback`); a ~229-app library-PICS response monopolizes that one thread so the download's app-info reply can't be read. **This is exactly why `4c49de5` didn't help — it moved the app's `onPICSProductInfo` off the *pump*, but the blocking parse is JavaSteam's `handleMsg` on the *netThread*, which `4c49de5` never touched.** Requires library sync to overlap the download. (2) session-not-ready race — `runInstall` skips `ensureLoggedIn` when `loggedIn==true` (`SteamDepotDownloader.kt:179`). (3) request written to a stale socket after a reconnect gen-swap.
+> **Can't pick between them from the current capture because JavaSteam's own logs are discarded** → agent implemented (NOT committed by it) a diagnostic: `wireJavaSteamLog()` installs a `LogManager` `LogListener` forwarding `onLog`/`onError` into `steam_debug.txt`, called at top of `runInstall` (`SteamDepotDownloader.kt`, +LogListener/LogManager imports). Next device capture will show whether the app-info request is written to the socket, whether any inbound frame is read, and whether the netThread is mid-`handleMsg` — decisively separating not-sent vs sent-but-netThread-blocked vs sent-but-no-reply.
+> **+ Bundled a CM AsyncJob timeout bump (10s→60s) as a discriminating test.** The 10s is JavaSteam's hard-coded `AsyncJob` default (`AsyncJob.java:34`) with NO Config/per-job/static knob; the only reachable lever (Java-only, `getJobManager$javasteam()` is Kotlin-`internal`) is the live job map `SteamClient.getJobManager$javasteam().getAsyncJobs()` → `AsyncJob.setTimeout()`. Because DepotDownloader creates jobs lazily per phase (appinfo→per-depot manifest/key/CDN), a one-shot bump misses later jobs → added `SteamRepository.bumpPendingJobTimeouts(ms)` (Java, iterates the map, bumps any job below target) + a download-scoped daemon `"SteamJobTimeoutWatchdog"` in `runInstall` polling it every 1s (matches AsyncJobManager's own 1s tick), stopped in `finally`. **Reads the two hypotheses cleanly:** reply lands late (e.g. 25s) = transient netThread head-of-line block (cause #1, and the download would then actually proceed); still nothing at 60s = genuine no-reply (session/transport, cause #2/#3). Diagnostic+mitigation, not a fix for a truly blocked netThread.
+> **⏳ Next:** commit+push diagnostic+watchdog → CI build (supersedes `28688733869`) → device re-run HL2 (appId 220) → read the now-visible JavaSteam logs + whether the reply arrives inside the 60s window → apply the matching real fix (serialize/chunk CM PICS off the download's netThread path / always `ensureSessionReady` before first depot job). **Do NOT** apply a "own dispatcher / don't block .get()" fix — evidence says that's not the cause. See memory [[project_bannerlator_steam_session_hardening]].
+
+---
+
+## 2026-07-03 — ⛔ Device-test of `4c49de5` (PICS-off-pump): download STILL fails at 0% → [SUPERSEDED — this entry's deadlock conclusion is REFUTED above]
+
+> **Test:** build `4c49de5` **confirmed installed** on device (`com.winlator.banner`, lastUpdateTime 19:07 EDT, 10 min after CI `28686413427` finished 18:57 EDT). Re-ran HL2 (appId 220) download at 19:24 EDT via root bridge, watched logcat (pid 27263, tag `SteamDepot`) + `steam_debug.txt`.
+> **Result: identical failure.** Login solid — `connected=true, loggedIn=true`, **no `LogonSessionReplaced`**, PICS fine (`hasPicsSize=true`, size 8.99 GB known). But `onDownloadStarted` → **exactly 10.2s later** `=== Download FAILED ===`, `onDownloadFailed: null`, `java.util.concurrent.CancellationException` at `AsyncJobManager.cancelTimedOutJobs(AsyncJobManager.kt:111)` → `AsyncJobSingle.setFailed(:49)`. So **hardening #2 (`4c49de5`, PICS parse off pump) fixed a real *earlier* starvation but is NOT the download blocker.**
+> **New root cause (from evidence, not inferred):** between `Blocking on getCompletion().get()...`/`onDownloadStarted` and the 10s failure there is **ZERO JavaSteam internal logging** — no CM traffic, no CDN server lookup, **no manifest request ever emitted**. The download coroutines never run at all. => **coroutine-dispatcher deadlock**: SteamDepot blocks the calling thread on `getCompletion().get()`, and the DepotDownloader's download work / manifest-AsyncJob completion is dispatched onto a thread that's now parked → nothing runs → the only thing that ever completes the future is AsyncJobManager's *separate* `TimerThread` cancelling the timed-out job at 10s, whose `CancellationException` unblocks `.get()`.
+> **Evidence archived:** `~/scratchpad/steam_hl2_deadlock_20260703.log` + device `/sdcard/Download/steam_debug_hl2_20260703.txt`.
+> **⏳ In progress:** `native-steam-engineer` agent tracing the exact `file:line` (SteamDepot `getCompletion().get()` vs the DepotDownloader `CoroutineDispatcher`; likely `SteamDepotDownloader.kt` + whatever logs "Blocking on getCompletion().get()") and drafting the minimal fix (dedicated thread for the blocking get / `await` instead of `.get()` / give DepotDownloader its own dispatcher). Fix NOT yet written/committed. See memory [[project_bannerlator_steam_session_hardening]].
+
+---
+
+## 2026-07-03 — 🐛→🔧 Steam download: login fix device-PROVEN; manifest AsyncJob times out at 0% → move PICS sync off the pump (hardening #2)
+
+> **Device result of `c72d943` (login fix):** HL2 (appId 220) from build `28685150972` reached `connected=true, **loggedIn=true**` with **no `LogonSessionReplaced` teardown** — the single-flight logon + no-self-kill fix is device-proven, that failure class is closed.
+> **But download still dies at 0%.** `steam_debug.txt`: `Blocking on getCompletion().get()` (18:23:15) → **~10.4s later `java.util.concurrent.CancellationException` at `AsyncJobManager.cancelTimedOutJobs(:111)`** — the depot **manifest-request AsyncJob timed out**; its reply was never dispatched in time. UI stuck on "Downloading… 0%".
+> **Root cause (confirmed in source, not inferred):** `runWaitCallbacks` is posted to the single `SteamPump` HandlerThread (`SteamRepository.java:418`) — *every* callback, incl. the manifest AsyncJob reply, is delivered there. `onLicenseList` (:571) and `onPICSProductInfo` (:650) ran their heavy work **synchronously on the pump**: the SYNC_APPS branch loops ~229 apps parsing each PICS KeyValue tree + depot-selection filter + Room writes → blocks `runWaitCallbacks` for seconds → manifest reply undelivered → Timer-thread 10s watchdog cancels the job → CancellationException. This is exactly **hardening plan item #2**. BC SHA-1 fix already present (:77), so downloads would proceed if the reply just landed.
+> **Fix (this session, `SteamRepository.java`, +106/−54):** added a dedicated single-thread `libraryWorker` executor (created in `startPump`, `shutdownNow` in `stopPump`, `runOnLibraryWorker` fallback for pre-start/teardown). Pump handlers now only marshal the callback payload (copy `getLicenseList()` / snapshot `pendingPackages`/`pendingApps` values into an `ArrayList`) and hand the DB + parse work to the worker via new `processPackages`/`processApps` methods. `syncLibrary()` re-sync also routed off the pump. `syncPhase` (volatile) is written on the worker before each `picsGetProductInfo` send and read on the pump only after a reply → happens-before holds, no phase race. JavaSteam send path verified off-pump-safe (`TcpConnection.send` guarded by `netLock`, matches GameNative). Compile-checked (javac -proc:none, zero structural errors); **NOT device-tested yet**.
+> **⏳ Next (device):** install the new build, re-run HL2 (appId 220) download — expect the manifest AsyncJob no longer times out at 0% and bytes start flowing. Then remaining hardening items #1/#3/#4/#5. See memory [[project_bannerlator_steam_session_hardening]], [[project_bannerlator_steam_download_login_guard]].
+
+---
+
+## 2026-07-03 — 🐛→✅ Goldberg: back up + restore game-shipped steamclient dlls (found while prepping Experimental/ColdClient device test)
+
+> **How it surfaced:** before touching the UI to test the Experimental/ColdClient tiers, inspected Portal 2 on device via the root bridge (`com.winlator.banner`, `imagefs/steam_games/Portal 2`). md5 **confirmed Regular is correctly applied** (in-place api dlls = the bundled Goldberg regular builds; `.bak` files = distinct pristine originals). But Portal 2 also ships its **own** `bin/steamclient.dll` (md5 `4505032f`, not Goldberg's `2983e67d`).
+> **Bug:** `GoldbergPatcher.removeAddedFiles` deleted `steamclient.dll`/`steamclient64.dll` **purely by name** (they're in `ADDED_FILE_NAMES`), and `applyExperimental`/`applyColdClient` **overwrote** them with no backup — unlike api dlls, which shared-prep backs up. So any game that ships its own steamclient loses it: Experimental overwrites it unrecoverably, and **Off deletes it entirely instead of restoring pristine**. Running the Off test as-is would have corrupted the Portal 2 install we just proved works.
+> **Fix (`6600914`):** new `backupIfOriginal(file)` mirrors the steam_api `.bak` rule — copies the first (pristine) copy to `<name>.bak` iff the file exists and no backup is there yet — and is called before every steamclient/loader overwrite in Experimental + ColdClient. `removeAddedFiles` now **restores from `.bak` if present** (keeping the `.bak` as the permanent source) and only deletes files with no original (loader exes, `GameOverlayRenderer`, `ColdClientLoader.ini`, our `steam_appid.txt`). Scope note: `bin/win64/` has no original `steamclient64.dll`, so Experimental genuinely *adds* it there (delete-on-restore stays correct); only the x86 `bin/steamclient.dll` collided. A `steam_appid.txt`-backup edit was reverted (games don't ship it → keep it always-added→deleted). Intermediate tier-switch stacking is transient and cleaned at Off.
+> **CI:** artifacts-only build **`28684046577`** (`build-artifacts.yml`, ref `feat/steam-goldberg-patcher` tip `6600914`, label steam-logoff-fix).
+> **⏳ Next (device, once the build installs):** run Regular→Experimental→ColdClient→Off on Portal 2, verifying each step by md5 against the captured fingerprints (esp. that Off restores `bin/steamclient.dll` to `4505032f` from its new `.bak`). Fingerprints + step-by-step in memory [[project-bannerlator-goldberg-autopatch]].
+
+---
+
+## 2026-07-03 — 🅿️ Steam login: QR path greyed out; Goldberg becomes the focus (Portal 2 patch-apply device-proven)
+
+> **Decision (user):** username/password login is "working solid and the best" → **grey out the QR-code login for now** so we can push on Goldberg. The QR ~1h logoff-recovery work (Fix A/B, `4c6b202`+`6669771`) stays **in the code, untested/parked — not reverted**; we only disabled the UI entry point.
+> **Change (`12166b3`, branch `feat/steam-goldberg-patcher`):** `SteamLoginActivity.kt` ~`:354` — the "Sign in with QR Code" `TextButton` is now `enabled = false`, relabeled **"Sign in with QR Code (temporarily unavailable)"**. UI-only, one-line re-enable. Username/password fields untouched (the primary path). ludashi Kotlin+Java compile GREEN.
+> **CI:** artifacts-only build **`28681946617`** (`build-artifacts.yml`, ref `feat/steam-goldberg-patcher` tip `12166b3`, label `steam-logoff-fix`) — 3 flavors, no tag/release. User grabs the APK himself (no device push requested).
+> **🎮 Goldberg milestone (device):** user **downloaded + installed Portal 2 (single-player Steam title) via the store, then applied the Goldberg patch successfully.** First real single-player validation of the **patch-apply** step — the exact gate Brawlhalla (online-only, Error 3003) could never clear. ⏳ still to confirm explicitly: patched Portal 2 **boots into gameplay** past the Steam check (apply succeeded; in-game boot not yet reported).
+> **Net state:** QR >1h survival test **deprioritized/parked** (not abandoned; playbook preserved). Focus = Goldberg tier ladder + launch-proof. Still on `feat/steam-goldberg-patcher`, **NOT merged**.
+>
+> **✅✅ UPDATE (same day): Portal 2 patched → BOOTED INTO GAMEPLAY on device.** The full end-to-end Goldberg loop is now proven on real hardware: store download → shared prep → DLL swap (**Regular** tier) → launch past the Steam check → in-game. Clears the last unknown (Brawlhalla could never validate it — online-only Error 3003).
+>
+> **Where the Goldberg branch stands — code is FEATURE-COMPLETE, only validation + shipping remain** (no TODOs/FIXMEs across the 4 Goldberg files; all 3 tiers + `resolveLaunchExe` + restore + PE-arch-detect implemented, compiling green):
+> 1. **Tier-ladder breadth (device):** only **Regular** proven. **Experimental** (adds `steamclient(64).dll`) and **Cold Client Loader** (restores orig api + `steamclient_experimental` loader + generated `ColdClientLoader.ini` + **shortcut Exec repoint** to `steamclient_loader_x64.exe`, wired at shortcut-add `SteamGameDetailActivity.kt:538`) are untested. ColdClient is riskiest — changes the launch command and asks the user to re-add the game to Shortcuts. Needs a title that fails Regular to exercise it.
+> 2. **Restore/Off flow (device):** confirm Off restores pristine dlls from `.bak` (+ restores shortcut Exec after ColdClient) — the idempotent restore-then-apply golden rule, not yet round-tripped on device.
+> 3. **Merge decision:** branch is **19 commits ahead of `origin/main`** and is a **SUPERSET** — Steam-store M3 restyle + Compose container-picker + dl size/progress dual-bar + Goldberg + parked/greyed QR logoff-recovery Fix A/B. Merging Goldberg = merging all of it. Cleanest = one **superset merge** once tiers proven (store rebuild is the substrate Goldberg sits on); alternative = cherry-pick Goldberg-only (fiddly, shared store files).
+> 4. **Release/version:** branch `versionCode 37` == released 2.2.2 → **must bump to vc38+** (monotonic gotcha) before any release. Per the beta-channel strategy, first cut defaults to a **pre-release**.
+> 5. **Catalog:** `goldberg.tzst` (`goldberg-v1`, MD5 `BC48B103AD3B067D3ED7CDFDAF728A4A`) already LIVE on winlator-contents — no re-cut needed unless the gbe_fork build changes.
+>
+> **Recommended next step:** device-test Experimental + ColdClient + Off/restore on a couple of titles → single **superset merge to main** + **vc38 pre-release**. QR path stays parked/greyed, untouched.
+
+---
+
+## 2026-07-02 — 🐛→✅ Steam: QR-login downloads die ~1h in — fixed (recover from involuntary CM logoff)
+
+> **Symptom (user):** on the QR-login device, Steam depot downloads stop working ~1 hour after login; on a *different* device using **username/password** they run all day, session after session. (This device has only ever used QR — so the correlation is cross-device, not a clean same-device A/B.)
+> **Investigation** = native-steam-engineer audit of our `SteamRepository`/`SteamDepotDownloader` vs **GameNative** (`utkarshdalal/GameNative`, `SteamService.kt`), the reference the user asked to compare against.
+> **Root cause (code-certain):** `SteamRepository.onLoggedOff` (`:485`) was a **dead-end** — it set `loggedIn=false` and emitted `LoggedOut` with **no reconnect and no re-logon**, unlike `onDisconnected` (`:445`) which auto-recovers a socket drop. Depot downloads authenticate purely over the live CM session (manifest request codes, depot keys, CDN tokens — `SteamDepotDownloader.kt:256-371`), **not** a WebAPI bearer. So a clean mid-session CM **LoggedOff** (`EResult.Expired` ~1h into a QR-approved session; password sessions last longer or drop as a *recoverable* Disconnect) permanently stranded the session → in-flight download stalled → surfaced a bogus **"Unknown error."**
+> **Not the cause (ruled out):** `getAccessToken()` (`:892`) returns the refresh token ("doubles as bearer") but has **zero callers** — dead code, not in the download path. Both auth managers mint **identical SteamClient-audience** tokens (`persistentSession=true`), so QR-vs-password is **which callback fires**, not a token-audience misconfig. Our `LogOnDetails.setAccessToken(refreshToken)` pattern **matches GameNative** — correct, not misused.
+> **Verdict:** we were **MISSING recovery, not misusing an API.** GameNative's `onLoggedOff`→`reconnect()` (`SteamService.kt:3940-3970`) heals *both* login types with **no proactive token renewal** — pure reconnect+relogin from the stored refresh token.
+>
+> **Fix (branch `feat/steam-goldberg-patcher`, `4c6b202` + follow-up; ludashi Kotlin+Java compile GREEN):**
+> - **A — `SteamRepository.java` (the fix):** `onLoggedOff` now recovers an involuntary logoff by forcing a reconnect+relogin. `forceReconnect` flag lets `onDisconnected` proceed even though a self-initiated `disconnect()` reports `userInitiated=true` (the gotcha). Bounded by `logoffRecoveryAttempts < MAX_LOGOFF_RECOVERY(3)` (reset on `LoggedOn`) so a dead token can't loop. `loggingOut` flag (set by `logout()`, cleared on login/`saveSession`) keeps an intentional sign-out from being "recovered." `LoggedInElsewhere`/`LogonSessionReplaced` treated as terminal.
+> - **B — `SteamDepotDownloader.kt`:** `onDownloadFailed` now **defers** to the `finally` block, which awaits `ensureLoggedIn(30s)` and **retries the install once as a resume** (`attempt` param, `MAX_SESSION_RETRIES=2`) before surfacing failure — so a mid-download logoff reuses already-downloaded files instead of restarting. Plus `initDebugLog(truncate = attempt == 0)` so the retry **appends** rather than wiping `steam_debug.txt` — the failure+recovery narrative survives for on-device diagnosis.
+> - **C/D deliberately deferred:** optional proactive `generateAccessTokenForApp(refreshToken, allowRenewal=true)` renewal, and deleting the dead `getAccessToken()` — GameNative proves A+B suffice.
+>
+> **CI:** artifacts-only build **`28625813606`** (`build-artifacts.yml`, ref `feat/steam-goldberg-patcher`, label `steam-logoff-fix`) — the installable APK with the fix.
+> **Bridge note:** root bridge daemon (`127.0.0.1:8765`) was alive but this session's PRoot lacked the (boot-rotated) token + Termux-home client; recovered by writing the user-supplied token and speaking the raw `<token>\n<verb>\n` protocol directly (bare verbs `exec`/`ping`/`cat`, not the `--exec` client form). No historical logs survived to confirm the `EResult` (ring buffer aged out, no `steam_debug.txt`, app not running).
+> **⏳ GATE (device):** user will download + test the new build. Confirm a fresh **QR login + large download survives past ~1h** — watch `steam_debug.txt` / logcat `SteamRepo` for `Involuntary logoff (Expired) → forcing reconnect+relogin` then a resumed completion. Fix is correct regardless of the exact EResult.
+
+---
+
+## 2026-07-01 — 🏁 RELEASED: Bannerlator 2.2.2 (stable, versionCode 37)
+
+> **GitHub release `2.2.2`** — tag `2.2.2` at `97c0e44`, **prerelease=false / make_latest** (now the Latest release), 3 flavor APKs + `update.json` reporting **versionCode 37 / versionName 2.2.2**. Built by `release.yml` run **`28520346738`** (success, from the main vc37 commit). **vc37 > pre1 vc36 > stable-2.2 vc35** so the in-app updater offers 2.2.2 to both stable and beta users.
+> **What shipped (the four areas previously staged on main since 2.2):** in-game ReShade Tier 1 (per-game multi-effect switching, on-demand catalog, typed live controls, pause-box fix); vkBasalt version-aware `.so` re-extraction (existing containers auto-refresh the ReShade layer on next launch); white-accent bundle (#46 control accent + #45 container-creation orphan-dir + white/dark app-accent contrast); FPS-limiter shortcut-persist (#46).
+> **Release description** hand-set via `gh release edit --notes-file` to match the 2.2 layout (logo → What's New → Downloads → updating note → thanks) — the workflow's auto-changelog body was overwritten. **README** updated on main (`d837036`): new "What's New in 2.2.2" section (old 2.2 notes moved into a `<details>`), version line → 2.2.2/vc37, and the **ReShade multi-select flat-screen warning in 3 places** (What's New, ReShade feature bullet, and the troubleshooting callout): stacking too many effects can prevent a game from starting (flat/blank screen) → uncheck effects one at a time until it boots.
+> **⚠️ Watch item:** the vkBasalt version-aware extraction (`f3a6340`) was CI-green but never independently device-proven — shipped on faith; watch for "existing container didn't pick up the new ReShade layer" reports.
+
+---
+
+## 2026-07-01 — 📦 RELEASE-CHANNEL STATE + artifacts-only test build of `main`
+
+> **Artifacts-only build dispatched** — `build-artifacts.yml` run **`28518700499`**, ref `main` tip `20fd2da` (vc36/2.2.1), label `2.2.1-main-test`, 3 flavors (ludashi/pubg/standard), **NO tag, NO release**. User downloads the APKs to device-test the staged stack; then has "a few things to test and add" before cutting the next release.
+> **Channel state (measured 2026-07-01):**
+> - **Stable** = `2.2` / vc35 (all users).
+> - **Beta (2.2.1-pre1)** = update.json **vc36** = **2.2 + in-game rail scroll ONLY.** ⚠️ CORRECTION: ReShade Tier 1 is **not** in the beta — it merged to main (`d166869`, 2026-07-01 00:19 EDT) ~4.5h *after* pre1 published (2026-06-30 19:45 EDT), and pre1 was built from the `fix/ingame-rail-scroll` branch before Tier 1 landed. (The git tag `2.2.1-pre1` sits loosely at a vc35 docs commit `9f51ed7`; trust the release's update.json vc36, not the tag.)
+> - **Staged on `main` (vc36) but released to NOBODY — 4 areas:** (1) ReShade Tier 1 `d166869`; (2) vkBasalt version-aware `extra_libs`/`.so` re-extraction `f3a6340` (makes Tier 1 work for existing users — ships with #1; NOT device-proven, needs an old-container upgrade check); (3) white-accent bundle `0bfeebd` (#46 control accent + #45 container-creation + white/dark app-accent, device-proven); (4) FPS-limiter shortcut-persist `12a4fc8` (#46, device-proven). #46 + #45 both CLOSED.
+> **⚠️ Monotonic gotcha:** `main` vc36 == pre1 vc36, so the next pre-release/stable **must bump to vc37+** or the updater won't offer it to pre1 testers.
+
+---
+
+## 2026-07-01 — 🏁 DEVICE-PROVEN + MERGED: #46 FPS-limiter-resets fix — persist in-game toggle to the owning shortcut
+
+> **✅ DEVICE-PROVEN** (user: "installed and tested it, works and remembers now") **+ MERGED to `main`** in `12a4fc8` (`--no-ff` of `8476b60`, `71be697..12a4fc8`), branch `fix/fps-limiter-shortcut-persist` deleted. CI code build `3d59293` / run **`28516599378`** GREEN (13m). **Issue #46 FULLY CLOSED** (both halves — white virtual-control color + this FPS reset — resolved). Version stayed vc36/2.2.1 (accumulate on main, no bump). Fixes the diagnosis in the entry below.
+> **Fix (mirror the ReShade Bug A owner-discriminator fix — write-target == read-source), all in `XServerDisplayActivity.java` (+29/−5):**
+> 1. `onFpsLimitChange` (`:603-611`): when `shortcut != null`, write `fpsLimiterEnabled` (+`fpsLimiterValue` when > 0) back to the **shortcut** and `shortcut.saveData()` (`Shortcut.java:153/163`); else the container write as before.
+> 2. New `resolvedFpsLimiterValue()` mirroring `resolvedFpsLimiterEnabled()` (parseInt with container fallback, null-safe pattern copied from `resolvedManualRefreshRate()`).
+> 3. Used the resolver at **both** value read sites so value reads from the same owner it's written to: the drawer value seed (`:795`) and the launch-time `applyFpsLimit(... ? resolvedFpsLimiterValue() : 0)` (was `:2159`, which had paired the shortcut-aware enabled resolver with the raw `container.getFpsLimiterValue()`).
+> **Scope:** container-only (no-shortcut) launches unchanged; `matchRefreshRate`/`manualRefreshRate`/`frameGen` untouched (not shortcut-stamped or not editable in-game). Backward-compatible: a shortcut with no `fpsLimiterValue` extra falls back to the container value.
+> **Hygiene note:** an initial `git add -A` accidentally staged two `.claude/worktrees/` embedded-repo gitlinks; amended out and added `.gitignore` `.claude/worktrees/` (force-pushed `d5f2b22`→`3d59293`).
+> **▶️ Device-retest gate (then comment + close #46):** launch a game via its shortcut → toggle the FPS limiter in-game (test both on→off and off→on, and a cap-value change) → quit → relaunch via the same shortcut → the limiter state + value hold. Confirm a container-only launch still persists, and that a second game's shortcut is unaffected (per-game isolation). No merge / no version bump without user go (accumulate on main per the beta-channel workflow).
+
+---
+
+## 2026-07-01 — 🔎 ROOT-CAUSE CONFIRMED (not yet coded): #46's 2nd complaint "FPS limit resets every time you close a game" = shortcut-vs-container owner mismatch
+
+> **Status: DIAGNOSED, fix planned, NOT implemented/branched.** Code-traced, not device-repro'd yet. This is the open half of issue #46 (Noname267), the same class of bug as ReShade Tier-1 **Bug A** (write-target ≠ read-source across the shortcut/container owner boundary).
+> **Trigger — hits ~EVERY shortcut-launched game:** `ShortcutsScreen.kt:1201` stamps an `fpsLimiterEnabled` extra onto every shortcut it saves (always `"1"`/`"0"`, never null), so every game launched from a shortcut/game-entry carries it.
+> **The asymmetry:**
+> - **READ (launch seed):** `resolvedFpsLimiterEnabled()` (`XServerDisplayActivity.java:3597-3602`) returns `shortcut.getExtra("fpsLimiterEnabled", <container default>)` when `shortcut != null` — i.e. reads the SHORTCUT.
+> - **WRITE (in-game toggle):** `onFpsLimitChange` (`:603-611`) commits **only** to `container.setFpsLimiterEnabled(limOn)` / `container.setFpsLimiterValue(limitVal)` + `container.saveData()` — there is NO shortcut branch.
+> **⇒** an in-game limiter on/off change is never written back to the owning shortcut, so the next launch re-seeds from the stale shortcut extra and the toggle reverts → "resets every time you close a game." (The *value* seed `:795` / write `:609` both use the container so `fpsLimiterValue` itself survives — but the on/off toggle reverting moots it.)
+> **The "and others" part is mostly benign:** `matchRefreshRate` / `manualRefreshRate` are NOT stamped onto shortcuts by the editor, so their resolvers (`:3606`, `:3616`) fall back to the container and read==write (no bug). `frameGenEngine` IS stamped (`:1200`) and read shortcut-aware (`:3527`) but the engine isn't editable in-game (only FG on/off + multiplier are, and those persist container↔container). So the single real, reproducible offender is the **FPS-limiter enable toggle** — exactly the setting the reporter named.
+> **FIX PLAN (mirror the ReShade Bug A fix — make write-target == read-source; `Shortcut.java:153/163` already exposes `putExtra()` + `saveData()`):**
+> 1. In `onFpsLimitChange` (`:603-611`): if `shortcut != null`, write `fpsLimiterEnabled` (+`fpsLimiterValue`) back to the **shortcut** and `shortcut.saveData()`; else keep the current container write.
+> 2. Add `resolvedFpsLimiterValue()` mirroring `resolvedFpsLimiterEnabled()` and use it at the value seed (`:795`) so the value is read from the same owner it's written to.
+> **Proposed branch** `fix/fps-limiter-shortcut-persist`. **Device retest** = toggle the limiter in-game → quit → relaunch via that game's shortcut → limiter state holds (both on→off and off→on); confirm container-only (no-shortcut) launches still persist. Then comment + close #46. No merge/version bump without user go.
+
+---
+
+## 2026-07-01 — 🏁 MERGED TO MAIN: #46 white virtual-control accent + #45 container-creation orphan-dir + white/dark app-accent contrast
+
+> **Merge `0bfeebd`** (`--no-ff`, `f3a6340..0bfeebd`), branch `fix/white-accent-and-container-creation` deleted (local + remote). Branch tip `116ef9e` CI-green (run **`28511850270`**, headSha-verified). This adds one commit beyond the earlier checkpoint — `116ef9e` "symmetric on-accent contrast": a **dark** custom accent previously fell through to the preset's baked `onPrimary` (itself dark on Monochrome/Phosphor/Royal Gold/Frost → dark-on-dark glyphs), now mirrors the light-accent guard (derive on-accent from luminance for ANY custom accent; built-in presets keep their designed `onPrimary` → default byte-identical). The white-app-accent follow-up is now **DEVICE-CONFIRMED** by the user ("works well").
+> **Version left at vc36 / 2.2.1** (same as main's prior rail-scroll + vkBasalt pre-release). Per the opt-in beta-channel workflow, **NO release cut and NO versionCode bump** — the user chose to let fixes keep accumulating on `main` until there's enough for a pre-release (pre2, vc37) or a stable push. ⚠️ Testers already on vc36 won't be offered a new build until the versionCode bumps to 37+.
+> **Issues closed out:** #45 commented + **CLOSED (completed)** pointing at fix `b69c0e7` / merge `0bfeebd`. #46 commented crediting the color fixes (`b69c0e7` + `b1b2cc7` + `116ef9e` / merge `0bfeebd`) but **LEFT OPEN** to track its second, unaddressed complaint — "limit fps and others reset every time you close a game" — for which the reporter was asked for repro steps (which setting, per-game vs container default, GL vs Vulkan). That FPS-reset bug was deliberately NOT in this branch (AMA bot's `state.reset()` theory is a misdiagnosis; real suspect = shortcut-vs-container owner mismatch, needs a repro).
+
+---
+
+## 2026-07-01 — Two user-reported bugs: white virtual-control accent (#46) + container creation bricked by orphan shortcut dir (#45), plus white-app-accent contrast follow-up — ✅ CODE DONE, CI building (branch `fix/white-accent-and-container-creation`, NOT merged) [SUPERSEDED — see MERGED entry above]
+
+> **Source:** GitHub issues #46 ("custom colors… white doesn't apply to virtual controls, becomes blue") and #45 ("Add shortcut issue that can break container creation"). The AMA bot had diagnosed both but never pushed (no CI write creds); all three fixes below are independently code-verified against source, not taken on the bot's word.
+> **Branch `fix/white-accent-and-container-creation`** off `main`. Commit 1 `b69c0e7` (#46 control + #45), CI run **`28506368680` ✅GREEN** (headSha == tip, 3 flavors). Commit 2 `b1b2cc7` (white-app-accent follow-up), CI run **`28508536976`** dispatched (headSha verified == tip; result pending at checkpoint). NOT merged, version un-bumped (35/2.2), no tag.
+>
+> **#46 — white virtual controls rendered as the default blue — FIXED (`ControlElement.java:728`).** The in-game GAMEHUB touch-control style gated its accent path on `boolean hasAccent = accent != -1`, but `resolveAccentColor()` → `InputControlsView.getAccentColor()` always returns a full-opacity ARGB (`0xff000000 | rgb`), so it can never legitimately be a `-1` "no accent" sentinel — **except pure white, which IS `0xFFFFFFFF` == `-1` as a signed int** → `hasAccent=false` → fell back to the hardcoded blue. Fix = `hasAccent = true` (accent is always live; the file's own comment already said "Never -1 now"). ✅ **DEVICE-CONFIRMED by user** (white controls now render white).
+>
+> **#45 — creating a container silently fails permanently after importing a shortcut for a deleted container — FIXED (`ContainerManager.java` + `ShortcutsViewModel.kt`).** Repro: create container → launch it (registers it in the Shortcuts screen's `ContainerManager`) → delete it → the `+` add-shortcut picker still lists the dead container → importing to it calls `getDesktopDir().mkdirs()` which **recreates** `xuser-<id>/` → the next `createContainer()` reuses that id, `mkdirs()` returns false (dir exists) → returns null → screen closes silently, and stays broken for ALL future creations. Fix, two parts: (1) `createContainer()` — before `mkdirs()`, if the target dir already exists, delete it when it's an orphan (no `.container` config) else bail as a real id collision; (2) `ShortcutsViewModel` — new `liveContainers()` filters `manager.getContainers()` to those whose `.container` file exists on disk, routed through `containers()`, `importShortcut()`, `cloneToContainer()`, `renameImportedShortcut()` so stale entries never appear in the picker or reach the filesystem (indices stay consistent because every call site uses the same filtered list). ✅ **DEVICE-CONFIRMED by user** (deleted container no longer shows in the add-game/shortcut picker).
+>
+> **Follow-up (user-found in the same test) — a WHITE APP THEME accent made on-accent buttons render solid white — FIXED (`ThemePreset.kt` + 3 call sites).** Separate path from the in-game control fix: out-of-game Compose UI. Root cause in `ThemePreset.toColorScheme()/toLightColorScheme()` — `val accent = accentOverride ?: primary` set `primary` to the custom white accent but kept the preset's baked `onPrimary` (white on the AMOLED base) → **white content on a now-white primary**. Fix = when a **light custom accent** is supplied (`accentOverride != null && accentOverride.luminance() > 0.5f`) derive a dark on-accent color for `onPrimary`/`onSecondary`; built-in presets and dark custom accents keep their designed `onPrimary`, so **default AMOLED (no override, onPrimary already white) stays byte-identical**. Also routed the hardcoded `Color.White` foregrounds on primary-backed buttons through `colorScheme.onPrimary`: the `+` FAB (`ContainersScreen.kt:185`), the container **Play** button (`:381`), the Saves `+` FAB (`SavesScreen.kt`), and the "NEW" badge (`AppDrawer.kt`) — the last two are the same bug and would also vanish under a white accent. ⏳ **NOT yet device-tested** (diagnosed from the user's description + source; device bridge was down this session — no adb/8765). New import `androidx.compose.ui.graphics.luminance`.
+>
+> **▶️ REMAINING:** device-retest the white-app-accent follow-up (set theme accent to white → `+`/Play/Saves-`+`/NEW badge show dark icon/text, not solid white; in-game white controls + #45 still hold); then merge decision. Per the opt-in beta-channel workflow these two user-reported fixes are a natural pre-release candidate once fully device-verified. No merge/tag/version-bump without explicit user go. **Not touched:** #46's second complaint ("FPS limit resets every time you close a game") — the AMA bot's `state.reset()` theory is a misdiagnosis (reset at `:506` runs BEFORE the container seed at `:794-795`; in-game changes already write back via `onFpsLimitChange`); real suspect is the same shortcut-vs-container owner mismatch as ReShade Bug A — needs a repro before coding, deliberately left out of this branch.
+
+---
+
+## 2026-07-01 — vkBasalt layer VERSION-AWARE EXTRACTION — existing containers get the updated `extra_libs.tzst` on app-update — ✅ CODE DONE (branch `fix/vkbasalt-version-aware-extraction`, NOT merged)
+
+> **Why:** the layer-extraction gate in `XServerDisplayActivity.java` re-extracted `graphics_driver/extra_libs.tzst` (which carries the vkBasalt layer `libvkbasalt.so`) ONLY when the container was brand-new (`firstTimeBoot`) or the `.so` was TOTALLY ABSENT. It had no "installed `.so` is OUTDATED" case, so a user updating from 2.1.1 (old bundled `.so`) to 2.2.1 who relaunched an EXISTING container kept the stale shared-imagefs `.so` → the new Tier-1 ReShade per-effect features (and CAS/DLS sharpness) silently no-op'd. Required before the 2.2.1 stable cut.
+> **Fix — a third trigger + a persisted version marker.** New constant `EXTRA_LIBS_VERSION = 2` (`XServerDisplayActivity.java:240`, near the other constants; MUST be bumped whenever `app/src/main/assets/graphics_driver/extra_libs.tzst` is repacked). Marker FILE (not SharedPreferences, so a reinstall-imagefs resets it consistently) at `imageFs.getLibDir()/.extra_libs_version` holding the int; missing/unparseable ⇒ `-1`. Restructured gate (`~:2976-2991`): `firstTimeBoot` still extracts BOTH `layers.tzst` + `extra_libs.tzst` then writes the marker; otherwise `!vkBasaltSo.exists() || installedVer != EXTRA_LIBS_VERSION` ⇒ extract `extra_libs.tzst` then write the marker. All three successful-extract paths converge the marker to `EXTRA_LIBS_VERSION` (extracts once per app-upgrade). Helpers `readExtraLibsVersion()`/`writeExtraLibsVersion()` (`~:2886`/`:2900`). Log.d mirrors existing style, names which trigger fired.
+> **Existing installs have NO marker ⇒ `-1` ⇒ mismatch ⇒ re-extract on first launch after updating** — so every pre-existing container picks up the patched Tier-1 `libvkbasalt.so` (md5 `3129127c098dcaa7704cf264ef47f157`, 1852976 B — already the one in `extra_libs.tzst` on main).
+> **DATA-SAFETY (unchanged):** extraction stays a pure additive per-entry overwrite to `imageFs.getRootDir()`; NO delete/clean step added; target unchanged. Verified `extra_libs.tzst` = ONLY `usr/lib/*.so` (libvkbasalt/libvulkan_freedreno/libbcn_layer) + `usr/share/vulkan/*` (icd.d + implicit_layer.d manifests) — NO home/drive_c/user data.
+> **NOT bumped:** app versionCode/versionName stay 35/2.2 (the bump lives on another branch). `extra_libs.tzst` NOT modified. No merge/tag.
+> **On-device verification recipe:** on a device that already has an EXISTING container built with the OLD `.so`, install the 2.2.1 build over it, relaunch that container (do NOT create a new one) → `imageFs` `usr/lib/libvkbasalt.so` md5 == `3129127c098dcaa7704cf264ef47f157`, `.extra_libs_version` == `2`, and a Tier-1 per-effect toggle (Solo bypass / per-effect enable) takes effect live.
+
+---
+
+## 2026-06-30 — In-game ReShade effect SWITCHING — Tier 1 (multi-effect loadout + per-effect enable gate) — 🏁 FULLY DEVICE-PROVEN + MERGED TO MAIN 2026-07-01 (merge `d166869`)
+
+> 🏁 **STATUS 2026-07-01 — TIER 1 DONE, DEVICE-PROVEN END-TO-END (ludashi).** Gates 1–8 device-verified earlier; then two device-found bugs were fixed and both confirmed on-device on fix build **CI `28492221848`** (branch `feat/reshade-multi-effect-switch` tip **`82c6799`**, headSha `82c67995…` == branch tip, +82/−16 across 3 files, `extra_libs.tzst`/patched .so untouched = app-side only):
+> - **BUG A — per-game persistence (commit `801fee9`): FIXED + user-confirmed.** In-game changes to loadout/order, Solo/Stack, per-effect enabled, sliders, and master on/off now persist to the game's **shortcut** and restore on cold relaunch. Root cause = persist path and read path used different owner discriminators (`applyReshadeLive` wrote to the shortcut whenever non-null, but `resolveReshade` reads the shortcut only when it *owns* reshade, else the container) → container-configured reshade launched via a shortcut reverted; master on/off was never persisted at all. Fix = one shared `shortcutOwnsReshade()` (write-target == read-source) + persisted `reshadeMasterEnabled`. Disk-flush verified: each in-game change-commit synchronously rewrites the shortcut `.desktop` (`Shortcut.saveData()` → `FileUtils.writeString`, `XServerDisplayActivity.java:1528`; container branch `container.saveData()` `:1534`), sliders debounced to release — so quitting/killing the game cannot lose changes.
+> - **BUG B — pause box on the freeze (commit `82c6799`): FIXED + user-confirmed ("pause and resume now shows up and works correctly").** Root cause = z-order: `PauseBoxOverlay` was an inline `Box` inside the dialog-host ComposeView, which the game SurfaceView (Vulkan/GL + ASR scanout) composites above → hidden on the frozen frame. Fix = host the pill in `androidx.compose.ui.window.Dialog` (own top-level window above the game surface), no dim scrim, non-modal so the drawer stays usable during a Live-preview-OFF freeze; tap → resume.
+> ✅ **MERGED to main 2026-07-01** (`d166869`, --no-ff of `feat/reshade-multi-effect-switch` tip `cd716cd`; pushed `9f51ed7..d166869`; version un-bumped 35/2.2, no tag/release). ▶️ **REMAINING (all user-gated / non-functional):** (2) version-aware-extraction fix (re-extract `extra_libs.tzst` when the bundled .so hash differs, so existing containers get the patched layer — needed before release); (3) codegen sweep to prune non-compiling catalog effects; (4) release notes (credits DadSchoorse / Pipetto / StevenMXZ); (5) Tier 2 (live add-from-catalog via on-device recompile). No merge/tag/version-bump without explicit user go.
+
+**Goal (user):** select MULTIPLE ReShade effects per game and **toggle between them LIVE in-game** — Solo (A/B one at a time) or Stack (layered) — with auto-generated per-effect sliders. Built on top of the merged Step 3 stack. Baseline was single-effect only (`Container.getReshadeEffect()` one string, conf `effects=<reshade>:cas`). Two tiers agreed: **Tier 1 = pre-compiled loadout with an instant per-effect enable gate (this entry)**; Tier 2 = live "add from catalog" via on-device recompile (later).
+
+- **LOCKED conf-key contract** (app emits / patch reads, exact): `effects = e1:e2:…:en:cas`; per effect `<ei> = <fxPath>`; uniforms `<ei>_<uniform>[_c] = value` (unchanged `formatUniformLine`); **NEW `<ei>_enabled = 0|1`** (default 1 = active); global master stays `enableOnLaunch`. effectKey = `name→[^A-Za-z0-9_]→_` lowercased.
+- **Native patch** — branch `feat/reshade-mes-patch` (`83930e2`), vkBasalt CI `28488420505` ✅GREEN. Extended `patches/vkbasalt-reshade-livereload.patch` (+219/−12): each `ReshadeEffect` reads `<name>_enabled` on construct + on the existing present-hook mtime reload; a disabled effect does an **identity image-copy passthrough** (reuses the proven `TransferEffect` barrier/`vkCmdCopyImage`/layout path — input `PRESENT_SRC→TRANSFER_SRC`, output `UNDEFINED→TRANSFER_DST`, copy, both back to `PRESENT_SRC`) so the ping-pong chain stays valid and downstream/present see the pre-effect frame. Gate flip → `QueueWaitIdle` + re-record `commandBuffersEffect` (one-frame hitch **only** on toggle, never per-frame). Base `Effect::enabled=true` so CAS/builtins are never gated; global `presentEffect`/`enableOnLaunch` orthogonal. Stripped patched `libvkbasalt.so` md5 `3129127c098dcaa7704cf264ef47f157` (1852976 B).
+- **App loadout** — branch `feat/reshade-multi-effect-switch`, app work commit `fc3ce45`. android-app-engineer added: `reshade/ReshadeLoadout.java` (parse/serialize + **migration** old single-effect → 1-entry Solo loadout, `paramsForEffect`, `enforceSolo`), `ui/ReshadeLoadoutItem.kt`, `ui/screens/ReshadeLoadoutEditor.kt` (`ReshadeLoadoutState` + editor: mode switch, high-count hint, per-effect typed controls); `Container.java` `reshadeLoadout`/`reshadeMode` (legacy getters kept); `XServerDisplayActivity` `writeVkBasaltConfig` rewritten to iterate the loadout (emits the contract incl. `<ei>_enabled` + colon-joined texture/include paths; live apply skips folder re-staging), `resolveReshade()` = shortcut owns reshade as a **unit** (loadout+mode+params) else container; `XServerDialogState.kt` new `ReshadeApplyCallback(masterEnabled, mode, items)`; `XServerDrawer.kt` ReShade tab = master toggle + Solo/Stack + per-effect radio(solo)/checkbox(stack) + collapsible typed controls + per-effect Reset; `ReshadeCatalogPicker.kt` now **multi-select** (download-on-demand preserved); `ContainerDetail*`/`ShortcutsScreen` wired. Reorder not implemented (order = selection order).
+- ⚠️ **Process catch — a FALSE CI PASS was corrected.** The app agent's first "CI green `28489017067`" actually built headSha `9f51ed7` (branch **base**, no Tier-1 code): it committed `fc3ce45` to a stray **local `main`** and never pushed to the feature branch, and `main.yml` ("Any branch compilation") is **workflow_dispatch-only**, building whatever the ref tip is at dispatch. Fixed: moved `feat/reshade-multi-effect-switch` → `fc3ce45` (clean; its parent IS the base), deleted the stray `main`. **Rule reaffirmed: verify the CI run's `headSha` == the intended commit, and push to the ref BEFORE `gh workflow run main.yml --ref <branch>`.**
+- **Integration + REAL CI green:** repacked the patched `.so` into `app/src/main/assets/graphics_driver/extra_libs.tzst` (14 entries preserved, `vkBasalt.json` manifest unchanged) + copied the updated patch → commit **`cd1187e`** (pushed); dispatched `main.yml --ref feat/reshade-multi-effect-switch` → run **`28489656349` ✅GREEN** (`build: success`, headSha `cd1187e` verified). So the loadout + enable-gate `.so` genuinely compile in CI (not the earlier wrong-SHA run).
+- **✅ Pause/preview UX DONE + INTEGRATED** — branch `feat/reshade-pause-pulse` (`c5cc755`, off `cd1187e`), **CI `28490017156` ✅GREEN (headSha c5cc755 verified, all 3 flavors `assembleRelease`)**. Because it branched off `cd1187e`, that one green build = the ENTIRE Tier 1 stack (loadout + integrated enable-gate `.so` + pause). Cherry-picked onto the feature branch → tip **`ab70dca`** (`git diff c5cc755 HEAD` = only PROGRESS_LOG differs). Impl: `PresentExtension` `PresentListener` (one fire per real present); `pulseReshadePreview()` = register listener + SIGCONT → on the 2nd present (`RESHADE_PULSE_TARGET_PRESENTS=2`) SIGSTOP, `postDelayed` 80ms (`RESHADE_PULSE_FALLBACK_MS`) fallback if the game isn't presenting, `AtomicBoolean`/`reshadePulseInProgress` guard so refreeze fires once and serializes; `setPausedState(boolean)` = single source of truth (SIGSTOP/SIGCONT + mirrors drawer `setIsPaused` + dialog `setPaused`, clears `reshadePreviewPaused` on resume); `PauseBoxOverlay.kt` (centered pill, only the pill `clickable`) hosted in the existing full-size dialog-host ComposeView above the SurfaceView, tap→`onRequestResume`; `onResume`/`exit()` clear-and-resume so teardown can't hang on a suspended guest. "Live preview" toggle itself doesn't route through `apply()` so opening the tab never freezes. **3 flavor APKs downloaded from run 28490017156 → `/home/claude-user/scratchpad/reshade-tier1-apk/{standard,ludashi,pubg}-debug/` (standard = `com.winlator.banner`).**
+- 🚨 **DEVICE-TEST SETUP GOTCHA + PRE-RELEASE FOLLOW-UP:** the layer re-extraction (`XServerDisplayActivity.java:2929-2937`) re-extracts `extra_libs.tzst` only on `firstTimeBoot` OR when `libvkbasalt.so` is **absent** — it does NOT replace an **out-of-date** .so. So containers that already have the OLD libvkbasalt.so keep it and silently ignore `<ei>_enabled` (per-effect toggle won't bypass; the multi-effect chain still compiles). ⇒ **DEVICE TEST ON A FRESH CONTAINER** (firstTimeBoot extracts the new md5 `3129127…` .so). **REQUIRED FIX before release** (affects all existing users): make extraction **version-aware** — re-extract when the bundled .so differs (store a version/hash marker or bump on appVersion change), else Tier 1 no-ops on every pre-existing container.
+- **(orig plan) Pause/preview UX (co-designed with user):** a persisted **"Live preview"** toggle in the ReShade tab (default OFF). **OFF = freeze-frame + pulse** — enter preview-pause on the first committed change (effect toggle, or slider **release**) via SIGSTOP; each committed change SIGCONT → count **1–2 real presents** (via `PresentExtension`) → SIGSTOP, so the change renders and the native re-record hitch is hidden inside the pulse; a compact **center pause-box** overlay (tap = full resume) shown while frozen, also generalised to normal manual Pause; sliders pulse on release only (not per-tick). **ON = game keeps running** (continuous live slider preview + ~1-frame toggle blip, no box). Reuses `ProcessHelper.pause/resumeAllWineProcesses` (SIGSTOP/SIGCONT), `isPaused`, `onPauseResume`, `PresentExtension`.
+  - *Why not "re-present one frozen frame forever" (user idea):* vkBasalt is a **passive** layer (runs only on the game's present); SIGSTOP freezes the presenting thread (may hold the `VkQueue` → external-sync/deadlock if we drive present from outside); and our host compositor re-blitting shows effects already **baked** into the handed-off buffer. A true frozen live-preview would need vkBasalt to **self-drive** a present loop on a cached pre-effect frame, or a **game-clock freeze** (intercept QPC/timeGetTime) — both heavy/fragile. The pulse is the safe ~95% (1–2 frames ≈ the same moment). Kept as a possible future enhancement if the pulse feels insufficient on-device.
+- ▶️ **NEXT = DEVICE TEST** (the real gate; branch tip `ab70dca`, APK ready). On a **FRESH container** (see gotcha above), on a **Vulkan/DXVK** title: (1) pre-launch multi-select loadout in shortcut + container settings; (2) in-game ReShade tab lists the loadout, Solo=radio / Stack=checkbox toggle switches effects LIVE; (3) per-effect sliders live-tune; (4) Live-preview OFF → first change freezes + center pause-box, toggle/slider-release pulses 1–2 frames to reveal, tap box resumes; (5) Live-preview ON → game keeps running, continuous slider preview + ~1-frame toggle blip, no box; (6) master on/off; (7) migration: an existing single-effect profile loads as a 1-entry Solo loadout; (8) no teardown hang when exiting while frozen. Then: version-aware-extraction fix, merge decision, Tier 2 (live add-from-catalog + pause-assisted recompile). **No merge / no release / no version bump without user go.**
+
+---
+
+## 2026-06-30 — In-game drawer left icon-rail now scrolls on short screens + 2.2.1 pre-release 1
+
+**Bug (Discord, "TAR - OnePlus 15 1TB - A840 gpu"):** in the in-game side menu the left vertical **icon rail** (Graphics / FPS / ReShade / Controls / Advanced … Task-Manager / Pause / **Exit**) didn't all fit; the user "can't go all the way down to close the game" — the bottom **Exit** button overflowed off-screen with no way to scroll.
+
+**Cause:** the rail was a `fillMaxHeight` `Column` distributing icons with three `Spacer(Modifier.weight(1f))`. On a short drawer height the weight spacers collapse to 0 and the bottom group overflows, unreachable (no scroll). `XServerDrawer.kt:133`.
+
+**Fix (`XServerDrawer.kt`):** wrapped the rail in `BoxWithConstraints` + `verticalScroll`. Content sits in a `Column` with `heightIn(min = maxHeight)` + `Arrangement.SpaceEvenly` over two group-columns (top tabs / bottom TM+Pause+Exit). `SpaceEvenly` reproduces the **exact** three-equal-gap distributed look when it fits, and **stacks + scrolls** when it doesn't, so Exit is always reachable. (`weight()` can't be used inside `verticalScroll` — infinite height — hence `SpaceEvenly`.) Added imports `BoxWithConstraints`, `heightIn`.
+
+**Release:** branch `fix/ingame-rail-scroll`. Bumped `versionCode` 35→36, `versionName` "2.2"→"2.2.1" so the in-app updater flags it. Cutting **2.2.1 Pre-release 1** via `release.yml` (`make_prerelease=true`) — publishes signed release APKs + `update.json` as a GitHub **pre-release**; `make_latest=false` so the **stable `latest` channel is untouched**. Only users who enabled **Settings → "Include pre-releases"** (`update_include_prereleases`, default off) get offered it (by design). NOT merged to main; awaiting on-device confirmation that the rail scrolls + Exit reachable on the OnePlus 15. **✅ DEVICE-VERIFIED by an online user 2026-07-01; merged to main.**
+
+---
+
+## 2026-06-30 — Release 2.2 description rewritten + README accuracy pass + UI-rewrite explainer
+
+**Docs/release only — no code.** Rewrote the **2.2 GitHub release** body (was the auto-generated commit-table) into the established release layout (centered logo → title → bold summary → `✨ What's New` emoji sections → Downloads table → updating note → thanks), covering the real 2.2 scope: themeable interface (app + in-game drawer), 9 new presets (16 total, AMOLED still default), per-game on-screen control colours, File Manager Favorites, rebuilt controller-binding screen, in-game Task Manager (New Task on Vulkan/Native + cards), consistency/readability. Updating note states 2.2 is **app-side only — no ImageFS reinstall**.
+
+- **README:** the bump commit `2ccfda8` had already rewritten it accurately; verified preset names against `ThemePreset.kt` (16 named + Custom) and Favorites labels against `FileManagerScreen.kt:describeLocation` (Internal / SD card / Drive C: / Drive Z:). One fix pushed (`6355d0e`): controls toggle is labelled **"Follow app theme"** (`XServerDrawer.kt:1611`), README said "Follow theme".
+- **NEW: "Under the hood — the UI rewrite" section added to the 2.2 release** at user request — what kind of Compose, what's converted, Compose-vs-XML/Java proportion. **Measured facts (for future reference):**
+  - **Stack** = Jetpack Compose + **Material 3**, Kotlin, **single-Activity** `MainActivity` + **Navigation-Compose** (`compose-bom:2024.02.00`, `navigation-compose:2.7.6`, `activity-compose:1.8.2`), **Hilt**. ~**237 `@Composable`** across ~**62 Compose files** / **91 .kt** files (~**32k** Kotlin LOC).
+  - **Out-of-game app = 100% Compose, no XML screens left.** All drawer destinations are Compose routes (`Screen.kt`): Containers, ContainerDetail, Games/Shortcuts, Contents, InputControls, AdrenoTools, Saves, FileManager, Settings, Appearance, Splash. All 4 storefronts (GOG/Epic/Amazon/Steam — main/login/QR/games/detail) are Compose `setContent {}`. **2.2 converted the last out-of-game holdout: `ExternalControllerBindingsActivity` → Compose.**
+  - **In-game stays classic Java by design** = `XServerDisplayActivity` inflates `xserver_display_activity.xml` to host the native `SurfaceView`/`GLSurfaceView` (X11 + Vulkan/GL renderer + Wine draw there — can't live in a Compose tree). 2.2 made the in-game **drawer + dialogs Compose islands** via `ComposeView` (`XServerDrawer.kt`, `XServerDialogHost.kt`).
+  - **Proportion honesty:** Java is larger by LOC (~**297 .java / ~53k LOC**) but it's the **emulation engine**, not screens — `xserver/` 7.4k, `renderer/` 5.3k, `core/` 5.2k, `inputcontrols/` 3.6k, store backends, box64/fexcore/winhandler/container/xenvironment/xconnector/alsa/midi/sysvshm. Remaining **legacy XML/Java UI** = perf HUD (`frame_rating`/`hud_*`), `BigPictureActivity`, `ControlsEditorActivity` (control-element editor), file/folder pickers (`ShortcutPicker`/`FolderPicker`/`CustomFilePicker`), native over-surface dialogs (`ContentDialog`/`DownloadProgressDialog`/`TaskManagerDialog.java`). Some XML now **orphaned** (e.g. `shortcut_settings_dialog.xml` — no longer referenced). **75 layout XML / ~5.4k LOC, shrinking.**
+- Release: <https://github.com/The412Banner/Bannerlator/releases/tag/2.2>
+
+---
+
+## 2026-06-30 — UI rebuild MERGED to main + 9 new theme presets (artifacts build)
+
+**The umbrella hold is collapsed.** User decided the rebuild is feature-complete enough to merge and apply small fixes forward, so `feat/ui-rebuild` was merged into `main` and a fresh batch of opt-in themes added.
+
+- **Merge:** `feat/ui-rebuild` → `main` = merge commit `35c8a28`. Only `PROGRESS_LOG.md` conflicted (docs); resolved as a union. Code tree verified identical to the umbrella tip (no code conflicts). Brings in: drawers rebuild (P1), theme centralization, drawer dialogs (P2), app-screen colour sweep (P3), on-screen controls + per-profile custom control colour (P4a), legacy-XML accent (P4b), TM-cards, External Controller Bindings → Compose, and File Manager Favorites.
+- **9 new theme presets** = commit `5d75439`: Midnight Cobalt, Phosphor, Carbon & Ember, Amethyst, Crimson, Synthwave, Royal Gold, Frost, Monochrome. All opt-in; **AMOLED stays the default**. Inserted *before* "Custom" in `themePresets` so existing saved preset indices 0..6 are unaffected; `AppThemeState.init` adds a one-time `preset_schema_v2` migration that remaps anyone on the old Custom slot (index 7) to the new `CUSTOM_PRESET_INDEX`. `onPrimary` forced dark on light/bright accents (phosphor/gold/frost/mono) for legible on-accent text. AppearanceScreen renders them automatically (`themePresets.chunked(4)`).
+- **Build:** pushed to `origin/main` after a brief github outage; artifacts-only build (workflow_dispatch `main.yml`) run `28470653013` in progress. **No release, no version bump** (hard rule).
+- ▶️ **GATE before any release:** consolidated on-device test of the whole merged stack — favorites, bindings-Compose, TM-cards, P4b, custom-control-colour sub-items (per-game persist/relaunch, out-of-game editor, back-compat), and the 9 new presets (each recolours app + drawer; AMOLED default unchanged; on-accent text legible). Nothing post-P4a is device-proven yet.
+
+---
+
+## 2026-06-30 — File Manager FAVORITES — CODE DONE + CI ✅GREEN (preview signed off)
+
+**Status:** implemented on `feat/ui-rebuild` — commits `bd57830` (feature) + `34247eb` (Back closes Favorites first) + `c06a397` (toasts on add/remove). CI `28467705193` ✅GREEN (pre-toast); toast commit CI `28469094380` ✅GREEN (tip `c06a397`). NOT merged (umbrella hold). Decisions: both pin entry points + global/absolute-path scope. ▶️ At device-test gate.
+
+- `app/src/main/java/com/winlator/star/util/FavoritesStore.kt` (new) — SharedPreferences, ordered JSON array of absolute paths (`list/isFavorite/add/remove/toggle`). Stores only the path; the card label is derived live.
+- `FileManagerScreen.kt` — `describeLocation()`/`FavLocation`/`FavStorage`/`badgeColors`; ⭐ toggle in the path bar (this screen has no top bar — New-Folder is a bottom FAB); content-swap (favorites list REPLACES the file list, path shows "★ Favorites", drive chip dims); `FavoritesList`+`FavoriteCard` (FileItemRow card style + drive badge + container/source line + mono path line + unpin star); row ⋮ "Add to/Remove from Favorites"; "Pin current folder" header action; system Back closes favorites before navigating up. `favTick` drives recompute on pin/unpin.
+- ▶️ NEXT: CI green → device test (dedicated list swap; full origin labels incl. container name; jump; both pin paths; persist across relaunch; dead-path drop; Back closes favorites; no FM regressions).
+
+### (prior) DESIGN + HTML PREVIEW
+
+A Discord user asked for favorite/bookmarked directories in the File Manager. After clarification the design is:
+- A **⭐ star button** in the top bar that **toggles** a favorites strip directly under the path/drive bar (slides in/out; zero vertical cost when collapsed).
+- Favorites render as File-Manager-style cards (`surfaceContainer` + outline), each with a **colour-coded LOCATION badge** showing where it lives — Internal (blue) / SD card (green) / `C:` + container name (amber) / `Z:` imagefs (purple). One-tap jump.
+- **Pin** via each folder row's ⋮ menu ("Add to Favorites") + a "Pin current folder" header action; **unpin** via the card's filled ★. Empty-state prompt.
+- Theme-follows-accent; badges keep semantic identity colours.
+
+**Why it's cheap:** the "go there" mechanism already exists — `FileManagerScreen.kt:168 openDrive(File)` is a generic jump-to-any-dir. Favorites = persisted `(path)` entries fed into it. Generalize the existing `currentDriveLabel` (`:498-503`) into a `describeLocation(path)` helper for the badges (add container name for `C:` paths via `containers` at `:123` + `Container.getName()`). Pin item goes in the row ⋮ (`:779-807`). Persistence = SharedPreferences/DataStore string-set, global/absolute paths v1, dead paths filtered by the existing `exists()` pattern (`:358`). Pure app-layer (Compose + prefs).
+
+**Open decisions (blocking Kotlin):** (1) container-drive badge text — letter / container name / both; (2) one vs both pin entry points; (3) scope global/absolute (recommended) vs per-container.
+
+**Preview:** `bannerlator_fm_favorites_preview.html` (scratchpad + `~/Downloads`; not pushed to device — no adb this session).
+
+---
+
+## 2026-06-30 — In-game Task Manager rows as cards (match File Manager) + 2 P4 fixes bundled (CODE DONE + CI building)
+
+**TL;DR:** Task Manager processes in the in-game drawer now render as cards like the app File Manager
+rows (user request), and the two prior P4 device-test fixes ride along. Latest commit `3e94450` on
+`feat/ui-rebuild`, CI `28462330620` building, at device gate. Not merged (umbrella hold).
+- `XServerDrawer.kt`: `TmProcessRow` wrapped in a Card matching `FileManagerScreen.FileItemRow`
+  (RoundedCornerShape 10dp, `surfaceContainer`, `outline` border, 3dp vertical margin); removed the
+  single-surface column + inter-row dividers (cards self-space).
+- Bundled (CI-green at `589566c`, not yet device-tested): controls-editor uses app theme accent in
+  editMode; binding-spinner text luminance floor (never invisible).
+
+---
+
+## 2026-06-30 — P4 device-test fixes: controls-editor readability + binding text never invisible (CODE DONE + CI building)
+
+**TL;DR:** Two bugs surfaced in device testing of P4b/custom-color, both fixed. Commit `589566c` on
+`feat/ui-rebuild`, CI `28461375330` building, at device gate. Not merged (umbrella hold).
+- **Controls editor** rendered the on-screen buttons/labels in the per-profile in-game *custom* accent
+  (a dark custom colour → unreadable, and it ignored the app theme). Fix: `resolveBaseAccentArgb()` uses
+  the app theme accent in `editMode` (the editor); in-game still honours the per-profile custom colour.
+- **Binding-spinner text** (themed in P4b) could go invisible on the screen's black background under a
+  dark accent — the original black-on-black bug. Fix: `AccentArrayAdapter` applies a luminance floor
+  (0.18) → accent when legible, white when too dark; default blue + presets keep their colour.
+
+---
+
+## 2026-06-30 — UI rebuild Phase 4b: legacy XML surfaces follow runtime accent (CODE DONE + reviewed + CI building)
+
+**TL;DR:** The remaining LIVE legacy `@color/colorPrimary` surfaces now follow the runtime theme accent
+(fed at inflation via `AppThemeState.getCurrentAccentArgb()`); `colors.xml` keeps #0055FF as the static
+fallback so the AMOLED default is unchanged. Dead/Compose-replaced layouts skipped. Commit `7ed3f10` on
+`feat/ui-rebuild`, CI `28459471318` building, **at device gate**. Not merged (umbrella hold).
+
+### What changed
+- New `widget/AccentArrayAdapter` — re-applies the runtime accent to the controller-binding spinner item
+  + dropdown TextViews (both binding-spinner activities point at it; they didn't share an adapter before).
+- `ExternalControllerBindingsActivity`: toolbar header background → accent; type + binding spinners →
+  AccentArrayAdapter (dropdown view resource preserved).
+- `ControlsEditorActivity`: binding spinners → AccentArrayAdapter.
+- `ContentDialog`: title icon tint + title text + bottom-bar label → accent; body `TVMessage` untouched.
+- `InputControlsFragment` (+ layout id): the "External Controllers" section header → accent at runtime.
+- Trash icon left as-is (styled `colorPrimaryDark` on a raster PNG, not `colorPrimary`).
+
+### Device-test gate (pending)
+Under a non-default preset: controller-bindings screen header bar + binding-spinner text recolor; native
+ContentDialog prompts show accent title/icon/label (body stays readable); Input Controls "External
+Controllers" header recolors. At AMOLED default everything stays #0055FF (unchanged).
+
+---
+
+## 2026-06-30 — Per-profile custom accent color for on-screen controls — ✅ CORE DEVICE-PROVEN
+
+Commit `f6ea902` on `feat/ui-rebuild`, CI `28455766095` green. Device-proven (core) via user screenshot:
+the in-game Controls tab shows the shared HSV picker ("Controls Accent", hex `#8F6A00`) and the on-screen
+controls (A–F row + MRB/BKSP/SPACE/ENTER) render in that amber custom color while the app/drawer stay
+green-themed — i.e. the controls are decoupled from the app theme, the override + live redraw work, and
+the shared ColorPicker reuse works in-game. Not yet visually confirmed (wired, expected fine): per-game
+persistence across relaunch, the out-of-game editor checkbox+swatch path, and old-profile back-compat.
+Not merged (umbrella hold). Remaining rebuild work: P4b legacy XML, then single merge.
+
+---
+
+## 2026-06-30 — Per-profile custom accent color for on-screen controls (CODE DONE + reviewed + CI building)
+
+**TL;DR:** Users can override the theme accent on the in-game touch controls with a **custom color saved
+per control profile (= per game)**, so the same setup returns next launch. Follow-app-theme stays the
+default. Commit `f6ea902` on `feat/ui-rebuild`, CI run `28455766095` building, **at the device gate**.
+Not merged (umbrella hold).
+
+### What changed (11 files)
+- `ControlsProfile` gains `customAccentEnabled` + `customAccentColor`, serialized in `save()` (header,
+  before the elements array). `InputControlsManager.loadProfile` parses them and replaces the brittle
+  `fieldsRead==3` break with an explicit break at `elements`/`controllers` — robust to the optional
+  fields and old profiles (which just default to follow-theme).
+- `InputControlsView.resolveBaseAccentArgb()` = the active profile's custom color when it opted in,
+  else the theme accent; the Phase-4a accent getters all derive from it (ControlElement inherits).
+- Shared HSV picker extracted to `ui/components/ColorPicker.kt` (reused by Appearance, the in-game
+  Controls tab, and a `ComposeView`-hosted `AlertDialog` for the legacy editor, with the three
+  ViewTree owners wired so Compose runs outside the activity content view).
+- In-game: `XServerDrawerState` + Controls-tab "Follow app theme" toggle + picker; `XServerDisplayActivity`
+  seeds from the active profile and persists + redraws live on change / profile switch.
+- Out-of-game: `InputControlsFragment` + layout get a Follow-theme checkbox + color swatch → shared picker.
+
+### Device-test gate (pending)
+Default = follow theme (unchanged); toggle off → pick color → controls recolor live; set on game A,
+relaunch A → persists; game B keeps its own; toggle back on → returns to theme; editor picker persists;
+old profiles still load.
+
+---
+
+## 2026-06-30 — UI rebuild Phase 4a: on-screen touch controls follow theme accent — ✅ DEVICE-PROVEN
+
+Commit `df5ce64` on `feat/ui-rebuild`, CI `28453428988` green. Device-proven via user screenshot on a
+green/Forest preset: the in-game GAMEHUB-style on-screen controls (A–F shoulder row + MRB/BKSP/SPACE/
+ENTER keys) render in the theme accent (green) and the in-game Controls tab is themed to match —
+confirming both the classic-path literal routing and the `resolveAccentColor()` stub-wiring (GAMEHUB
+glass style) work on hardware. Not merged (umbrella hold). Next: per-profile custom control color
+(in progress, same branch), then P4b legacy XML.
+
+---
+
+## 2026-06-30 — UI rebuild Phase 4a: on-screen touch controls follow theme accent (CODE DONE + CI building)
+
+**TL;DR:** Phase 4 = the native/legacy surfaces that Compose theming doesn't reach, wired to the
+accent via `AppThemeState.getCurrentAccentArgb()`. **P4a = the in-game on-screen touch controls** —
+code-complete on `feat/ui-rebuild` (commit `df5ce64`), CI run `28453428988` building, **at the device
+gate**. Not merged (umbrella hold). Next after device-proof = P4b (legacy XML).
+
+### What changed (2 files)
+- `widget/InputControlsView.java`: `getSecondaryColor()` now returns the live theme accent (keeping
+  the overlay alpha) instead of hardcoded `#0277BD`. Added `getAccentColor()` (full-opacity accent) +
+  `getAccentBrightColor()` (accent lerped 55% toward white, for the pressed highlight) + a small
+  `lerpToWhite` helper. `getPrimaryColor()` (white idle controls) unchanged.
+- `inputcontrols/ControlElement.java`: every `0xff0277bd` → `getAccentColor()` and every `0xff64ddff`
+  → `getAccentBrightColor()` across the classic-style strokes, dpad/stick, and button-icon tints;
+  collapsed the now-identical GAMEHUB/default icon-tint branch. **Key fix:** `resolveAccentColor()` was
+  a `-1` stub (forcing the always-blue fallback) — wired it to `getAccentColor()`, so the GAMEHUB
+  "glass" control style (fill/stroke/pressed/text/thumb) now follows the theme too.
+
+### Deliberately out of scope
+- **Perf HUD** (`PerfHudView` / `FrameRating*` / `HudMetrics`) — all colors are semantic (FPS
+  thresholds + per-metric identity), left untouched (same reasoning as the P3 per-tech dots).
+- Idle control tint (white), semantic reds/blacks, and `CPUListView`/`EnvVarsView` (already on the bridge).
+- **P4b — legacy XML `@color/colorPrimary` surfaces** (binding spinners, content_dialog,
+  input_controls_fragment, main_menu_header, …) — deferred to a separate follow-up; judgment-heavy and
+  touches the intentional binding-spinner-blue fix.
+
+### Device-test gate (pending)
+Install (manual), launch a container, open the on-screen controls, apply Sunset → control accent
+(selected/active/pressed strokes, dpad/stick, icon tints) should be orange not blue, in both the
+classic and GAMEHUB visual styles; idle controls stay white; controls still register touch/press.
+
+---
+
+## 2026-06-30 — UI rebuild: Phase 3 DEVICE-PROVEN + Games-cards-match-Containers follow-up (device-proven)
+
+**TL;DR:** Phase 3 (app-screen colour sweep) is now **device-proven** (all 4 checks pass), and a
+small follow-up makes the **Games list cards look like the Containers cards** — also device-proven.
+Still on the umbrella branch `feat/ui-rebuild` (no merge until the whole rebuild is done).
+Next = Phase 4 (native/legacy surfaces via `getCurrentAccentArgb`).
+
+### Phase 3 — app-screen colour sweep — ✅ DEVICE-PROVEN
+Commits `8a97185` (sweep ~190 literals → theme tokens) + `b20a58d` (3b: elevated `surfaceContainer`
+tokens to restore card depth). Device test on the ludashi build, all 4 pass: (a) AMOLED default card
+depth restored, (b) Sunset recolors the whole app incl. headline FAB + renderer/DXVK chips, (c) wiring
+intact, (d) semantic/per-tech colors kept.
+
+### Follow-up — Games list cards match Containers cards — ✅ DEVICE-PROVEN
+Commit `c6116f5`, CI `28451457959` green. User gripe: the Games list item was a flat edge-to-edge row
+while the Containers entry is a floating card. Fix in `ShortcutsScreen.kt` — wrapped `ShortcutItemLayoutL`
+in the same `Card` as `ContainersScreen` (rounded 12dp `surfaceVariant` panel, `outline` border, 16dp/6dp
+outer margins, 12dp inner padding; `onRun` moved from `Row.clickable` → `Card` onClick) and removed the
+inter-item `Divider`. Grid view unchanged (already a bordered tile). User installed manually + confirmed
+"looks much better" from a screenshot = device-proven. Not merged (umbrella hold).
+
+---
+
+## 2026-06-30 — Theme + Drawer rebuild: Phase 3 CODE DONE + CI GREEN (at device gate); Phase 2 DEVICE-PROVEN
+
+**TL;DR:** Catch-up checkpoint for Phases 2 & 3 of the UI rebuild. All work lives on the
+umbrella branch **`feat/ui-rebuild`** (no merge to main until the whole rebuild is done).
+**Phase 2 (drawer dialogs) is device-proven**; **Phase 3 (app-screen colour sweep) is code-complete
+and CI-green, now at the device-test gate.**
+
+### Phase 2 — drawer dialogs — ✅ DEVICE-PROVEN (2026-06-30, 2nd attempt)
+Commit `33eeb6a` on `feat/ui-rebuild`, CI `28440636066` green. Driven on the ludashi build
+(`com.ludashi.benchmark` code 34) via the root bridge, Sunset preset, Vulkan container. All four
+checklist items passed, no regressions:
+- **Recolor under preset** — in-game drawer, Task Manager tab, CPU/Memory sections, and the New
+  Task dialog all themed orange under Sunset; selected rail tab = orange pill.
+- **Task Manager MoreVert** — "Bring to Front" (FlipToFront icon, neutral) + "End Process"
+  (X/Close icon, red error-tint, destructive); New Task… (accent) + Clear footer themed.
+- **🎉 Group B win — New Task dialog VISIBLE on Vulkan AND works** — the old native
+  `ContentDialog.prompt` was invisible on Vulkan/ASR; converted to a Compose `AlertDialog`
+  (title, text field defaulting `taskmgr.exe`, Cancel/OK). Tapping OK → `winHandler.exec`
+  launched the real Windows Task Manager (Running on guest). End-to-end proven.
+- **Wiring intact** — dropdown opens, New Task exec spawns a process, Exit → clean Shutdown
+  teardown → clean return to Games. No crash/hang.
+- Capture note: a persistent detached `logcat` must write to `/data/local/tmp` (not `/sdcard`,
+  which is namespace-isolated under magisk su) to survive the bridge connection dropping.
+
+### Phase 3 — app-screen colour sweep — ✅ CODE DONE + CI GREEN, ▶️ AT DEVICE GATE
+Two commits on `feat/ui-rebuild`, both CI-green (workflow_dispatch `main.yml`):
+- **`8a97185` "phase 3" — the sweep** (CI `28447905004` ✅): ~190 hardcoded `Color(0x…)` sites
+  across 13 in-scope Compose screens rerouted onto `MaterialTheme.colorScheme.*` /
+  `LocalAccentDim.current`. Stores (`store/*`) and theme-definition files
+  (Color/ThemePreset/AppThemeState/Theme) left untouched; colour-only.
+  - **Headline fix:** `ShortcutsScreen` FAB(+), grid-tile gradient, scrape icon → `primary`;
+    `SpecCardComponents` renderer + DXVK chips → `primary` (so they follow the accent).
+  - **Kept semantic colours:** green success `4CAF50`, `installedBlue 4FC3F7`, amber `FFC107`,
+    error reds, untrusted salmon, per-tech identity dots, contrast white/black.
+- **`b20a58d` "phase 3b" — elevated surfaces (user-approved fix)** (CI `28449013883` ✅): phase-3
+  had no token matching the bespoke navy card surfaces / dialog greys → they flattened to
+  near-black at default. Fixed by adding Material3's built-in `surfaceContainer` family slots to
+  `ThemePreset` (data-class fields + set in `toColorScheme`/`toLightColorScheme`; derived defaults
+  `lerp(surface, onSurface, 0.05/0.09/0.14)` so every preset gets a recolouring elevation ramp).
+  - **AMOLED override values:** `surfaceContainer=0xFF1A1A2E`, `surfaceContainerHigh=0xFF2A2A38`,
+    `surfaceContainerHighest=0xFF38383F` (restores blue-on-black card depth).
+  - Repointed Settings / InputControls / FileManager navy cards & buttons by original depth order,
+    and themed the leftover dialog greys (`2A2A2A`→High, `333333` tracks→Highest, body text
+    `CCCCCC/E0E0E0`→onSurface, `AAAAAA/B0BEC5`→onSurfaceVariant). `Theme.kt` DefaultColorScheme
+    confirmed dead/unused.
+
+### Two sanctioned default-look changes to eyeball on device
+(User OK'd default changes for this rebuild.) (1) renderer/DXVK chips are now accent-blue at the
+AMOLED default instead of teal/green — the requested "chips follow the theme"; (2) Settings/Input/
+FileManager card depth — flattened by 3a, restored by 3b's elevated tokens → confirm it reads
+~like the original at default and recolours under a preset.
+
+### ▶️ Next
+Device-test Phase 3 on the ludashi build (user installs the `ludashi-debug` artifact from CI run
+`28449013883`): (a) AMOLED default — Settings/dialogs have raised card depth, nothing broken;
+(b) apply Sunset → Games FAB + renderer/DXVK chips + Settings + InputControls + FileManager +
+dialogs all recolour; (c) wiring intact; (d) green success buttons stayed green. Then Phase 4
+(native/legacy via `getCurrentAccentArgb`) and Phase 5 (optional presets). Merge `feat/ui-rebuild`
+→ main only when ALL phases are device-proven.
+
+---
+
+## 2026-06-30 — Theme + Drawer rebuild: Phase 1 DEVICE-PROVEN (all checklist items pass)
+
+**TL;DR:** Phase 1 (themed icons + button restyle of BOTH drawers) is now **device-proven**.
+On-device verification on the ludashi build (`com.ludashi.benchmark` code 34, branch
+`feat/drawer-rebuild-p1` @ `f30db20`, CI `28434248077` green @ `f30db209`) passed all four
+checklist items with **no wiring regressions**. At the merge decision; not yet merged.
+
+### Device test results (release-device-engineer, root bridge)
+- **(a) App drawer — PASS** — LIBRARY/SYSTEM/STORES section headers (STORES "· unchanged"
+  subtitle), distinct gamepad Games icon, palette Appearance icon (distinct from Settings),
+  "NEW" badge, accent glow bar on selected item.
+- **(b) Appearance reachable + live recolor — PASS** — Appearance opens from the drawer;
+  Sunset preset recolored the whole app AND the drawer live; restored to AMOLED default.
+  (Also clears the previously-untested base build `96ed50e`: Appearance nav entry +
+  PrimaryDim→accentDim fix both confirmed — scaling chips/borders recolored orange.)
+- **(c) In-game drawer — PASS** — AIO Graphics Test container (OpenGL): Graphics rail shows a
+  monitor/display icon as a filled accent pill; selected "Linear" scaling chip accent-filled
+  with black text; whole in-game drawer themed orange under Sunset.
+- **(d) Wiring intact — PASS, no regressions** — launch ×2, tab-switch, Task Manager (7 procs),
+  End Process → real kill → clean Shutdown teardown to app, Bring-to-Front dispatched clean
+  (visual no-op on single-window AIO = documented native-fullscreen visibility limit), Pause
+  fired, Exit closed cleanly to Games.
+
+### Decisions
+- **"NEW" badge on Appearance: KEEP for this release** (clean accent pill, not noisy; treat
+  as temporary — fine to drop later once Appearance is discovered).
+- Out-of-P1-scope (NOT a regression): Games-screen FAB + renderer/DXVK chips stayed blue under
+  Sunset — screen-level hardcoded literals = the deferred P3 336-literal sweep.
+
+### Next
+- **Merge decision** for `feat/drawer-rebuild-p1` (stacked off the unmerged base
+  `feat/theme-centralize-drawer` @ `96ed50e` — merging P1 carries the base; both proven
+  together). → then **Phase 2** (drawer dialogs, incl. native ContentDialog → Compose).
+
+## 2026-06-30 — Theme + Drawer rebuild: plans reconciled, Phase 1 (drawer rebuild) building
+
+**TL;DR:** Merged the recolor-only theme-centralization plan with the new drawer-rebuild
+request into one plan (`docs/THEME_AND_DRAWER_REBUILD_PLAN.md`). User greenlit **Phase 1**
+(themed icons + button restyle of BOTH drawers). Phase 1 is compiling on branch
+`feat/drawer-rebuild-p1`. No device test yet — this is a checkpoint before that.
+
+### Decisions
+- **Default look may now CHANGE** for the drawers — user dropped the old byte-identical-to-2.1.1
+  rule. The rebuilt drawer look ships as the new default. (Other phases' app-screen recolor stays
+  visually conservative.)
+- **Restyle depth only** — icons + button styling + accent-driven states. NO wiring / structure /
+  tab-order / handler changes. End-Process / Bring-to-Front / Exit / Pause / launch / controller
+  paths untouched. Stores excluded.
+- **Typography ramp + light mode stay CUT** (keep close to original).
+
+### Combined plan = 5 phases
+- P0 foundation: Branch 1 in-game color centralization (device-proven) + follow-up `96ed50e`
+  (PrimaryDim→LocalAccentDim + Appearance nav entry), CI `28431784626` GREEN — not device-tested
+  in isolation; its only independent piece (Appearance nav entry) gets verified inside the P1 test.
+- **P1 (BUILDING)** = drawer rebuild: `AppDrawer.kt` (centralize local consts → colorScheme/
+  LocalAccentDim, add LIBRARY/SYSTEM/STORES section headers, fix icon gaps Games→distinct gamepad,
+  Appearance→`icon_palette`) + `XServerDrawer.kt` (Graphics rail → display icon, scaling/frame-gen/
+  toggle/HUD-chip buttons restyled to accent-fill states on the already-centralized colors) + new
+  drawables. Branch `feat/drawer-rebuild-p1` stacked off `feat/theme-centralize-drawer` (build =
+  base + P1). Worktree `/home/claude-user/wt-drawer-p1`.
+- P2 drawer dialogs (incl. native ContentDialogs needing Compose conversion) · P3 app-screen color
+  sweep (~336 literals, old Branch 2) · P4 native/legacy via `getCurrentAccentArgb()` · P5 optional
+  Midnight Cobalt + Phosphor presets.
+
+### Approved preview
+`bannerlator_drawer_rebuild_preview.html` (scratchpad + ~/Downloads + device /sdcard/Download) —
+both drawers, live preset + HSV switcher, Before/Rebuilt toggle. Signed off → became P1.
+
+### Next
+Agent finishes P1 → push → CI "Any branch compilation." green → **device test** (gate = looks right
++ wiring intact, NOT byte-identical). SAVE memory + this log + commit BEFORE that device test
+(same-device OOM rule).
+
+**UPDATE (2026-06-30, later):** P1 code DONE + **CI `28434248077` GREEN**. Branch
+`feat/drawer-rebuild-p1` @ `f30db20`. 4 files: AppDrawer.kt + XServerDrawer.kt + new `icon_games.xml`
++ `icon_display.xml`. Wiring confirmed untouched (no handler/structure/order changes). Open question
+for user: keep the additive "NEW" badge on Appearance? **Now AT the device-test gate** — checkpoint
+re-flushed; user drives the install + test. Phase-completion checkpoint will follow once device-proven.
+
+**⏸️ PAUSED (2026-06-30) — user lost Wi-Fi mid-session, resuming at work.** Nothing in flight; all
+pushed. RESUME = device-test the `feat/drawer-rebuild-p1` build (CI `28434248077` green, ludashi
+flavor) per the checklist above + decide the Appearance "NEW" badge; on pass → phase-completion
+checkpoint → decide merge → Phase 2 (drawer dialogs). Full resume pointer in memory
+`project_bannerlator_drawer_rebuild` (🔖 RESUME HERE at top).
+
+---
+
+## 2026-06-30 — Theme centralization: reroute hardcoded colors onto the live theme (branch 1 started)
+
+**TL;DR:** Starting a refactor so the existing theme engine actually paints everywhere — a
+preset/accent now recolors the **whole app AND the in-game drawer**, which it doesn't today.
+**Hard constraint from the user: the DEFAULT look must stay byte-identical to 2.1.1 (AMOLED,
+#0055FF on pure black).** New presets are opt-in; no surprise on update. Stores are out of scope —
+only the out-of-game Compose UI and the in-game side drawer + its submenus.
+
+### Why (recon on main 2.1.1)
+- `ui/theme/Color.kt`: `Primary`/`GlowPurple`/`AccentBlue` are **static consts** — a custom accent
+  never reaches code that uses them directly. Core bug.
+- `ui/XServerDrawer.kt` (the in-game drawer, 6 tabs: Graphics/HUD/ReShade/Controls/Advanced/Task Mgr):
+  wrapped in `WinlatorTheme` so it inherits fonts but reads `colorScheme` for **zero** colors — paints
+  from 6 local hardcoded constants (PureBlack/DarkSurface/…) + the static Primary/GlowPurple. ~37 literal
+  sites. So a red accent leaves the drawer blue-on-black.
+- Out-of-game: **336+ hardcoded literals** bypass the theme (worst: SettingsScreen 77, ContentsScreen 26,
+  InputControlsScreen 21).
+
+### Scope (user-trimmed: "close to original, no extreme complications")
+- **CUT** typography ramp (leave force-600) and light-mode revival (leave dead) — colors only.
+- Default stays **AMOLED**; existing users keep their saved preset (`AppThemeState` already persists).
+
+### Plan
+- **Branch 1 (this one) = steps 0-2:** (0) kill the static Primary/GlowPurple/AccentBlue aliases →
+  resolve from the live scheme; (1) make the **AMOLED** preset carry today's EXACT shades (incl. the
+  drawer's #000/#0D0D0D/#1A1A1A) so centralization is a visual no-op; (2) move `XServerDrawer.kt` fully
+  onto `MaterialTheme.colorScheme.*`. Delivers "in-game drawer follows theme."
+- Branch 2 = step 3: sweep the 336+ out-of-game literals, screen by screen (Settings first).
+- Branch 3 = step 4: add Midnight Cobalt + Phosphor as **optional** presets.
+- **Verify gate (every branch):** on-device before/after screenshot diff proving the default look is
+  unchanged. The only failure mode is shade drift.
+
+### Status (updated 2026-06-30)
+- Branch `feat/theme-centralize-drawer`. Step-2 edit DONE in `ui/XServerDrawer.kt` (color-only).
+- **Diff reviewed = color-only, verified safe:** no function signatures, no `onClick`/`winHandler`/lambda/
+  control-flow lines changed. Only color args swapped + 20 `val accent = MaterialTheme.colorScheme.primary`
+  and 1 `val surface = ...colorScheme.surface` locals added (pure theme reads). The 3 static imports
+  (`Primary`/`GlowPurple`/`PrimaryDim`) removed; `PrimaryDim` kept as a drawer-LOCAL `Color(0xFF002277)`.
+- **Drift-safety honored:** every accent site resolves to `colorScheme.primary` (= #0055FF under default
+  AMOLED → byte-identical); pure-black panel/rail bg → `colorScheme.surface` (= #000000 under AMOLED). All
+  neutral greys (`DarkSurface`/`DimWhite`/`MutedWhite`/toggle-off/#1A1A1A dividers/#4CAF50 green) left local.
+- **Known limitation (deliberate):** `PrimaryDim` sites (switch-ON track, AccentButton container,
+  selected-tab gradient bottom, HudChip selected bg) do NOT recolor for a CUSTOM accent — they stay
+  dark-blue. #002277 maps to no exact scheme slot, so routing it would drift the default. Revisit later if
+  we want those to follow the accent (accept a tiny default shift).
+- **Functional safety = the user's concern:** theme edit cannot alter wiring. App↔drawer, Wine/containers,
+  controller input (legacy `InputControlsView.java`, NOT touched), and all drawer buttons keep their exact
+  handlers. Verify gate = on-device functional pass (End Process / Bring to Front / Pause / Exit / Apply &
+  Close / ReShade toggle / controller drives game) + before/after color diff. **User drives the device tests.**
+- Committed + pushed branch `feat/theme-centralize-drawer`. CI APK build (main.yml,
+  **run 28419854007**) **✅ GREEN** 2026-06-30 — all 3 flavors built clean (standard/pubg/ludashi-debug
+  ~560 MB each). Color-only diff compiled with NO fixes needed. **APK READY for the morning device test**
+  (download the `standard-debug` artifact from run 28419854007).
+- **PLAN: user device-tests in the MORNING** (user went to bed 2026-06-30). Build is green; no overnight
+  fix was needed. Green APK + test checklist are ready.
+- ON-DEVICE CHECKLIST (user drives, I watch logcat): (1) launch game in a real container → open drawer;
+  (2) wiring — Task Mgr End Process / Bring to Front / Pause-Resume / Exit-to-app / Controls Apply&Close /
+  ReShade toggle / controller drives game; (3) app side — launch + edit a container/shortcut; (4) color —
+  default AMOLED drawer unchanged, then custom accent → drawer highlights recolor. EXPECTED non-bug:
+  switch-ON tracks + a couple selected-chip bgs stay dark-blue under custom accent (the PrimaryDim call).
+- Preview mock: `bannerlator_theme_preview_v2.html` (~/Downloads + /sdcard/Download).
+
+---
+
+## 2026-06-29 — bionic-fg: upstream MERGED our compat PR #6; fork synced; branch-landscape mapped for later
+
+**TL;DR:** Our Android wrapper-ICD compatibility fix was **merged into upstream bionic-fg**
+(`xXJSONDeruloXx/bionic-fg` PR #6, squash commit `68497bf`). Synced our fork `main` to it
+(clean fast-forward, identical). Audited what the shipped build contains vs every open branch/PR.
+No code changes this entry — this is a checkpoint so the shader/model work can be picked up later.
+
+### What merged (PR #6 — "Single-device mode + layer-dispatch routing for Android wrapper ICDs")
+- Authored by The412Banner, +310/-22 / 7 files. Fixes the hang-at-first-interpolated-present on the
+  Wine+DXVK -> Turnip `wrapper_icd` stack: (1) manifest `disable_environment`, (2) single-device mode
+  (run gen on the app's OWN VkDevice -> kills the 2-device cross-instance deadlock), (3) dispatch
+  routing via `memPropsFn` + bounded 250ms fence waits + optional `fps_limit`. Device-proven Adreno 750
+  2x/3x/4x. Squash-merge `68497bf` rolled in the 4 layer-robustness refinements too.
+
+### Build provenance (verified 2026-06-29)
+- Bannerlator submodule still pinned to upstream base `4f71770`; CI (`build-bionic-fg.yml`) applies
+  `patches/bionic-fg-bannerlator-fixes.patch` at build time. Verified: that patch applied to the base ==
+  merged `68497bf` **byte-for-byte** (0-line diff). So our source == merged main.
+- Cleanup available (NOT done): bump the submodule to `68497bf` and DELETE the now-redundant patch.
+  Must be one combined change — bumping the pin without removing the patch breaks `git apply` (already
+  applied) and fails the bionic-fg CI build.
+
+### Branch / PR landscape vs the SHIPPED build (`68497bf`)
+- `feat/toml-hot-reload` (upstream) — MERGED, already in our build.
+- **`feat/shader-pool-gamescope-v2`** (our fork, tip `b0c2e5c`) — HIGHEST ROI. New = ~+22.7k lines
+  `shaders_embedded.hpp` (FIXES the malformed `shader_02` we currently ship + pools GameScopeVK/V2
+  shaders) + `model=2` "V2 engine". This is the open shader-pool thread.
+- **`feat/fsr3-optical-flow-model`** (our fork, tip `603d26e`) — HIGHEST CEILING, heaviest. Superset of
+  shader-pool + `model=3` AMD FidelityFX Optical Flow (4 new compute shaders, ~+24.8k embedded,
+  `NOTICE_FIDELITYFX_OPTICALFLOW.md`, standalone `build-so.yml`). Needs on-device perf+visual validation.
+- `fix/model1-remove-warpblend` (upstream, 1 commit) — cheap correctness fix (removes a model-1
+  warp-blend stage that shouldn't exist). Not in our build.
+- PR #5 `feat/future-refresh-pacing` (upstream, OPEN) — alt frame pacing, overlaps our `fps_limit`,
+  unmerged + unproven on Turnip. Lowest confidence.
+
+### Caveat for whoever resumes
+All branches above pre-date the squash, so they sit on the un-squashed compat commits (same content,
+different SHAs) and read "1 behind". To integrate cleanly: REBASE onto synced `main`/`68497bf`
+(cherry-pick only the genuinely-new commits) so the compat changes don't reappear as conflicts.
+**Recommended start = `feat/shader-pool-gamescope-v2`** (fixes a bug we currently ship + it's our own
+half-done work), then FSR3 `model=3`. Save+commit before any same-device test.
+
+---
+
+## 2026-06-29 (cont.) — STEP 3 ReShade: P2 DEVICE-PROVEN + typed controls/tab/reset + on-demand download catalog LIVE
+
+**TL;DR:** The in-game ReShade feature is now fully device-proven (P2 done). Added typed UI controls,
+a dedicated ReShade drawer tab, and a Reset button. Switched the effect library from APK-bundled to
+**on-demand download** — published a 100-effect catalog (`reshade.json` + `reshade-v1` release) on
+`The412Banner/winlator-contents`; the app-side download UI is building.
+
+### P2 device-proven (in-game ReShade)
+- Live `.fx` compile, live on/off, and live per-uniform sliders all confirmed on hardware (Technicolor,
+  ArcaneBloom over The Saboteur). The `formatUniformLine` `<effect>_<uniform>` key syntax is correct.
+
+### `feat/reshade-typed-controls` (off `fix/reshade-live-toggle`) — CI `28411754406` GREEN
+- `ReshadeManager.ParamType += COMBO, COLOR`; `reflectParams` parses `floatN`/`intN` + `ui_items`
+  (`\0`-split), and now **skips `source=`-annotated uniforms** (engine semantics like timer/frametime —
+  ArcaneBloom's `uTime`/`uFrameTime` were leaking in as dead sliders).
+- Drawer renders by type: bool→toggle, combo/radio→dropdown, color→HSV picker (collapsed by default,
+  tap swatch to expand), slider/drag→slider. Value transport stays float-based; color = `<u>_0.._N` keys.
+- New **dedicated ReShade tab** (`TabType.RESHADE`, `icon_screen_effect`) — pulled the ReShade block out
+  of the Graphics tab. **Reset** button re-seeds every param to its `.fx` default via `onReshadeApply`.
+- Pre-launch editors (container + shortcut) render the same typed controls (color = R/G/B sliders there).
+- Device-confirmed: toggle ("Use Limits"), dropdown ("Debug Options"), color picker, collapse, Reset.
+
+### On-demand download catalog (replaces APK bundling)
+- Decision: do NOT ship `.fx` in the APK. Host on `The412Banner/winlator-contents`; the pre-launch effect
+  picker shows the full catalog GREYED, each row downloads-and-fills-in on tap.
+- **Published + LIVE:** `reshade.json` on repo `main` (100 effects) + 100 per-effect `.tzst` as assets on
+  release **`reshade-v1`**. License-safe set only (crosire/prod80/luluco250/fubax; AstrayFX excluded for
+  license ambiguity, qUINT excluded). Built by `scratchpad/reshade_catalog.py` (include+texture closure;
+  prod80 `PD80_NN_` prefixes stripped for clean ids; category-tagged).
+- Schema: `{schemaVersion,category,release,mirrorBase,count,effects[{id,name,description,category,author,
+  license,url,file_size,file_checksum(MD5),version}]}`. `id` = drop-in folder name; tzst extracts into
+  `getExternalFilesDir/ReShade/<id>/`.
+- App side building on `feat/reshade-download-catalog` (off `feat/reshade-typed-controls`).
+
+### Credits (for the next stable's release notes)
+- vkBasalt engine: **DadSchoorse** (original, our patched .so builds from this) + **Pipetto-crypto**
+  (Winlator integration, commit `67b6dad`) + **StevenMXZ** (Winlator-Ludashi). Shader authors:
+  crosire/ReShade, prod80, luluco250, Fubaxiusz.
+
+### Still ahead
+- Codegen sweep (verify which of the 100 actually compile on vkBasalt → prune/flag catalog).
+- Tier-1 hardening: existing-container layer heal, GPU/Mali coverage, Vulkan-only boundary.
+- Merge the ReShade stack to main + cut the stable (with credits). Depth effects = STEP 4.
+
+---
+
+## 2026-06-29 — ▶️ RESUME HERE: STEP 3 ReShade effects — BUILT end-to-end, one device test from done
+
+**TL;DR:** In-game ReShade `.fx` effects via the bundled vkBasalt layer. App feature + a patched live-reload
+vkBasalt layer are BOTH built and CI-green; integrated build is compiling. **Only the on-hardware device test
+remains.** Design doc: `docs/RESHADE_STEP3_PLAN.md`.
+
+### Branches (all pushed to origin)
+- `feat/reshade-step3` — app-side feature (5 commits). CI `28401038692` ✅ GREEN.
+- `feat/reshade-vkbasalt-build` — patched libvkbasalt.so source/patch/workflow. CI `28401364441` ✅ GREEN.
+- **`feat/reshade-integrated`** — `step3` ⊕ `vkbasalt-build` + integration commit (patched .so repacked into
+  `extra_libs.tzst` + uniform-key fix). **THIS is the branch to install/test.** Combined CI `28402115564`
+  (workflow "CI Build (artifacts only)") — was IN PROGRESS at handoff; check it on resume.
+
+### What was proven / built this session
+1. **Spike DEVICE-PROVEN:** hardcoded sepia `.fx` compiled on-device (vkBasalt reshadefx→SPIR-V→Turnip) and
+   applied to a live DXVK game (The Saboteur) → screen went sepia. ReShade `.fx` on Adreno = real. Blockers
+   #1 (language) + #2 (Adreno compile) empirically dead. (Depth effects still STEP 4.)
+2. **Two infra bugs found + fixed:** (a) `extra_libs.tzst` (carries libvkbasalt.so) only extracted on container
+   `firstTimeBoot` → existing containers never got the layer (silent no-op). Fixed: extract whenever the .so is
+   absent. (b) the SHIPPED libvkbasalt.so has its key-detection compiled out (`isKeyPressedX11`→return false) +
+   no uniform-override path → its HOME toggle is dead for ALL inputs and it can't do live sliders. ⇒ any live
+   control REQUIRES a rebuilt layer (the X11-Home-inject "free toggle" idea is DEAD — dropped).
+3. **App-side Phase 1** (android-app-engineer): `reshade/ReshadeManager.java` (drop-in folder scan +
+   `.fx` ui_* param regex reflection, scalar float/int/bool); `Container.java` persists `reshadeEffect`/
+   `reshadeParams`; `XServerDisplayActivity.java` extraction-gate fix + `writeVkBasaltConfig()` (merged with CAS
+   into one `effects = <effect>:cas` chain) + `applyReshadeLive()` seam; in-game drawer ReShade section
+   (`XServerDialogState.kt`/`XServerDrawer.kt`); effect pickers in shortcut + container editors.
+   Drop-in folder = `getExternalFilesDir(null)/ReShade/` (one subfolder per effect; copied into guest HOME
+   `.config/vkBasalt/effects/<name>/` at launch for host-absolute paths). Gated to DXVK/VKD3D.
+4. **Patched vkBasalt** (graphics-vulkan-engineer): `patches/vkbasalt-reshade-livereload.patch` vs upstream
+   `DadSchoorse/vkBasalt@4f97f09` (submodule `app/src/main/cpp/vkbasalt`), built via new `build-vkbasalt.yml`
+   (meson Android cross, NDK r27c, arm64-v8a/android-24, X11-free). **Part A** = live on/off (Config remembers
+   opened path; present-hook mtime-watch re-reads conf → flips `presentEffect` from `enableOnLaunch`; lsfg-mirror,
+   no swapchain recreate). **Part B** = live sliders (codegen uniforms-to-spec-constants=FALSE → ui_* uniforms in
+   UBO; new `GenericUniform` + `ReshadeEffect::updateUniformsFromConfig()` overrides from conf key
+   `"<effect>_<uniform>"` → next-frame memcpy, no recompile). CI-green + binary-symbol-verified.
+5. **Integration:** patched .so (stripped 1.85MB) repacked into `extra_libs.tzst`; `formatUniformLine()` aligned
+   to emit `<effectKey>_<uniform>` to match the patch's read key.
+
+### ▶️ NEXT (on resume, when home / Wi-Fi back)
+1. Check combined CI `28402115564` (branch `feat/reshade-integrated`); if green, grab the APK artifact.
+2. **DEVICE TEST on The Saboteur (DXVK)** — the unproven gate (all green/binary-verified, Part A+B untested on
+   hardware): install integrated APK → use a **FRESH container** (old `xuser-4` has `libvkbasalt.so.disabled`
+   from the spike sepia-cleanup; extraction-heal/new container installs the patched .so) → pick a ReShade effect
+   → verify (a) effect renders CORRECTLY [Part B UBO change didn't break render], (b) drawer ReShade on/off
+   toggles LIVE [Part A], (c) sliders move the image LIVE [Part B + key syntax]. ⚠️ uniform-override key form is
+   the most likely thing to need a tweak — centralized in `formatUniformLine()`.
+3. If green on device → tidy (strip note, drop the throwaway `spike/vkbasalt-reshade`), then decide merge to main.
+   Live SLIDERS depend entirely on the patched .so working; if Part B misbehaves on device, on/off (Part A) is the
+   lower-risk fallback to ship first.
+
+⚠️ Memory file `project_bannerlator_step3_shader_loader_reshade` has the full detail + every commit/run id.
+
+---
+
+## 2026-06-28 (s4) — ▶️ RESUME / CURRENT STATUS: VRR + manual picker built & verified; pacing tweak pending
+
+**Where things stand on the graphics roadmap:**
+- **STEP 1 (debanding + NIS): DONE — MERGED to main** (`feat/deband-nis` ff `71e2d27..4565b80`, branch deleted).
+  Both device-proven on Vulkan via the new AIO torture cards (banding ramp + scaling combo). Not in a tagged
+  release yet (per versioning rule — no stable cut without explicit say-so).
+- **STEP 2 (VRR / refresh-rate matching): BUILT + DEVICE-VERIFIED**, branch `feat/vrr-refresh-rate` (off main,
+  NOT merged). Took 3 fixes to get the panel to actually move: seamless→ALWAYS (`c29acc0`), capability gating
+  (`83da657`), and the big one — window `preferredRefreshRate` was pinning the panel to max and out-voting our
+  surface vote (`35dd636`). After that, all 4 states verified on-device (Vulkan, AYANEO 144Hz panel):
+  cap+match→60, cap+nomatch→144, uncapped+match→144, incapable→greyed. Clean 60↔144 both directions.
+- **Manual refresh-rate picker: BUILT** (`fa77da6`, CI `28333613335` GREEN) — unified 'Refresh rate' drawer
+  control (Auto match-FPS + manual snap-to-supported-modes chips, auto-detected via getSupportedRefreshRates;
+  Auto greys chips; whole group greys on incapable devices). Editor got a manual FilterChip row. Auto path
+  byte-identical (reviewed). DEVICE-TEST OWED.
+
+**Open issue — FPS oscillation (user-observed):** with limiter=60 + Auto-match ON, FPS swings 56↔64 every few
+seconds. Two suspects: (1) **AYASpace system refresh control** — the test device is an AYANEO handheld whose
+AYASpace overlay has its OWN 'Refresh Rate' control (Auto/144/120/90/60), was pinned to 144; its polling
+service likely re-asserts 144 vs our VRR every few seconds (matches the timing). (2) **limiter/VSync beat** —
+matching the panel to exactly the cap removes the 144Hz headroom that hid the limiter's pacing jitter (panel
+likely 59.94 vs cap 60.0). 
+
+**▶️ NEXT (test plan, before merge):** (1) DIAGNOSTIC — set AYASpace Refresh Rate→Auto, re-test: swing stops =
+system contention (config fix, document it), persists = pacing beat. (2) Install build `28333613335`, verify
+manual picker (Auto-off+pick 90/120 → dumpsys locks panel to it regardless of cap) + headroom check (manual
+120 + cap 60 should be smooth) + auto-path 4/4 regression. (3) If pacing beat confirmed → add **cap-below-
+refresh** fix (pace limiter to ~refresh−1 when Auto matching). (4) Then MERGE feat/vrr-refresh-rate (VRR +
+manual picker + any pacing fix) to main → then STEP 3.
+
+**Device-driving notes:** measure VRR while game is FOREGROUND (it releases the vote on background); 'go'
+handshake + `sleep 12; dumpsys` works. Key greps: activeMode= , setFrameRate=/{10492, the per-layer
+`Hz ... Always/OnlySeamless` vote line. Move-cursor-to-touchpoint is ON (tap absolute). Newest device
+screenshots in /sdcard/Pictures/Screenshots/.
+
+---
+
+## 2026-06-28 (s4) — 🆕 Manual refresh-rate picker built (unified Auto + manual control)
+
+On top of the verified VRR, added a unified "Refresh rate" drawer control: the match-refresh toggle is now
+"Auto (match FPS)" + a chip row of the panel's supported rates (auto-detected via `getSupportedRefreshRates`).
+Auto ON → chips greyed (VRR drives it); Auto OFF → pick a rate and the panel locks to it regardless of the FPS
+cap; whole group greys on incapable devices. `applyVrr` extended with an additive manual branch (auto path
+byte-identical, reviewed). New state manualRefreshRate/supportedRefreshRates/onManualRefreshChange + Container
+`manualRefreshRate` extra + resolver + editor FilterChip row. Commit `fa77da6`, CI run `28333613335`.
+Device-test owed: Auto-off + pick 90 → panel locks 90 regardless of cap; chips greyed when Auto on; auto path
+4/4 regression. Then merge the whole `feat/vrr-refresh-rate` (VRR + manual picker) to main.
+
+---
+
+## 2026-06-28 (s4) — ✅✅ VRR device-test #3: WORKING (+ clear-path verified) — panel drops 144→60 to match the FPS cap
+
+Build `28332650876` (seamless fix `c29acc0` + capability gating `83da657` + window-pin fix `35dd636`). On
+Vulkan, FPS cap 60, Match-refresh ON, game foreground: **activeMode 144.00→60.00 Hz** — the panel physically
+switched. Override `{10492, 60.00 Hz}`, both layer votes now `60 Hz SeamedAndSeamless` (game surface + window
+pref agree). VRR is device-proven end-to-end. The `preferredRefreshRate` lever moves this panel, so both
+auto-VRR and a future manual refresh-rate picker will work here.
+
+**Before merge:** verify toggle-off/uncapped returns the panel to 144 (clear path); optional GL/ASR spot-check
+(shared code, Vulkan proven). **Next feature (green-lit):** manual refresh-rate picker — one control with
+'Auto (match FPS)' + manual snap-to-supported-modes (60/90/120/144 auto-detected via getSupportedModes); Auto
+greys the slider; whole control greys on single-mode/pre-A11 devices. Same `preferredRefreshRate` lever.
+
+
+**Clear-path verified (test #3b):** toggling "Match refresh rate to FPS" OFF returned the panel 144 Hz (activeMode 60→144, both votes restored to 144). So VRR does the full round trip — drops to the cap when on, restores max when off. Also verified the cap-dependency: limiter OFF + match ON (uncapped) → panel returns to 144 (VRR only acts while capping). All 4 states confirmed {ON+match→60, ON+nomatch→144, OFF+match→144, incapable→greyed}. **VRR comprehensively verified and ready to merge.**
+
+
+---
+
+## 2026-06-28 (s4) — 🐛➡️✅ VRR device-test #2: surface fix confirmed, fixed a 2nd blocker (window pins max refresh)
+
+Re-tested with the seamless fix (`c29acc0`) + capability gating (`83da657`). Our game-surface vote is now correct —
+`60.00 Hz Default SeamedAndSeamless` (the force-switch worked; was OnlySeamless). But the panel still held 144
+because a 2nd layer voted 144: `XServerDisplayActivity.onCreate` pins `window.preferredRefreshRate = max` (144)
+for smooth UI, and that window-level request out-votes the surface vote. **Fix `35dd636`:** new
+`applyWindowPreferredRefreshRate(vrrRate)` (called from applyVrr) lowers the window preference to the matched
+rate when VRR is capping, restores max otherwise. CI run `28332650876`. Retest: expect activeMode 144→60.
+Lesson: an emulator that force-pins preferredRefreshRate to max blocks ANY app VRR vote — keep it in step.
+
+---
+
+## 2026-06-28 (s4) — 🐛➡️✅ VRR device-test #1: found + fixed the "panel won't drop" bug
+
+Tested VRR on-device (AIO, OpenGL renderer, FPS cap 60, Match-refresh ON, game@60). Panel stayed at 144 Hz —
+frameRateOverride showed our app un-throttled `{10492, 144}`. Root cause via dumpsys layer line
+`60.00 Hz Default OnlySeamless`: our 60 Hz vote WAS placed correctly, but with **seamless-only** strategy, which
+a peak-refresh 144 panel ignores. The code bug: `XServerView.applyFrameRateToSurface` only used the 3-arg
+`setFrameRate(..., ONLY_IF_SEAMLESS)` when `FRAME_RATE_SEAMLESS_ONLY` was true, else fell through to the 2-arg
+overload — which **also defaults to ONLY_IF_SEAMLESS**, so the "force" path was never taken.
+
+**Fix `c29acc0`:** when SDK≥31, pass the strategy explicitly — `ONLY_IF_SEAMLESS` if seamless-only else
+`CHANGE_FRAME_RATE_ALWAYS` (force the mode switch). CI run `28331250229`. Retest owed: reinstall, re-measure
+(expect override→cap, activeMode drop). Notes: 40 fps is an awkward cap for a 144 panel (144/40=3.6) — use 60;
+container was GL, also test Vulkan; if ALWAYS still won't drop it's device display policy, not our code.
+
+**➕ Capability gating (`83da657`, CI `28332020195`):** the "Match refresh rate to FPS" toggle is now **greyed out** on devices that can't do VRR — `XServerView.isDisplayVrrCapable(display)` = SDK>=30 AND >1 distinct refresh rate among supported modes; gated in the in-game drawer (XServerDrawerState.vrrSupported, seeded at launch) + the ContainerDetail editor (probes the default display), with an "Unavailable on this display" hint. Single-mode/60Hz-only + pre-Android-11 → disabled. Build 28332020195 includes BOTH this AND the seamless-only fix `c29acc0`, so it supersedes 28331250229 — install THIS one for the retest. User's 144/120/90/60 panel = capable → toggle stays enabled.
+
+**Same-device test protocol (1-thing-at-a-time):** VRR releases its vote on background (onStop→0), so measure
+while the game is foreground — user stays in game, sends "go", switches back; I fire `sleep 12; dumpsys` to
+capture with the vote reapplied. Confirm foreground via topResumedActivity.
+
+---
+
+## 2026-06-28 (s4) — 🆕 STEP 2: VRR / refresh-rate matching IMPLEMENTED (branch `feat/vrr-refresh-rate`, device-test owed)
+
+Step 1 (debanding+NIS) merged to main earlier today; started Step 2 = make the panel refresh rate follow the
+game FPS via `Surface.setFrameRate` votes (complementary to the FPS limiter: limiter=render rate, VRR=display
+rate). One Surface-level vote on the parent SurfaceView covers all 3 host renderers (GL / Vulkan compositor /
+SurfaceFlinger-ASR) since SF aggregates frame-rate votes over the layer subtree; existing Vulkan native child-SC
+votes left intact.
+
+5 commits on `feat/vrr-refresh-rate` (off main, pushed, NOT merged):
+1. `4882473` XServerView.setDisplayFrameRate(float,int) — SDK_INT>=30 guard, picks active holder Surface,
+   remembers last rate + re-asserts in surfaceChanged (added a holder callback to glSurfaceView which had none).
+2. `4671c26` applyVrr()/reapplyVrr()/resolvedMatchRefreshRate() in XServerDisplayActivity — votes 0 when
+   off/uncapped, `cap` normally, `cap×mult` in the lsfg-governs case; wired into applyFpsLimit + onStop(release)
+   + onResume(reassert) + drawer onMatchRefreshChange.
+3. `dcbefb5` Container `matchRefreshRate` extra (default ON) + shortcut resolver.
+4. `2b603e5` drawer "Match refresh rate to FPS" toggle + XServerDrawerState flow.
+5. `5ff90db` ContainerDetail editor switch + strings.
+
+Reviewed rate logic + cross-layer contract names (sound; `getFrameGenMultiplier()` confirmed to exist).
+CI run `28330068467` ✅GREEN (all flavors compile). No release/tag cut.
+
+**▶️ DEVICE-TEST (user starting now):** `dumpsys SurfaceFlinger | grep -i frameRate` to confirm the panel takes
+the vote. Verify: vote = cap when capped, cap×mult under lsfg, clears (0) when toggle-off/uncapped, re-asserts
+bg→fg. **PREREQ: turn the FPS limiter ON + set a cap** (VRR only votes when capped; limiter is the existing
+pre-feature, VRR just matches the panel to it). Needs a high-refresh panel (dumpsys shows the modes).
+**Renderer priority:** Vulkan first (full stack, most likely to land) → OpenGL → SurfaceFlinger/ASR last + most
+scrutiny (relies on SF aggregating the parent-Surface vote to the native child SC; if it doesn't land there →
+do optional commit 6 = native ASurfaceTransaction_setFrameRate on the game child SC). Everyday use: Vulkan.
+Risk: setFrameRate is a HINT (battery-saver may ignore).
+
+---
+
+## 2026-06-28 (s4) — ✅ VULKAN RETEST PASSED on new AIO torture cards → `feat/deband-nis` CLEARED TO MERGE
+
+User built the AIO Graphics Test with the Banding scene + new "Scaling Tests >" sub-page (builder used the
+exact scene ids from the brief: scaletest_combo/zoneplate/wedge/grid/checker/edges). Switched the AIO shortcut
+to the **Vulkan** renderer (1280x720→1080p upscale) and drove it on-device:
+- **Debanding (banding card, dark 0..16/255 ramp):** OFF = ~12 hard stair-step bands; ON = bands dissolved into
+  fine dither grain. Max diff exactly 1/255, mean diff ~3x the smooth Space scene. The visual proof we couldn't
+  get on Space/Nebula.
+- **Scaling modes (combo card, grid patch sharpness std-dev):** none=linear 0.0590 (identical → None≡Linear
+  label quirk), sgsr 0.0689, fsr 0.0693, **NIS 0.0757 (sharpest clean upscaler)**, nearest 0.0936 (blocky
+  aliasing). All live-switch, all distinct; SGSR/FSR/NIS reconstruct cleanly above Linear.
+- Host compositor confirmed Vulkan via drawer layout (CAS/Debanding). NOTE: AIO HUD "Renderer" line mislabels
+  (showed "OpenGL" on the combo) — trust the container renderer, not that label.
+
+**BOTH gate halves PASSED on Vulkan → `feat/deband-nis` is cleared to merge (awaiting user go-ahead).** Then
+STEP 2 = VRR. Optional cleanup: None≡Linear label + CAS/Sharpen slider-snapping.
+
+---
+
+## 2026-06-28 — 🎨 `feat/deband-nis` FULLY DEVICE-PROVEN (NIS both renderers + Debanding) → MERGE-READY
+
+**Branch `feat/deband-nis` (tip `cc3361f`, off main, PUSHED, NOT merged).** Detail memory =
+`project_bannerlator_smooth_sharp_render_roadmap.md` (STEP 1). Device test driven via root bridge on the
+SAME device (Adreno 750), AIO graphics test app, renderer = **OpenGL | DXVK**.
+
+**NIS (NVIDIA Image Scaling, upscaler mode 7) — re-confirmed on GL (Space scene 720p→1080p):**
+- ✅ **NO Adreno runtime-compile crash** selecting NIS on the GL renderer — the one big open risk (heavy
+  unrolled NIS shader) is definitively cleared; scene keeps rendering. (Already proven on Vulkan in s2.)
+- ✅ **Perf cost now measured** (was unbenchmarked): **290fps → 200fps (~31%)**, GPU load 72%→~86%. Still smooth.
+- ✅ **Quality** (clean frozen-frame montage None/Nearest/Linear/NIS): NIS = crisp edges + detail preserved,
+  distinct from blocky Nearest & soft Linear, no artifacts → NVScaler math correct. RMSE vs `none`: NIS 0.54%.
+- ✅ **Sharpness slider** present, continuous, seeds 75, registers 0/100. Modulation confirmed qualitatively
+  (clean pixel-delta elusive — the AIO Pause releases on a slider drag; first 4.9%/0.6% numbers were motion-contaminated, discarded).
+
+**Debanding (terminal TPDF dither pass) — device-verified on GL Space scene (frozen-frame A/B):**
+- ✅ Toggle works (drawer, below HDR); ON reveals "Dither strength" slider (seeds 100).
+- ✅ **Max pixel diff = EXACTLY 1/255 (one 8-bit LSB)**, mean ~0.04/255 — textbook dither magnitude.
+- ✅ **Mean brightness perfectly preserved** (0.282483→0.282532) — no bias/tint (hallmark of correct dither).
+- ✅ Diff footprint = fine uniform noise across gradients (atmosphere/planet/moon), ~zero in black sky/saturated.
+- ⚠️ **CAVEAT:** no dramatic "bands→smooth" before/after on Space — its gradients are dark/shallow + broken by
+  stars/detail, so little gross banding to dramatize. Dither provably correct at LSB level; Space ≠ a showcase.
+  **For a striking visual demo → AIO "Detailed Nebula" scene (next test).**
+
+**🔎 SIDE-FINDING (cleanup candidate, unfixed):** in this build **None ≡ Linear EXACTLY** (RMSE 0) — base "None"
+is doing bilinear; base-sampler labels (None/Linear/Nearest) worth a look. Pairs with the known CAS/Sharpen
+slider-snapping inconsistency (GL 5-notch vs VK continuous).
+
+**Debanding RE-TESTED on "Detailed Nebula" (s3, GL, frozen-frame A/B):** mechanism re-confirmed (game-area
+max diff = exactly 1/255, mean-preserving); positive dither-footprint = fine stipple noise, ~8.8% of pixels in
+the glow falloff nudged 1 LSB, densest at quantization boundaries. BUT even hard-amplified on the brightest
+smooth ramp, OFF vs ON look identical — Nebula shows NO gross banding to dramatize either. CONCLUSION: AIO
+test scenes render gradients clean enough that 8-bit banding is minimal in both Space & Nebula; debanding's
+gain is real but sub-perceptual on THIS content (will matter on real games w/ heavy banding — fog/skyboxes/UE).
+Build is dither-only on 8-bit chain (precision-bump step deferred). Note: whole-frame RMSE is meaningless here
+(drawer changes between shots) — always crop to game area x>900.
+
+**▶️ NEXT — ⛔ MERGE ON HOLD (user decision 2026-06-28):** do NOT merge `feat/deband-nis` yet. All prior
+tests ran on AIO Space/Nebula scenes, which don't visibly band and barely separate upscalers (smooth content)
+→ only proved debanding/scaling mathematically, not visually. GATE before merge: (1) AIO Graphics Test gets
+its Banding scene (already built, commit `881f39e`, 1 past v1.6.0 — needs push+build+install) + new
+Scaling-Test scenes (spec'd, not built — briefs in /sdcard/Download/SCALING_TESTS_BUILD_BRIEF.md +
+BANDING_SCENE_FINDINGS.md) → (2) install new AIO binary → (3) **retest on the VULKAN renderer** with real
+torture content (debanding on the dark 0..16/255 ramp, in-app dither OFF, scaling=None/1:1;
+NIS/SGSR/FSR/FSR-Fit on zone-plate/wedge/grid at sub-native render-res). THEN merge if it passes → THEN STEP 2
+= VRR. Optional: precision-bump (10-bit/R16F intermediate) would make debanding visibly stronger — revisit
+only if a real game shows banding.
+
+---
+
+## 2026-06-28 — 🧩 BIONIC-FG: Track-3 FSR3 Optical Flow built + `.so` delivered for manual injection (NOT device-tested)
+
+**Resume context for the bionic-fg frame-gen shader-pool / model-expansion effort.** Detail memory =
+`project_bannerlator_bionic_fg_shader_pool.md`. Fork = `The412Banner/bionic-fg`, clone `/home/claude-user/bionic-fg-fork`.
+
+**WHAT GOT DONE THIS SESSION:**
+- ✅ **Track 3 = FSR3 Optical Flow added as runtime model 3.** Branch `feat/fsr3-optical-flow-model`
+  (off `b0c2e5c`), commits `d6f4a09`(embed FSR3 OF SPIR-V idx66-69 + restore dropped `IsValidSpirv`) →
+  `9f06376`(model-3 dispatch + clamp→3) → `5eb11a7`(GLSL src+docs) → `603d26e`(CI workflow). PUSHED, unmerged.
+  Source = FidelityFX-SDK optical-flow passes (MIT), reimplemented subgroup-free GLSL for Turnip/no-DXC.
+  15 OF passes → reuse model-0 warp/blend/synth back half. Models 0/1/2 byte-unchanged (additive).
+- ✅ **Built `libbionic_fg.so` (arm64-v8a).** NEW self-build workflow in the fork `.github/workflows/build-so.yml`,
+  CI run `28323607624` **GREEN** (NDK r26b 26.1.10909125 / android-26, matches app). No external patch needed —
+  the single-device anti-deadlock fixes (fork commit `ac2f5c0`) are already an ANCESTOR of Track-3, so the
+  source self-contains models 0/1/2/3 + single-device `create(device,…)` + manifest `disable_environment`.
+- ✅ **Delivered to device for manual inject:** `/sdcard/Download/libbionic_fg.so` (6.3M, md5 `971e6aaa…`) +
+  `/sdcard/Download/VkLayer_BIONIC_framegen.json`. User will inject + test LATER.
+
+**🔑 CRITICAL ARCH FINDING (corrects prior records):** the app does NOT compile bionic-fg in its main NDK
+build (no `add_subdirectory(bionic-fg)`); the layer ships as a **prebuilt asset**
+`app/src/main/assets/bionic-fg/libbionic_fg.so`, built by the SEPARATE manual `build-bionic-fg.yml`. So the
+recorded "model-2 app CI GREEN" only bundled the OLD prebuilt `.so` — **shipped layer = `9136405c` (Jun 21),
+pre-model-1/2/3.** Models 1/2/3 + the shader_02 fix were NEVER in any shipped layer until this new `.so`.
+
+**▶️ WHAT TO DO LATER (resume):**
+1. **User injects + device-tests the new `.so`** — replace `<imagefs root>/usr/lib/libbionic_fg.so`,
+   set `model = 3` in `…/home/<container>/.config/bionic-fg/conf.toml` (UI only writes 0/1), FG enabled.
+   ⚠️ **CLOBBER CAVEAT:** `ImageFsInstaller.installBionicFgLayer` re-stages the OLD bundled asset whenever
+   on-device size ≠ bundled size → inject right BEFORE launching or it reverts. Also worth testing model 2 (V2).
+2. **Triage results:** FSR3 OF is compile-proven only — main risks = PERF (heavy SAD motion search; tunable
+   search window `BR`/`SR` in `of3_flow.comp`) + visual correctness. shader_02 fix + model 2 also first-ever on device.
+3. **If we want to ship for real** (not just inject): rebuild the bundled asset — either dispatch the app's
+   `build-bionic-fg.yml` AFTER refreshing/removing the now-redundant 608-line `patches/bionic-fg-bannerlator-fixes.patch`
+   (stale; fixes already in source), OR repoint that workflow to build the fork branch like `build-so.yml` does;
+   then commit the new `.so` to `assets/`, bump versionCode (NOT a release per [[feedback_bannerlator_release_versioning_rule]]).
+4. **Roadmap Tracks 4 & 5 BLOCKED on toolchains** (no sudo): Track 4 Lossless DXBC→SPIR-V needs `vkd3d-compiler`
+   (meson/widl/spirv-headers all missing); Track 5 RIFE/IFRNet needs an `ncnn` build. Revisit when toolchains available.
+
+---
+
+## 2026-06-28 — 🛠️ BUILT: Debanding + NIS upscaler (branch `feat/deband-nis`, CI pending, NOT device-tested)
+
+Implemented Track-1 step 1 from the master plan below. **Branch `feat/deband-nis` off main, 6 commits
+`194b7b9`→`cc3e0e7` (+log `a53a226`), PUSHED, NOT merged, NOT device-tested.** Shaders compile clean
+(glslangValidator), all cross-layer contracts reviewed+consistent. **CI ✅ GREEN — run `28319416413`
+(build-artifacts.yml, all flavors; only a harmless Node-20 deprecation annotation).** First real compile of the
+C++/JNI/Java/Kotlin passed. NEXT = on-device A/B (see ⚠️ below), then merge.
+
+**DEBANDING** — terminal TPDF/IGN dither pass (float-only hash, Adreno-safe), `deband.frag`+header,
+appended LAST as `FX_DEBAND`, registered in fxOn in BOTH planUpscaleFrame AND recordUpscalePasses
+(known "scaling drops chain" bug avoided). `setDeband(bool,int strength)` JNI↔C++↔Java; GL `DebandEffect`
++ dedicated terminal slot in EffectComposer (render() + renderUpscaled()). strength 0..200 → /100 LSBs
+(default 100 = ±1/255). Session-live (not persisted).
+
+**NIS** — new upscaler mode int **7**. Faithful NVScaler port from authentic NVIDIA reference (MIT)
+into single-pass `nis.frag` (edge map + 6-tap scale/USM + directional filters + CalcLTI + luma recolor);
+**exact fp32 coef_scale/coef_usm baked as `const float[384]`** (transcribed programmatically from
+NIS_Config.h, NOT hand-typed, first-row verified); fp32 path (no fp16/bitwise); NO 2nd descriptor binding.
+Reuses existing sharpness slider. GL `NISEffect` + EffectComposer `case 7`. Engages only when render
+res < display (like SGSR mode 3). Drawer: `7 to "NIS"` + mode-7 sharpness in both GL+Vulkan blocks.
+
+**⚠️ Needs device-verification (agent's honest flags):** (1) NIS math not pixel-compared to a reference
+NIS — A/B on the high-freq SPACE scene 720p→1080p, GL AND Vulkan. (2) GL NISEffect runtime-compiles a
+heavy unrolled NVScaler + 2×384 const arrays on the Adreno GLES driver = the runtime-compile-crash class
+the roadmap flags — DEVICE-TEST GL NIS specifically (Vulkan NIS is precompiled SPIR-V, safer). (3) NIS =
+37 texture fetches/fragment, perf untested. (4) CI is the first real compile of the non-shader code.
+Files: `cpp/winlator/{deband,nis}.frag`+headers+`gen_shaders.sh`, `VulkanRendererContext.{cpp,h}`,
+`vulkan_jni.cpp`, `renderer/vulkan/VulkanRenderer.java`, `renderer/EffectComposer.java`,
+`renderer/effects/{DebandEffect,NISEffect}.java`, `ui/XServerDrawer.kt`, `ui/XServerDialogState.kt`,
+`XServerDisplayActivity.java`.
+
+---
+
+## 2026-06-28 — 🗺️ MASTER PLAN: Graphics smoothness/sharpness roadmap + App theming/icons
+
+> **STATUS: RESEARCH + RECON + 1 HTML MOCKUP + CODE-GROUNDED PLANS ONLY. NOTHING CODED, NOTHING
+> COMMITTED, NOTHING DEVICE-TESTED.** This entry consolidates a full session of exploration into one
+> plan. Deep detail (every file:line touchpoint) lives in the two memory files:
+> `project_bannerlator_smooth_sharp_render_roadmap.md` + `project_bannerlator_theming_icons.md`.
+
+Two parallel tracks scoped this session. Recommended first build = **debanding + NIS** (Track 1, small/visible/low-risk).
+
+---
+
+### TRACK 1 — SMOOTHNESS + SHARPNESS RENDERING
+
+**User goal:** keep games EXTREMELY SMOOTH, NO FPS loss (ideally gain), + clarity/sharpness.
+
+**Core principle (the answer):** it's a STACK, not one effect →
+**render a bit lower → spatial upscaler (sharp) → VRR refresh-match (smooth) → debanding (clarity).**
+That gains real FPS, cuts heat/power, adds sharpness, zero added latency.
+**Myth busted:** frame-gen does NOT give free FPS — it inflates the HUD number while costing GPU + latency
+(a perceived-smoothness layer, optional cherry-on-top for single-player base≥45fps).
+
+**Recommended build order:**
+1. **Debanding + NIS** ← START HERE (ready, ~6 commits, low-risk)
+2. **VRR / `setFrameRate`** (refresh-rate matching; biggest smoothness-per-effort; SurfaceFlinger path best home)
+3. **Curated shader-loader platform** (force-multiplier; compile `.spv` OFFLINE in CI = Adreno-crash-safe; permissive-licensed shaders only)
+4. **Moonshot: DXVK depth → true SGSR2 on TAA/FSR2 games** (XL, staged, multi-repo)
+5. Keep frame-gen (`bionic-fg`) gated/off-by-default, labeled as a latency trade.
+**DROP:** BFI, Anime4K-CNN, pixel-art scalers, heavy CRT (royale), NPU/AI super-res — each costs FPS or doesn't fit.
+
+**Scorecard (vs goal):** SGSR1/NIS/FSR1 ★★★★★ · CAS / shader-loader-platform ★★★★ · 3D-LUT / panel-calibration / estimated-MV-temporal ★★★ · Anime4K(CNN heavy) / pixel-art / adaptive-sharpen(already have CAS+RCAS) / heavy-CRT ★★ · BFI ★½ skip.
+
+**READY-TO-BUILD PLAN — Debanding + NIS (GL + native Vulkan; ASR path runs neither chain):**
+Shared plumbing: Vk post shaders `cpp/winlator/*.frag` + committed `*_frag.h` SPIR-V (gen via
+`glslangValidator -V x.frag --vn x_code -o x_frag.h`, NO CI compile step). `VulkanRendererContext.cpp`
+`createPostPipelines`~:552 / `recordUpscalePasses`:1074 / `planUpscaleFrame`:1235 / locked effect-chain
+:1204-1229 / SINGLE-sampler `createDSLayout`:402-407 (don't add a 2nd binding) / PC range 88B.
+**Whole chain = R8G8B8A8_UNORM 8-bit** end-to-end. GL = `renderer/EffectComposer.java` + `renderer/effects/*.java`.
+Drawer `ui/XServerDrawer.kt` (options :772-775, sharpness slider :815-838). Effects SESSION-LIVE (not persisted).
+⚠️known bug: an effect silently no-ops under scaling unless added to fxOn in BOTH planUpscaleFrame:1250 AND recordUpscalePasses:1087.
+- **Debanding:** new `deband.frag` = terminal dither (IGN/TPDF, float-only hash, ~1 LSB, display space, no texture taps, Adreno-safe). Last effect-chain entry `FX_DEBAND` (always→swapchain). Vk pipeline + push-const + `setDeband` JNI/Java. GL `DebandEffect` + dedicated TERMINAL slot in EffectComposer (GL has no fixed order). Toggle + optional strength slider. Optional SEPARATE gated commit: bump offscreenFmt→A2B10G10R10/R16F (then off↔swap cross-bind needs split pipelines) — ship dither-only first.
+- **NIS:** upscaler mode int=7. new `nis.frag` single-pass NVScaler, BAKE coef tables as `const float[]` in shader (no 2nd descriptor binding; fp32 not fp16). Reuse sharpness slider. Vk pipeline + planUpscaleFrame mode-7 branch (like SGSR mode3) + recordUpscalePasses single-pass; no new JNI. GL `NISEffect` + setUpscaler `case 7`. Drawer add `7 to "NIS"`. MIT ©NVIDIA.
+- **Commits:** 1)shaders+headers+gen_shaders.sh 2)NIS-Vk 3)deband-Vk+JNI 4)NIS-GL 5)deband-GL 6)drawer+wiring 7)opt fmt-bump 8)opt persist. **Device-test SPACE scene 720p→1080p, GL AND Vulkan, A/B, confirm no FPS drop + composes with upscalers.**
+
+**STAGED MOONSHOT — SGSR2 (XL, MULTI-REPO):** VERDICT — shipping a patched DXVK is mechanically fine
+(we build/ship own DXVK `.tzst` in `assets/dxwrapper/`, extract `XServerDisplayActivity.java:2582`). REAL WALL =
+guest→host transport: today only 1 buffer (color) crosses via DRI3 1-AHB=1-FD (`DRI3Extension.java:141`
+`modifiers==1255`); the SENDER of extra buffers lives in the guest Wine/WSI build (NOT this repo → wine-compat +
+guest build). PREREQ A.0: add a sub-1.0 internal-res lever (renderScale only supersamples ≥1.0 today). **Stage A
+depth** (med, useful alone → unlocks DoF/SSAO): patch DXVK to export chosen depth as **R32F** AHB (sidesteps Adreno
+depth-AHB limits), new DRI3 `modifiers==1256`, depth import variant, prove via depth-grayscale DEBUG pass. **Stage B
+SGSR2** on TAA/FSR2 games (they give MV+jitter free): new 2-pass-FS shaders, persistent history buffer, 4-binding
+descriptor for SGSR2 only, per-title jitter profile, auto-fallback SGSR2→SGSR1→passthrough, Vulkan-compositor-only
+(ASR can't). **Stage C generic = research wall** (jitter can't be generically injected) — spike only.
+**Smallest prototype:** 1 FSR2/TAA game → DXVK export depth-only R32F → accept 1256 → grayscale debug overlay;
+if frame-aligned depth correct, transport PROVEN, rest is shader math; else STOP.
+
+**SurfaceFlinger/ASR renderer (the 3rd host renderer) findings:** it hands the guest buffer STRAIGHT to the system
+compositor — NO programmable pass, so the upscaler/effect shaders CAN'T live there (by design = its speed/battery win).
+What it CAN uniquely add: `setFrameRate`/VRR (best home for #2 above), present-fence timing into the HUD, scaling/aspect
+geometry modes, true HDR10 passthrough (speculative), layer alpha/damage. Already wired: setBuffer/geometry/visibility/zorder.
+
+---
+
+### TRACK 2 — APP THEMING + BUTTON ICONS
+
+**Deliverable in hand:** interactive HTML preview (live theme switch, dark/light, accent slider, typography
+before/after, 4 screens with icon fixes, offline-safe inline SVG) at device
+`/sdcard/Download/bannerlator_theme_icons_preview.html` (+ scratchpad + `~/Downloads/`).
+
+**Finding:** the app ALREADY has a theme engine (`ui/theme/Theme.kt`/`ThemePreset.kt` = 8 presets + HSV picker
+`AppearanceScreen.kt`) → this is POLISH not a rebuild. Brand accent `#0055FF` (`Color.kt:8`).
+**3 weaknesses:** light mode is DEAD CODE (`toLightColorScheme` exists, `_isDarkMode` hardcoded true, no toggle);
+no Material You; ~730 hardcoded color literals bypass the theme (custom accent only paints PART of app until centralized).
+
+**Proposals:**
+- 3 new themes (live in the HTML): **★Midnight Cobalt** (rec, evolves brand blue; primary `#2F6DFF`/accent `#6FA8FF`/bg `#0E1117`) · **Phosphor Terminal** (retro CRT amber+green, dark-only) · **Carbon & Ember** (graphite+orange `#FF7A33`). Rec: ship Midnight Cobalt default + keep AMOLED + add Phosphor preset.
+- **Typography ramp** (high ROI, ~10 lines `Theme.kt`): app forces weight 600 on ALL text → give head700/body400/label500.
+- Un-disable light mode (setter+toggle); optional Material You preset API31+.
+- **Icon gaps:** store detail pages (`store/{Steam,Epic,Gog,Amazon}GameDetailActivity.kt`) are TEXT-ONLY buttons → add `Icons.Filled.{PlayArrow,Download,Update,Delete,InsertDriveFile,CloudUpload}`; text "←"→`ArrowBack`; Epic "✓ Installed"→`CheckCircle`; game-card placeholder `OpenInNew`→`SportsEsports`; magnifier "✕"→`Close`. `material-icons-extended` already a dep. **Highest-ROI = store action-button icons (pure additive).**
+
+**3-bucket app-wide reach verdict:** (a) AUTO once colors centralized = all out-of-game Compose UI + in-game magnifier;
+(b) small recolor fix = in-game DRAWER `XServerDrawer.kt` (wrapped in theme, inherits fonts, but ~40 hardcoded colors → stays blue under a custom accent);
+(c) feed accent MANUALLY = FPS/perf HUD (`widget/FrameRating*.java`, `PerfHudView.java`), on-screen controls (`InputControlsView.java`), legacy XML editors — via existing bridge `AppThemeState.getCurrentAccentArgb()`.
+
+**Theming sequencing:** 1) typography ramp 2) store-button icons + back-arrows 3) centralize ~730 colors per-screen 4) Midnight Cobalt + Phosphor 5) light-mode toggle + optional Material You.
+
+---
+
+### NEXT MOVE
+Start coding **Track 1 → debanding + NIS** (commits 1-6, CI-green, then user device-tests on the SPACE scene before SGSR2 spike). Everything above is durable in the two memory files; this log entry is the master index.
+
+---
+
+## 2026-06-27 — 🏷️ 2.0 STABLE RELEASE CUT
+
+Merged the #18 turnip-ICD branch to main, bumped to **2.0 (versionCode 32)**, rewrote the README
+"What's New in 2.0" + feature sections, and cut the **2.0 stable release** (run `28309799973`,
+prerelease:false + make_latest:true → now the Latest the in-app updater offers; 3 flavor APKs +
+update.json attached). Closed PR #24 (not merged).
+
+**Everything in 2.0 since 1.9.2:** OpenGL renderer upscaler parity (SGSR/FSR/Sharpen) · sharpness
+sliders retuned (0=off→100=max, SGSR doubled, Sharpen 5-stop snap, inverted-CAS fix) · OpenGL
+filter-mode + glBlitFramebuffer plumbing (P4) · **game + container card redesign (#19)** ·
+**auto-close session on game exit** · magnifier fix on Vulkan (#22) · FEXCore "Performance (TSO)"
+preset (#20) · **Android-10 direct-ICD turnip driver (#18)**.
+
+README/release note imageFS-reinstall reminder added (new turnip driver lives in imageFS).
+Pinged issue #18 reporter (SD845/A10) to verify the new `turnip-26.1.0` driver — issue left open
+pending their confirmation (no A10 device locally).
+
+---
+
+## 2026-06-27 — #18 direct-ICD turnip path for Android <11 (built, CI-green, awaiting reporter A10 test)
+
+Diagnosis: the reporter's A10/SD845 problem is the driver LOADING MECHANISM — Bannerlator loads
+turnip via adrenotools (linkernsbypass hook, needs ~A11+); Winlator loads it as a plain system
+Vulkan ICD (works on any Android). Also closed PR #24 (strlcpy/snprintf — original code already
+safe).
+
+Branch `feat/turnip-icd-direct-android10` off main (`f43a319`), commits `60038cf` + `971c415`,
+CI `28309292459` ✅ green, **NOT merged, NOT device-tested** (no A10 hardware here). New driver
+option `turnip-26.1.0` (Winlator's Mesa Turnip 26.1.0, ICD format) that installs the freedreno
+ICD + .so into the guest, points `VK_ICD_FILENAMES` at it, and **skips the adrenotools env**
+entirely — bypassing the A11+ hook. Picker filter special-cased to gate on `isAdrenoGPU()` (the
+normal adrenotools probe is exactly what fails on A10). Adrenotools path untouched; default still
+turnip-sdk36. Top residual risk: host-vs-guest path assumption (if proot-remapped, library_path
+would need a guest path). NEXT: reporter verifies a CI build on their SD845 → then merge.
+
+---
+
+## 2026-06-27 — Implement open issues #22 (magnifier) + #20 (FEX Performance+TSO preset)
+
+gl-upscaler-parity merged to main (`6d5f75b`). Branch `fix/issues-22-magnifier-20-fextso` off
+main, CI build `28308479676` ✅ green. **User device-confirmed both work → MERGED to main (ff
+`6d5f75b..ecb8646`, branch deleted, no tag); GitHub auto-closed #22 and #20.**
+
+**#22 magnifier (`d7a736e`):** `showMagnifierOverlay()` cast the renderer to `GLRenderer` and
+no-op'd the zoom callback for anything else → on the default Vulkan renderer the overlay opened
+stuck at 100% with dead +/- buttons. Now uses the `HostRenderer` interface (get/setMagnifierZoom
+implemented by all 3 renderers; Vulkan applies it live via `updateTransform`). The other
+GLRenderer cast in `showScreenEffectsDialog` is correct (effects are GL-only) — left as-is.
+
+**#20 FEX "Performance (TSO)" preset (`55fb879`):** fetched the issue screenshot — the reporter's
+preset is Performance with **only `FEX_TSOENABLED=1`** (vector/halfbarrier/memcpy TSO stay off,
+x87-reduced + multiblock on), the lightweight single-TSO-flag variant. Added `PERFORMANCE_TSO`
+to `FEXCorePreset` + a `getEnvVars` block + `getPresets` entry + `performance_tso` string.
+Additive, no DB migration; auto-appears in the spinner and Compose container/shortcut editors.
+
+NEXT: CI green → device-test (#22 magnifier on a **Vulkan** container; #20 pick preset + launch a
+TSO game) → merge to main.
+
+---
+
+## 2026-06-27 — Open-issue triage + scopes (#22 magnifier, #20 FEX TSO preset) — QUEUED
+
+Scoped while the gl-upscaler-parity slider CI built. To be implemented on a **fresh branch off
+main AFTER the gl-parity sliders device-test + merge** (user: "after we device test we will
+tackle them both").
+
+**#22 — magnifier doesn't work / zoom — ROOT CAUSE FOUND (high confidence):**
+`XServerDisplayActivity.showMagnifierOverlay()` (~line 3339) casts the renderer to
+**GLRenderer only** and the zoom callback early-returns when it's not GL. The **default
+renderer is Vulkan**, so the Magnifier overlay opens, shows 100%, and the +/− buttons are dead.
+Confirmed clean fix: `HostRenderer` interface already declares `get/setMagnifierZoom` (all 3
+renderers implement it) and `VulkanRenderer.setMagnifierZoom` calls `updateTransform()` → zoom
+applies live. **Fix = use the `HostRenderer` reference instead of the GLRenderer cast** (~3
+lines, 1 file). Optional: `ASurfaceRenderer.setMagnifierZoom` lacks a redraw trigger (add
+`updateScene()`). Device-test on Vulkan (can fold into the slider session).
+
+**#20 — Add FEX "Performance + TSO" preset:** the built-in PERFORMANCE preset sets
+`FEX_TSOENABLED=0`; many games need TSO. **Fix = add a new "Performance (TSO)" built-in preset**
+(Performance base + the 4 TSO flags on: TSOENABLED/VECTORTSOENABLED/MEMCPYSETTSOENABLED/
+HALFBARRIERTSOENABLED=1, X87REDUCEDPRECISION=1, MULTIBLOCK=1) across `FEXCorePreset.java` +
+`FEXCorePresetManager.java` (getEnvVars + getPresets) + `strings.xml`. No DB migration (presets
+stored by id). Verify exact flags vs the reporter's screenshot.
+
+**Also noted:** #18 (bundle brunodev Winlator turnip 26.1.0 for A10/SD845 — packaging easy but
+adrenotools load may need A11; needs an A10 device) and PR #24 (bounded strlcpy/snprintf in
+android_sysvshm.c — review + merge candidate).
+
+---
+
+## 2026-06-27 — GL upscaler parity: device-test, inverted-slider fix, sharpness-range tuning
+
+**Branch:** `feat/gl-upscaler-parity` (off main `ec3bcb0`). Phase 1 (SGSR/FSR/Sharpen on the
+OpenGL EffectComposer + drawer Scaling-mode picker, commits `efd5f4f`→`327ab9d`) was already
+CI-green (`28306036455`). This session = device-test + fixes. NOT merged.
+
+**Device test (build 1.9.2 vc31, AIO-Graphics-Test-32bit = OpenGL + 1280x720 on 1080p panel,
+DX11 SPACE scene, frozen-frame A/B via drawer Pause):** GL parity LIVE — all 6 scaling chips
+produce DISTINCT output on the GL renderer (frozen-frame re-upscale works). RMSE vs None:
+Linear 0% (≡None ⇒ default sampling IS bilinear) · Nearest 1.51% (blocky) · Sharpen 0.36% ·
+SGSR 0.68% · FSR 0.79% (crispest). Cursor stays crisp under Nearest = PASS (host cursor
+exempt from point-scale). Zoomed montages confirm visual distinctness.
+
+**🐛 Bug found + fixed (`52c7092`):** the upscale "Sharpness" slider was INVERTED for the
+Sharpen mode (AMD CAS) — raising it SOFTENED. Root cause = `FSREffect`'s level scale is
+inverted (level 1 = CAS sharpness 0.90 = sharpest, level 5 = 0.12 = softest) but both CAS
+call sites mapped slider straight onto level. Fix: `EffectComposer.buildPickerCas():339`
+`level=(1-upscaleSharpness)*4+1` + `XServerDisplayActivity.onSgsrUpdate:2088`
+`level=(100-sharpness)/25+1`. SGSR (EdgeSharpness=1+s*1.333) and FSR RCAS (stops=1-s) were
+already correct → untouched. CI `28307366153` triggered then cancelled (superseded below).
+
+**✅ Slider-effectiveness tuning DONE + committed (graphics-vulkan-engineer, GL + Vulkan):**
+every sharpness slider now spans **0 = nothing (neutral, no sharpening; upscale still runs)
+→ 100 = max**, ZERO shader recompiles (all host-side push-constant / pass-gating math).
+Final effective values, slider 0/50/100:
+- GL SGSR EdgeSharpness **1.0 / 2.33 / 3.67** (`1.0+s*2.666` — span doubled, neutral floor 1.0)
+- GL FSR RCAS lobe scale **0.0 / 0.5 / 1.0** (`clamp(sharpness,0,1)` — 0 = true passthrough)
+- GL Sharpen mode 6 (snapped {0,25,50,75,100}) **OFF / CAS 0.50 / CAS 0.90** (0 = no CAS pass)
+- GL "Sharpen (CAS)" toggle (snapped) **OFF / 0.50 / 0.90**
+- Vulkan SGSR edge **0.5 / 2.5 / 4.5** (`0.5+s01*4.0` — span doubled)
+- Vulkan FSR/Sharpen RCAS con.x **0.0 / 0.5 / 1.0** (`upscaleSharpness01` linear, 0 = passthrough)
+- Vulkan CAS toggle **OFF / 0.5 / 1.0** (`casOn = casEnabled && casSharpness>0`)
+Snap = `XServerDrawer.kt` IntSlider `steps` override (5 stops only in mode 6 + always for the
+Sharpen(CAS) toggle; SGSR/FSR/Vulkan-Sharpen stay continuous). No over-drive past RCAS/CAS
+ceiling → no ringing. Commits `beebb17` (GL SGSR-double + FSR 0=neutral) · `fac47ed` (GL Sharpen
+5-stop snap + 0=OFF) · `0718c39` (Vulkan mirror). CI build **`28307792454`** ✅ green all 3 flavors.
+
+**✅ GL device-test PASSED (AIO space scene, OpenGL|DXVK Adreno 750, live drawer-open method):**
+Sharpen slider **snaps to 0/25/50/75/100** (tap ~38% → snapped to 50). FSR slider **0 = true
+passthrough** (crop png 218 KB, softer than None's 245 KB, no sharpening) → **100 = strongly
+sharp** (420 KB, +92%). SGSR **0→100 = +18% png**, montage shows visibly crisper limb/coastlines
+(doubled range). 0 = neutral confirmed. Vulkan mirror = code-verified (shared host logic) but
+not device-tested this session (AIO shortcut is OpenGL). Note for next time: this AIO test
+**exits the scene on BACK while paused**, so the frozen method was abandoned — open the drawer
+once via BACK while running, then switch chips live without pause/BACK. NEXT: merge gl-parity to main.
+
+**❌ Dropped per user:** a persisted per-shortcut "upscaling on/off" toggle. Clarified that
+720p→1080p plain stretch is ~free (final-blit sampler); only opt-in SGSR/FSR cost GPU and are
+already default-None + session-live. User said "leave the upscaling alone."
+
+---
+
+## 2026-06-27 — P4 "Lean GL path" (render-upgrades roadmap, final phase) — steps 1+3
+
+**Status:** branch `feat/p4-lean-gl-1-3` off main `35fd80d` (pushed). 2 commits. CI
+`28304623016` (`build-artifacts.yml`, all 3 flavors) running. Baseline main build
+`28304103719` ✅ green (known-good fallback). NOT merged; device-test pending.
+
+**Context:** Vulkan render-upgrades (P1 SGSR/FSR framework, P1b/1c CAS/HDR/sliders, P2 the
+5 GL effects → Vulkan, + native-mutex) are all DONE + on main. P3 (ReShade `.fx` engine)
+DROPPED. **P4 = the last phase**, and it targets the *Java GL renderer only*.
+
+**Recon (graphics-vulkan-engineer, read-only):** the roadmap's framing — "reduce
+GLSurfaceView overhead" — is mostly the wrong target. In the default config (DRI3 on) the
+game frame is **already zero-copy** on GL via AHardwareBuffer→EGLImageKHR (`GPUImage`), so
+there's no per-frame CPU upload to kill. EGL context is already GLES3 (`XServerView.java:89`)
+despite `GLES20.*` calls → GLES3 APIs available today. Real gaps: `setFilterMode` is a dead
+no-op on GL; no low-res→cheap-upscale path; full-frame `glTexSubImage2D` only on the
+SHM/DRI3-off/cursor path; effect chain renders base into a full-res FBO even for 1 effect.
+GameHub's `libxserver.so` is proprietary but its "direct scanout" rides the same AHB/EGLImage
+primitives we already own → P4 = clean-room reimpl with in-tree CAS/SGSR/FSR, nothing
+license-blocked. Ladder = 5 rungs; this batch = the low-risk 1–3.
+
+**Implemented (this batch):**
+- **Step 1 — `f7e0670` setFilterMode real on GL.** `GLRenderer.java`: new `windowTexFilter`
+  field; `setFilterMode(int)` maps `2→GL_NEAREST else→GL_LINEAR` (matches Vulkan convention),
+  applied in `renderDrawable` ONLY when `material == windowMaterial` so the **cursor stays
+  LINEAR**. Launch hook `XServerDisplayActivity.java:1785`
+  `renderer.setFilterMode(container.getRendererFilterMode())` gated `instanceof GLRenderer`
+  (was dead/unreachable before — nothing called `HostRenderer.setFilterMode`; Vulkan drives
+  filtering via `setUpscaler`). `getRendererFilterMode()` verified to exist (`Container.java:497`).
+- **Step 2 — PBO async upload — ❌ DROPPED.** First CI failed to compile
+  (`Texture.java:153 int cannot be converted to Buffer`): this project's compileSdk exposes
+  only the `Buffer` overload of `GLES30.glTexSubImage2D`, not the int-offset (PBO) variant →
+  a PBO can't feed the texture, so no benefit (`glTexImage2D`-with-offset would realloc every
+  frame, slower than the sync path). Cleanly reverted (`Texture.java` diff vs main now empty).
+  Deferred, not delivered. Lesson: don't assume Android GLES30 int-offset texSubImage exists.
+- **Step 3 — `c085dd9` glBlitFramebuffer for trivial copy stage.** `EffectComposer.render()`:
+  null-material (pure-copy) pass now goes through `blitReadBufferTo` (GLES30
+  `glBlitFramebuffer`, COLOR_BUFFER_BIT, LINEAR, scissor disabled) instead of program-bind +
+  textured quad. ALL real shader passes (Color/FXAA/Toon/CRT/NTSC/CAS) + the source-less
+  `drawFrame` scene render are UNCHANGED — only the degenerate null-material branch changed
+  (which also fixes an old clear-then-draw-nothing→black bug). Bit-identical with-effects output.
+
+**Deferred:** Step 4 (low-res render-target → cheap upscale = the actual "GameHub feel" win,
+higher risk: letterbox/scissor + keep cursor full-res) and Step 5 (drop GLSurfaceView for an
+owned EGL/SurfaceView present thread). Step 2 (async CPU-path upload) would need a non-PBO
+mechanism given this SDK's bindings.
+
+**Confidence:** step 1 = would-work/needs-device-proof (sampler state only, no fast-path
+regression); step 3 = would-work (bit-identical for shipped effects). No SDK in the agent env
+→ correctness proven by CI compile + device test, not local build.
+
+**Next:** CI green → device-test (GL renderer + Filter toggle nearest/linear; confirm cursor
+stays sharp; effects still composite) → merge to main. No tag/release (artifacts only).
+
+---
+
+## 2026-06-27 — #19 follow-up: Layout L wired + A/L card chooser
+
+**Status:** branch `fix/shortcut-name-overflow` (pushed). Commit `324bb4a` (L + chooser) +
+audio-drop follow-up edit. Compile CI `28300618235` (`main.yml`) running on `324bb4a`;
+audio-drop fix needs a re-run after its commit. NOT merged.
+
+**Ask:** user said "wire up L so I can choose between the two" — make the list-view card style
+user-selectable between the existing layout A and the chosen layout L.
+
+**Implementation:**
+- `ShortcutsViewModel.kt`: persisted `useLayoutL` pref (`shortcuts_prefs` / `list_card_layout_l`,
+  default `false` = A) mirroring `isGridView`; `setUseLayoutL()`.
+- `ShortcutsScreen.kt`:
+  - Top-bar **A/L toggle** — an "A"/"L" Text `IconButton`, shown only in list view (hidden in
+    grid). Keyed the top-bar-actions `LaunchedEffect` on `(isGridView, useLayoutL)` so the toggle
+    reflects live state (was `Unit` → captured stale values; the existing grid icon only updated
+    via content recompose).
+  - List branch now picks `ShortcutItemLayoutL` vs `ShortcutItem` on `useLayoutL`.
+  - New `ShortcutItemLayoutL`: same 48×64 poster cover; subtitle = `container · resolution`;
+    PRIMARY `FlowRow` of bright `CompChip`s — renderer (`ChipRendColor`), DXVK, frame-gen
+    (`ChipFgColor`, "Bionic-FG" / "LSFG-VK"); SECONDARY `FlowRow` of `SecondarySpec` (7dp colour
+    dot + dimmed `OnSurfaceVariant` 10sp label) — driver, VKD3D, backend (`ChipCpuColor`).
+  - Renderer / frame-gen / backend resolved via `shortcut.getExtra(key, container.getX())`
+    (`getRenderer` / `getFrameGenEngine` / `getEmulator`); backend name via
+    `R.array.emulator_entries` + `StringUtils.parseIdentifier`.
+  - **Refactor:** extracted the shared ⋮ menu into `ShortcutOverflowButton` (own `menuExpanded`),
+    now used by BOTH A and L so the menu can't drift.
+- **Audio dropped** from L's secondary (follow-up edit) to match `docs/shortcut_card_L_final.html`
+  — lets driver · VKD3D · backend sit on one row. First commit `324bb4a` wrongly included it.
+- **Deferred:** backend preset suffix ("FEXCore · TSO" / "Box64 · Perf" in the mockup) — needs the
+  async `Box64PresetManager` / `FEXCorePresetManager`, too heavy to resolve per list-card; backend
+  shows the emulator name only for now.
+
+**Next:** commit audio-drop fix → CI green → device-test (both layouts render + pref persists
+across the toggle and app restart) → merge → close #19. ⚠️ save-before-device-test rule.
+
+---
+
+## 2026-06-27 — Issue #19 "Name of games is empty" + game-card redesign
+
+**Status:** branch `fix/shortcut-name-overflow` (pushed, NOT merged). Layout A build CI `28299970224` running.
+
+**Root cause (#19):** in `ShortcutsScreen.kt` list-mode `ShortcutItem`, the right-aligned
+resolution+DXVK/VKD3D info column had no width bound. In a `Row`, unweighted children are
+measured before the weighted name column gets the remainder, so a long version string (e.g.
+a DXVK/VKD3D nightly with a commit id in its name) grew unbounded → collapsed the weighted
+name column to 0 width ("name is empty") AND pushed the trailing ⋮ overflow menu off-screen.
+
+**Iterations on the branch:**
+- `1dd8d4d` interim: capped info column `widthIn(max=120dp)` + ellipsize. Device-tested by user
+  → fixed the blank name but now TRUNCATED the component versions (not acceptable).
+- `e496040` interim: split DXVK/VKD3D onto own lines, wrap to 2 lines, cap 140dp.
+- `b598adb` (current tip) **Layout A redesign**: replaced the info column with a 3:4 poster
+  cover (reuses `shortcut.icon`, same bitmap the grid uses) + name/container + graphics
+  components as colour-coded chips on a wrapping `FlowRow` (`CompChip` helper + 4 chip colors,
+  `ExperimentalLayoutApi`). Long version strings wrap to another chip line / grow the row
+  taller instead of clipping. CI building (`28299970224`).
+
+**Design exploration (HTML mockups, rendered via headless chromium, saved to /sdcard/Download):**
+- `docs/shortcut_card_layouts.html` — 6 layouts A–F (poster, square-icon+chips, hero banner,
+  16:9 spec grid, two-tier stat strip, current-for-comparison).
+- `docs/shortcut_card_layouts_dense.html` — 6 denser layouts G–L that ALSO show renderer
+  (OpenGL/Vulkan/SurfaceFlinger), frame-gen (off/bionic/lsfg), audio (ALSA/PulseAudio) and
+  x86 backend (FEXCore/Box64/wowbox64 + box64/FEX preset). Real values pulled from arrays.xml
+  + ShortcutsScreen.
+- `docs/shortcut_card_L_final.html` — **user likes layout L** (bright primary chips
+  renderer·DXVK·frame-gen + muted secondary line driver·VKD3D·backend), **audio dropped per
+  user so the secondary line fits one row / card is shorter**. Resolution moves into subtitle.
+
+**NEXT:** user wants to SEE the layout A build on device first, but LIKES L → likely wire L
+(swap the FlowRow chip cloud for L's two-tier primary/secondary) on the same branch. L needs
+3 more shortcut extras resolved in ShortcutItem: `renderer`, `frameGenEngine`, `emulator`
+(+ box64Preset/fexcorePreset). Keys all confirmed present.
+
+---
+
+## (legacy) Star-Compose
+
+**Repo:** https://github.com/The412Banner/star-compose (main branch)  
+**Mirror:** https://github.com/kalteatz24/winlator-test (star-compose branch)  
+**Local:** `/data/data/com.termux/files/home/winlator-test`  
+**Always push to both remotes after every commit:**
+```
+git push star-compose star-compose:main
+git push kalteatz24 star-compose:star-compose
+```
+**Then trigger CI:**
+```
+gh workflow run "Any branch compilation." --repo The412Banner/star-compose --ref main
+```
+
+---
+
+## ⚠️ WORKFLOW RULE — save before device tests / heavy jobs
+
+We **device-test on the same physical device that hosts the working session** (PRoot/Termux + the app under
+test are on one device). A device test, app install, screenshot/diff batch, or large agent/workflow can OOM and
+crash the session, losing any un-saved context. **Always flush memory + this progress log + commit BEFORE running
+a device test or heavy/memory-load job, and update continuously — not just at the end.** Memory + this log are the
+durable checkpoint; the live session is volatile.
+
+---
+
+## 2026-06-27 (latest) — 🚀 Release 1.9.2 (stable patch)
+
+Opacity fix device-confirmed working by user → cut **1.9.2** stable patch. Bumped `app/build.gradle`
+versionCode 30→31, versionName 1.9.1→1.9.2 (`84b6bc1`), pushed main, dispatched `release.yml`
+(run `28295471682`) with tag `1.9.2`, title `Bannerlator 1.9.2`, make_prerelease=`false`
+(→ prerelease:false + make_latest:true). Workflow builds all 3 release APKs + generates/attaches
+update.json (vc31) so the in-app updater offers it to stable users.
+
+**What 1.9.2 ships (since 1.9.1):** full Vulkan effect suite — P1 SGSR + FSR1 upscalers (`5f5a4a0`),
+P1b sharpen + render-scale, P1c CAS + fake-HDR + sharpness sliders, P2 FXAA/Toon/Color/CRT/NTSC screen
+effects; Native-Rendering ↔ presets mutex; Linear default scaling mode; on-screen-controls overlay-opacity
+drop-shadow fix (`1d9439e`). Plain numeric tag = stable per the versioning hard rule (patch X.Y.Z allowed
+on explicit user request).
+
+**✅ PUBLISHED — release run `28295879200` succeeded.** 1.9.2 is **Latest**, prerelease=false, all 3 flavor
+APKs + `update.json` (vc31) attached → in-app updater offers the OTA to 1.9.1 (vc30) installs. Release body
+rewritten to the polished 1.9.1-style layout (logo → ✨What's New → 📥Downloads → 🙏Credits → changelog)
+with a full **graphics credits table**: SGSR ([SnapdragonStudios/snapdragon-gsr](https://github.com/SnapdragonStudios/snapdragon-gsr), BSD-3),
+FSR/Sharpen ([GPUOpen-Effects/FidelityFX-FSR](https://github.com/GPUOpen-Effects/FidelityFX-FSR), MIT),
+CAS ([GPUOpen-Effects/FidelityFX-CAS](https://github.com/GPUOpen-Effects/FidelityFX-CAS), MIT),
+FSR-Fit/compositor blueprint ([utkarshdalal/GameNative](https://github.com/utkarshdalal/GameNative), GPL-3.0 — approach reimplemented, not copied),
+and HDR/FXAA/Toon/CRT/NTSC/Color (upstream Winlator-Ludashi GLES2 effects ported to Vulkan). Attributions
+sourced from the bundled shader headers at `app/src/main/cpp/winlator/*.frag`, which retain their upstream
+license text. ⚠️First run `28295471682` FAILED at the update.json step — `release_notes` had literal
+double-quotes that broke the bash `NOTES="..."` assignment (exit 127); re-ran with shell-safe plain notes.
+
+**📝 Release-copy accuracy pass (post-publish body edits, no rebuild).** User flagged the marketing line
+("only Winlator fork with both real spatial upscalers and a complete post-processing chain on Vulkan —
+previously all OpenGL-only"). Verified in source against the other forks and corrected it:
+- **GameNative** = FSR1-only on the Vulkan compositor (the blueprint we built on).
+- **WinNative** (`/home/claude-user/winnative`) = **SGSR-only** on its Vulkan compositor (`cpp/winlator/vk/shaders/sgsr1.frag`
+  + `SGSRUpscaler.java`) **plus an effect chain broader than ours** (sharpen/CRT/HDR/NTSC+NTSC2/Toon/ColorAdjust/
+  ColorGrade/ColorBlind/Vivid/Scanlines/Pixelate/Natural); its `fsr.glsl` is only in the cnc-ddraw wrapper, not the compositor.
+- So "real upscaler on Vulkan" and "full effect chain on Vulkan" are **NOT** unique to us; only **both SGSR *and* FSR1
+  together** on the default path is. Also the upscalers were brand-new, not "previously OpenGL-only" (only the effects were).
+- Rewrote the 1.9.2 intro: dropped the superlative, credited GameNative as FSR-on-Vulkan pioneer, noted SGSR exists in
+  other Pluvia forks, claimed only the verified differentiator (both upscalers together). Also split What's New so
+  **Render scale (supersampling)** is labeled *set before launch* (container/shortcut) vs the drawer-live upscalers/effects.
+  Applied via `gh release edit 1.9.2 --notes-file` (APKs/update.json/Latest unchanged).
+
+---
+
+## 2026-06-27 — Native-mutex merge + on-screen controls opacity shadow fix
+
+**1. Native-Rendering ↔ presets mutex MERGED to main.** User device-tested the latest `feat/vulkan-native-mutex`
+build and confirmed it good. Fast-forwarded `main` `506ac6a`→`1c9c576` (`3ed78bb` mutex + `1c9c576` toast
+black-box fix + Linear default scaling mode), pushed `origin/main`, deleted the feature branch local + remote.
+The full Vulkan graphics program (P1 / P1b / P1c CAS+HDR / P2 effects / native-mutex) is now all on main.
+
+**2. On-screen controls opacity bug FIXED** — `app/.../inputcontrols/ControlElement.java`, commit `1d9439e` on
+main, CI run `28294667670` ✅ GREEN (all 3 flavors). **Device-test PENDING.**
+- *Symptom (user, device screenshots 100% vs 6%):* at low Overlay Opacity the A–F keyboard strip fades fully, but
+  the 4 compact keys MRB/BKSP/SPACE/ENTER keep a solid blue filled square while only their label text fades.
+- *Root cause (pulled both screenshots to confirm):* NOT the fill paint — the GameHub `fillColor` already tracks
+  `gameHubDim`. It was the **drop shadow**: the BUTTON draw path calls `paint.setShadowLayer(..., 0x401C85FE)`
+  (hardcoded blue, alpha `0x40`) before the fill, and that shadow alpha never scaled with opacity. At low opacity
+  the fill/stroke/text vanish but the blue glow persists — on the compact `SQUARE` keys it reads as a solid blue
+  background; on the wide `ROUND_RECT` pills (A–F) it smears out and looks invisible. That asymmetry = the bug.
+- *Fix:* added `int shadowColor = Color.argb((int)(0x40*gameHubDim*effectiveOpacity),0x1C,0x85,0xFE)` and used it
+  in both `setShadowLayer` calls (trigger + non-trigger BUTTON paths). 0% opacity now truly vanishes. Only the
+  BUTTON case has a shadow; STICK/D_PAD/TRACKPAD/RANGE_BUTTON unaffected.
+- *Next:* CI green → install → device-test opacity at low values across both key shapes.
+
+---
+
+## 2026-06-27 — Phase 2: remaining GL screen effects → Vulkan post chain
+
+**Branch `feat/vulkan-effects-p2`** (off `main` `71dceca`), commit `5dfcdbf` + fix `77c6b76`. Builds on the
+now-merged P1/P1c Vulkan post-process framework. NOT merged.
+
+**Device test (space scene):** all 5 effects work individually — Color/Brightness (washes out at 95), Toon
+(edge outlines + posterized), CRT (RGB chromatic-aberration on stars), NTSC (horizontal chroma bleed). NTSC+CRT
+2-effect combo renders clean. **Bug found + fixed (`77c6b76`):** with a *scaling* mode (SGSR/FSR/Sharpen/downscale)
+active, the screen effects were silently dropped (toggles on, image clean) — `recordUpscalePasses`' local `fxOn`
+only checked `cas||hdr`, so the scale pass treated itself as final and skipped the chain. Now includes all 7 effects.
+(This also fixes P1c CAS/HDR, which had the same gap on the scaling path.) **Fix rebuilt: branch tip `aed6cde`, CI build `28290066760` ✅ green (all 3 flavors).** **Fix device-verified on the
+space scene:** SGSR + CRT now shows the CRT fringing/scanlines on the upscaled image (was dropped pre-fix), and
+SGSR + NTSC + CRT (3-deep chain) renders both effects cleanly — no black screen/corruption. **Phase 2 is
+device-proven** (Color/Toon/CRT/NTSC visually confirmed + the scaling-chain fix; FXAA wired, subtle by nature).
+Branch tip `0593385`. **Merged to main (ff `eee9d57`), branch deleted; artifacts build `28291121833` ✅ green.**
+
+**Phase 3 (ReShade-style `.fx` engine) DROPPED 2026-06-27.** The upscalers (SGSR/FSR/Sharpen/downscale) are
+resolution-reconstruction passes wired into the compositor — not ReShade-style fixed-res filters, so they stay hardcoded
+(the headline differentiator). The cosmetic effects (CAS/HDR/FXAA/Toon/Color/CRT/NTSC) are fully covered by the curated
+hardcoded set with better perf/reliability on mobile/Turnip. A data-driven engine only pays off for user/community
+extensibility without rebuilds, which isn't a goal. **Effects work is complete.** Remaining: P4 (lean native-GLES2 GL path)
++ the queued overlay-opacity button-fill bug. The Vulkan renderer now carries the full stack: SGSR/FSR/Sharpen upscalers +
+CAS + fake-HDR + FXAA/Toon/Color/CRT/NTSC, all on the default path.
+
+Ported the 5 remaining GL-only screen effects onto the **same** Vulkan post chain as composable controls,
+at full GL parity:
+- **Color** — Brightness / Contrast / Gamma sliders (replicates `ColorEffect.java`: brightness `clamp(s/100,-1,1)`,
+  contrast `clamp(s/100,0,2)` so negative contrast is a no-op like GL, gamma `clamp(0.1,5)`; neutral 0/0/1 ⇒ pass skipped).
+- **FXAA · Toon · CRT · NTSC** — toggles (GL shader math ported verbatim).
+
+**Locked canonical chain order** (best results): `composite → scale (SGSR/FSR) → FXAA → Toon → Color → CAS → HDR
+→ NTSC → CRT → swapchain` — AA first, stylize/grade the clean image, sharpen, bloom, then the output-medium
+emulation last (NTSC analog signal, then the CRT tube). The fixed 2-effect chain from P1c was generalized to an
+ordered 7-effect list, ping-ponging `fx1`/`fx2` (2 buffers suffice); the last active effect writes the swapchain,
+earlier ones write `offscreenRenderPass` fx targets (auto-barriers). Engages even at scaling mode 0/1/2.
+
+5 new shaders (`fxaa/toon/color/ntsc/crt.frag` + compiled `*_frag.h`), 10 new pipelines (Off/Swap per effect),
+all PC structs ≤ 28 B (≤ the 88 B shared range, unchanged). Plumbing mirrors P1c: 5 JNI entry points,
+`VulkanRenderer.setScreenEffects(b,c,g,fxaa,toon,crt,ntsc)`, `XServerDialogState.onVulkanScreenEffectsApply`,
+a "Screen Effects" subsection in the Vulkan drawer block, and launch-seed + callback wiring in
+`XServerDisplayActivity`. **No-op safety:** with zero new effects enabled, control flow is identical to current main
+(no regression to shipped P1/P1c behavior). Touched: `{fxaa,toon,color,ntsc,crt}.frag`(+`.h`),
+`VulkanRendererContext.cpp/.h`, `vulkan_jni.cpp`, `VulkanRenderer.java`, `XServerDialogState.kt`, `XServerDrawer.kt`,
+`XServerDisplayActivity.java`. `docs/render_upgrades_report.html` already shows P2 in-progress + the locked chain order.
+
+---
+
+## 2026-06-27 — Vulkan CAS + fake-HDR + sharpness sliders (Phase 1c) + on-device upscaler proof
+
+**Branch `feat/vulkan-cas-hdr`** (off `feat/vulkan-upscaler-sgsr-fsr` tip `80c6d56`), commit `4fecbc6` +
+docs `181500c`. **CI build `28287630767` ✅ GREEN** (standard/ludashi/pubg). NOT merged. Device-test pending.
+
+**On-device upscaler verification (the resume from the smooth-blob test).** Re-ran the frozen-frame A/B on the
+**DX11 "space" scene** (textured planet + coastlines + dense starfield), 720p container → 1080p panel, build 1.9.1:
+the scaling modes are now clearly and usefully distinct (RMSE vs None ≈ 6× the smooth blob's <0.4%):
+
+| Mode | RMSE vs None | On screen |
+|---|---|---|
+| Nearest | 0% (≡ None) | hard stair-step jaggies on the planet limb (point) |
+| Linear | 1.79% | jaggies smoothed but whole frame softened |
+| **SGSR** | 1.75% | edges cleaned, stars/detail stay crisp — sweet spot |
+| **FSR / FSR-Fit** | 1.82% | same family as SGSR |
+| **Sharpen** | 2.46% | brighter/punchier (RCAS), keeps base jaggies |
+
+The earlier "no visible difference" was **bad test content** (smooth SDF blob, no high-freq edges), not a bug —
+spatial upscalers are an edge-cleanup whose effect grows with the upscale ratio. "More RMSE" ≠ "better"; fidelity to
+a native render is the goal. This test motivated the P1c sharpness sliders (strength was locked at 0.25).
+
+**Phase 1c — three new composable Vulkan post controls + one rename:**
+- **CAS toggle + "CAS Sharpness" slider (0–100, default 60)** — the same AMD CAS the GL path uses (`cas.frag`
+  ported from `FSREffect.java`), layered on top of any scaling mode, runs even at native res.
+- **HDR toggle** — the same fake-HDR (`hdr.frag` ported from `HDREffect.java`, HDRPower 1.30, binary).
+- **"Sharpness" slider** for scaling modes SGSR/FSR/FSR-Fit/Sharpen — unlocks the real upscaler sharpness
+  (was hard-coded 0.25 RCAS stops; default slider 75 keeps 0.25). SGSR `EdgeSharpness` moved const→push-constant.
+- **GL "SGSR" → "Sharpen (CAS)"** — the GL toggle was never SGSR; it's AMD CAS sharpening at native res. Label-only.
+
+Pipeline: `recordUpscalePasses` rewritten to chain `composite → scale → CAS → HDR → swapchain`, with optional
+`fx1`/`fx2` intermediates ping-ponged through `offscreenRenderPass` (auto-barriers via its baked subpass deps; no
+hand-rolled `vkCmdPipelineBarrier`). Cross-binding the swapchain-render-pass scale pipelines into an
+`offscreenRenderPass` fx target is legal — both passes use `VK_FORMAT_R8G8B8A8_UNORM` (format-compatible). All PC
+structs ≤ 88-byte range. Touched: `cas/hdr/sgsr.frag` (+ compiled `*_frag.h`), `VulkanRendererContext.cpp/.h`,
+`vulkan_jni.cpp`, `VulkanRenderer.java`, `XServerDialogState.kt`, `XServerDrawer.kt`, `XServerDisplayActivity.java`.
+Drawer-only / session-live (no DB persist), like the scaling mode. `docs/render_upgrades_report.html` updated with
+the device-test results + P1c.
+
+---
+
+## 2026-06-27 — Vulkan spatial upscalers + sharpen + supersampling (Phase 1/1b)
+
+Branch `feat/vulkan-upscaler-sgsr-fsr` (NOT merged). First fork with real SGSR **and** FSR1 upscaling on the
+default Vulkan renderer, plus native-res sharpen and supersampling — in one app. Full design/provenance log:
+`docs/SGSR_HDR_VULKAN_PLAN.md`; per-renderer summary `docs/render_upgrades_report.html`.
+
+**Built a Vulkan post-process framework** in `app/src/main/cpp/winlator/VulkanRendererContext.cpp` (offscreen
+composite target at game res → post/upscale pass → swapchain), then layered features on it:
+
+- **Scaling mode** (in-game drawer, live, Vulkan-only): None / Linear / Nearest / **SGSR** / **FSR** / **FSR (Fit)** /
+  **Sharpen**. Modes via `VulkanRenderer.setUpscaler(int)` 0–6. Upscalers engage only when the game renders below
+  display res; **Sharpen (6)** runs FSR RCAS at any res incl. native.
+- **Supersampling ("Render scale")** — pre-launch container + per-game-shortcut setting Off/1.25x/1.5x/2x (stored via
+  `renderScale` extra, no DB migration). Launch multiplies the X11 render res (aspect-preserve, clamp 7680x4320, even
+  dims); compositor runs a new Lanczos-2 `downscale.frag` via `setHqDownscale(true)`. DSR/OGSSAA-style.
+- **Per-renderer Graphics tab** — shows ONLY the active renderer's controls (OpenGL→SGSR/HDR+ScreenEffects;
+  Vulkan→Scaling mode; SurfaceFlinger→"no enhancements" note) instead of greying out the rest.
+
+**Shaders bundled** (offline-compiled to `.spv` C-array headers, license headers retained): SGSR 1.0 (Qualcomm,
+BSD-3), FSR1 EASU+RCAS (AMD, MIT), Lanczos downscale. Approach for FSR-in-compositor / FSR-Fit credited to GameNative.
+**HDR deferred** (Android WSI rarely exposes an HDR10 surface; revisit later).
+
+**Commits:** `5f5a4a0` native upscaler + drawer · `28ab22d` per-renderer tab · `c3cbe49` Phase 1b sharpen+supersampling
+· docs `33ad5f4`. **CI:** Phase 1 GREEN (`28276691564`, `28277238762`); full Phase-1b build `28277821185` ✅ GREEN
+(all 3 flavors). **DEVICE-UNTESTED** — next step is on-device: sub-native upscale modes, native-res sharpen, 1.5x
+supersampling, and per-renderer tab. Then **Phase 2** = port GL effects (FXAA/CRT/Toon/NTSC/color) to Vulkan.
+
+CI for this repo is MANUAL: `gh workflow run build-artifacts.yml --ref <branch>`.
+
+---
+
+## 2026-06-25 — 1.9 STABLE cut ✅ (SurfaceFlinger renderer + DXVK 3.0 / Vulkan 1.4)
+
+Merged `feat/surfaceflinger-renderer` to main (ff `d915798`), bumped to **1.9 / versionCode 29** (`eb39c2b`),
+and cut **1.9 stable** (release run `28215839109`, `make_latest`, `update.json` attached → in-app updater
+offers it on the stable channel). User explicitly authorized promoting to stable ("release 1.9").
+
+**Shipped in 1.9:**
+- **SurfaceFlinger (ASR) renderer** — experimental third host renderer, opt-in behind a reboot-risk warning
+  dialog, default off. Ported from GameNative PR #1582 (André Vito) on StevenMXZ's scanout work.
+- **DXVK 3.0 / Vulkan 1.4** option in the Turnip/Wrapper Driver Configuration.
+- **Fixes:** per-game DXVK/VKD3D download sheet no longer hides behind the settings dialog; perf HUD labels
+  SurfaceFlinger correctly.
+
+**No imagefs reinstall required** — the 1.9 diff is purely app-side (renderer engine, a bundled native lib,
+an env-var option, UI). No `imagefs/`, `assets/`, or `imgVersion` change; existing containers are untouched.
+
+Release description was rewritten to the 1.8 layout with credits to GameNative (André Vito) + StevenMXZ for ASR.
+
+---
+
+## 2026-06-25 — SurfaceFlinger (ASR) renderer Phase 1 ✅ WORKING + device-proven (branch `feat/surfaceflinger-renderer`)
+
+Took the SurfaceFlinger renderer from "selectable skeleton" (Phase 0) to a working scene compositor
+that renders real D3D games fullscreen via Android SurfaceFlinger — no GL/Vulkan compositor. Ported
+from GameNative PR #1582 (André Vito, on StevenMX's scanout work), adapted to Bannerlator's X-server API.
+
+**Build-up:** scene engine (`ASurfaceRenderer` implements `WindowManager.OnWindowModificationListener`
++ `Pointer.OnPointerMotionListener`; `updateScene` walks the window tree under XLock → one SurfaceControl
+layer per window via `nativeRegisterWindowSC`/`nativeUpdateWindow` in a begin/apply transaction; frames
+pushed via `nativeSetWindowBuffer`) + additive `PresentExtension` ASR branch (routes the game AHB to the
+SC; Vulkan/GL paths untouched).
+
+**The hard debugging (device, Adreno 750, GTA IV + AIO Graphics Test, DXVK 3.0 + VK 1.4):** game ran
+(audio) but showed a small top-left window. On-device logging (filtered logcat to a file — wine logs flood
+the buffer) proved the whole Java chain worked (8000+ `ASR_Present`/pushes with valid AHBs, SC registered,
+visible). Two stacked root causes, both fixed:
+- **`Drawable.DRAWABLE_ASR_MODE`** (`98861c8`): port GameNative's flag so every Drawable is backed by a
+  composer-compatible `GPUImage` AHB at construction (`data = AHB mapped memory`) — required for
+  SurfaceFlinger to scan out. Wired `setAsrMode(true/false)` per renderer in `XServerView.initRenderer`.
+- **Geometry** (`bf292bf`): `computeWindowRect` used the normalized GL `sceneScaleX` (~1.0), pinning the
+  game at native size in the corner. Map through `viewTransformation.aspect` (surface-px-per-X-px, e.g.
+  1.5×) + letterbox offset instead → fills the surface.
+- **HUD** (`bf292bf` + `c4f6e5f`): wired `ASurfaceRenderer.setHudFrameTick` (FPS was blank — the tick was
+  Vulkan-only) + fixed the renderer label (`XServerDisplayActivity:1710` binary vulkan?:OpenGL → +SF case).
+
+**✅ DEVICE-PROVEN** (build `28213017959`, screenshot-every-5s/60s): GTA IV menu renders FULLSCREEN under
+ASR, HUD reads `SurfaceFlinger | DXVK | … FPS: 398 2.5ms`, stable. **✅ GL/Vulkan regression pass:** all
+three renderers render GTA fullscreen with correct labels/FPS (Vulkan 300, OpenGL 295, SurfaceFlinger 398)
+— additive edits don't disturb GL/Vulkan, global ASR flag clears correctly. **✅ Debug logging stripped**
+(`bb64f2b`, clean build `28213752314`).
+
+Branch tip `bb64f2b`, carries the merged Vulkan 1.4 commit. **NOT merged** — awaiting call: merge to main vs
+Phase 2 polish first (CPU desktop chrome compositing, cursor, fps-limit tearing — none block game render).
+Process note: always `git push` BEFORE dispatching a CI build (a build was once cut from the pre-push commit;
+verify via `gh run view <id> --json headSha`). 1.9-pre prerelease when cut.
+
+---
+
+## 2026-06-25 — DXVK 3.0 Vulkan 1.4 option ✅ merged + SurfaceFlinger renderer Phase-0 spike 🚧
+
+**Context:** DXVK 3.0 shipped (all 4 `.wcp` flavors on The412Banner/Nightlies). DXVK 3.0 **hard-requires
+Vulkan 1.4** (mandatory bump from 2.x's 1.3 — verified vs the release notes). The Turnip/Wrapper Driver
+Configuration "Vulkan Version" dropdown capped at 1.3, so the wrapper exported `WRAPPER_VK_VERSION=1.3.x`
+and DXVK 3.0 refused to init even on a VK1.4-capable driver.
+
+**Fix — Vulkan 1.4 option (`785fe2b`, branch `feat/vulkan-1.4-dxvk3`, CI `28205826581` ✅ → ff-merged to
+main 2026-06-25).** One-line: added `<item>1.4</item>` to `arrays.xml` `vulkan_version_entries`. Default
+kept **1.3** (safe; 1.3-only drivers/A6xx unaffected) — user picks 1.4 manually for DXVK 3.0. Value flows
+generically: dialog → `graphicsDriverConfig` `vulkanVersion=` token → `XServerDisplayActivity:2149` appends
+the driver patch → `WRAPPER_VK_VERSION` env. **Proved load-bearing at the binary level:** disassembled the
+bundled `libvulkan_wrapper.so` — `wrapper_GetPhysicalDeviceProperties` does `getenv("WRAPPER_VK_VERSION")` →
+`sscanf` → `VK_MAKE_API_VERSION` → `str` into `pProperties->apiVersion` (offset 0), the exact field DXVK 3.0
+gates on. Caveat: override is unconditional (no clamp to real driver max) → on A6xx (Turnip caps at 1.3)
+picking 1.4 would lie to DXVK = footgun; default-1.3 avoids it. All 4 Nightlies DXVK release bodies updated
+with the VK1.4 note + "Current version: 3.0". Driver side: The412Banner/Banners-Turnip builds report
+**Vulkan 1.4.354** (Mesa main, `TU_API_VERSION=VK_MAKE_VERSION(1,4,..)` for chip≥7); device Adreno 750 (A7xx)
+gets the 1.4 path. DEVICE-UNTESTED end-to-end (DXVK 3.0 launch w/ 1.4 selected).
+
+**SurfaceFlinger renderer (ASR) — Phase-0 spike (branch `feat/surfaceflinger-renderer`, commit `068c3a5`,
+CI `28208898551`).** 3rd host renderer ported from GameNative PR #1582 (André Vito; built on StevenMX's
+scanout work). Confirmed our `cpp/winlator/VulkanRendererScanout.cpp` is **byte-identical** to GameNative's —
+Steven's scanout foundation already in-tree. Spike = compiles + selectable (NOT a working compositor):
+native `cpp/asurfacerenderer/` (JNI repackaged to `com_winlator_star_renderer`) → `libasurface_renderer.so`
+via main CMakeLists; skeleton `ASurfaceRenderer` implements `HostRenderer` + loads lib + creates/destroys the
+SF context on the surface lifecycle (per-window scene compositing deferred to Phase 1); selection wired in
+`XServerView.initRenderer(String)` + `XServerDisplayActivity` (API<29 → Vulkan fallback) + "SurfaceFlinger"
+added to container + per-game renderer dropdowns. NOT merged; device-test pending. See
+`reference_gamenative_surfaceflinger_renderer` memory for the full Phase-1 plan.
+
+---
+
+## 2026-06-25 — 1.8 STABLE cut ✅ (updater picker fix + in-app OTA proven on a real stable)
+
+Closed out the 1.8 cycle. One code blocker remained from the updater work, then cut stable.
+
+**Picker correctness fix (`f1729a7`, branch `fix/updater-picker-sort`, CI `28200393133` ✅ → ff-merged to
+main, branch deleted).** GitHub's list-releases API does **not** return pure newest-first — it pins the
+`make_latest` release to the top, then lists the rest by date. Confirmed live: the API returned
+`[1.7 (latest, published 01:46), 1.8-pre2 (published 20:30), 1.8-pre1, 1.6…]`. `UpdateManager.pickNewestWithUpdateJson`
+took the **first** array element carrying `update.json`, which worked only because 1.7 had none (skipped).
+Once 1.8 stable carried `update.json` + `make_latest`, it would have **shadowed a newer 1.9-preN** in the
+prerelease channel. Fix = parse all releases into a list, `sortWith(compareByDescending { optString("published_at","") })`
+(ISO-8601 sorts lexicographically = chronologically), then walk for the first with `update.json`.
+
+**1.8 stable cut (user explicit go-ahead — required by the hard rule).** Bumped `versionCode 27→28` +
+`versionName "1.8"` (`376e5fd`), dispatched `release.yml` with `release_tag=1.8 release_number=1.8
+make_prerelease=false` → workflow auto-sets `prerelease:false` + `make_latest:true`. Release run
+`28201699881` ✅. Verified: **Bannerlator 1.8 = Latest**, 1.7 demoted; assets = 3 flavor APKs +
+`update.json`; **`releases/latest/download/update.json` now resolves to vc28/1.8** (stable updater
+baseline live). Release body rewritten to match the 1.7 layout (logo / tagline / What's-New sections /
+downloads table / credits / collapsible changelog) — intentionally **no reinstall-imageFS warning** since
+1.8 is app-side only (HUD + updater), nothing changed in imageFS.
+
+**✅ In-app OTA proven on a real stable cut:** a device running **1.8-pre2 (vc27)** auto-updated in-app to
+**1.8 stable (vc28)** — the full updater loop (detect → download correct flavor → install) confirmed on a
+genuine stable transition, not just pre→pre. Main tip `376e5fd`.
+
+**1.8 ships:** GameHub-style perf HUD (2nd selectable overlay + live swap) · in-app updater (auto-install
++ optional prerelease channel) · setup-screen branding fix · updater picker fix. Next cycle → 1.9-preN
+prereleases until an explicit stable call.
+
+---
+
+## 2026-06-25 (later) — In-app updater + prerelease channel (✅ device-proven, shipping via 1.8-preN)
+
+Built a GitHub-releases-based **in-app update system** (modelled on the BannersComponentInjector /
+BannerHub updater). Merged to main; being device-tested via prereleases.
+
+**Core — `core/UpdateManager.kt`:** fetches `releases/latest/download/update.json`, compares
+`BuildConfig.VERSION_CODE` (the integer is the source of truth, NOT the tag string), caches to
+`cacheDir` (offline-safe), picks the flavor APK by `BuildConfig.APPLICATION_ID`, downloads via the
+existing `HttpUtils` (reuses `DownloadProgressDialog`) and installs through the existing
+`com.winlator.star.tileprovider` FileProvider. Install-permission guarded (`REQUEST_INSTALL_PACKAGES`,
+Android 8+). **UI lives in 3 places:** Settings → new "Updates" section (readout, Check, Download &
+install, Notify toggle); About dialog (latest-version line + "Update now"); app-wide amber home banner
+(honours notify + skip-version). Manifest got `REQUEST_INSTALL_PACKAGES` + an `external-cache-path`;
+`release.yml` generates + attaches `update.json` per release.
+
+**"Include pre-releases" toggle (Settings, default OFF):** OFF = stable path (`releases/latest` only ever
+resolves to a non-prerelease). ON = `checkViaApi` → GitHub releases API (`?per_page=30`, prereleases
+included) → newest release carrying an `update.json` → its own asset URLs. **Gotcha: api.github.com 403s
+without a `User-Agent`** → added one to `HttpUtils`' string fetch. `release.yml` gained a
+`make_prerelease` input (sets `prerelease` + inverts `make_latest`); `update.json` now attaches to EVERY
+release so the toggle has data.
+
+**Versioning rule established (hard rule):** stables = plain numeric tag (`1.8`,`1.9`),
+`prerelease:false` + `make_latest:true` — the ONLY thing the default updater offers. Everything between
+stables = `X.Y-preN` (`1.9-pre1`,`pre2`…), `prerelease:true`, no make_latest, until explicitly promoted.
+`versionCode` ticks up on EVERY build.
+
+**Branding fix (`fix/setup-splash-branding`, merged):** the shared `DownloadProgressDialog` (first-launch
+imagefs setup + HttpUtils downloads incl. the update download) hardcoded **"Star Bionic"** + **"Bionic
+V1.1"** — caught from a device screenshot (pulled via root bridge). Title → `@string/app_name`
+(per-flavor), version → `BuildConfig.VERSION_NAME` (dynamic, new `@+id/TVVersion`). Also cleaned the
+leftover "Star Bionic" in the unused `about_dialog.xml`.
+
+**Build log:**
+
+| Step | Commit / Tag | CI Run | Result |
+|---|---|---|---|
+| Updater core (Settings/About/banner) | `41d7c06` | `28193511129` | ✅ green |
+| Include-prereleases toggle + UA fix | `19b7e36` | `28195066124` | ✅ green |
+| Merge + bump → 1.8-pre1 (vc26) | `ca87892` | `28195824422` (release) | ✅ published (prerelease) |
+| Setup-screen branding fix | `b11814c` | `28197124387` | ✅ green |
+| Merge + bump → 1.8-pre2 (vc27) | `2b10f53` | `28197773910` (release) | ✅ published (prerelease) |
+
+**✅ DEVICE-PROVEN:** on the installed vc25 build, toggling Include-prereleases ON surfaced 1.8-pre1, and
+Update downloaded + installed + launched it end-to-end. 1.8-pre2 (vc27) cut to re-test + carry the
+branding fix. Stable 1.7 users untouched throughout (`releases/latest` still 404s for update.json since
+1.7 predates the feature; no pre is make_latest). Main tip `2b10f53`.
+
+**🐛 KNOWN latent bug (NOT yet fixed):** GitHub `/releases` API is not reliably newest-first — it hoists
+the `make_latest` (stable) release to the top. `pickNewestWithUpdateJson` takes the first array element
+with an `update.json`, which works while only prereleases carry it, but once a **stable + a newer
+prerelease coexist**, the older stable would win over the newer beta for toggle-on users. **Fix before
+cutting 1.8 stable: sort releases by `published_at` (fallback `created_at`) DESC before scanning.**
+
+---
+
+## 2026-06-25 — GameHub HUD: device-test crash fix + full in-game drawer mirror (branch `feat/gamehub-perf-hud`)
+
+Continued the GameHub HUD port from P0–P4 (entry below) into on-device testing. Two follow-ups, neither merged.
+
+**1. First-launch crash FIXED (`4808d51`, build `28179250039` ✅ green).** Installing the correct P4
+build and enabling the GameHub HUD crashed the container + app the moment the overlay first refreshed.
+Logcat (pulled via the root bridge):
+```
+FATAL EXCEPTION: Thread-6
+android.view.ViewRootImpl$CalledFromWrongThreadException: Only the original thread that
+  created a view hierarchy can touch its views. Expected: main Calling: Thread-6
+    at com.winlator.star.widget.PerfHudView.update(PerfHudView.java:350)
+    at ...XServerDisplayActivity$6.onUpdateWindowContent(:798)   ← X-server epoll thread (PresentExtension)
+```
+Root cause: `PerfHudView.update()` runs on the X-server epoll thread and called `requestLayout()` /
+`invalidate()` directly — neither is thread-safe. `FrameRating` never hit this because it marshals via
+`post(this)`. Fix = `post(refreshOnUi)` where `refreshOnUi = () -> { requestLayout(); invalidate(); }`.
+The other two view-touching methods (`applyConfig`, `setVertical`) already run on the UI thread
+(`runOnUiThread` at `XServerDisplayActivity:561` / tap handler). **Gotcha for future HUD work: anything
+reached from `onUpdateWindowContent` is on the epoll thread → only `post()` / `postInvalidate()`.**
+
+**2. In-game side drawer now fully mirrors the container dialog (`7437c3d`).** User wanted the same
+settings/toggles in the in-game HUD tab. Before, `XServerDrawer.kt` → `HudContent` only had the classic
+subset (scale/opacity + 6 toggles) and its `buildConfig()` **omitted `hudStyle` and every gamehub-only
+key** — so changing anything in-game while the GameHub HUD was active stripped `hudStyle=gamehub` from the
+saved container config (persisted via `onFpsConfigApply` → `setFPSCounterConfig` + `saveData` at
+`XServerDisplayActivity:567`), reverting to the classic HUD on next launch. Rewrote `HudContent` to mirror
+`FpsCounterConfigDialog` exactly: GameHub-style switch, FPS-graph / Power / GPU-model / dual-battery
+toggles, skin/color/outline 3-stop chips (new drawer-styled `HudChipRow`, no FilterChip import), opacity
+slider, and the **identical key set** (emits both classic + gamehub metric key names) so the drawer and
+the pre-launch dialog are interchangeable. Metric/skin/scale/opacity changes apply **live** via
+`onFpsConfigApply` → `perfHud.applyConfig` (UI-thread safe). The classic↔gamehub **view swap** still
+applies on next launch only (the view is chosen at launch; a caption notes this) — live view-swap is a
+possible follow-up.
+
+Branch tip `7437c3d`. Combined build CI `28181338752` (in progress at time of writing). **NOT merged.**
+Next: device-test the `28181338752` build — (a) enable GameHub HUD (master **Show FPS** must also be on),
+launch → confirm renders without crash + tap flips orientation + metrics live; (b) open in-game drawer
+HUD tab → confirm all GameHub controls present, apply live, and no revert-to-classic → tune dims/colors →
+merge to main.
+
+## 2026-06-25 — GameHub-style performance HUD port (branch `feat/gamehub-perf-hud`) — P0–P4 coded, device-test pending
+
+A second, **selectable** in-game performance HUD modeled on GameHub 6.0.9's overlay, alongside the
+existing `FrameRating`. User scope: **full parity** (17 controls), **per-container**, **all 3 skins**.
+Clean reimplementation (our own View + data we already collect) — no GameHub code/assets copied.
+
+Recon: 3 Explore agents over the jadx decompile (`/home/claude-user/gamehub-6.0.9-jadx`, GameHub =
+Compose-Multiplatform `com.xiaoji.egggame`, obfuscated). HUD = plain Canvas/Paint/Path (no Compose/GL/
+native for visuals; ref legacy View `o6m.java`). Two layouts (horizontal pill / vertical list), FPS line
+graph (last 50 samples, peak clamped ≥60, 30fps guide), Classic/Neon/Mono skins, color-intensity
+(0.72/0.88/1.0), text outline (off/1.0dp/1.4dp), scale 0.6–1.4, opacity. Most metrics already collected
+by `FrameRating`; FPS comes from our own frame counter (GameHub's `libxserver.so` shm not needed).
+
+- **P0 plan** `docs/GAMEHUB_PERF_HUD_PORT_PLAN.md`.
+- **P1+P2** new `widget/PerfHudView.java` — self-contained Canvas view: both layouts, per-field colors,
+  FPS graph, all 3 skins, color-intensity, outline, scale, opacity; parses the `fpsCounterConfig`
+  KeyValueSet; `update()` frame-tick mirrors `FrameRating`; tap-toggle + drag. Standalone compile CI
+  `28175068799` ✅ green.
+- **P3** new `widget/HudMetrics.java` — shared collector: GPU% / temp / RAM / power+charging ported from
+  `FrameRating`, **plus** overall CPU usage % (`/proc/stat` delta) and the dual-battery power fix (sums
+  `battery`+`bms`+`main` `current_now` with abs()).
+- **P0 wiring** `XServerDisplayActivity.java` — when `hudStyle=gamehub`, creates a `PerfHudView`
+  (WRAP_CONTENT params) instead of the two `FrameRating` views; handled at every HUD site (create /
+  show-hide / frame-tick update / live applyConfig / `toggleFpsHudOrientation`→`perfHud.setVertical` /
+  DX-API detect→`setEngineLabel` / `_MESA_DRV_GPU_NAME`→`setGpuModel`). Classic path unchanged.
+- **P4 config UI** `ContainerDetailScreen.kt` `FpsCounterConfigDialog` — "GameHub-style HUD" switch
+  (`hudStyle`) + 9 metric toggles + dual-battery + scale/opacity sliders + skin/color/outline 3-stop
+  FilterChip selectors (`HudToggleRow`/`HudThreeStop`); toggles emitted under both classic + gamehub key
+  names; bounded scroll via `heightIn(screenHeight*0.7)`.
+
+Config keys (per-container `fpsCounterConfig`): `hudStyle=classic|gamehub`, `hudMode`, `showFPS`,
+`showFPSGraph`, `showCPUUsage`(+`showCPULoad`), `showGPULoad`, `showRAM`, `showPower`,
+`showTemp`(+`showBatteryTemp`), `showEngine`(+`showRenderer`), `showGpuModel`, `hudDualBattery`,
+`hudSkin=classic|neon|mono`, `hudColor=soft|mid|vivid`, `hudOutline=off|soft|strong`, `hudScale` (50–150),
+`hudOpacity` (0–100), `hudTransparency` (classic).
+
+Branch tip `b2fc55e`. Full artifact build CI `28176206476` (in progress at time of writing). **NOT merged.**
+Next: verify build green → device-test (enable "GameHub-style HUD" in a container's FPS settings, launch,
+confirm render + tap-flip + live metrics) → tune dimensions/colors on device → merge to main. Caveats:
+HUD dimensions are first-guess; CPU% is overall-device (not per-game); in-game `XServerDrawer.kt` config
+not extended (container-detail dialog only; orientation tap still works in-game).
+
+## 2026-06-25 — Two HUD fixes merged to main (`ac6abbb`)
+
+- **Fake FPS offset removed** (`19c9982`): stripped a fudge offset from `FrameRating.java` +
+  `FrameRatingHorizontal.java` so the on-screen FPS reads true when native rendering is on.
+- **Vertical HUD tap area fixed** (`ac6abbb`): the vertical `FrameRating` was added to the root
+  `FrameLayout` with no LayoutParams, inheriting FrameLayout's `MATCH_PARENT × MATCH_PARENT` default — so
+  its tap-to-toggle hit area covered the whole screen (a tap far from the overlay flipped orientation).
+  Fixed with explicit `WRAP_CONTENT` + top-left gravity. Both built green (`28172970834`) and
+  fast-forward-merged to main; `fix/fps-hud-tap-area` deleted. No release cut (still versionCode 25).
+
+## 2026-06-24 — Steam detail-page revamp — branch `feat/steam-detail-revamp` (stacked on launch branch)
+
+User asked to modernize the Steam game detail page. Picked all of: stored-info rows, last-played,
+real playtime hours, bigger sheets (DLC/branch/cloud/add-home), and more robust/fluid download buttons +
+accurate progress bars.
+
+- **Chunk 1 DONE** (`SteamGameDetailActivity.kt` `ca90b96`): renders **developer / genres /
+  metacritic** (already stored in our GameRow but previously hidden) + a **"Last played"** row from the
+  install-dir timestamp (`relativeTime()`); reworked the downloads UI — **animated rounded progress bar**
+  in a card with an **indeterminate "Preparing…" phase** and a separate %/bytes line; new
+  `DetailActionButton` (48dp, rounded, disabled dimming) + `DetailInfoRow`. Pure UI/Compose.
+- **Chunk 2 — real playtime hours: ABANDONED + REVERTED** (`ee85bf9`). Tried owned-games via JavaSteam
+  unified messages (`SteamOwnedGames.kt`) but the API fought compilation (needed protobuf-java for the
+  proto `GeneratedMessage` supertype; then `Player.getOwnedGames` return type is neither `Future` nor
+  `CompletionStage` — `.get()`/`.toCompletableFuture()`/`.result`/`.body` unresolved). User chose to drop
+  playtime recording; timestamp-based "Last played" (chunk 1) stays. Removed the file + Playtime row +
+  protobuf-java dep.
+- **TODO (remaining follow-up):** **bigger sheets** — DLC/depot manager, beta branch picker,
+  cloud-save export/import/sync, add-to-home-screen (port from ref4ik `SteamLibrarySheets.kt` /
+  `SteamGameActions.kt`).
+
+**RESUME SNAPSHOT (2026-06-24, for crash recovery):** Two stacked feature branches, NONE merged, all
+device-test-pending:
+  • `feat/steam-pluvia-launch` (off main) — Pluvia Phase 1 coldclient launch, steps 1-4, commits
+    `ff13265`/`1c6839d`/`f0b6106`/`73834d6`, all compile-green. Drawer "Steam" = unchanged store; adds
+    emulation launch.
+  • `feat/steam-detail-revamp` (stacked on the launch branch) — tip `ee85bf9` — detail revamp chunk 1
+    only (chunk-2 playtime reverted). CI `28143904501`.
+NEXT WHEN RESUMING: (1) confirm CI `28143904501` green; (2) device-test on the test device — Steam
+download → add a steam_api game with "Steam emulation" → confirm Goldberg launch; detail page shows
+dev/genres/metacritic/last-played + fluid progress; (3) optionally build the bigger sheets;
+(4) then decide merge order (launch branch → main first, then rebase revamp → main). ref4ik clone at
+`/home/claude-user/scratchpad/ref4ik`. Full design = `docs/STEAM_PLUVIA_PORT_PLAN.md`.
+
+**imageFS reinstall?** No — for the Steam coldclient + detail revamp, updating 1.7 → next release needs
+NO imageFS reinstall. The coldclient loader is a separate bundled APK asset extracted at runtime into the
+existing imageFS (not baked into `imagefs.txz`), and the detail revamp is app-only. (Only carryover: if a
+user never reinstalled imageFS for 1.7's ffmpeg-8, that 1.7 recommendation still applies.)
+
+## 2026-06-24 — Pluvia Steam: Phase 1 (Goldberg/coldclient launch) — branch `feat/steam-pluvia-launch`
+
+Implementing the recommended **Option A** from `docs/STEAM_PLUVIA_PORT_PLAN.md` — **UPGRADE the
+existing Steam store** (browse/login/download/UI stay ours, unchanged from 1.7), adding only the
+Goldberg/coldclient **launch** so SteamAPI titles actually run. ⚠️ User confirmed scope 2026-06-24:
+NOT a full replacement (drawer "Steam" still opens our existing store). All work on the branch; NOT
+merged; device-test pending.
+
+- **Step 1 (`ff13265`)** — bundled asset `experimental-drm.tzst` (coldclient loader x32/x64 +
+  emulated steamclient DLLs + extra_dlls; PE → host-arch independent) + `SteamClientManager.kt`
+  (extracts it into the imageFs Steam dir). Ported from REF4IK/winlator-ref4ik- (GPL-3.0).
+- **Step 2 (`1c6839d`)** — `SteamLaunchUtils.kt`: self-contained **offline** Goldberg helpers
+  (writeColdClientIni, generateInterfacesFile, writeOfflineSteamSettings, backupSteamclientFiles,
+  putBackSteamDlls, setupLightweightSteamConfig, skipFirstTimeSteamSetup, ensureSteamappsCommonSymlink).
+  No dependency on ref4ik's Room SteamService; account read from our `steam_prefs`.
+- **Step 3 (`f0b6106`)** — launch glue: `prepareColdClientLaunch` + `writeGameSteamSettings` +
+  `StarLaunchBridge.addSteamGameToLauncher`/`writeSteamShortcut` (container picker → activateContainer →
+  prepare env → write `.desktop` `Exec=wine C:/Program Files (x86)/Steam/steamclient_loader_x64.exe`
+  with `game_source=STEAM` Extra Data). Prefix model = `activateContainer` repoints the `home/xuser`
+  symlink → active container; corrected ref4ik's `skipFirstTimeSteamSetup` to take `imageFs.rootDir`.
+- **Step 4 (`73834d6`)** — Compose UI: `SteamGameDetailActivity` shows a Compose AlertDialog
+  ("Steam emulation" vs "Run .exe directly") after exe resolution → routes to the coldclient path or
+  legacy raw path; `SteamGamesActivity` defaults its add paths to the emulation route.
+
+Compile CIs: steps 1+2 `28141425805` ✅ green; steps 3 `28141874404` / 4 `28142049412` ⏳ pending.
+**Next:** device-test a steam_api title (download → add with Steam emulation → boots under Goldberg)
+→ then merge to main. Possible follow-ups: preferred-container, PICS LaunchInfo exe detection, cloud saves.
+
+## 2026-06-24 — 🚀 Release 1.7
+
+Cut **Bannerlator 1.7** (`versionName 1.7`, `versionCode 25`, commit `30c869c`). Version bumped in
+`app/build.gradle`; splash screen reads `BuildConfig.VERSION_NAME` so it shows "V 1.7" automatically
+(no hardcoded version strings anywhere). README version line + "What's New in 1.7" updated (1.6 notes
+demoted to "Previously in 1.6"). Release build = workflow "Nightly Manual Release Build" run
+`28140854161` (tag `1.7`, builds standard/ludashi/pubg release APKs) — ✅ GREEN. **PUBLISHED**
+https://github.com/The412Banner/Bannerlator/releases/tag/1.7 with full notes; 3 assets each ~588.7 MB
+(`Bannerlator-1.7-standard.apk` 588704729 B / `-ludashi.apk` 588704765 B / `-pubg.apk` 588704647 B).
+Everything merged to main since the 1.6 tag is in this release:
+
+- **Steam store — downloads fixed**: login-race guard (`9f6197e`) + BouncyCastle SHA-1 provider
+  registration (`63e4366`). ⚠️ download-only; raw `wine exe` launch still has no steam-emu (DRM games
+  may not run — see `docs/STEAM_PLUVIA_PORT_PLAN.md`).
+- **Components installer (new)**: in-container Wine-dependency installer (Phase 2 file-drop + Phase 3b
+  execute engine), copy_dll glob + arch-targeting fixes, win7/winXP set_windows, persisted Installed
+  status.
+- **On-screen controls**: overlay-opacity slider moved to in-game side menu, live, true 0–100 %.
+- **FPS overlay**: tap to toggle orientation, live D3D API label (VKD3D vs DXVK).
+- **Vulkan**: Advanced Vulkan / Graphics Driver dialogs scrollable.
+- **Video**: full ffmpeg-8 libs bundled for winedmo.
+
+⚠️ DEVICE-TEST status: Steam download fix, Components installer, and overlay-opacity were CI-green but
+device-test was still pending/partial at release time.
+
+## 2026-06-24 (late 2) — Steam download fixes + Pluvia/GameNative Steam-store recon & plan
+
+**Steam download bug (✅ MERGED to main `63e4366`/`9f6197e`; compile CI `28139917719` ✅ green;
+device-test pending).** User's Steam game downloads failed "Download failed: Unknown error".
+Two distinct bugs found from the on-device `steam_debug.txt`:
+1. *Login race* — `runInstall` started while `connected=true` but `loggedIn=false` (Steam CM
+   connections cycle; re-logon after reconnect is async, license cache masked it). Manifest job
+   timed out → `CancellationException`. Fix = new `SteamRepository.ensureLoggedIn(timeoutMs)` guard
+   in `runInstall` (re-logon from saved token, wait up to 15s).
+2. *SHA-1/BC* (the real download-killer, seen after re-login) — JavaSteam `DepotManifest.serialize`
+   calls `MessageDigest.getInstance("SHA-1","BC")`; Android's built-in "BC" provider has SHA-1
+   stripped → `NoSuchAlgorithmException`. App bundled `bcprov-jdk15on` but never registered it.
+   Fix = static initializer in `SteamRepository` that removes stock BC + installs the full
+   `BouncyCastleProvider`. Device-test of FlatOut 2 pending; then merge to main.
+
+**Recon + plan: "Pluvia Steam" to replace the current Steam store.** Researched GameNative
+(utkarshdalal/GameNative, GPL-3.0; local at `/home/claude-user/GameNative/`) and Pluvia
+(oxters168/Pluvia, original, stalled). Key finding: **REF4IK/winlator-ref4ik-** (`com.winlator.cmod`)
+already ported the GameNative/Pluvia Steam module into a Winlator **Cmod** fork — same lineage as
+us — on the **same `in.dragonbra:javasteam:1.8.0`** we ship. It's an *upgrade*, not greenfield:
+our download already works (post-fix); the real prize is the **Goldberg/coldclient launch model**
+(ref4ik `SteamGameLauncher.kt`) — our store launches raw `wine exe`, so DRM/steam_api titles fail.
+Recommendation = **Option A incremental** (Phase 1: Goldberg launch + loader assets +
+`game_source`/`app_id` shortcut extras; then preferred-container, PICS LaunchInfo exe detection,
+optional cloud-saves/updates). Full file-level seam map + risks (GPL-3.0, Goldberg asset arch,
+bionic = coldclient only, A:↔Z: drive, Room↔SQLite) → **`docs/STEAM_PLUVIA_PORT_PLAN.md`** (this
+commit). NOT STARTED — for down the road.
+
+## 2026-06-24 (late) — Merged the day's branches to main + new Components installer fix
+
+Rolled the day's feature branches onto `main` (linear rebase/ff, branches deleted). `main` tip now
+`0ea1a84`. The 10 commits that make up today (oldest→newest):
+
+1. `445f963` Components Phase 3b — execute engine for installer-based components (.NET/vcredist)
+2. `1955f43` Components Phase 3b — auto-close installer sessions + cleanup
+3. `c4399ce` Components — install win7/winXP via pure `set_windows` instead of N/A
+4. `ce6561d` imagefs — bundle full ffmpeg-8 libs for winedmo video decode *(was the leftover "PENDING #2")*
+5. `fe8e74d` HUD — live D3D API label (VKD3D vs DXVK) + tap overlay to toggle FPS orientation
+6. `19ec967` HUD — tap overlay to toggle orientation live; dropped the settings dropdown
+7. `de71493` Vulkan — make Advanced Vulkan / Graphics Driver dialogs scrollable
+8. `16dc463` docs — components N/A backfill + quartz device-test (this log)
+9. `4b9b0ad` Controls — overlay-opacity slider moved into in-game side menu (live, true 0–100 %)
+10. `0ea1a84` **Components fix (new today)** — see below
+
+**`0ea1a84` Components installer — two bugs fixed** (branch `fix/components-copy-and-installed-persist`,
+rebased+ff to main, deleted; CI `28137352729` ✅ green; **device-untested**):
+- **`copy_dll` glob was broken.** `copyMatching` built its regex as
+  `Regex.escape(pattern).replace("\\*",".*")`, but Kotlin's `Regex.escape` uses `Pattern.quote`
+  (`\Q…\E`), so a literal `"*"` file_name pattern compiled to `^\Q*\E$` — matching a file *named* `*`
+  (nothing). The `*` components (`atmlib`/`devenum` + the pre-baked win7-SP1 set) set their DLL
+  override but **never copied the DLL**. Fix: `pattern.split("*").joinToString(".*"){Regex.escape(it)}`
+  → proper glob semantics. (`ComponentInstaller.kt`)
+- **"Installed" status didn't persist.** It lived in an in-memory `remember{}` set, so it reset on
+  every sheet close/reopen. Now persisted per container in SharedPreferences `component_installs`
+  (key `c<id>`): loaded on open, written on each successful install. (`ComponentsSheet.kt`)
+
+**Main artifact build:** triggered run **`28138274652`** (CI Build, artifacts only, `main`).
+**Next:** device-test the glob fix + persisted-installed status (root bridge) → then cut 1.6.
+
+## 2026-06-24 — Components: backfilled 15 "N/A" components + device-tested registration
+
+**Backfill (winlator-contents `1f6eb72`).** The catalog had **17 components stuck at N/A**
+(`needs-upstream`/`pending-manual`) because their source files were never mirrored. User supplied
+the missing Microsoft files (`windows6.1-kb976932` Win7-SP1 x64+x86, ~1.5 GB; `powershell-wrapper.zip`),
+covering **15 of 17**.
+
+- The app has **no runtime cab engine** (verified: `ComponentInstaller`/`ComponentExecInstaller`
+  handle neither `cab_extract`/`get_from_cab` nor `register_dll`; Phase 3b = installer-exec, not cab).
+  The 12 already-working cab components were **pre-baked build-side** — so I followed the same method.
+- **Pre-baked** the DLLs with `cabextract` straight out of the SP1 packages (all validated PE/`MZ`),
+  packaged each as `<name>__libs.tar.xz` (`win32/`+`win64/` layout, gdiplus = 1.1.7601.17514),
+  uploaded all **15** to release `system-libraries-v1` (~10 MB total — not the 1.5 GB raw `.exe`s,
+  which would never install).
+- **Rewrote** each component in `components.json` to the proven file-drop pattern
+  (`archive_extract` + `copy_dll`(+`override_dll`)) — exactly like `devenum`/`riched20`; dropped the
+  unsupported `register_dll` (native override inherits Wine's builtin COM registration). PowerShell
+  repackaged into the same convention (its `powershell_core` dep was already `ready`).
+- Catalog tally now **ready 112 / N/A 2**. Still N/A: `art2k7min` (needs AccessRuntime2007.exe),
+  `vbrun6` (needs VB6 SP6 runtime).
+- **No app rebuild needed:** `ComponentCatalog` fetches the catalog live (no cache) from
+  `raw.githubusercontent.com/.../main/components.json`; installed builds see the 15 within minutes.
+
+**Device test — quartz registration CONFIRMED (root bridge, `com.winlator.banner`).** Premise held:
+every container prefix already has builtin Wine quartz fully COM-registered (**48** `quartz.dll`
+InprocServer32 refs, FilterGraph CLSID `{e436ebb3-…}` + DirectShow Filters category present). Did a
+reversible end-to-end install on `xuser-2` "P11 ARM" (backups `*.bak-comp`): native MS `quartz.dll`
+→ system32 (1,572,352 B) + syswow64 (1,328,128 B), both `MZ`; inserted `"quartz"="native,builtin"`;
+**48 CLSIDs still resolve to quartz.dll (now the native DLL), FilterGraph CLSID intact**. Only the
+runtime-load under Wine/arm64ec (launch a DirectShow/FMV title) is left for a user-side check.
+
+## 2026-06-24 — In-game overlay-opacity (controls) reworked + moved to side menu
+
+On-screen controls "overlay opacity not working" → fixed + relocated. Was: draw curve
+`0.5+0.7*opacity` (dead top ~29 %, never faint), `setOverlayOpacity()` never `invalidate()`d, editor
+hardcoded 0.6. Now **linear 0–100 %** (0 % = fully invisible; accent-stroke alpha floors scaled with
+opacity), live `invalidate()`, and the slider **moved from the Input-Controls profile screen into the
+in-game side menu (Controls tab)** so it tunes the visible overlay live (`XServerDrawerState`
+`overlayOpacity` + `onOverlayOpacityChange`; activity applies + persists). DEFAULT 0.4→0.75 (matches
+old look under the new mapping). Branch `feat/ingame-overlay-opacity` `d3f2a8b`, compile CI
+`28135045851` ✅ green. Next: device-test → merge for the next release.
+
+## 2026-06-23 — Components installer: catalog + mirror DONE (app side next)
+
+Building a **Components installer** for container settings — browse + install Wine dependencies
+(mono, gecko, dotnet, vcredist, d3dx, …) into a container's prefix, the same set BannerHub/GameHub
+offer (Bottles "Type 6 — System Libraries", 114 components).
+
+- **Mirrored** all components' binaries to a new release **`system-libraries-v1`** on
+  `The412Banner/winlator-contents` — **92 assets**, deduped by URL (shared payloads like the Win7-SP1
+  packages referenced once, not per-component). Each asset named after its component.
+- **6 not mirrored** (manual re-source list at `/sdcard/Download/winlator-components-needed.txt`):
+  the 3 huge **Win7-SP1 platform-update** packages (shared by 14 components → referenced upstream) and
+  3 dead/timed-out sources (`art2k7min`, `powershell`, `vbrun6`).
+- **`components.json` committed + live** on winlator-contents
+  (`raw.githubusercontent.com/The412Banner/winlator-contents/main/components.json`) — 114 components
+  with full **Bottles-format install steps**, URLs rewritten to the mirror; `status` per component:
+  **ready 97 / needs-upstream 14 / pending-manual 3**.
+- **App side: Phase 2 + Phase 3a DONE & MERGED to main** (`4c732b8`, build `28072511822`).
+  - **Phase 2** (`91ca6a3`): a "Components" browser in the Win Components tab (`ComponentsSheet`) +
+    `ComponentCatalog` (reads the live components.json) + `ComponentInstaller` (file-drop Bottles
+    steps → `system32`/`syswow64` + DLL overrides via `WineRegistryEditor`). **Device + root-verified:**
+    installed `d3dcompiler_43`/`_47` — correct 64-bit→system32 / 32-bit→syswow64 + overrides set.
+  - **Copy hardening** (`4c732b8`): `copy_dll` constrains source to the matching arch sub-tree.
+  - **Phase 3a (pre-bake, no app change):** extracted the cab contents build-side with `cabextract`,
+    hosted 12 components as `<name>__libs.tar.xz` on the `system-libraries-v1` release, and rewrote
+    their catalog steps to file-drop. **22 components now installable** (10 file-drop + 12 pre-baked
+    cab: d3dcompiler_42/46, xinput, xaudio2.7, msxml6, atmlib, riched20, vcredist6, winhttp, …).
+  - The app reads components.json at runtime, so catalog updates are live without an app rebuild.
+- **Still to do — Phase 3b:** the execute engine (`install_exe`/`install_msi` via launching the
+  container session) for the +54 .NET / vcredist runtimes. Plan in memory `project_bannerlator_components_installer`.
+
+---
+
+## 1.6 RELEASE MANIFEST (in progress, since tag `1.5` / `dc74f67`) — NOT yet released
+
+Everything queued for the next release:
+
+**Merged to `main`** (device-confirmed):
+1. On-screen dpad/stick multi-touch freeze fix (`fba6080`, merged `d1356d8`) — GitHub issue #5, reporter-confirmed.
+2. In-app File Manager batch (`d086990`→`5521e0f`, +`ca26466`) — data-loss paste, silent Run, working dir, off-thread listing, copy-into-self guard, copy progress bar, PTR/scroll/file+exe icons, system-Back-up-one-dir, Run-executes-exe-in-container (`core/WinePath.kt`).
+3. Per-game (shortcut) overrides for Renderer + Frame-Gen engine + FPS limiter (`08878be`).
+4. Frame gen starts OFF in-game on every launch (`a669b8b`).
+
+5. Standalone FPS limiter — guest-side X11 Present IdleNotify pacing (`bd990b2`) + lsfg≥2 guard (`4909549`); caps fps with Off / bionic-fg / lsfg-vk, both host renderers, live. ✅ merged to main (`a2ebd35`), GameNative credit (`0eadf16`).
+6. Advanced Vulkan present settings now actually apply (native/presentMode/filter/swapRB) + renderer-dropdown label/gear fix. ✅ merged to main (`dcd9d47`).
+
+**In progress (before 1.6, user's call)** — branch `feat/layer-download-menu`:
+7. Compatibility-layer download menu rework — adrenotools-style cards, cloud opens the sheet directly, install-from-file in the sheet, Wine/Proton chips, in-use marker, byte-accurate install bar. See the dated section below.
+
+Next: finish the download menu → merge → cut 1.6 (bump versionCode from 23 + splash).
+
+---
+
+## 2026-06-23 — Compatibility-layer download menu rework (branch `feat/layer-download-menu`, in progress)
+
+Reworked the per-component download entry points into an adrenotools-style menu. The backend
+(`ContentDownloadSheet` + `ContentsManager` + one remote `contents.json`) already covered all five
+layers — the work is front-end consolidation + a real install bar. Confirmed design (HTML preview
+first, then implemented):
+
+- **Cloud icons replace the gears** on every layer (Wine/Proton, DXVK, VKD3D, Box64/WOWBox64, FEXCore);
+  the cloud opens the download sheet **directly**. "Install from file" moved **into** the sheet header.
+- **Adrenotools-style rows** — flat rows, `Memory` icon, name + "In use"/"Installed"/desc subtitle,
+  trailing `CloudDownload`; chips restyled to the adrenotools `SourceChip` look. **Wine/Proton chips**
+  split the compatibility-layer sheet; the others are single-type.
+- **In-use marker** for the container's current version (Wine/Box64/FEXCore). Author/size are NOT in
+  the manifest (`ContentProfile` has only type/verName/verCode/desc) — would need a manifest extension
+  or a HEAD request; deferred.
+- **Two determinate 0→100 bars** — blue "Downloading" (byte-accurate) and green "Installing", now also
+  **byte-accurate**: `TarCompressorUtils` got a `CountingInputStream` + `OnReadProgressListener` and an
+  `extract(…, total, listener)` overload reporting `bytesRead/total` off the compressed stream
+  (single-pass, denominator = downloaded .wcp size); `ContentsManager.extraContentFile` got a matching
+  overload; the sheet feeds it monotonically (ignoring the brief XZ-probe before the ZSTD pass).
+
+VEGAS and the adrenotools GPU-driver downloader are left untouched. Kept as a centered `Dialog` for now
+(bottom-sheet vs centered to be decided on device). First impl device-tested ("looks good").
+
+**Build status (2026-06-23):** UI restyle + cloud-direct + file-in-sheet + in-use = `f4e551e` (CI
+`28056314348` ✅). Byte-accurate install bar = `f9485ef` (CI **`28057297317`** — final combined build).
+**⏸️ Resume:** verify `28057297317` green → download standard APK → device-test (cloud opens sheet
+directly, adrenotools cards, Wine/Proton chips, install-from-file, in-use marker, real install bar) →
+decide bottom-sheet vs centered + whether to add author/size → merge to main → cut 1.6.
+
+---
+
+## 2026-06-23 — Standalone FPS limiter (guest-side IdleNotify pacing) DEVICE-CONFIRMED ✅
+
+Commit `bd990b2`, branch `feat/standalone-fps-limiter`, CI `28043133606` ✅ green.
+
+The reworked limiter — guest-side X11 Present `IdleNotify` pacing in `PresentExtension`
+(GameNative/Ludashi-3.1 mechanism: delay IdleNotify → DXVK blocks waiting for a free
+buffer → the GUEST throttles), decoupled from the frame-gen layers — **caps fps in all
+three FG modes: Off / bionic-fg / lsfg-vk.** Engine-agnostic, all-API, live in-game toggle.
+This succeeds where the earlier host-side nanosleep pacer (`f8d7598`) failed (that one only
+dropped frames at the compositor; the guest ran full-speed).
+
+**✅ Confirmed on BOTH host renderers** — all 3 modes (Off / bionic-fg / lsfg-vk) cap fps on
+the OpenGL host renderer AND the Vulkan host renderer.
+
+**lsfg-mult≥2 guard wired (commit `4909549`, CI `28046025979`).** `lsfgGovernsFps()` returns true
+when engine=lsfg + FG enabled + multiplier≥2; `applyFpsLimit()` clamps to 0 in that case, and
+`reapplyFpsLimit()` runs from the lsfg branch of `onBionicFgConfigChange` so the guard engages the
+moment the multiplier crosses 2. Rationale: lsfg paces itself when multiplying — layering our
+IdleNotify limiter on top double-paces the stream (clamps the panel to the limiter value, kills the
+FG gain, wastes GPU). Unaffected: bionic-fg, Off, and lsfg at 1× still cap.
+> ⚠️ **SUPPORT NOTE:** if users report "the FPS limiter doesn't work / no cap" on **lsfg-vk**, this
+> guard is the intended cause — the limiter is deliberately disabled while lsfg-vk multiplies
+> (mult≥2). Documented in-code at `lsfgGovernsFps()`. Not a bug.
+
+Remaining: guard CI green → merge `feat/standalone-fps-limiter` → main for 1.6.
+
+---
+
+## 2026-06-22 — lsfg-vk live reload CONFIRMED ✅ + Off→passthrough fix + engine badge + Task-Manager-on-Vulkan bug (diagnosing)
+
+Session driven by live device questions ("which FG engine is running right now?").
+
+**1. lsfg-vk 3× + LIVE RELOAD confirmed working (supersedes the 2026-06-21 "no live reload" finding).**
+Probed the running game (`DOOMBLADE.exe`) on device: `liblsfg-vk.so` mapped into the game proc, env
+`ENABLE_LSFG=1` / `LSFG_PROCESS=bannerlator-lsfg` / `LSFG_CONFIG=…/home/xuser/.config/lsfg-vk/conf.toml`,
+`Lossless.dll` present. Logcat showed `lsfg-vk: Rereading configuration, as it is no longer valid.` →
+`Reloaded configuration … Multiplier: 3` → `lsfg-vk-framegen: Entering Device::Device` — i.e. the
+mtime-watch → OUT_OF_DATE → swapchain-recreate reload mechanism (GameNative fork `.so`) DOES fire on our
+DXVK→vkd3d→wrapper_icd→Turnip stack now. Panel present rate ~138–143 fps on a 144 Hz panel = base ~46 × 3.
+DXVK HUD correctly shows the BASE rate (~46) because lsfg-vk inserts frames downstream of DXVK's counter
+(HUD≠panel is expected, and is itself proof FG works). Two conf.toml files exist: live
+`home/xuser/.config/lsfg-vk/conf.toml` (read by the layer) and a stale `home/xuser-1/.config/bionic-fg/conf.toml`
+(ignored by lsfg; its `fps_limit` field isn't an lsfg option). Minor cleanup candidate.
+
+**2. Off-bug found + fixed.** Installed APK (`7f7ffb5`) predated the Off fix (`80e238a`), so in-game "Off"
+wrote `multiplier = 2` (`Math.max(2,0)`) → still 2× frame gen. `80e238a` writes `1` (true passthrough).
+Built off-fix APK (run `27941385132`, label `1.3-lsfg-offfix`, ✅ green). PROVEN on device by live-editing
+the running conf.toml `multiplier 2→1`: reload fired (`Rereading` → `Multiplier: 1`), FPS dropped to native
+~21–27. So `multiplier=1` = genuine off.
+
+**3. Engine badge in in-game FG drawer (commit `740e779`).** Per user, replaced the standalone
+"Frame Generation (AI)" header with a title + engine badge row — `Frame Generation  [● bionic-fg]` (green
+dot = layer running this session; swaps to `lsfg-vk`; "Off" when disabled). No double labeling (user picked
+the "Engine badge" layout). Plumbed `XServerDrawerState.frameGenEngine` ← `container.getFrameGenEngine()`,
+wired in `XServerDisplayActivity` next to the other FG drawer-state setters.
+
+**4. Task Manager reports nothing on the Vulkan host renderer (SAME container works on OpenGL). Diagnosing.**
+Game runs fine; `winhandler.exe` (the process-list backend) is alive; no app crash. The new off-fix build's
+Task Manager refreshes on a render-independent 1s timer and STILL shows empty on Vulkan → ruled out the
+UI-tick/copyArea theory. `setupTmCallbacks`/listener registration are NOT renderer-conditional in source, so
+nothing intends to disable it on Vulkan. Added WinHandler diagnostic logging (commit `e75d1d4`, tag
+`WinHandlerTM`): logs INIT handshake, each `listProcesses` send + sendPacket result, every received request
+code, and `GET_PROCESS` replies. One Vulkan run with Task Manager open will split it: `GET_PROCESS` arriving
+but UI empty → Compose/StateFlow update problem on Vulkan; no `recv` at all → guest not replying / INIT never
+happened. NOT yet root-caused.
+
+**Builds:** off-fix `27941385132` (`1.3-lsfg-offfix`) ✅; logging-only `27943043968` (`1.3-tmlog`) ✅;
+combined `27943884565` (`1.3-tmlog-badge` = off-fix + WinHandler logging + engine badge) — in progress.
+Branch `feature/lsfg-vk-engine` tip `740e779`, pushed, NOT merged.
+**NEXT:** deliver combined APK to `/sdcard/Download` + arm `WinHandlerTM` logcat → user opens Task Manager on
+Vulkan once → read logs to root-cause → fix → merge to main.
+
+---
+
+## 2026-06-21 (night) — lsfg-vk DEVICE TEST: works (2×) but live in-game reload does NOT on our stack ⏸️ RESUME
+
+Installed the test APK (`Bannerlator-1.3-lsfg-vk-standard.apk`, testkey, updates over current), imported a
+`Lossless.dll`, selected lsfg-vk in a container, launched DOOMBLADE.
+
+- ✅ **lsfg-vk loads + runs on our Turnip/Proton stack** (GameNative fork `.so` `93fa20bb`). Log
+  `/sdcard/Download/lsfgvk_ingame_test.txt`: `Loaded configuration for bannerlator-lsfg` / `Shaders extracted` /
+  layers init / AHB + swapchain contexts. **2× frame gen confirmed** (DXVK 39.4 → overlay 78). Opt-in
+  `ENABLE_LSFG` gate, conf.toml driving, and `LSFG_PROCESS=bannerlator-lsfg` all work.
+- 🐞 **Bug found + fixed (commit `80e238a`):** the in-game "Off" = drawer multiplier 0 (frame-gen stays
+  enabled), and the callback did `Math.max(2,0)=2` → forced 2× on Off. Fixed to `mult>=2 ? mult : 1`
+  (passthrough). Only matters on relaunch though, because…
+- ❌ **Live conf.toml reload does NOT fire on our stack (definitive).** Bypassed the app entirely: `sed`'d the
+  running game's conf.toml to `multiplier=1`, confirmed mtime changed → **zero `Rereading configuration` lines,
+  FPS stayed 2×** (capture fresh through 19:36, not a gap). Then a fullscreen toggle (swapchain recreate) →
+  still no change. So GameNative's mechanism (layer returns `VK_ERROR_OUT_OF_DATE_KHR` on conf change → DXVK
+  recreates swapchain → layer re-reads) is **not propagating through DXVK → vkd3d → wrapper_icd → Turnip**.
+
+**Decision pending (A vs B):**
+- **(A, recommended)** ship lsfg-vk as **launch-time** config: restore the per-container Multiplier + Flow
+  control (was in `1997a55`, removed in `7f7ffb5`); in-game drawer hides/labels lsfg FG controls as
+  "relaunch to apply"; bionic-fg keeps its working live in-game control.
+- **(B)** deep-dive why OUT_OF_DATE doesn't recreate/reload here (instrument a debug layer; uncertain).
+
+**Resume state:** branch `feature/lsfg-vk-engine` @ `80e238a` (pushed, NOT merged). Build works; engine
+selector + gray-out + DLL picker + lsfg-vk 2× all functional. Only the lsfg live in-game tuning is the gap.
+
+## 2026-06-21 (evening) — lsfg-vk as a SECOND, selectable frame-gen engine (recon → spike → integration → in-game live)
+
+New feature on branch **`feature/lsfg-vk-engine`** (off `main`; NOT merged): add **lsfg-vk** (Lossless
+Scaling FG, PancakeTAS lineage) alongside the existing **bionic-fg** so users pick the engine per
+container. User supplies their own `Lossless.dll` (we bundle nothing proprietary).
+
+**Recon (3-repo lineage):** lsfg-vk source = `FrankBarretta/lsfg-vk-android@b55b182` (Android AHB port);
+built by `The412Banner/LLS` CI (NDK 27, `-DLSFGVK_ANDROID_WINE=ON`, 2-line color-fix patch). Ludashi-plus
+itself has NO lsfg-vk (it dropped the feature). LLS run `25313482636` has a clean prebuilt artifact (NO
+`libc++_shared` dep — the libc++ blocker was only the old dead APK `.so`).
+
+**Device spike (✅ SUCCESS):** staged the LLS prebuilt `.so` + manifest + the user's `Lossless.dll` into a
+container's imagefs, env `LSFG_LEGACY=1 LSFG_DLL_PATH=… LSFG_MULTIPLIER=2 BIONIC_FG_DISABLE=1`. After fixing
+my guest-relative DLL path → full Android path (guest is NOT chrooted), **DOOMBLADE ran with lsfg-vk doing
+2× frame gen** (DXVK 39.3 → overlay 79). DEFINITIVELY confirmed lsfg-vk (not bionic) via live `/proc/*/maps`:
+`liblsfg-vk.so` mapped r-xp in the game procs, `libbionic_fg.so` mapped in zero. lsfg-vk = plain implicit
+layer, NO wrapper-ICD hack needed (unlike bionic-fg). ⚠️ it HARD-EXITS (bricks the container) if it can't read
+the DLL → the feature must gate on a valid DLL.
+
+**In-game LIVE control (GameNative recon):** stock lsfg-vk reads config once. GameNative makes mult/flow apply
+mid-game by rewriting `conf.toml` → their **forked layer** watches the file mtime in its present hook → returns
+`VK_ERROR_OUT_OF_DATE_KHR` → game recreates swapchain → layer re-reads config (the ~100ms "pause" the user sees
+= that rebuild). NO SIGSTOP, no app-side swapchain call. So we **re-vendored GameNative's fork** (`.so` md5
+`93fa20bb`, has the `Rereading configuration` mtime-watch) and drive via **conf.toml**, not `LSFG_LEGACY` env.
+
+**Integration (commits `a8974d9`,`1b96cb4`,`1997a55`,`7f7ffb5`):**
+- Layer staged opt-in: `assets/lsfg-vk/{liblsfg-vk.so,manifest}` + `ImageFsInstaller.installLsfgVkLayer()`;
+  added `enable_environment ENABLE_LSFG=1` to the manifest so the on-by-default upstream layer can't brick
+  other containers (loads only when a container selects lsfg-vk).
+- Launch wiring (`XServerDisplayActivity`): engine==lsfg → `ENABLE_LSFG=1` + `LSFG_CONFIG=<home>/.config/lsfg-vk/conf.toml`
+  + `LSFG_PROCESS=bannerlator-lsfg` + `writeLsfgConfig()` ([global].dll + [[game]] mult/flow/present=fifo),
+  gated on the imported DLL existing; else bionic-fg path unchanged. Mutual exclusion = one engine's enable env.
+- Data model (`Container`): `getFrameGenEngine/setFrameGenEngine/isLsfgEngine` ("off"/"bionic"/"lsfg"; default
+  migrates legacy `frameGenEnabled`).
+- UI: container FG control = engine selector ONLY (Off/bionic-fg/lsfg-vk); **lsfg-vk grayed out until a
+  `Lossless.dll` is imported** (`LabeledDropdown` gained `disabledOptions`). DLL picker at the bottom of
+  Settings (SAF → **copies into `filesDir/lsfg-vk/Lossless.dll`**, loads from the copy).
+- **Unified in-game control:** the single in-game multiplier toggle + flow slider drive WHICHEVER engine the
+  container runs — `onBionicFgConfigChange` branches to `writeLsfgConfig` for lsfg (live reload via the fork's
+  mtime-watch); drawer activated for lsfg containers. No per-container mult/flow control.
+
+**APK signing:** all builds now signed with the AOSP **testkey v1+v2+v3** (`keystore/testkey.p12`, commit
+`e09ac71`) so releases/updates install over previous installs (one-time uninstall on first testkey build).
+
+**Build:** test APK run `27920491173` @ `7f7ffb5` (label `lsfg-vk-ui-test3`) IN PROGRESS. ⚠️ Dispatch-race
+gotcha hit again — verify `git ls-remote` tip == local before `gh workflow run`. **STILL UNVERIFIED ON DEVICE:**
+GameNative fork `.so` loading on our Turnip stack + the live conf.toml reload mid-game (the test APK verifies).
+
+## 2026-06-21 (later) — sticky sync-failure force-disable fix + new `.so` `9136405c` STAGED/SWAPPED
+
+Found (via Jason's PR #6 `layer.cpp:1093` follow-up) that the runtime auto-disable wasn't sticky:
+`noteFenceTimeout` stored the kill in `conf.enabled`, which the hot-reload path overwrites wholesale
+(`st.conf = newConf`) — so any conf.toml touch (notably the in-game flow slider) silently re-armed
+framegen on an ICD path already proven sync-incompatible. **Fix:** new sticky `SwapState::framegenForceDisabled`
+that hot-reload never clears; QueuePresent gate honours it; clean re-attempt point stays a swapchain
+recreate. Fork `The412Banner/bionic-fg`@`bannerlator-android-wrapper-icd-fixes` commit `c861d8c`
+(4th unpushed commit ahead of PR remote `ac2f5c0`). App branch `feature/bionic-fg-pr-followups`
+`6807e83` (patch regen 597→608L, applies clean).
+
+**Build gotcha logged:** first dispatch (run 27916226393) checked out the STALE tip `56c6735`
+(dispatched a beat too fast after push → byte-identical `4b99b2d1`, no change). Re-dispatched
+27916284710 on confirmed remote tip `6807e83` → **new `.so` md5 `9136405c`**, `will NOT re-enable`
+log string confirmed compiled in. RULE: after `git push`, verify `git ls-remote` tip == local before
+`gh workflow run`, or the run may use the old ref.
+
+**Hot-swapped onto device** (no reinstall — pure layer-internal change, no conf/JNI/ABI surface):
+`imagefs/usr/lib/libbionic_fg.so` 4b99b2d1→`9136405c` (owner u0_a484, chmod 600); backups `.bak_c8e4`
+(shipped) + `.bak_prev` (4b99b2d1). App force-stopped. Staged `/sdcard/Download/libbionic_fg_9136405c.so`.
+
+⚠️ **Test scope:** the sticky-disable only ENGAGES on a sync-incompatible ICD (6 consecutive fence
+timeouts). On the known-good Proton 11 + Turnip path framegen never force-disables, so the fix is
+logic-verified by code; on-device this run is a **regression check** = confirm 2× still works + flow
+slider still hot-reloads cleanly (i.e. my change didn't break the happy path). ⏳ awaiting user launch;
+logcat → `/sdcard/Download/bionicfg_sticky_disable_test.txt`.
+
+---
+
+## 2026-06-21 — PR #6 review-followup `.so` (`4b99b2d1`) DEVICE-CONFIRMED ✅
+
+Hot-swapped the new layer (`libbionic_fg_4b99b2d1.so`, build run 27915620310, fork HEAD `5f4fc03`)
+into the installed app's imagefs — **no reinstall** — and tested on device. **All green.**
+
+- **Frame gen 2× confirmed** (game "FOLLOW MY LIGHT", Screenshot_20260621-155950): DXVK base HUD
+  **29.9 fps** → Banner overlay **60 fps** = 2.00×. Adreno 750, GPU 58%.
+- **FPS-limiter pacing confirmed** (Screenshot_20260621-160008): in-game FPS Limiter "Limit FPS" ON,
+  Max FPS = 30 → overlay ≈ **60–63 fps** (cap × mult). The relaxed clamp + new variance-aware
+  pacing path work.
+- **New container:** ran on **Proton 11.0-5-arm64ec** + Mesa Turnip v26.2.0 + zink (prior proofs
+  were on older containers). Layer loads clean: `VK_LAYER_BIONIC_framegen Device created` →
+  `SwapchainState provisioned 1280x720` → `FramegenContext ready mult=2 model=0
+  graph=model0-full-of-chain`; config hot-reload flow 0.90→1.00 live.
+- **CPU-temp HUD fix holds** (79.7 / 86.6 °C real values).
+- **No app crash.** No FATAL/SIGSEGV/tombstone for `com.winlator.banner` or `libbionic_fg`. Display
+  went `committedState OFF` at 15:59:41 (backgrounded); the ANR storm after 16:01 is
+  `com.qti.diagservices` = AYANEO firmware nvkeeper/diag bug, unrelated. The Claude session is what
+  died (known device-launch issue).
+- **Benign noise (cleanup candidate):** `failed to load layer libVkLayer_LSFGVK_frame_generation.so:
+  libc++_shared.so not found` — that's the *old* LSFGVK-named layer in the APK `lib/arm64`, not our
+  layer. Our `VK_LAYER_BIONIC_framegen` (imagefs/usr/lib) loads fine. Strip-or-bundle-libc++ before
+  the PR push.
+
+Log `/sdcard/Download/bionicfg_pr_followups_test.txt`; `.so` staged `/sdcard/Download/libbionic_fg_4b99b2d1.so`.
+
+**NEXT (now unblocked):** post the 3 drafted replies to Jason (1093/1334/manifest:17) → push fork
+`5f4fc03` to PR #6 branch `bannerlator-android-wrapper-icd-fixes` (one clean batch) → build APK from
+`feature/bionic-fg-pr-followups` for the app-side niceties (next reinstall). GN #1443 verify deferred.
+
+---
+
+## 2026-06-20 — 1.3 shipped public + upstream PR review cycle (in progress)
+
+**1.3 released (public).** Repo flipped public (secret-scanned first), `Bannerlator 1.3` release
+created (run 27878418873) with all 3 flavors; release notes credit xXJSONDeruloXx with links to
+[bionic-fg](https://github.com/xXJSONDeruloXx/bionic-fg) and [PR #6](https://github.com/xXJSONDeruloXx/bionic-fg/pull/6).
+README updated to 1.3 (fixed standard package id `com.winlator.banner`, version line, added the
+Frame Generation feature section).
+
+**Upstream PR #6 opened and reviewed.** Fork `The412Banner/bionic-fg` branch
+`bannerlator-android-wrapper-icd-fixes`. Jason (xXJSONDeruloXx) left 9 inline review comments;
+all 9 answered. He's constructive and wants it in with refinements. Work plan (layer fixes land on
+the fork branch → update the PR; app-side conf-key changes land on a new Bannerlator branch
+`feature/bionic-fg-pr-followups`):
+
+- **A — separate copy vs generated fence-timeout counters.** Real bug he found: the shared counter
+  reset on copy-fence success, so generated-frame timeouts could never reach the disable threshold.
+  **Done** (fork commit `4c259f8`): split into `copyFenceTimeouts` / `genFenceTimeouts`, each reset
+  only on its own fence type.
+- **B — timeout rework + split the generated-frame deadline from the sync-incompatibility recovery
+  path.** **Done** (fork commit `345e35e`): frame-budget-scaled sync timeout (4× base interval,
+  clamped 200 ms–1 s, else 500 ms), disable threshold 2→6, and a separate shorter generated-frame
+  cadence deadline (~2× the output interval) that just skips a late frame without counting it as a
+  sync failure. A+B compile-validated via CI.
+- **C — fps_limit ergonomics:** justify/relax the 10–200 clamp + add an `fps_limit_enabled` bool so
+  the value is remembered across toggles. (layer + app) — *todo*
+- **D — optional even-pacing** of generated presents to `1s/(base×mult)` behind an opt-in flag,
+  off by default. (layer + app) — *todo*
+- **E — document** ENABLE+DISABLE precedence in the manifest (disable wins). Trivial. — *todo*
+
+**Device-creation regression (his main concern) — direction changed after his reply.** The JNI/native
+path is unchanged (`Device::create()`, owned + destroyed); only the Vulkan-layer path uses
+`Device::wrap()` of the app's device. Jason confirmed **GameNative also uses the layer path**, so our
+change reaches it too. Arch root cause: standalone mode runs a second VkDevice and hands frames across
+it via `VK_QUEUE_FAMILY_EXTERNAL` transfers, which need a shared queue/timeline; a wrapper ICD bridges
+each guest device to Turnip as a separate host context, so that cross-device sync never completes →
+hang. Single-device avoids it by running interpolation on the app's own device (intra-device sync).
+
+**Plan:** likely **no flag** — single-device is probably the correct layer default for both stacks.
+**Critical next step: verify single-device on GameNative [PR #1443](https://github.com/utkarshdalal/GameNative/pull/1443).**
+If it's clean there, make single-device the layer default; only add an init-time `single_device`
+launch arg (it can't hot-reload — device is created at init) if GN regresses. Fork commits A–B are
+held locally and not yet pushed to PR #6; push as one batch after the GN question is settled and our
+stack is re-tested.
+
+---
+
+## 2026-06-20 — bionic-fg FRAME GEN + FPS LIMITER: merged to main, version → 1.3
+
+**FPS-limiter pacing device-confirmed (Phase 4 complete).** The deferred pacer (built into
+the bionic-fg Vulkan layer, `.so` md5 `c8e4b188`) ran on device with `fps_limit=30`: base
+DXVK frames locked at ~30 while the on-screen overlay stepped 60 → 90 → 122 as the in-game
+FG selector went 2× → 3× → 4× (i.e. on-screen = limit × multiplier). Proven on the OpenGL
+host renderer (log `bionicfg_fpslimit_test.txt` + 5 screenshots). The pacer sits at the top
+of `BionicFG_QueuePresentKHR`, gated `!st.inPresent && fpsLimit>0`, so it throttles only the
+app's real frames; generated frames (presented with `inPresent` true) bypass it. Verified the
+pacer `.so` is bundled in the shipped APK asset (`assets/bionic-fg/libbionic_fg.so` md5
+`c8e4b188`), not hand-staged.
+
+**Merged to main (`ddf46fb`).** Merged `feature/bionic-fg-framegen` (HEAD `f39b96a`) into main.
+One conflict in `.github/workflows/build-bionic-fg.yml` (both branches had it) resolved by
+keeping the feature branch's version (the one with the patch-apply step). Stale
+`BIONIC_FG_UPSTREAM_REPORT.md` working-tree edit reverted (falsely said single-device crashes;
+run6 disproved it). Feature branch kept until the upstream PR is cut.
+
+**CI: artifacts build now produces all 3 flavors (`eb30d1b`).** Previous standard-only build was
+a workaround for an OOM (exit 143) caused by packaging the ~588MB APKs in parallel.
+`build-artifacts.yml` now runs `assembleStandardDebug assembleLudashiDebug assemblePubgDebug
+--no-parallel --max-workers=1` with a larger Gradle heap (serialized packaging) and requires
+all 3 uploads. Run 27877129792 confirmed green with all 3 artifacts.
+
+**Version relabel → 1.3 (`9ee5cb2`, `90ce00b`).** Fresh-install Android "All files access"
+permission screen showed `1.4-marcescene` (the APK `versionName`) under "Bannerlator Bionic".
+Fixed: `app/build.gradle` `versionName "1.4-marcescene"→"1.3"`, `versionCode 20→21`; splash
+`SplashScreen.kt` "V 1.2"→"V 1.3" (color unchanged — stays grey `0xFFAAAAAA`); about/main
+`MainActivity.kt` stray "V 1.0"→"V 1.3". Build run 27877738210 label `1.3` dispatched on main;
+standard APK to be delivered to `/sdcard/Download/Bannerlator-1.3-standard.apk`.
+
+---
+
+## 2026-06-19 — Vulkan/DXVK/vkd3d BLACK-SCREEN FIX (✅ both renderers device-confirmed)
+
+**Symptom:** native Vulkan + DXVK(d3d8-11) + vkd3d(d3d12) rendered BLACK at full FPS on BOTH
+host renderers; OpenGL/DirectDraw/D3D7 fine.
+
+**Root cause:** marcescence shipped the native scanout machinery but left the AHB (DRI3 modifier
+1255) present path UNWIRED, and the GL renderer had NO AHB->GL (EGLImage) sampling at all
+(GPUImage textureId==0 -> black). Confirmed via device logcat (tag "Dri3": modifier 1255 ->
+AHB path taken; pixmaps imported fine -> not an import failure).
+
+**Fix (commit `7d5c9f8`, build label "vkfix3" run 27848179202):** ported proven wiring from
+GameNative (utkarshdalal/GameNative, local ~/GameNative):
+- `renderer/GPUImage.java` + `cpp/winlator/gpu_image.c`: GPUImage(int socketFd) now locks
+  (valid getStride + virtualData) and gained EGLImage support (createImageKHR =
+  eglGetNativeClientBufferANDROID + eglCreateImageKHR + glEGLImageTargetTexture2DOES). AHB
+  allocated BGRA_8888 (matches X depth-32 / GL_BGRA -> correct colors). unlock-before-release.
+- `xserver/extensions/DRI3Extension.java`: setDirectScanout(true) + getStride() width.
+- `xserver/extensions/PresentExtension.java`: 3-branch present (Vulkan native+scanout=FLIP /
+  Vulkan=COPY via onUpdateWindowContentDirect / GL+SHM=copyArea); relaxed depth 24<->32.
+- `XServerDisplayActivity.setupUI` + `VulkanRenderer.setInitialNativeMode`: wired the
+  previously-dead Vulkan toggles (native / presentMode / filterMode / swapRB).
+
+**Device results (vkfix3):** ✅ OpenGL host renderer (native Vulkan 1432fps + D3D12/vkd3d
+1748fps, correct colors). ✅ Vulkan host renderer (native Vulkan 1449fps, correct colors).
+
+APKs delivered: `/sdcard/Download/Bannerlator-vkfix3-standard.apk` (md5 eebfe339…),
+`-pubg.apk` (md5 a7c0acb3…).
+
+---
+
+## 2026-06-19 (PM) — Native Rendering toggle: device-tested + HUD-freeze fix
+
+User tested the previously-untested Native Rendering+ toggle on the Vulkan host renderer
+(AIO Graphics Test, native-Vulkan cube). Two findings:
+
+**1. Windowed content stretches/distorts — EXPECTED, not a bug.** With the graphics test in a
+*window* (sub-screen), enabling Native Rendering blits the active swapchain straight to the full
+device surface, stretched (LUNARG cube visibly squished). Direct scanout (`onUpdateWindowContent`
+FLIP branch → `nativeScanoutSetBuffer`) has no aspect-correct dst path for sub-screen windows;
+the aspect-preserving letterbox (`ViewTransformation`, `Math.min`-based) only applies on the
+copyArea path. ✅ With the test app **maximized to fullscreen**, native rendering renders the cube
+correctly proportioned (FPS still climbs 582→743→…). So for real fullscreen games — the actual use
+case — native rendering is correct. Windowed-distortion is a known limitation, not release-blocking.
+
+**2. Perf HUD freezes in Native Rendering — FIXED (commit `f724ec2`).** When Native Rendering was
+on, the horizontal perf HUD bar (Vulkan|DXVK|CPU|GPU|…|FPS) froze — values stopped updating while
+the game kept animating. Root cause: commit `779967a` wired `hudFrameTick` (which drives
+`frameRatingHorizontal.update()`, `XServerDisplayActivity.java:1345`) only into
+`onUpdateWindowContentDirect` (the COPY present path). Native rendering uses the FLIP/scanout path
+(`PresentExtension.java:154` → `VulkanRenderer.onUpdateWindowContent`), which never called it. Fix:
+added `if (hudFrameTick != null) hudFrameTick.accept(window.id);` in the scanout-delivered branch
+of `onUpdateWindowContent` (`VulkanRenderer.java:495`), mirroring the COPY path — ticks once per
+presented game frame in native mode.
+
+**Build:** `build-artifacts.yml` run `27852720105` (artifacts-only, no release, APK label `hudfix`),
+triggered off `main` @ `f724ec2`. ⏳ standard APK to be dropped in `/sdcard/Download/` when green;
+HUD fix in native mode still ⏳ device-unconfirmed.
+
+**Next:** device-confirm HUD ticks (and shows a sane FPS — native mode pauses X-side rendering) →
+then cut a tagged release (pick a real version; vkfix3/hudfix are just build labels). Cleanup:
+graphicsDriverConfig has two competing dialog formats writing the same field.
+
+---
+
+## 2026-06-19 (PM) — New neon gamepad launcher icon (corner-clip fix)
+
+User supplied a new icon (neon gamepad + magenta chevron + white L-bracket + corner stars on
+black, white rounded border) — `/storage/emulated/0/Download/ADM/file_…588.jpg`, 1254×1254 — and
+reported the previously-installed icon had its **border corners clipped** by the launcher's
+round/squircle mask (device screenshot 20260619-194013, drawer): that old icon was **full-bleed**
+(art edge-to-edge) so adaptive masks cut the corners.
+
+**Done (commit `19d62f8`, all 15 files = 5 densities × ic_launcher + ic_launcher_round + adaptive
+foreground):**
+- Legacy `ic_launcher.png` / `ic_launcher_round.png` (mdpi 48 … xxxhdpi 192) = full image, exact.
+- Adaptive foreground (mdpi 108 … xxxhdpi 432) = full art fit into the **safe zone** (~66% of
+  canvas, centered, transparent pad) so the launcher mask only ever trims the black margin — the
+  white border + corner stars stay fully visible under ANY mask shape. Generated with ImageMagick.
+- Adaptive background was already `@color/ic_launcher_background` = `#000000` (matches art bg) → no
+  change needed; seamless (image black bg blends into adaptive black).
+- No per-flavor icon overrides → shared `main/res` applies to all 3 flavors (standard/ludashi/pubg).
+- User explicitly chose "full white border visible" over a bigger near-full-bleed (88%) variant.
+
+**Build:** `build-artifacts.yml` run `27853329322` (artifacts-only, label `neonicon`, off `main` @
+`19d62f8`). ✅ standard APK delivered `/sdcard/Download/Bannerlator-neonicon-standard.apk` (md5
+`13056a0e2845f56ca34b00405abd3afb`). ⏳ icon device-unconfirmed (note: Android caches launcher icons
+— reboot / clear launcher cache if old clipped icon persists).
+
+---
+
+## 2026-06-19 (PM) — 🏁 RELEASE 1.2 + README features/download button
+
+**Released Bannerlator 1.2** (`release.yml`, run `27853787348`): tag `1.2`, marked **Latest**,
+non-prerelease, 3 flavor APKs attached. Standard APK → `/sdcard/Download/Bannerlator-1.2-standard.apk`
+(md5 `e5d5689ecf4b9b1a91596d70658a752f`). `release.yml` inputs = `release_tag` / `release_title` /
+`release_number` / `release_notes` (publishes `make_latest:true`, supersedes 1.1).
+
+1.2 changelog (commits since `1.1` tag): Vulkan/DXVK/vkd3d black-screen fix (`7d5c9f8` + lead-ups
+`b7d4f3a`/`c4d252c`), Native Rendering+ toggle wired (`779967a`), HUD-freeze fix on FLIP path
+(`f724ec2`), GL-only effects greyed out on Vulkan (`ba06bc3`/`df3a5c7`), DXVK/VKD3D/Vegas version-list
+refresh (`00a2544`), new neon icon (`19d62f8`).
+
+**Splash version** bumped `V 1.1` → `V 1.2` (`SplashScreen.kt:164`, commit `a598584`) BEFORE the
+release so it shipped in 1.2.
+
+**README** (commits `ae5d9b7` + `18eab3d`): added **✨ Full Features** section (7 grouped categories —
+Windows compat / graphics layers / renderers / containers / games+input / UI+overlay / builds; every
+item cross-checked against actual code, NO invented features like AI frame-gen which isn't in this
+app); bumped Information-table version V 1.0→V 1.2; added a centered shields.io **Download button**
+linking to `/releases/latest` + a "Download" entry in the nav row.
+
+**GameNative render-fix credit** (commit `8792f6d`): expanded the README GameNative credit row to
+state its rendering pipeline was the **reference used to fix/rewire the render options** (AHB present
+path → Vulkan/DXVK/VKD3D on both renderers: GPUImage socket-buffer lock + EGLImage sampling, DRI3
+direct-scanout, Present FLIP/COPY branches, Native Rendering+ scanout). Also appended a **Credits**
+section to the **1.2 GitHub release notes** (`gh release edit 1.2`) crediting GameNative (utkarshdalal)
+for the same, linking back to the README Credits.
+
+**Next:** device-confirm HUD-tick + new icon on 1.2; cleanup graphicsDriverConfig's 2 competing
+dialog formats.
+
+---
+
+## 2026-06-19 (PM) — bionic-fg frame generation: recon + branch `feature/bionic-fg-framegen`
+
+New feature kicked off: integrate [bionic-fg](https://github.com/xXJSONDeruloXx/bionic-fg) (Android/
+bionic Vulkan frame-generation layer, LSFG lineage — same engine GameHub ships as `libGameScopeVK.so`)
+as **(a)** a per-container option and **(b)** a live in-game side-menu control.
+
+**Author permission GRANTED** (xXJSONDeruloXx). Terms: (1) credit in README, (2) if source goes in
+tree do it as a **git submodule** (his preference), (3) feedback/PRs welcome.
+
+**Recon findings:**
+- Guest Vulkan goes through a **wrapper ICD** (`wrapper_icd.aarch64.json` + `GALLIUM_DRIVER=zink` +
+  `WRAPPER_*` at `XServerDisplayActivity.java:1823–1861`) bridging to the **Android bionic GPU driver**
+  via **adrenotools** — exactly the context bionic-fg targets.
+- Tree already has frame-gen groundwork: `app/src/main/cpp/lsfg-vk/` (stub CMakeLists, build excluded)
+  + root `build-lsfg-android.sh`. bionic-fg = the bionic-targeted sibling.
+- **All 3 CI workflows already use `submodules: recursive`** → adding the submodule needs NO CI change.
+- In-game drawer (`XServerDrawerState.kt`) uses StateFlow+Runnable; Native Rendering toggle is a
+  turnkey template for a Frame-Gen toggle. bionic-fg **hot-reloads its TOML** → in-game live control
+  by rewriting the config (multiplier 0=off / 2–4× / model 0-1 / flow_scale).
+- ⚠️ **Critical unknown:** does the wrapper expose a `VkSwapchainKHR` for the layer to hook, or does
+  it AHB-export with no WSI swapchain? Resolve with a verification spike BEFORE building UI.
+
+**Deliverable this session:** branch `feature/bionic-fg-framegen` created off `main`; full recon +
+phased job task list written to **`BIONIC_FG_INTEGRATION_REPORT.md`** (Phase 0 honor-terms → 1 native
+build → 2 spike/de-risk → 3 container setting → 4 in-game menu → 5 polish/release/give-back).
+
+**Next on branch:** Phase 0 — add bionic-fg as a submodule under `app/src/main/cpp/bionic-fg` +
+README credit; then the Phase 2 verification spike (gate the rest on it).
+
+### ✅ Phase 0 DONE (2026-06-19) — author terms honored
+- Added **bionic-fg as a git submodule** at `app/src/main/cpp/bionic-fg` (his preference), pinned at
+  `4f71770`; new root `.gitmodules`. CI needs no change (all 3 workflows already `submodules: recursive`).
+- **README credit**: added xXJSONDeruloXx / bionic-fg to the Credits table (frame-generation layer,
+  in-tree as a submodule with permission) + a "Frame Generation (bionic-fg)" row in the upstream-stack
+  table.
+- ⚠️ Submodule has **no LICENSE** → carry to Phase 5.2 (ask author before bundling in a release).
+- **Next:** Phase 2 verification spike — build `libbionic_fg.so`, hand-wire one container's env +
+  `conf.toml`, launch a DXVK game, confirm via logcat whether the layer engages (wrapper exposes a
+  `VkSwapchainKHR`?) BEFORE any UI work.
+
+### ✅ Phase 1 DONE (2026-06-19) — native build
+- `build-bionic-fg.yml` (standalone, NDK 26.1.10909125 + cmake 3.22.1, arm64-v8a/android-26). Run
+  **27854824786 ✅** → artifact `bionic-fg-arm64` (1.65 MB) = `libbionic_fg.so` (ELF aarch64,
+  Android 26, NDK r26b — matches our minSdk 26) + `VkLayer_BIONIC_framegen.json`. Workflow also added
+  to `main` (dispatch-only/inert) since workflow_dispatch requires the file on the default branch.
+- **Manifest insights (sharpen the spike):** layer is **IMPLICIT** (`enable_environment
+  BIONIC_FG_ENABLE=1`); `library_path ../../../lib/libbionic_fg.so` → manifest goes in
+  `…/share/vulkan/implicit_layer.d/`, .so in sibling `lib/`. Implicit layers are found via system
+  dirs / `VK_ADD_IMPLICIT_LAYER_PATH` (NOT `VK_LAYER_PATH`, which is explicit-only). Hooks
+  vkGetInstance/DeviceProcAddr → sits above the ICD.
+- **Refined crux:** bionic `.so` CANNOT load in the glibc guest (box64/Wine) → must load **host-side**
+  where the wrapper-ICD server runs Turnip via adrenotools. Spike must confirm (1) host loader honors
+  the implicit layer, (2) a real `VkSwapchainKHR` exists to hook (vs AHB-export = nothing to
+  intercept). Copy GameHub `libGameScopeVK` imagefs placement.
+- Artifact staged for device spike: `/sdcard/Download/bionic-fg/{libbionic_fg.so,VkLayer_BIONIC_framegen.json}`.
+- **Next:** Phase 2 spike (needs a device launch — log to crash-surviving `/sdcard/Download/*.txt`
+  per the device-launch rule; hold the actual launch for the user).
+
+### Phase 2 spike — runbook written + device recon (2026-06-19)
+- **`BIONIC_FG_SPIKE_RUNBOOK.md`** written: full device steps (place `.so` in `imagefs/usr/lib`,
+  manifest in `implicit_layer.d`, `BIONIC_FG_ENABLE=1` + `VK_LOADER_DEBUG=all` in container Env Vars,
+  conf.toml at guest `$HOME/.config/bionic-fg/`, logcat→`/sdcard/Download/bionicfg_spike.txt`) +
+  a decision table + cleanup.
+- **Device recon (root bridge):** guest uses its **own glibc Khronos loader**
+  `imagefs/usr/lib/libvulkan.so.1.4.315` and already loads **glibc** implicit layers — **MangoHud**
+  (`VK_LAYER_MANGOHUD_overlay_aarch64`) + `libutil_layer` — from `usr/share/vulkan/implicit_layer.d/`.
+  MangoHud's manifest is structurally identical to bionic-fg's (enable_environment, `../../../lib/…`,
+  same proc-addr hooks) → **discovery works**.
+- ⚠️ **KEY HYPOTHESIS:** our NDK/**bionic** `libbionic_fg.so` (links libandroid/liblog/Android
+  libvulkan) **will not load in the glibc guest loader** → real path is a **glibc aarch64 build**
+  (new Phase 1.5), mirroring how MangoHud + GameHub `libGameScopeVK` ship in imagefs. The spike's
+  Test A is designed to confirm this fast (expect a `cannot open shared object`/`libandroid` load
+  error), then pivot.
+- Standard pkg confirmed `com.winlator.banner` (pubg `com.tencent.ig`); both installed.
+- **Next (user):** run the spike launch per the runbook; report the log signals.
+
+### Phase 2 spike ARMED on device (2026-06-19) — awaiting user launch
+- Test workload = **DOOMBLADE** (user's choice; real DX11/DXVK game) in **container 2 "P10arm"**
+  (`imagefs/home/xuser-2`, the ACTIVE container; arm64ec, DXVK 2.4.1+vkd3d, Turnip, FPS HUD on).
+- Staged via root bridge: `libbionic_fg.so` → `imagefs/usr/lib/`, `VkLayer_BIONIC_framegen.json` →
+  `imagefs/usr/share/vulkan/implicit_layer.d/`, `conf.toml` (multiplier=2) →
+  `imagefs/home/xuser-2/.config/bionic-fg/`. All chown'd back to app uid `u0_a478`.
+- Container 2 `.container` env vars **prepended** `BIONIC_FG_ENABLE=1 VK_LOADER_DEBUG=all`
+  (backup at `.container.bak_bfg`).
+- Logcat capture → `/sdcard/Download/bionicfg_spike.txt`.
+- **REVERT if needed:** restore `imagefs/home/xuser-2/.container.bak_bfg`; rm the staged
+  `.so`/manifest/`.config/bionic-fg`.
+- ⚠️ Expectation: bionic `.so` likely fails to load in glibc guest loader (ABI) → then Phase 1.5
+  glibc build. Spike confirms.
+
+---
+
+## How to Resume a Session
+
+1. Read this file top to bottom
+2. Find the **Current Job** section — it tells you exactly what to do next
+3. Check the last commit hash matches what's on GitHub before continuing
+4. Run CI after every commit. Do not continue to the next job until CI is green.
+
+---
+
+## Completed Work (Pre-Plan)
+
+Full Jetpack Compose migration of all screens and dialogs is complete.  
+See `COMPOSE_MIGRATION_REPORT.md` for the full record.
+
+**Last migration commit:** `6dff28e`  
+**Bug fixes after migration:**
+- `85b1e57` — controller name text + drive letter dropdown fix
+- `6537038` — External Controllers header text fix
+- `3323810` — Customizable theme: 8 presets + HSV color picker (AppearanceScreen)
+- `beee77b` — Appearance entry missing from nav drawer (AppDrawer hardcoded)
+
+**Latest commit:** `beee77b`  
+**Latest CI:** run `24568759383` — in progress at time of writing
+
+---
+
+## Feedback Fix Plan
+
+Source: Developer feedback comparing v1.1 (old Java/XML) vs Compose version.  
+8 issues identified. Listed in execution order (smallest/highest impact first).
+
+---
+
+### Job 1 — Help and Support (BROKEN)
+**Status:** ✅ COMPLETE — commit `93d0326`, CI run `24569312463`  
+**File:** `app/src/main/java/com/winlator/cmod/ui/AppDrawer.kt`  
+**Problem:** `onClick = { /* TODO: open help URL or dialog */ }` — tapping does nothing  
+**Fix:** Replace the TODO with a Compose `AlertDialog` containing:
+- GitHub repo link: https://github.com/The412Banner/star-compose
+- Issue tracker link
+- A "Close" button
+Or alternatively open a URL via `Intent(Intent.ACTION_VIEW, Uri.parse(url))`.  
+**Effort:** 30 min  
+**Commit message:** `fix: implement Help and Support dialog`
+
+---
+
+### Job 2 — About Dialog (MISSING CONTENT)
+**Status:** ✅ COMPLETE — commit `d18cae6`, CI run `24569669122`  
+**File:** `app/src/main/java/com/winlator/cmod/MainActivity.kt` — `AboutDialog()` at bottom of file  
+**Problem:** Current dialog is 4 lines of plain text. Missing: app icon/logo, version name, Wine/Box64/FEX versions, credits list.  
+**Fix:** Rebuild `AboutDialog()` as a proper Compose `Dialog` (not AlertDialog — needs more space) with:
+- App icon (R.mipmap.ic_launcher_foreground)
+- App name + version (read from `BuildConfig.VERSION_NAME` + `BuildConfig.VERSION_CODE`)
+- Powered-by section: Wine, Box64, FEX-Emu, Turnip
+- Credits section with contributor names
+- Close button  
+**Effort:** 45 min  
+**Commit message:** `feat: rebuild About dialog with logo, version, credits`
+
+---
+
+### Job 3 — Container Creation Loading Indicator
+**Status:** ✅ COMPLETE — commit `2e5f4a1`, CI run `24570142005`  
+**Files:**
+- `app/src/main/java/com/winlator/cmod/ui/screens/ContainerDetailScreen.kt` — Save button / confirm action
+- `app/src/main/java/com/winlator/cmod/ui/screens/ContainerDetailViewModel.kt` — `saveContainer()` or equivalent
+**Problem:** When user taps Save on a new container, it creates silently with no progress feedback. On slow devices this looks like a freeze.  
+**Fix:**
+1. Add `isCreating: StateFlow<Boolean>` to `ContainerDetailViewModel`
+2. Set it true before container creation starts, false when done
+3. In `ContainerDetailScreen`, show a full-screen semi-transparent overlay with `CircularProgressIndicator` + "Creating container…" text when `isCreating == true`
+4. Disable the Save button while creating  
+**Effort:** 45 min  
+**Commit message:** `feat: add loading overlay during container creation`
+
+---
+
+### Job 4 — Settings Theme Mismatch (Dark Mode Toggle Broken)
+**Status:** ✅ COMPLETE — commit `44a4bdb`, CI run `24571445525`  
+**Files:**
+- `app/src/main/java/com/winlator/cmod/ui/theme/AppThemeState.kt`
+- `app/src/main/java/com/winlator/cmod/ui/theme/ThemePreset.kt`
+- `app/src/main/java/com/winlator/cmod/ui/theme/Theme.kt`
+- `app/src/main/java/com/winlator/cmod/MainActivity.kt`
+**Problem (two parts):**
+1. `SettingsFragment` uses Light XML AppTheme while the rest of the app is dark Compose — mismatched look inside the Settings screen
+2. The `dark_mode` SharedPreferences toggle in SettingsFragment has no effect on the Compose UI — `WinlatorTheme` always uses `darkColorScheme()`  
+**Fix:**
+1. Read `PreferenceManager.getDefaultSharedPreferences(this).getBoolean("dark_mode", false)` in `AppThemeState.init()` and store it as `isDarkMode: StateFlow<Boolean>`
+2. Add a light variant to each `ThemePreset` (or use Material3 `lightColorScheme()` as the light base)
+3. `AppThemeState.colorScheme` flow emits light or dark scheme based on `isDarkMode`
+4. Register a `SharedPreferences.OnSharedPreferenceChangeListener` so toggling dark mode in Settings updates the flow in real time without restart
+5. For SettingsFragment XML mismatch: set `android:theme="@style/Theme.AppCompat.DayNight"` on the fragment's parent or override the fragment background to match Compose surface color  
+**Effort:** 1.5 hours  
+**Commit message:** `fix: wire dark_mode preference to Compose theme + fix Settings appearance`
+
+---
+
+### Job 5 — Sort Shortcut List
+**Status:** ✅ COMPLETE — commit `00dc6a5`, CI run `24571836336`  
+**File:** `app/src/main/java/com/winlator/cmod/ui/screens/ShortcutsScreen.kt`  
+**Problem:** No sort option — shortcuts always appear in filesystem order  
+**Fix:**
+1. Add a sort icon button in the top bar or a sort dropdown in the shortcuts screen
+2. Sort options: Name A→Z, Name Z→A, Last Played, Container
+3. Store selected sort in `ShortcutsViewModel` (persisted to SharedPreferences)
+4. Apply sort to the `shortcuts` StateFlow before emitting  
+**Effort:** 1 hour  
+**Commit message:** `feat: add sort options to shortcuts list`
+
+---
+
+### Job 6 — Import/Export Container
+**Status:** ✅ COMPLETE — commit `8477b65`, CI run `24572308670`  
+**Files:**
+- `app/src/main/java/com/winlator/cmod/ui/screens/ContainersScreen.kt`
+- `app/src/main/java/com/winlator/cmod/ui/screens/ContainersViewModel.kt`
+**Problem:** The old `ContainersFragment` had import/export container options. These are missing from the Compose version.  
+**Fix:**
+1. Add "Import Container" and "Export Container" options to the container long-press context menu (already has Duplicate/Delete)
+2. Check original `ContainersFragment.java` (deleted) — refer to git history if needed, or find the logic in `ContainerManager.java`
+3. Export: zip the container directory → write to Downloads or user-picked location via `ActivityResultContracts.CreateDocument`
+4. Import: user picks a zip via `ActivityResultContracts.GetContent` → unzip to containers directory → reload list  
+**Check ContainerManager.java for existing import/export methods first** — they likely already exist.  
+**Effort:** 1.5 hours  
+**Commit message:** `feat: add import/export container to containers screen`
+
+---
+
+### Job 7 — Add Shortcut from External Storage
+**Status:** ✅ COMPLETE — commit `546d25e`, CI run `24577265773`  
+**Files:** `ShortcutsViewModel.kt`, `ShortcutsScreen.kt`
+
+---
+
+### Job 8 — Shortcut List Layout Toggle (Grid / List)
+**Status:** ✅ COMPLETE — commit `546d25e`, CI run `24577265773`  
+**Files:** `ShortcutsViewModel.kt`, `ShortcutsScreen.kt`
+
+---
+
+## Execution Order
+
+```
+Job 1 → Job 2 → Job 3 → Job 4 → Job 5 → Job 6 → Job 7 → Job 8
+```
+
+Each job: implement → commit → push both remotes → trigger CI → wait for green → update this log → proceed.
+
+---
+
+## Build Log
+
+| Job | Commit | CI Run | Result | Date |
+|---|---|---|---|---|
+| Pre-plan: Appearance drawer fix | `beee77b` | `24568759383` | ✅ green | 2026-04-17 |
+| Job 1: Help and Support dialog | `93d0326` | `24569312463` | ✅ green | 2026-04-17 |
+| Job 2: About dialog rebuild | `d18cae6` | `24569669122` | ✅ green | 2026-04-17 |
+| Job 3: Container creation loading overlay | `2e5f4a1` | `24570142005` | ✅ green (fix: `67844d2`) | 2026-04-17 |
+| Job 4: Dark mode pref + Settings theme fix | `44a4bdb` | `24571445525` | ✅ green | 2026-04-17 |
+| Job 5: Sort shortcuts list | `00dc6a5` | `24571836336` | ✅ green | 2026-04-17 |
+| Job 6: Import/Export container | `8477b65` | `24572308670` | ✅ green | 2026-04-17 |
+| Job 7+8: Import shortcut + grid/list toggle | `546d25e` | `24577265773` | ✅ green | 2026-04-17 |
+
+---
+
+## Current Job
+
+**→ ALL 8 JOBS COMPLETE** ✅
+
+Last commit: `546d25e`  
+Last CI: `24577265773` ✅ green
+
+---
+
+## 2026-06-28 — NIS device-test checkpoint (feat/deband-nis)
+
+**Status:** Vulkan NIS ✅ device-proven by user ("it works on Vulkan"). OpenGL/GL NIS ⏳ device-test in progress (Adreno runtime-compile risk = the open question).
+
+**NIS sharpness slider (resolved from committed source, this session):**
+- CONTINUOUS on BOTH renderers — every value 0–100 is live (GL `XServerDrawer.kt:463` steps=-1 for mode 7; VK `:547` no steps arg). Not notched.
+- GL & VK share the SAME NVIDIA `NVScalerUpdateConfig` constants (stock, untuned) → identical strength on both:
+  - slider 0 ≈ OFF (max USM strength ~0.03, overshoot limit ±20%)
+  - slider 50 = NVIDIA neutral default (1.6, ±50%)
+  - slider 75 = our seeded default (~2.16, ±69%)
+  - slider 100 = hard max (~2.73, ±87% — halo onset)
+- Input is `clamp(sharpness,0,1)`; 100 cannot be exceeded without editing shader constants. Curve is piecewise-linear with one slope kink at 50 (steeper above), plus soft floors ~17 & ~37 at the low end.
+
+**Side-finding (NOT NIS — cleanup candidate, UNFIXED):** CAS/Sharpen slider snapping is inconsistent across renderers.
+- OpenGL: Scaling-mode "Sharpen" (mode 6, `glUpscaleSharpness` steps=3) + standalone "Sharpen (CAS)" toggle (`sgsrSharpness` steps=3) → snap to 5 notches {0,25,50,75,100}.
+- Vulkan: "Sharpen" mode 6 (`upscaleSharpness` :547) + standalone "CAS" toggle (`casSharpness` :568) → continuous.
+- Fix later: add `steps=3` to the two VK sliders, or drop `steps` on the two GL ones (lean continuous-everywhere; GL keeps notches only for the "stop 0 = OFF" guarantee).
+
+**UPDATE 2026-06-28 (later):** ✅ OpenGL NIS DEVICE-PROVEN — user: "it worked like vulkan". Adreno GL shader-compile risk CLEARED. NIS now proven on BOTH renderers, matching looks. (Install: NIS vc32 needed `pm install -r -d` over the bionic-fg vc33 build via root bridge.) NIS feature merge-ready; debanding (other half of branch) may want a quick dark-gradient check before merge.
+
+**RESUME POINT (2026-06-28, user driving home):** Step 1 NIS = DONE, device-proven both renderers. NEXT SESSION = **Step 2: VRR / refresh-rate matching** (full plan in roadmap memory file). Open optional threads to fold in: (a) debanding dark-gradient check + merge `feat/deband-nis` to main; (b) CAS/Sharpen snapping cleanup (GL 5-notch vs VK continuous). Branch tip `cc3361f`, pushed, unmerged.
+
+---
+
+## 2026-06-28 — AMA bot: fix question form + switch to auto-answer-every-issue
+
+**Context:** User reported a friend submitted a test question but it never got answered — came in with no label, and manually adding `ama-request` after the fact did nothing.
+
+**Root causes found (two):**
+1. **Form template broken since day one.** `.github/ISSUE_TEMPLATE/ask-the-ai.yml` used the singular key `validation:` instead of GitHub's schema key `validations:`. GitHub strict-rejects invalid form templates → the `?template=ask-the-ai.yml` link silently fell back to the BLANK "Create new issue" page (no `Q:` title, "No labels") → submissions carried no `ama-request` → bot never fired. Fixed singular→plural (`62a223e`). Template now parses clean (verified with js-yaml).
+2. **After-the-fact labeling is a no-op.** The `labeled` trigger only listens for the `question` label, not `ama-request` — so manually adding `ama-request` later never triggers anything. (Adding `question` does — used it to force-answer the friend's #34.)
+
+**Decision (user chose): drop the fragile form/label dependency entirely → auto-answer EVERY new issue.** GitHub's new mobile issue-creation UI made the form/chooser unreliable across devices, so relying on it was the real friction.
+
+**Workflow change (`035ef08`):**
+- Trigger: job now runs on ANY `issues:[opened]` (skips bot-opened + already-`answered`); `labeled`+`question` kept as a maintainer force-rerun on older issues.
+- Per-user daily counter rewritten to count `label:answered author:X created:>=dayAgo` with `>=` (new issues no longer carry `ama-request`, so the old counter would never fire).
+- Now prepends the issue **Title** to the question (bug reports often put the ask in the title with an empty body).
+- Rate limits unchanged: 5/user/day (maintainers exempt) + 200/month.
+- Side effect (user accepted): bot now also answers bug reports / feature requests, not just questions.
+
+**Docs (`a394c2b`):** README badge + 3-steps now point to plain `/issues/new` ("Open an issue"); maintainer notes drop the form-only/`ama-request` wording (only `answered`+`question` labels needed now).
+
+**Proven:** plain unlabeled test issue #35 ("Native Rendering+") auto-answered in ~1–2 min with accurate citations (`XServerDisplayActivity.java:1936-2007`, `XServerDrawer.kt:633`) and got `answered`; closed as test. Also confirmed `OPENCODE_AUTH` secret is set and #34 answered correctly. No stale "No answer generated" comments remain on #32–#35.
+
+**Commits:** form fix `62a223e`, workflow `035ef08`, README `a394c2b` — all on `main` via API.
+
+---
+
+## 2026-06-29 — 2.1 stable cut + GL Native Rendering P0 (scanout extraction)
+
+### ✅ 2.1 STABLE released
+Cut `2.1` (versionCode 33, plain tag, `prerelease:false`/`make_latest:true`, releases/latest→2.1). Bumped `app/build.gradle` first (`282a674`) since `release.yml` reads version FROM there. Successful run `28341709108`; 3 APKs + `update.json` vc33 attached. Shipped: **VRR / refresh-rate matching** (Auto match-FPS + manual 60/90/120/144 snap slider, all 3 renderers), **NIS** upscaler (NVScaler mode 7, Vulkan), **debanding** (Vulkan compositor, strength slider), **Task Manager Vulkan/ASR fix**, **install-progress 98%→100% fix**, AIO Graphics Test v1.6.1 bundled.
+- ⚠️ **Release-notes trap (recurring):** first dispatch `28341637256` had a literal `"` in the notes → would break `release.yml`'s `NOTES="${{ inputs.release_notes }}"` bash line (the 1.9.2 failure). CANCELLED before the build finished (no tag leaked), re-dispatched with curly-quote-safe notes. **Lesson: pass release notes via a file / no straight `"`.** Final body replaced post-publish via `gh release edit --notes-file` for the clean 2.0-style layout.
+- README "What's New in 2.0"→"in 2.1" rewritten + Full Features updated (NIS/deband/VRR) — `d019bc3`. Verified each feature is real in renderer code before writing (deband `setDeband`, NIS NVScaler mode 7, `matchRefreshRate`).
+
+### ▶️ GL Native Rendering — P0 (renderer-neutral scanout extraction) — CI-GREEN, device-test owed
+Goal: bring **Native Rendering** (direct scanout via `SurfaceControl`→HWC overlay) to the **OpenGL** renderer (Vulkan-only today). Plan committed `docs/GL_DIRECT_SCANOUT_PLAN.md` (`228319f`). Phased P0–P6.
+
+**P0 (delegated to graphics-vulkan-engineer, branch `feat/p0-scanout-extract`, off main, pushed, NOT merged):** behavior-preserving extraction of the scanout impl into a standalone renderer-neutral `app/src/main/cpp/scanout/ScanoutContext.{h,cpp}` (zero Vulkan/GL/EGL). Methods moved (initScanout→initFromWindow, scanoutSetBuffer→setBuffer, applyScanoutBuffer→applyPendingCursor, dst/cursor setters) + state + SC_CREATE/ST_* macros + 9 dlsym fn ptrs. **Cursor threading split:** ScanoutContext gets pure setters + `applyPendingCursor()`; `needsRender`/`dirtyCV`/`cursorMoved` STAY in VulkanRendererContext, render loop calls `scanout.applyPendingCursor()` at `VulkanRendererContext.cpp:1485`. `VulkanRendererScanout.cpp` → thin forwarders. **`vulkan_jni.cpp` UNCHANGED → libvulkan_renderer ABI preserved.** Dropped 3 dead members; 1 log-only line touched. **CI run `28342956403` GREEN all 3 flavors.** CI-green only — NOT device-proven.
+
+**RESUME POINT / NEXT ACTION (user is about to test):** **P0 GATE = Vulkan-native REGRESSION device test.** Install the `feat/p0-scanout-extract` build (CI `28342956403`, release_number `p0-scanout`), open a **VULKAN** container with **Native Rendering ON**, run a DXVK game (AIO DX11 SPACE scene = known-good). Confirm UNCHANGED vs before: presents correctly, colors right, cursor right (pos/hotspot, not double-drawn), no black screen, clean teardown on rotate/background. **This must pass before P1.** Then P1 = new `libdirect_scanout.so` + `DirectScanout.java` (dormant, no wiring). Project memory: `project_bannerlator_gl_native_rendering.md`.
+
+**UPDATE — P0 device check + dumpsys SurfaceFlinger analysis (2026-06-29):** Tested the `p0-scanout` build on device "Pocket FIT" (Adreno 750 / SD8Gen3, Vulkan|DXVK), AIO DX11 cube test, Native Rendering OFF vs ON.
+- **Renders correctly both ways** (colors/geometry/cursor fine, no black screen) → **P0 extraction looks behavior-preserving** (regression-clean; strict A/B vs pre-P0 2.1 Native-ON not run, but the feature works on the refactored build).
+- **`dumpsys SurfaceFlinger` (root bridge, game in foreground) CONFIRMS overlay promotion WORKS:** `winlator_game_buf#66438` = **composition type=DEVICE (2)** = HWC hardware overlay (parent `winlator_game#66434` is the empty container SC). Game buffer `1280x702 BGRA_8888`, display controller SCALEs it ~1.5x→1080p **for free**. So direct scanout offloads the GPU from compositing, as intended. (3 layers total on DEVICE overlays; 128 idle/INVALID.)
+- **User Q "why is FPS lower with Native ON?"** OFF=766fps/29% GPU/86°C/1.3ms vs ON=584fps/27% GPU/96°C/1.7ms. **Not a failure** — overlay is promoting. Direct scanout couples the guest to a real vsync-paced, triple-buffered overlay queue with buffer-release backpressure → the guest can't sprint ahead; the OFF path lets it race to 766 into Winlator's looser offscreen compositor, but **most of those frames are never displayed**. GPU load staying low = GPU offloaded (the win); CPU temp up = per-frame `ASurfaceTransaction`/fence cost. **Native Rendering is a latency/power feature, not a more-FPS feature**; an uncapped microbench is the worst way to measure it (cap to panel 60/120 and compare power/temp/latency at equal displayed FPS to see the benefit). Same backpressure tradeoff will apply to the GL port at P4.
+- **NEXT: merge P0 → start P1** (`libdirect_scanout.so` = `scanout/directscanout_jni.cpp` + `ScanoutContext.cpp`, links log/android/dl/atomic only, NO vulkan; + `DirectScanout.java`; dormant, not wired).
+
+**UPDATE — GL Native Rendering P0 merged, P1 done+merged, P2 in flight (2026-06-29):**
+- **P0 MERGED** to main (merge `9575164`, no-ff, branch deleted) — renderer-neutral `ScanoutContext` extraction, Vulkan-native overlay device-confirmed (see above).
+- **P1 DONE + CI-green + MERGED** (graphics-vulkan-engineer; CI `28344514069`; merge `51ccb3a`, branch deleted). New **`libdirect_scanout.so`** (CMake target `direct_scanout`: `scanout/directscanout_jni.cpp` + `ScanoutContext.cpp`, links **log/android/dl/atomic only — NO vulkan/adreno**; ScanoutContext.cpp object-duplicated across this + vulkan_renderer, intended). JNI = heap `ScanoutContext*` as jlong, 1:1 forwarders; cursor applied **inline** (GL model, no needsRender/dirtyCV). New **`DirectScanout.java`** — lifted child-SC builder/teardown/`applyScanoutSwapTransform`(R/B-swap)/`releaseScanoutSurfaces` from `VulkanRenderer.java:614-679`/`:168-300`, generalized `enable(SurfaceControl parent,...)` to take parent SC as arg. **VulkanRenderer.java byte-for-byte unchanged; nothing wires DirectScanout yet → behavior-neutral, no device test needed.**
+- **P2 IN PROGRESS** (main session, one-liner): `XServerView.getSurfaceControl()` (`:153`) now returns `glSurfaceView.getSurfaceControl()` for GL too (was null; GLSurfaceView extends SurfaceView → inherits it, API29+). Vulkan return unchanged. **Behavior-neutral now** — only callers are `VulkanRenderer.java:173`/`:623` (Vulkan-only path); no GL path calls it until P3, so the "non-null SC on GL" device check lands at P3. Branch `feat/p2-gl-surfacecontrol`, CI run `28345217160` building, NOT merged.
+- **NEXT: P2 CI-green → merge → P3** = GLRenderer scanout lifecycle (`nativeMode`/`setNativeMode`/`setInitialNativeMode`, `DirectScanout.enable/disable`, dst + cursor, implement GL `setRenderingEnabled`→`xServer`; toggle wiring §4 activity+drawer). **P3 = first GL device validation** (§3: non-null GL SC + cursor SC composites ABOVE GL content). P4 = per-frame game push (feature lights up). Delegate P3 to graphics-vulkan-engineer.
+
+---
+
+## 2026-06-29 — Controller bindings persistence + scrollable profiles (#37) MERGED
+
+**✅ DEVICE-PROVEN (Odin 2) + MERGED to main** (merge `d3ee2d5`, no-ff).
+- `2f5cf0a` persist controller bindings + harden profile import (issue #37)
+- `4867789` make the Download Profiles list scrollable
+- Touches: `Binding.java`, `ControlsProfile.java`, `InputControlsScreen.kt`.
+- Build: manual "Any branch compilation" run `28365146389` GREEN (all 3 flavors). User device-tested → working.
+- No release cut (still 2.1 stable). Branch `fix/odin2-controller-bindings` can be deleted.
+
+---
+
+## 2026-06-29 — GL Native Rendering P2 MERGED, P3 started
+
+**P2 MERGED** to main (merge `460725f`, no-ff; branch `feat/p2-gl-surfacecontrol` deleted local+remote). One file: `XServerView.getSurfaceControl()` now also returns `glSurfaceView.getSurfaceControl()` (GLSurfaceView extends SurfaceView → inherits it, API29+). Behavior-neutral (only Vulkan path calls it today). CI run `28345217160` was green.
+
+**P3 STARTED** — delegated to graphics-vulkan-engineer. Scope = GLRenderer scanout LIFECYCLE only (no per-frame push, that's P4): `nativeMode`/`setNativeMode`/`setInitialNativeMode`, `DirectScanout.enable/disable`, dst + cursor SCs, implement `setRenderingEnabled`→`xServer`, toggle wiring §4 (activity + drawer). Goal: enabling GL native builds the child SCs + shows cursor SC; game still GL-composited. **P3 = first real GL device validation** (cursor SC composites ABOVE GL content). Plan `docs/GL_DIRECT_SCANOUT_PLAN.md`.
+
+**UPDATE — P3 CI GREEN, device-test owed (2026-06-29):** Branch `feat/p3-gl-scanout-lifecycle` (`f414e38`), CI run `28367896129` GREEN all 3 flavors (build 14m54s). +184 lines / 3 files: `GLRenderer.java` (lifecycle: setNativeMode/setInitialNativeMode/isNativeMode, enableScanout/disableScanout = game SC layer1 + cursor SC layer2 above GL, setRenderingEnabled→xServer, sendCursorToScanout skips GL cursor pass, updateScanoutDst, onSurfaceDestroyed/forceCleanup teardown), `XServerDisplayActivity.java` (toggle wiring in drawer onChange + launch path: setInitialNativeMode from container.isRendererNative() + setSwapRB), `XServerView.java`. NO per-frame push (P4). **NOT merged — P3 is the device gate.** Device-test (GL container, Native ON): cursor SC composites ABOVE GL content (not double-drawn, right pos/hotspot); `dumpsys SurfaceFlinger` shows child game+cursor SCs; rotate/app-switch/exit no leak/black; Native OFF = regression-clean. Merge only after device pass.
+
+**UPDATE — P3 DEVICE-VERIFIED in-game (2026-06-29, device "Pocket FIT" Adreno 750/SD8Gen3, GL|DXVK, AIO DX11 cube):** `dumpsys SurfaceFlinger` (game in fg, Native Rendering ON) confirms the P3 lifecycle BUILT the child SurfaceControls under the GLSurfaceView SC: `winlator_game#3181` + `winlator_game_buf#3185` + `winlator_cursor#3183` + `winlator_cursor_buf#3186`(16x16) all present. **Cursor SC is a separate composited layer** (winlator_cursor_buf, CLIENT, ROT_90, 1064,0-1080,16 = top-right) ABOVE the GL SurfaceView(#3165) → cursor-on-own-SC WORKS, no double-draw. **Game still GL-composited** (the GL SurfaceView carries the full game image; `winlator_game_buf` NOT in the active HWC composited set = game SC is bufferless, no per-frame push) = EXACTLY correct for P3. No overlay promotion of the GAME yet (that's P4). No black screen, renders fine. ✅ **P3 DEVICE GATE PASSED.**
+
+**📌 User finding — "screen effects still work with Native Rendering ON" (screenshot: FXAA+CRT+Toon+NTSC all checked + Native toggle ON + effects visibly applied to the cube):** EXPECTED in P3, NOT a bug. P3 only moves the CURSOR to its own SC; the GAME still flows through the GL renderer → EffectComposer → onDrawFrame, so effects still apply. The "effects can't work with native rendering" end-state only kicks in at **P4** (game frame pushed straight to HWC overlay, bypassing GL entirely) + **P5** (grey-out the effect toggles when native on). So P3 = effects coexist with native; that flips at P4.
+
+**▶️ NEXT: P3 passed device gate → MERGE `feat/p3-gl-scanout-lifecycle` → P4** (per-frame game push = feature lights up + effects-bypass behavior appears).
+
+**UPDATE — P4 CI GREEN, device-test owed (2026-06-29):** Branch `feat/p4-gl-perframe-push` (`d44b560`), CI run `28369663007` GREEN all 3 flavors (artifacts `Bannerlator-p4-gl-perframe-{standard,ludashi,pubg}`). +70 lines, 3 files: **GLRenderer.java** new `presentScanout(Window,Drawable)` (lift of VulkanRenderer.onUpdateWindowContent AHB body: synchronized(content.renderLock), GPUImage g=content.getTexture(), ahbPtr=g.getHardwareBufferPtr(), fence=g.unlock(), scanout.present(ahbPtr,rx,ry,w,h,fence), g.lock(), refreshDataFromTexture(), first-delivery pause via xServer.setRenderingEnabled(false)+xRenderingPausedForScanout, hudFrameTick.accept) + `setHudFrameTick(IntConsumer)`. **PresentExtension.java** GL-native FLIP branch before final else (mirrors Vulkan isNative: content.setTexture(pixmap GPUImage)+setDirectScanout(true)+sendCompleteNotify FLIP+presentScanout+emitIdleNotify). **XServerDisplayActivity.java** glr.setHudFrameTick wired (updates frameRating/frameRatingHorizontal/perfHud on frameRatingWindowId). Reuses DirectScanout.present()/isGameFrameDelivered() from P1. Vulkan/ASR untouched. **NOT merged — P4 is the full-feature device gate.** Device-test (GL container, Native ON, DXVK game): game presents correct (no black, colors right=swapRB, letterbox); `dumpsys SurfaceFlinger` GAME layer on HWC overlay (composition type=DEVICE) GL layer skipped (= the win vs P3 CLIENT/GL); cursor correct not double-drawn; HUD ticks (not frozen); rotate/bg no leak; effects now silently stop applying (expected, P5 greys toggles). Merge after device pass.
+
+**UPDATE — P5 CI GREEN (stacked on P4), device-test owed (2026-06-29):** Branch `feat/p5-gl-effect-exclusion` (`64b7cfb`) OFF `feat/p4-gl-perframe-push` (`d44b560`) — so ONE test build = P4 per-frame push + P5 grey-out. CI run `28373207641` GREEN all 3 flavors (`Bannerlator-...{standard,ludashi,pubg}` — note artifact name prefix per agent). +87 lines, 2 files: **XServerDisplayActivity.java** — `disableNativeRenderingForPreset()` got a GLRenderer arm (setNativeMode(false)); new `resetGlEffectsForNative(GLRenderer)` (Direction B, mirrors resetVulkanPresets: filter→1/setUpscaler(0), remove FSREffect+HDREffect, applyScreenEffects neutral, deband off, reset XServerDialogState flows glUpscalerMode/Sharpness/sgsr*/hdrEnabled/se*/deband* — touches EffectComposer+StateFlows only, never apply callbacks → no re-entry); Native toggle GL arm calls resetGlEffectsForNative on enable; Direction A wired into onGlUpscalerApply(mode≥3)/onSgsrUpdate(enabled||hdr)/onScreenEffectsApply(non-neutral)/GL onDebandApply(enabled) → each calls guarded disableNativeRenderingForPreset(). **XServerDrawer.kt** — GraphicsContent derives `glEnabled = !nativeRenderingEnabled` (existing reactive XServerDrawerState flow, no new flow) + dimmed glHeaderColor; passes glEnabled to UpscalerModeButtons/scaling+SGSR IntSliders/Sharpen(CAS)+HDR ToggleRows/DebandControls/Screen-Effects sliders/SeShaderToggles; added `enabled` param to IntSlider+DebandControls (Vulkan callers default true → unchanged). Vulkan/ASR + P3/P4 untouched. **NOT merged.** Device-test: GL+Native ON → all GL effect+scaling controls greyed/disabled (~0.4 alpha) + headers dim; toggle Native live un-greys instantly; Direction A (effect→native off+toast)/B (native→effects reset); Vulkan unchanged. ⚠️Deviation: grey-out applied to GL block only (Vulkan resets-on-enable but doesn't grey — plan phrasing "matching Vulkan greys" was inaccurate; followed explicit GL-grey requirement).
+
+**▶️NEXT: device-test the combined P4+P5 build → if pass, merge `feat/p5-gl-effect-exclusion` to main (brings P4+P5 together) → P6 optional cleanup (fold Vulkan/ASR onto DirectScanout).**
+
+**UPDATE — Combined P4+P5 DEVICE-TESTED (2026-06-29, Adreno 750/SD8Gen3, GL|DXVK, AIO DX11 cube). Mixed result → overlay-promotion fix started.**
+Driven via root bridge (toggle in-drawer, dumpsys OFF vs ON, drawer open vs closed):
+- ✅ **P4 functional:** Native ON builds scanout SCs (winlator_SC_count 0→14): winlator_game/winlator_game_buf (game buffer 1280×702 ROT_90 → disp 0,0,1080,1920 fullscreen), winlator_cursor/winlator_cursor_buf (16×16). Game renders perfectly, colors correct (swapRB good), cursor on own SC. Toast "Native Rendering+ Enabled".
+- ✅ **P5 grey-out:** toggling Native ON instantly dims+disables FXAA/CRT/Toon/NTSC + sliders (verified screenshot vs Native-OFF bright state).
+- ❌ **THE BUG — no HWC overlay promotion:** Native OFF = GL SurfaceView is `composition type=DEVICE` (single fullscreen overlay, efficient). Native ON (even drawer CLOSED) = winlator_game_buf AND GL SurfaceView both **CLIENT** (GPU). Raw HWC = `composition: DEVICE/CLIENT` = SF requested overlay, HWC REJECTED → GPU fallback. So zero power/latency win; currently WORSE than native-off. Vulkan native promotes to DEVICE on same device/scene/scale → rejection is GL-specific.
+- **Diagnosis:** gameSC IS opaque in both (DirectScanout.java:85-86 / VulkanRenderer.java:174-175) — NOT the cause. The game/cursor SCs are CHILDREN of the renderer's own SC (parent = xServerView.getSurfaceControl() = GLSurfaceView's SC). On GL the paused GLSurfaceView keeps its last opaque fullscreen buffer on the parent layer → SF can't drop it → overlay rejected. Classic hole-punch issue. Can't just hide the parent SC (children hide too).
+- **▶️FIX STARTED** — branch `feat/gl-scanout-overlay-fix` off `feat/p5-gl-effect-exclusion` (graphics-vulkan-engineer, agentId a1c4b9fd82603ed55): investigate how Vulkan's base surface stays non-competing, then make the GL base layer transparent/hole-punched/bufferless when scanout active so SF can overlay-promote the opaque child game SC. Primary device gate = dumpsys winlator_game_buf = composition type=DEVICE, GL layer skipped.
+- ⚠️ Native left toggled ON on the test container.
+
+**UPDATE — GL overlay-promotion fix #1 (idle base layer) CI-GREEN, device-test owed (2026-06-29):** Branch `feat/gl-scanout-overlay-fix` (`b418e53` off P5 `64b7cfb`), CI run `28376490129` GREEN. +38 lines GLRenderer.java only. Fix = once first game frame reaches game SC, onDrawFrame renders ONE cleared frame (glClearColor 0,0,0,0) then early-returns every subsequent frame (no GL compositing of game/cursor); onPointerMove no longer requestRenders in native mode → base GLSurfaceView goes IDLE holding a single cleared buffer (mirrors Vulkan render-loop single clearing frame + ASR bufferless base). `xRenderingPausedForScanout` made volatile (X-thread write / GL-thread read). Theory: idle base lets SF occlusion-cull it so HWC promotes the opaque game SC to DEVICE. **CAVEAT: addresses BLOCKER #1 ONLY (competing base layer). Base still OPAQUE black (agent noted translucent-format fallback lever). Did NOT address BLOCKER #2 (SC-level ROT_90+scale that Adreno overlay pipes may reject) — libwinemu intel arrived after agent committed.** This build isolates hypothesis #1. **DEVICE GATE = dumpsys winlator_game_buf composition type CLIENT→DEVICE.** If DEVICE → #1 was the whole fix (don't touch orientation). If still CLIENT → blocker #2 confirmed → GameHub-style geometry rework (no SC-level rotate/scale, fit via setBuffersGeometry). ⚠️Agent also committed PROGRESS_LOG.md ON the branch (+36) → diverges from main, reconcile on merge.
+
+**UPDATE — overlay-fix #1 (idle base) DEVICE-TESTED 2026-06-29: INSUFFICIENT, blocker #2 CONFIRMED.** GL container + Native ON + drawer closed, dumpsys: winlator_game_buf STILL = CLIENT (raw `composition: DEVICE/CLIENT` = HWC rejected overlay). Game renders fine / no black / no regression — but no DEVICE promotion. Game SC still carries `ROT_90` + source 1280×702 → disp 1080×1920 (rotate + 1.5× scale). So idle-base was necessary-but-not-sufficient. **Blocker #2 = Adreno HWC won't overlay a layer needing SIMULTANEOUS rotation + scaling** (matches libwinemu RE: GameHub does ZERO SC-level geometry, sizes via setBuffersGeometry+RGBA_8888). ▶️Agent a1c4b9fd82603ed55 resumed on same branch `feat/gl-scanout-overlay-fix` to do blocker #2: eliminate SC-level rotate+scale on the game SC (compare why Vulkan native IS overlay-eligible on this device but GL isn't). ⚠️Risky (orientation/fit). Device gate unchanged: winlator_game_buf CLIENT→DEVICE + game still correct.
+
+**NOTE — interpreting "native ON feels different" (2026-06-29, important for the upcoming test):** User observes real latency/FPS difference Native ON vs OFF and asked if the overlay is already working. THREE distinct things change when Native turns on — don't conflate:
+- **A. P5 toggles grey out** — pure UI, no perf impact unless an effect was active (confound: turning off an active effect changes FPS).
+- **B. GL compositor pass is SKIPPED** — even with zero effects, Native-OFF does a per-frame GPU blit (game texture → GLSurfaceView + swap); Native-ON's `presentScanout` pushes the AHB straight to the game SC and idles the base, removing that GPU stage + changing present pacing (SurfaceControl queue vsync/backpressure). **This is a REAL, PARTIAL win and is what the user is measuring — it happens WHETHER OR NOT the overlay promotes.**
+- **C. HWC overlay promotion (`DEVICE`)** — display controller does the final composite, GPU does nothing for it. **STILL NOT happening (dumpsys = CLIENT).** This is the big win blocker #2 targets.
+Corrected an earlier overstatement ("pointless/regression"): B is a legitimate benefit on its own; C is the additional win still missing. **To verify C specifically: compare GPU load/power/temp at CAPPED equal FPS (e.g. lock 60) OFF vs ON — only C drops GPU load meaningfully; FPS alone is downstream of B and will differ regardless.** The `dumpsys` DEVICE-vs-CLIENT line is the authoritative overlay readout.
+
+**TEST QUEUED (after blocker-#2 build finishes):** blocker #2 fix is building on `feat/gl-scanout-overlay-fix` (agent a1c4b9fd82603ed55, eliminate SC-level rotate+scale). When green → device-test the full thing: (1) dumpsys winlator_game_buf CLIENT→DEVICE (the gate), (2) game still correct orientation/fit/colors, (3) capped-FPS GPU/power A/B to quantify C, (4) cursor/HUD/lifecycle.
+
+---
+
+## ⏸️ RESUME-HERE CHECKPOINT (2026-06-29, before user device reboot)
+
+**Active task: GL Native Rendering — overlay-promotion fix.** Session runs on the device → reboot kills it + the background CI watch (CI continues server-side).
+
+**MERGED to main:** P0 (scanout extract) + P1 (libdirect_scanout) + P2 (GL getSurfaceControl) + P3 (GL scanout lifecycle). main tip = `7aaacaf` (docs only after the P3 merge `2fe3f10`).
+
+**NOT merged — all on branch `feat/gl-scanout-overlay-fix` (tip `e036124`):** stacked P4 (`d44b560` per-frame push) → P5 (`64b7cfb` effect/scaling grey-out) → overlay-fix#1 (`b418e53` idle base) → overlay-fix#2 (`e036124` TRANSLUCENT base). ⚠️ Agent also committed PROGRESS_LOG.md ON this branch (+36) → diverges from main's PROGRESS_LOG; reconcile (keep main's) on eventual merge.
+
+**Build in flight:** CI run **`28378890898`** for `e036124` (translucent base) — was BUILDING at checkpoint, status NOT yet confirmed. ON RESUME: `gh run view 28378890898 --json status,conclusion`; if green, artifacts = `Bannerlator-glscanout-overlayfix-{standard,ludashi,pubg}`.
+
+**DEVICE-PROVEN SO FAR (Adreno 750/SD8Gen3, GL|DXVK, AIO DX11 cube):** P4 functional (game flows through scanout, renders correct, swapRB ok, cursor own SC), P5 grey-out works. ❌ Overlay NOT promoting: every Native-ON test shows `winlator_game_buf = CLIENT` (raw `composition: DEVICE/CLIENT` = HWC rejected). fix#1 (idle OPAQUE base) tested INSUFFICIENT. fix#2 (translucent base) = current build, UNTESTED.
+
+**KEY FINDING (agent, code-read):** the game-SC geometry (src 1280×702→dst fullscreen + ROT_90=global display orientation) is BYTE-FOR-BYTE the same as the Vulkan native path, which DOES promote to DEVICE on this device → so rotate+scale is NOT the GL-specific blocker (my earlier blocker-#2 hypothesis likely WRONG). The GL-specific difference = GLSurfaceView base is OPAQUE & composited (CLIENT) even when idle, starving the game overlay's HWC plane. fix#2 makes it TRANSLUCENT so SF can skip it (Vulkan base = idle swapchain, ASR = bufferless — both non-competing).
+
+**NEXT ACTION ON RESUME:** 1) confirm CI `28378890898` green. 2) Device-test translucent build (GL container, Native ON, DX11 scene, drawer closed): **THE GATE = dumpsys `winlator_game_buf` composition type CLIENT→DEVICE** + game still correct (orientation/fit/colors/no-black). 3) If promoted → quantify the win: capped-60 GPU/power/temp A/B (off vs on). 4) If STILL CLIENT → deeper dig: why does identical-geometry Vulkan promote but GL not (plane budget? layer count? the extra activity/decor layers? try fewer layers / check HWC plane caps). 5) If promotes + correct → merge `feat/gl-scanout-overlay-fix` chain to main (reconcile PROGRESS_LOG), then P6 optional. If unfixable → gate GL-native experimental (plan §3 fallback).
+
+**Interpretation reminder (A/B/C):** user feels a real latency/FPS diff Native ON vs OFF = the **B** win (GL compositor pass skipped) which happens regardless of overlay; **C** (the DEVICE overlay) is the missing big win. Verify C via capped-FPS GPU/power, NOT raw FPS. dumpsys DEVICE/CLIENT = authoritative.
+
+**Bridge test recipe (from this session):** `getlog --exec` (PATH +=/data/data/com.termux/files/usr/bin). Graphics tab icon tap (70,138); Native Rendering toggle (765,968); close drawer keyevent 4; dumpsys → `/sdcard/Download/_x.txt`; check `grep -iE "HWC layers" -A18 | grep -iE "winlator_game|SurfaceView\[com.winlator|DEVICE|CLIENT"`; SCcount `grep -icE "winlator_game|winlator_cursor"` (0=native off, ~14=on). Foreground session: `monkey -p com.termux -c android.intent.category.LAUNCHER 1`. ⚠️ Native left toggled ON on test container (container 2 / the AIO test container).
+
+---
+
+## ❌ overlay-fix #2 (TRANSLUCENT base) DEVICE-TESTED 2026-06-29 — STILL CLIENT, base regressed. Translucent approach backfired.
+
+Build `e036124` (CI `28378890898` green, manually installed by user). Device = Adreno 750/SD8Gen3, GL|DXVK, AIO DX11 cube, drawer closed. Driven via root bridge (toggle 765,968; dumpsys OFF vs ON).
+
+**THE GATE = FAIL.** dumpsys SurfaceFlinger composition (requested/actual):
+- **Native OFF baseline:** base `SurfaceView[…XServerDisplayActivity]` = `composition: DEVICE/DEVICE` ✅ — ONE clean fullscreen HWC overlay, 0 scanout SCs. (FPS 750 / GPU 26% / CPU 90.7°C)
+- **Native ON (fix #2):** SC count 0→14 (scanout built, native active, P5 grey-out confirmed, cube renders correct/right colors). BUT:
+  - base `SurfaceView` = `composition: DEVICE/CLIENT` ❌ (was DEVICE/DEVICE off — **REGRESSED**, making it translucent did NOT get SF to cull it; it stays in the stack at z:0 and now forces GPU comp)
+  - `winlator_game_buf#781` AHB = `DEVICE/CLIENT` ❌ — ROT_90, src 1280×702 → dst 1080×1920 (rotate + 1.5× scale)
+  - `winlator_cursor_buf#782` AHB = `DEVICE/CLIENT` ❌
+  - VRI + ScreenDecor also CLIENT → **EVERY layer GPU-composited.** (FPS 704 / GPU 28% / CPU 93.1°C = slightly WORSE than off)
+
+**VERDICT:** translucent base = INSUFFICIENT and counterproductive. It didn't make SF skip the base (base still composited, just now blended/CLIENT instead of a clean opaque DEVICE overlay), and the whole frame fell to GPU. So the checkpoint's "opaque competing base is the GL-specific blocker" hypothesis is NOT confirmed by making it translucent — the base being *present at all* (not its opacity) plus the rotate+scale game buffer is what's blocking. **C (HWC overlay) still not happening; only the B win (skipped GL compositor pass) remains, and it's marginal here.**
+
+**▶️ NEXT HYPOTHESES (not yet tried, ranked):**
+1. **Make the base GLSurfaceView genuinely BUFFERLESS/absent when scanout active** (like ASR's bufferless base), not merely translucent — currently it's still a composited layer at z:0. If SF still can't drop it, the GLSurfaceView architecture itself may be the wall (can't host children AND vanish).
+2. **Drop the SC-level SCALE on the game buffer** — set the game SC to display size via setBuffersGeometry/setGeometry so it carries ONLY ROT_90 (the global display transform), matching GameHub/libwinemu (zero SC-level geometry). The 1280×702→1080×1920 rotate+scale combo is a known Adreno overlay-rejection trigger. (Re-opens old "blocker #2"; checkpoint thought it was wrong but this run keeps it live.)
+3. **DECISIVE DIAGNOSTIC: capture Vulkan-native ON dumpsys on the SAME device/scene** and diff layer-for-layer vs this GL one — Vulkan promotes to DEVICE here, so the diff (layer count? base swapchain state? is the Vulkan base even present? buffer geometry/transform?) points straight at the real GL-specific blocker instead of guessing.
+
+⚠️ Container left with Native toggled ON after this test. fix #2 NOT merged (still on branch `feat/gl-scanout-overlay-fix` tip `e036124`).
+
+---
+
+## 🔬 ROOT-CAUSE DIAGNOSIS 2026-06-29 (graphics-vulkan-engineer code-read, agentId aa8c3b24c81f5e41c) — it's the GLSurfaceView base + child-parenting, NOT geometry/opacity.
+
+Read both scanout paths (Vulkan works→DEVICE, GL fails→CLIENT) against the device evidence. Eliminations:
+- **Geometry/SC-scale = RED HERRING.** Both renderers feed the SAME `ScanoutContext::setBuffer` (`ScanoutContext.cpp:173-211`) with transform arg **0** (identity); the ROT_90 you see in dumpsys is the global display orientation applied to EVERY layer (incl base), and the 1280×702→1080×1920 is the inherent src≠dst guest→display scale. This exact block runs on the Vulkan path that DOES promote on this device. So `setBuffersGeometry`/dropping the scale would change nothing GL-specific.
+- **Parenting topology = IDENTICAL.** Both parent the game/cursor SCs under `xServerView.getSurfaceControl()` = their own base-view's SC (Vulkan `VulkanRenderer.java:623`, GL `DirectScanout.java:85-89`). Only variable = base VIEW TYPE: plain `SurfaceView` (Vulkan/ASR) vs `GLSurfaceView` (GL).
+- **"Base still updating" = NOT it.** Both idle the base after scanout starts (Vulkan `VulkanRendererContext.cpp:1486-1499` renders ONE empty frame then `return`s forever — its plain-SurfaceView BufferQueue genuinely flatlines so SF can drop it; GL mirrors via `setRenderingEnabled(false)`+early-return `GLRenderer.java:262-285,387-395`).
+
+**THE WALL:** `GLSurfaceView` OWNS/manages its own `EGLSurface` (`XServerView.java:102-111`, preserveEGLContextOnPause) → it ALWAYS holds its last fullscreen EGL buffer and can't be made bufferless/absent like a stopped Vulkan swapchain or ASR's bufferless host. AND because the game/cursor SCs are its CHILDREN, you can't hide/remove the base without hiding them (parent setVisibility(false) hides subtree). `setGlSurfaceTranslucent` only changes the holder format → turns the base into a BLENDED fullscreen layer at z=0 that HWC must client-composite → cascades the whole frame to CLIENT = exactly the fix-#2 regression. Matches the GameHub/libwinemu RE: GameHub promotes because it uses a **dedicated standalone surface with no competing base**.
+
+**▶️ RECOMMENDED FIX (a), IMPLEMENT FIRST:** reparent the scanout SCs OFF the GLSurfaceView. Concrete lowest-risk form: add a **dedicated plain `SurfaceView`** sibling of `glSurfaceView` in the `XServerView` FrameLayout, parent game/cursor SCs under THAT SC, and set the GLSurfaceView GONE / its SC invisible while native active → single opaque fullscreen game SC over a clean base = the same topology that already promotes on the Native-OFF baseline AND the Vulkan path. Files: `XServerView.java` (`getSurfaceControl()` :183, add dedicated SurfaceView + base-hide hook by `setGlSurfaceTranslucent` :168), `GLRenderer.enableScanout/disableScanout` (:608/:646), `DirectScanout.enable` (parent arg already generalized). (Plan §3 Fallback-A via `getRootSurfaceControl()` API30+ also works but fussier on lifecycle — dedicated-SurfaceView is closer to the proven Vulkan path.)
+- **(b) genuinely bufferless GL base** = SECOND/fallback — needs replacing GLSurfaceView with self-managed EGL-on-SurfaceView (big rewrite, deferred "drop GLSurfaceView" step). (a) reaches the same end-state without it.
+- **(c) drop SC scale** = DO NOT — proven not the blocker (shared with working Vulkan path).
+
+**Device tests now CONFIRMATORY, not exploratory:** Vulkan-ON would re-confirm the P0 result (already proven DEVICE on this device); GameHub-GL-ON would independently prove a GL-origin standalone overlay promotes here + hand us the target layer structure. Optional belt-and-suspenders before building fix (a).
+
+---
+
+## 🧪 GAMEHUB 5.3.5 NATIVE-RENDERING+ DEVICE-TESTED 2026-06-29 — ALSO fails to promote (DEVICE/CLIENT), BUT confounded by windowed-desktop mode.
+
+Ran the upstream reference (GameHub 5.3.5, pkg `com.tencent.ig`/`com.xj.winemu.WineActivity` — basis of Banner Hub 3.8.0) on the SAME Adreno750/SD8Gen3, SAME AIO DX11 cube, DXVK, right-side drawer. "Native Rendering+" is a 3-way radio Auto/Disabled/**Force Enable**. dumpsys composition (requested/actual):
+- **Native OFF (Disabled):** `SurfaceView[com.tencent.ig/…WineActivity]#5` = `DEVICE/DEVICE` ✅ (clean fullscreen overlay, RGBX_8888, transform 0, src 720×1280→dst 1080×1920) + VRI `DEVICE/DEVICE`. HUD "DXVK".
+- **Native ON (Force Enable):** HUD flips to "DXVK+". ALL layers `DEVICE/CLIENT` ❌ (requested overlay, HWC REJECTED→GPU): base SurfaceView#5 (still PRESENT, RGBX), `AHardwareBuffer pid[27828]` z1 (game, RGBA_8888, transform **90**/ROT_90), `bbq-adapter#1` z2 (RGBA_8888, transform 90), VRI z3. **EXACT same failure shape as our GL path** (base stays present + ROT_90 game AHB + everything rejected to CLIENT).
+
+**⚠️ CRITICAL CONFOUND — GameHub was running its Wine DESKTOP (windowed), NOT a borderless fullscreen game:** taskbar at bottom + title bar + window chrome; the game content layer is INSET (dst 61,2–1035,1919, not fullscreen). A non-fullscreen scene with competing chrome will be rejected for overlay promotion REGARDLESS of renderer. So this is NOT a clean apples-to-apples vs our fullscreen container, and does NOT cleanly serve as the "GL-origin overlay CAN promote here" reference we wanted.
+
+**What it DOES tell us:**
+1. GameHub's native path ALSO keeps its base SurfaceView present (doesn't vanish it) and ALSO applies ROT_90+scale on the game AHB — so the libwinemu-RE "zero SC-level geometry / standalone surface, no competing base" claim is NOT what this build does in desktop mode. (RE may describe fullscreen-game path or a different code branch.)
+2. It does NOT refute the engineer's diagnosis for OUR GL-vs-Vulkan: that remains a CLEAN A/B (same container, same fullscreen config, same scene — only renderer differs; Vulkan promotes to DEVICE, GL doesn't). The GameHub non-promotion is explained by windowing.
+
+**▶️ To make GameHub a decisive reference: re-run it with a BORDERLESS FULLSCREEN game (no taskbar/title bar).** If fullscreen GameHub promotes → confirms fullscreen+standalone-surface is the recipe (supports fix (a)). If even fullscreen GameHub stays CLIENT on this device → this Adreno750/Android build may be stingy about overlays generally (re-scope expectations). Meanwhile fix (a) is still well-founded on our own Vulkan A/B (the clean fullscreen proof that this geometry promotes on this device).
+⚠️ Left GameHub with Native Rendering+ = Force Enable; may have toggled "RTS Touch Controls" on the Controls page (harmless, cosmetic).
+
+---
+
+## 🚨 GAMEHUB 5.3.5 FULLSCREEN Native-ON DEVICE-TESTED 2026-06-29 — STILL CLIENT even fullscreen+base-dropped. Blocker looks DEVICE-LEVEL (rotated non-UBWC buffer), not our GLSurfaceView.
+
+Re-ran GameHub as a BORDERLESS FULLSCREEN game (no taskbar/title bar — confirmed via screenshot, cube fills screen + horizontal top HUD bar "DXVK+"), Native Rendering+ = Force Enable, drawer closed. SAME Adreno750/SD8Gen3.
+- **The base WineActivity SurfaceView is GONE from the active HWC set** (in fullscreen GameHub DID drop its base — unlike windowed-desktop where it stayed). Game buffer is now z:0 (bottom).
+- **Yet STILL no promotion — ALL `DEVICE/CLIENT`:** `AHardwareBuffer pid[32674]` z0 (game, RGBA_8888, **transform 90**), `bbq-adapter#1` z1 (RGBA_8888, **transform 90**), `VRI[WineActivity]` z2 (RGBA_8888_UBWC, transform 0). HWC requested overlay, rejected every layer to GPU.
+
+**🔑 PATTERN across EVERY capture today (sharp):**
+- Layers that PROMOTE (`DEVICE/DEVICE`): `RGBX/RGBA_8888_UBWC`, **transform 0**. (GameHub OFF baseline base SurfaceView; our Native-OFF GL base.)
+- Layers that get REJECTED (`DEVICE/CLIENT`): `RGBA_8888` NON-UBWC, **transform 90** (ROT_90). (our GL game AHB; GameHub game AHB windowed AND fullscreen.)
+→ Strongly suggests a **device/DPU limitation: this Adreno display controller won't HWC-overlay a ROTATED, non-UBWC AHardwareBuffer** (Adreno rotator typically requires UBWC; a transform-90 linear buffer is overlay-ineligible → forced CLIENT, and one ineligible layer drags the whole frame to CLIENT). The landscape-game→portrait-panel 90° rotation is the likely poison.
+
+**⚠️ THIS WEAKENS "just do fix (a)":** fix (a) = reparent scanout SCs off the GLSurfaceView + drop the base. But GameHub fullscreen ALREADY effectively does that (base dropped, standalone game buffer) and STILL doesn't promote. So dropping the competing base is necessary-but-NOT-sufficient on this device — the rotated non-UBWC buffer itself is rejected.
+
+**🎯 THE NOW-DECISIVE TEST (no longer redundant): capture OUR Bannerlator VULKAN native-ON game buffer's composition + TRANSFORM + FORMAT on this device.** Our P0 gate recorded Vulkan promotes to `DEVICE` (BGRA_8888) but did NOT record the transform. Two outcomes:
+- If Vulkan promotes with transform 90 + non-UBWC → then GameHub/GL rejection is something else (layer count? a GameHub quirk?) and the rotation theory is wrong — re-examine.
+- If Vulkan's promoting buffer is transform 0 (pre-rotated content) or UBWC → THAT is the recipe: the GL/native path must deliver a pre-rotated and/or UBWC buffer so the DPU can overlay it. Fix shifts from "reparent" to "fix the buffer orientation/format."
+(Earlier I called the Vulkan capture redundant — this GameHub result makes it the key missing measurement.)
+
+⚠️ Left GameHub fullscreen + Native+=Force Enable.
+
+---
+
+## 🚨🚨 BOMBSHELL 2026-06-29 — OUR VULKAN NATIVE ALSO DOES NOT PROMOTE ON THIS DEVICE. The whole "Vulkan promotes / GL doesn't" premise is FALSE. Blocker = the 90° rotation (landscape game → portrait panel), device-level, renderer-agnostic.
+
+Captured OUR Bannerlator **Vulkan|DXVK** native-ON dumpsys (same Adreno750/SD8Gen3, same AIO cube, Native ON confirmed via screenshot — Renderer: Vulkan|DXVK, P5 grey-out active, 564fps/GPU20%):
+- `SurfaceView[com.winlator.banner/…XServerDisplayActivity]#2` z0 = `DEVICE/CLIENT` ❌ (RGBA_8888_UBWC, **transform 90**)
+- `AHardwareBuffer pid[5980]` z1 = `DEVICE/CLIENT` ❌ (BGRA_8888, **transform 90**) = the game buffer
+- `VRI[XServerDisplayActivity]` z2 = `DEVICE/CLIENT` ❌ (RGBA_8888_UBWC, transform 0)
+- HWC layers table shows winlator_game_buf actual = **CLIENT**; active `---------client target---------` = full GPU composition. **NO overlay.**
+
+**⛔ This means our Vulkan native NEVER actually promoted on this device.** The P0 gate's "winlator_game_buf composition type=DEVICE = HWC overlay confirmed" was a **MISREAD of the REQUESTED composition type** (the HWC hint column says DEVICE = "SF asked for overlay") **not the ACTUAL** (post-validateDisplay = CLIENT = HWC rejected → GPU). Every native-render path requests DEVICE; this device rejects them all.
+
+**🔑 NOW the picture is consistent across ALL FOUR captures today:**
+| Path | game buf | result |
+|---|---|---|
+| Bannerlator Vulkan native ON | BGRA_8888, ROT_90 | DEVICE/**CLIENT** ❌ |
+| Bannerlator GL native ON | BGRA/RGBA, ROT_90 | DEVICE/**CLIENT** ❌ |
+| GameHub native ON (windowed) | RGBA_8888, ROT_90 | DEVICE/**CLIENT** ❌ |
+| GameHub native ON (fullscreen, base dropped) | RGBA_8888, ROT_90 | DEVICE/**CLIENT** ❌ |
+| (any renderer) Native OFF baseline | UBWC, **transform 0** | DEVICE/**DEVICE** ✅ |
+
+**ROOT CAUSE = the 90° rotation.** This is a PORTRAIT-NATIVE panel (SF display 1080×1920); the game runs landscape and the direct-scanout buffer is handed to SurfaceFlinger with **transform=ROT_90** so the DPU must rotate it for display. This Adreno DPU/HWC will NOT take a rotated layer as an overlay (rotation on the overlay path is unsupported / disqualifying here) → falls back to GPU/CLIENT for the whole frame. In the Native-OFF baseline the app's own compositor bakes the rotation into a transform-0 UBWC surface, which DOES promote. So: rotation baked-in (OFF) = overlayable; rotation requested on the scanout layer (ON) = rejected.
+
+## ⛳ STRATEGIC CONSEQUENCES (big)
+1. **The "C win" (true HWC hardware overlay, GPU idle) is NOT achievable on this portrait device for landscape content — for ANY renderer.** Not a GL bug, not a Vulkan win. It's a display-rotation/DPU limitation.
+2. **fix (a) / the whole GLSurfaceView-base theory is MOOT for overlay promotion** — Vulkan uses a plain SurfaceView and STILL doesn't promote. Dropping the GL base would not unlock the overlay. Stop the overlay-fix branch attempts (fix#1 idle, fix#2 translucent, proposed fix(a) reparent) — they chase an unattainable C on this device.
+3. **What native rendering DOES deliver here = the "B win"** (skip the app's own compositor blit + change present pacing → lower latency / the real feel the user reports). That is renderer-agnostic and ALREADY delivered by P4/P5. So GL native = latency PARITY with Vulkan; both get B, neither gets C on this device.
+4. **The C win likely WORKS on a LANDSCAPE-NATIVE panel** (game buffer arrives transform 0, no DPU rotation needed) — e.g. AYANEO/landscape handhelds. The feature isn't useless; its overlay benefit is display-orientation-dependent.
+
+## ▶️ RECOMMENDED NEW DIRECTION
+- **Re-scope native rendering = a latency/pacing feature (B), not an overlay feature (C)**, on portrait devices. Document that HWC-overlay promotion needs a transform-0 (landscape-native) path.
+- **Salvage the GL work:** merge P4+P5 (the functional per-frame push + effect grey-out) as "GL native rendering (latency parity)", DROP the failed overlay-fix commits (#1 idle, #2 translucent) — they targeted C. Reconcile branch PROGRESS_LOG.
+- **Two confirmations worth doing (cheap):** (1) capture native-ON on a **landscape-native device** (AYANEO) — if game buf = transform 0 → DEVICE, the rotation theory is proven and C works there. (2) optional: try forcing this container/display to landscape-native orientation and re-capture — if it promotes, we have a per-device path.
+⚠️ Vulkan container left Native ON.
+
+---
+
+## 🔁 LANDSCAPE LONG-SHOT DEVICE-TESTED 2026-06-29 — DID NOT help; but revealed the ROT_90 is applied by the SCANOUT CODE, not system orientation.
+
+User forced the whole Android system to landscape, ran AIO cube on GL|DXVK, Native ON, drawer closed. (Note: forcing orientation RESTARTS the XServerDisplayActivity → reloads container; came back OpenGL/Native-off, re-enabled Native.) dumpsys (composition | format | transform):
+- base `SurfaceView[…XServerDisplayActivity]#2` z0 = DEVICE/**CLIENT** ❌, RGBA_8888_UBWC, **transform 0** (now 0 because the activity surface follows the landscape system)
+- game `AHardwareBuffer pid[17795]` z1 = DEVICE/**CLIENT** ❌, BGRA_8888, **transform 90** ← STILL ROTATED even though system is landscape
+- cursor `AHardwareBuffer pid[17527]` z2 = DEVICE/**CLIENT** ❌, RGBA_8888, transform 90
+- VRI z3 = DEVICE/**CLIENT** ❌, UBWC, transform 0
+
+**KEY NEW INSIGHT:** the base surface went transform 0 in landscape (follows system), but the **GAME scanout buffer is STILL transform 90**. So the 90° rotation on the game buffer is applied by the **native-rendering handoff itself** (ScanoutContext/DirectScanout sets the buffer's transform), NOT by the global display orientation as previously assumed. Forcing landscape therefore could NOT remove it → still a rotated layer in the stack → HWC still rejects the WHOLE frame to CLIENT (the transform-0 UBWC base + VRI get dragged to CLIENT too, exactly as the pattern predicts). The cube still displays CORRECTLY with ROT_90+landscape (so the rotation is currently part of producing the right image — naively removing it would likely break orientation).
+
+**CONCLUSION: landscape long-shot = DEAD END on this device with current code.** The overlay still doesn't engage. The blocker (rotated game buffer, overlay-ineligible on this Adreno DPU) is confirmed and is baked into the scanout handoff.
+
+**One UNTESTED lever this surfaces (speculative, code change):** make the scanout transform ORIENTATION-AWARE — deliver the game buffer at transform 0 when the display is genuinely landscape-native (and ensure buffer dims match), so no rotated layer is in the stack. MIGHT promote + still display correctly IF the guest render orientation is adjusted to match. Risky (orientation/fit), unproven, and GameHub doesn't do it. NOT recommended without the engineer validating it's even coherent. The safe path remains: re-scope native = latency (B) feature, salvage P4+P5, and confirm the true overlay win on a genuinely landscape-native panel where the buffer naturally needs no rotation.
+
+---
+
+## ✅ SALVAGE MERGE 2026-06-29 — P4+P5 landed on main as "GL Native Rendering (Low-Latency Mode)"; dead overlay-fix reverted.
+
+Per user direction ("give me P4 and P5 with a solid explanation for the next release"), after today's findings (overlay/C-win unattainable on this portrait device for ANY renderer; native = latency/B-win feature):
+- **Reverted `7aaacaf`** (overlay-fix #2 translucent base — was the ONLY overlay-fix code that had reached main; proven dead/counterproductive on device today). Revert `ee63ab1` (-43 lines, restores clean P3 base).
+- **Cherry-picked P4 (`d44b560`→`fcaf104`)** per-frame game push + **P5 (`64b7cfb`→`ba0d35d`)** effect/scaling grey-out onto the clean base (authored against 2fe3f10 = post-revert state → applied with ZERO conflicts). Verified: GLRenderer.presentScanout present, XServerDrawer glEnabled present.
+- main now = P0+P1+P2+P3+P4+P5, NO overlay-fix code. P4+P5 were device-proven FUNCTIONAL (native active, game renders correct, P5 grey-out works) — only the overlay promotion failed, which we're no longer claiming.
+- **NOT cutting a release** (per versioning rule — no tag/make_latest without explicit say-so). Release notes prepared at `docs/release_notes/gl_native_rendering.md` (paste-ready, honest: latency feature, effects mutually exclusive, power/overlay win is device/orientation-dependent).
+- Dropped (NOT merged, stay on branch `feat/gl-scanout-overlay-fix`): overlay-fix #1 idle base (`b418e53`), overlay-fix #2 translucent (`e036124`) — both chase the unattainable C-win.
+- ▶️ NEXT: CI build to confirm green on main; (optional, when available) confirm the overlay/power win on a landscape-native device (AYANEO).
+
+---
+
+## 🔬 PRE-ROTATION FEASIBILITY (graphics-vulkan-engineer, 2026-06-29) — reframes "rotation is THE blocker" as CONFOUNDED; cheap diagnostic experiment identified.
+
+**Key correction (to my own conclusion):** "transform-0 promotes / transform-90 rejects → rotation is the blocker" is CONFOUNDED. The only transform-0 layer ever seen promoting is the BASE SurfaceView, which differs from the rejected game AHB in FOUR ways at once:
+| | promoting base | rejected game AHB |
+|---|---|---|
+| transform | 0 | 90 |
+| tiling | UBWC | non-UBWC/linear |
+| usage | composer/scanout-grade | lacks COMPOSER_OVERLAY |
+| geometry | full-screen 1:1 | scaled 1280×702→1080×1920 |
+Rotation is ONE suspect; **non-UBWC + missing COMPOSER_OVERLAY usage is an independent, very-likely-decisive co-blocker that pre-rotation would NOT fix** (and is renderer-agnostic → would explain why Vulkan also fails).
+
+**Where ROT_90 comes from (Q1): NOT our code.** Every scanout `setGeometry` passes transform 0 (`ScanoutContext.cpp:196` game, `:256` cursor; ASR `:246,383`). No `ASurfaceTransaction_setBufferTransform` anywhere in the scanout path (symbol only loaded by ASR `ASurfaceRendererContext.cpp:120`, unused). The ROT_90 is **SurfaceFlinger folding the display/window orientation** onto the layer: a landscape container runs the activity landscape on a portrait-native 1080×1920 panel (`XServerDisplayActivity.java:1015-1019` only locks PORTRAIT for portrait containers), so SF must rotate the game child-SC's fixed landscape guest buffer 90° to reach the panel.
+
+**Critical wrinkle:** the game scanout buffer is **GUEST-allocated (Mesa/turnip Android WSI export), received zero-copy over socket** (`DRI3Extension.java:154-156`→`GPUImage(fd)`→`AHardwareBuffer_recvHandleFromUnixSocket` `gpu_image.c:81`). The host `createHardwareBuffer` (`gpu_image.c:88-97`, lacks COMPOSER_OVERLAY, CPU_WRITE_OFTEN/BGRA→linear) is only the CPU/SHM fallback, NOT game frames. So we do NOT control the game buffer's tiling/usage/format host-side without COPYING.
+
+**Pre-rotation verdict (Q2-Q4):** Option (a) — render the guest frame via a GL pass into a HOST AHB allocated COMPOSER_OVERLAY+UBWC-friendly at panel res — is feasible and fixes 3 of 4 differences at once (transform, usage/tiling, scale). BUT re-introduces a per-frame GPU blit → "zero-GPU" dream gone; remaining win = direct HWC scanout + lower latency, MODEST over today's GL compositor. Option (b) just-force-transform-0 = sideways image (we don't set ROT_90; forcing it 0 without rotating pixels mis-orients). Option (c) patch guest WSI to allocate scanout-grade buffers = no host copy but Mesa/turnip change (wine-compat), risky, leaves rotation. Honest promotion odds even with pre-rotation: MODERATE — usage/UBWC, the scale, BGRA, and plane budget could each independently block.
+
+**▶️ RECOMMENDED EXPERIMENT A (cheapest, isolates the most-likely + unexamined blocker, host-only ~40-60 lines GL):** in `GLRenderer.presentScanout`, blit the guest GPUImage into a host AHB allocated `GPU_SAMPLED_IMAGE|COMPOSER_OVERLAY` RGBA_8888 (reuse cursor alloc pattern `ScanoutContext.cpp:279-285`), KEEPING transform 90 + scale, present THAT. dumpsys: if game flips CLIENT→DEVICE at transform 90 → rotation was a red herring, blocker was usage/UBWC (renderer-agnostic, ~done). If still CLIENT → rotation implicated → Experiment B (add 90° rotate + render at exact 1080×1920 + lock portrait for the probe, accept wrong cursor/HUD). 
+Key files: `ScanoutContext.cpp:185-196,256,279-285`, `gpu_image.c:81,88-97`, `GPUImage.java:18-38`, `DRI3Extension.java:154-156`, `GLRenderer.java presentScanout ~:725`, `XServerDisplayActivity.java:1015-1019`.
+
+**✅ CI GREEN on main (run `28388609799`) — P4+P5 salvage compiles clean in the fresh main combination (revert `ee63ab1` + P4 `fcaf104` + P5 `ba0d35d`). GL Native Rendering (Low-Latency Mode) is now build-verified on main. Release notes ready at docs/release_notes/gl_native_rendering.md; no release cut.**
+
+**🧪 EXPERIMENT A BUILT (graphics-vulkan-engineer, 2026-06-29) — branch `exp/gl-scanout-composer-overlay-ahb` (`75115bb`, off main `9c7156c`, NOT merged). CI run `28390468273`.** GL native path blits the guest game AHB (one passthrough quad, SAME size/orientation/scale, NO pre-rotation) into a HOST AHB allocated `GPU_SAMPLED|GPU_FRAMEBUFFER|COMPOSER_OVERLAY` (BGRA_8888, swapRB still applies), presents THAT — isolates buffer-usage/UBWC hypothesis from ROT_90. Files: `gpu_image.c` createScanoutHardwareBuffer JNI; `GPUImage.java` scanout ctor; NEW `ScanoutBlitMaterial.java` (passthrough+V-flip); `GLRenderer.presentScanout` rewritten to marshal blit to GL thread (queueEvent+latch, epoll thread has no GL ctx) +ensureHostScanout/releaseHostScanout. Fallback: alloc/FBO/roundtrip fail or 3 timeouts → sticky-revert to direct guest present (never black-screens). +1 quad blit/frame. Caveat: samples guest tex post-unlock w/o write-fence → rare tearing on fast frames (irrelevant to signal). **DEVICE GATE: GL+Native ON, dumpsys winlator_game_buf CLIENT→DEVICE at transform 90? YES=usage/UBWC was blocker (rotation red herring, likely renderer-agnostic→explains Vulkan). STILL CLIENT=rotation implicated→Experiment B. Confirm cube renders correct (V-flip=1-line lever, doesn't affect reading).**
+
+## 🧪 EXPERIMENT A DEVICE-TESTED 2026-06-29 — PROBE ENGAGED, but COMPOSER_OVERLAY usage RULED OUT as the blocker. Game still CLIENT.
+GL container, Native ON, drawer closed, Adreno750. dumpsys: game `AHardwareBuffer` is now **pid 11930 (= the app process, `pidof com.winlator.banner`=11930 → host blit ENGAGED)**, buffer-cache `usage: 0xb00` (= COMPOSER_OVERLAY 0x800 + GPU_FRAMEBUFFER 0x200 + GPU_SAMPLED 0x100, no CPU flags) — vs the original guest buffer's 0x333. So the host AHB with COMPOSER_OVERLAY IS what's presented. **YET STILL `composition: DEVICE/CLIENT` (rejected), transform 90, BGRA_8888 non-UBWC (compressed:false), still scaled 1280×702→1080×1920.** Content rendered (not black; fallback did NOT trigger; no V-flip black-screen). 
+**⇒ COMPOSER_OVERLAY usage flag is NOT the blocker (set it, still rejected). Engineer's leading hypothesis disproven.** Remaining co-varying suspects on the game layer vs the (would-promote) base: **(1) transform 90 (rotation), (2) non-UBWC/linear (base is RGBA_8888_UBWC), (3) the SC-level scale.** Note also: the base SurfaceView (UBWC/transform0) is ALSO DEVICE/CLIENT here while it was DEVICE/DEVICE in the OFF baseline → the rotated game layer poisons the whole stack to client (or plane budget). 
+**▶️ Experiment B (the likely-decisive next probe): pre-rotate the blit + render the host AHB at exact panel res (1920×1080 so ROT_90→1080×1920 = NO SC scale), lock portrait for the probe. Neutralizes rotation AND scale at once, leaving only UBWC.** If B promotes → rotation/scale was it (path exists, w/ cursor/orientation plumbing cost). If B still CLIENT → it's UBWC (hard/maybe-impossible to force on a GL render-target AHB on Adreno) or fundamental → gate GL-native overlay unsupported on portrait; the clean overlay win stays the landscape-native-device path. Honest: diminishing returns; even B success = modest win (per-frame blit + plumbing); landscape-native handheld remains the clean payoff.
+
+## 🧪 EXPERIMENT B BUILT (graphics-vulkan-engineer, 2026-06-29) — branch `exp/gl-scanout-prerotate-panelres` (`8b20b96`, stacked on Exp A `75115bb`, NOT merged). CI run `28392607613`.
+Extends Exp A: host scanout AHB allocated at PANEL res (1080×1920, portrait-locked), blit ROTATES guest frame 90° into it (new `ScanoutBlitRot90Material`, UV transpose) so content is display-oriented, then presents at **transform 0, src==dst (no SC scale)** via setContainerSize/setDst(0,0,pw,ph). Activity portrait-locked during native (`setProbeOrientation(true)` in enableScanout, restore sensorLandscape on native-off; configChanges has orientation|screenSize → reconfigure in place, NO activity recreation). Keeps COMPOSER_OVERLAY usage + the sticky fallback (alloc/FBO/roundtrip fail or 3 timeouts → direct guest present, never black). Files: NEW `ScanoutBlitRot90Material.java`; `GLRenderer.java` (blitGuestIntoHostScanoutAndPresent → panel-res+rotate+transform0/src==dst, setProbeOrientation, portrait lock wiring). DIAGNOSTIC: cursor/HUD/input + image orientation intentionally WRONG — only the dumpsys reading + not-black matter. **DEVICE GATE: GL+Native ON, dumpsys winlator_game_buf = `DEVICE/DEVICE` at transform 0? DEVICE→rotation/scale was the blocker (path exists w/ cursor/orientation plumbing). STILL CLIENT→UBWC/compression or fundamental→gate GL-native overlay unsupported on portrait; landscape-native device = the win.** Confirm cube image present (rotated/odd = fine, just not black).
+
+## 🟢🟢 EXPERIMENT B DEVICE-TESTED (2026-06-29, post-crash resume) — PROMOTES! TRUE HWC OVERLAY ON THE PORTRAIT DEVICE. The "C-win unattainable on portrait" bombshell is OVERTURNED.
+Device "Pocket FIT" Adreno750/SD8Gen3, GL|DXVK, AIO DX11 cube, Native ON (game already foreground after the session crash; 14 scanout SCs alive; captured with drawer open — promotion holds with drawer up).
+
+**DPU/SDM hardware composition pipe table (ground truth — the Snapdragon Display Engine's actual scanout plan, NOT a requested-hint column, so immune to the earlier requested-vs-actual misread):**
+- idx0 base SurfaceView  RGBA_8888_UBWC  = SDE  (overlay)
+- idx1 **GAME  BGRA_8888  = SDE pipe149, src 0 0 1080 1920 -> dst 0 0 1080 1920 (NO SCALE), Transform 0**
+- idx2 cursor  RGBA_8888 16x16  = SDE
+- idx3 VRI  RGBA_8888_UBWC  = SDE
+- idx5 GPU_TARGET = **NO layers assigned = GPU does ZERO composition**
+
+Raw HWC `layer:` list corroborates (game/cursor are named `AHardwareBuffer pid[15581]` = the app process = exp-B host-blit AHB, NOT `winlator_*` — that's why the first grep missed them):
+- game  z1  `composition: DEVICE/DEVICE`  BGRA_8888  transform 0/0/0
+- cursor z2 `composition: DEVICE/DEVICE`  RGBA_8888  transform 0/0/0
+- base + VRI  `composition: DEVICE/DEVICE`  RGBA_8888_UBWC  transform 0/0/0
+- count of `DEVICE/CLIENT` + `CLIENT/CLIENT` across the whole dump = **0**
+
+Screenshot (scratchpad/eb1.png) = image produced, not black (Wine window chrome visible on the strip beside the open drawer; orientation/aspect intentionally wrong per the diagnostic design).
+
+**VERDICT: the HWC-overlay blocker was ROTATION (transform 90) + SCALE (src != dst) TOGETHER — NOT UBWC, NOT GLSurfaceView, NOT portrait-orientation-per-se.** Pre-rotating the guest frame 90° into a panel-res (1080x1920) host AHB (so it's display-oriented = transform 0) + presenting src==dst (no SC-level scale) + portrait-locking the activity => this Adreno DPU accepts a **plain non-UBWC BGRA_8888** buffer on a hardware overlay pipe.
+
+**Overturns:** (a) bombshell "C-win unattainable on this portrait device for ANY renderer" = FALSE — C IS attainable, you must hand the DPU a transform-0, unscaled buffer; (b) the "UBWC required" hypothesis (Exp A's last suspect) = FALSE (game promoted as plain BGRA_8888); (c) the landscape long-shot finding (ROT_90 applied by the scanout handoff, not the display orientation) = CONFIRMED as the cause, and Exp B's pre-rotation is the fix.
+
+**Exp B is a DIAGNOSTIC THROWAWAY (branch `exp/gl-scanout-prerotate-panelres` `8b20b96`, do-NOT-merge as-is):** hardcoded 90° UV-transpose one direction; cursor/HUD/input/aspect intentionally wrong; extra full-frame GPU blit + GL-thread roundtrip per frame; portrait-lock hack.
+
+**Next (decision pending with user) — productionize C-win on portrait vs. ship latency-only:** orientation-aware correct pre-rotation (all 4 rotations, right handedness/flip), fix cursor/HUD/input mapping under the rotated present, weigh the host-blit cost (extra blit + roundtrip + possible base double-buffer) against the overlay/GPU-idle win — vs. just keeping the already-merged latency-only P4+P5. Container left Native ON, exp-B build installed, Claude/Termux session brought back to foreground.
+
+## ⏸️ PHASE 0 (GL native overlay portrait — power/perf A/B) STARTED then PAUSED by user (2026-06-29) — SETUP ONLY, NO NUMBERS. Resume when home.
+User chose to run P0 (measure-first), then stopped it (about to lose Wi-Fi). Reached SETUP only; no OFF/ON numbers captured. Partial log: `scratchpad/p0_results.md`.
+
+Resume state:
+- Test container = `xuser-3` "P11 x86-64" (renderer=opengl, rendererNative=false). exp-B build (`exp/gl-scanout-prerotate-panelres` `8b20b96`) is the installed/active APK.
+- **Container config WAS MODIFIED:** DXVK `dxwrapperConfig` framerate `0`->`60` (maxFrameRate, guest-side cap for matched-FPS A/B). **Backup at `<imagefs>/home/xuser-3/.container.p0bak`.** Keep the 60 cap to resume P0, or restore from backup to abandon.
+- Termux/Claude session brought back to foreground.
+
+Resume recipe: launch GL container xuser-3 -> AIO DX11 cube -> enable perf HUD -> State A Native OFF (dwell ~30s, 3+ samples) -> State B Native ON (toggle in drawer, dwell ~30s, same samples). Sample {`/sys/class/kgsl/kgsl-3d0/gpu_busy_percentage`, `gpuclk`, `/sys/class/power_supply/battery/current_now` uA, thermal_zone temp, displayed FPS}. Confirm overlay via dumpsys SDE pipe table (ON: game AHB DEVICE/DEVICE on SDE pipe + GPU_TARGET empty; OFF: base SurfaceView DEVICE/DEVICE, no game AHB). VERDICT: ON lower GPU% AND power at equal FPS -> portrait worth productionizing; flat/worse -> drop portrait, headline the free landscape-native win.
+
+
+## 🔴 STEAM DOWNLOAD FIX (2026-07-03) — LogonSessionReplaced regression on rebuilt stack (#1+#2+#4). Branch `feat/steam-goldberg-patcher`.
+**Symptom:** After a successful sign-in, Steam game downloads fail on the detail page: "Download failed: Steam session not ready — sign in again or retry in a moment" (device: HL2 appId 220, davidroethlein@comcast.net). Foreground-service notification stuck at "Connecting to Steam…".
+
+**Evidence:**
+- `steam_debug.txt`: `SteamClient: connected=true, loggedIn=false` → `Not logged in — waiting for session…` → `ensureLoggedIn → false` after 15s. File does NOT record WHY.
+- logcat (SteamRepo) is where the reason lives:
+  ```
+  17:47:11.851 Connected to Steam CM / Auto-login as davidroethlein@comcast.net
+  17:47:12.857 Logged in as davidroethlein@comcast.net        ← login SUCCEEDS
+  17:47:12–17:47:17 Library sync (229 apps, depot filter) — ALL on pump thread 23943 (blocks callbacks ~5s)
+  17:47:17.191 Library sync complete: 229 apps
+  17:47:17.191 Logged off: LogonSessionReplaced               ← queued LoggedOff dispatched the instant pump freed
+  ```
+
+**Root cause (self-inflicted double-login):** The Steam stack was REBUILT and lost the old `feat/steam-detail-revamp` fixes (single-flight logon `ceeeeb5`, dead-token `e383393` — never merged into the goldberg line). So: TWO logons fire for the same account — foreground-service `onConnected` auto-login (SteamRepository.java:436) + interactive `SteamLoginActivity.kt:197` loginWithToken — neither guarded. The 2nd replaces the 1st; Steam sends `LoggedOff: LogonSessionReplaced` for the older session; `onLoggedOff` (:506) treats that as TERMINAL (emits LoggedOut, no recovery) and clobbers the good LoggedOn's `loggedIn=true` → stuck `connected=true, loggedIn=false` → every download "session not ready". The 5s library sync on the single pump thread delays the LoggedOff so it lands AFTER the good LoggedOn, guaranteeing the clobber.
+
+**Fixes applied (#1+#2+#4):**
+1. **Single-flight logon guard** — `loginWithToken` skips if already `loggedIn` or a logon is in flight (`loggingOn` AtomicBoolean + `logonStartedAt`; supersede only a stalled logon >LOGON_STALL_MS=12s so we can't lock out forever). Released in onLoggedOn/onLoggedOff/onDisconnected. Kills the double logon at the source.
+2. **No self-kill on LogonSessionReplaced** — `onLoggedOff` treats a `LogonSessionReplaced` arriving within SELF_REPLACE_WINDOW_MS=15s of our own logon (`lastSelfLogonAt`) as self-inflicted → ignores it (does NOT clear loggedIn or emit LoggedOut; the newer session is live). Genuine/old replacement (real "logged in elsewhere") still surfaces LoggedOut as before.
+3. **Log the reason into steam_debug.txt (#4)** — repo records `lastSessionStatus` (LoggedIn / LoginFailed:<r> / LoggedOff:<r>); SteamDepotDownloader dlogs it into steam_debug.txt when ensureLoggedIn fails, so the file the UI points to actually contains the cause next time.
+
+**Deferred:** #3 (move library sync off the pump thread) and #5 (wire the "Connecting to Steam…" notification to real state — currently dead `updateNotification`). Separate follow-up.
+
+**Status:** ✅ implemented + committed `c72d943` (The412Banner) + pushed `feat/steam-goldberg-patcher`. CI is `workflow_dispatch` (not on-push) → manually dispatched **CI Build (artifacts only) run `28685150972`** on sha c72d943 (building, ~16min). Key files: `SteamRepository.java` (single-flight guard `loggingOn`/`logonStartedAt`/`lastSelfLogonAt`, self-replace branch in onLoggedOn/onLoggedOff/onDisconnected, `getLastSessionStatus()`), `SteamDepotDownloader.kt` (dlog `lastSessionStatus` on ensureLoggedIn-fail).
+**NEXT (device-test once green):** install APK, download HL2 (appId 220) end-to-end. Pass = NO `Logged off: LogonSessionReplaced` teardown in logcat + download proceeds past manifest. If it still fails, `steam_debug.txt` now prints `Session status at failure: <reason>`. Deferred #3 (library sync off pump thread) + #5 (FGS notification) remain.
+
+
+## 🛡️ STEAM SESSION HARDENING PLAN (2026-07-03) — adopt 5 GameNative/Pluvia patterns
+**Why:** ~7 distinct root causes for "downloads fail after login" in ~2wk = architectural, not one bug. Our rebuilt `SteamRepository` models session state as hand-flipped volatile booleans + runs heavy work on the callback pump → every new path is a new race. Today's fix (`c72d943`) plugs ONE hole; it does NOT give us the properties that make GameNative solid.
+
+**Basis:** mapped GameNative/Pluvia `SteamService.kt` (~4481 lines, SAME JavaSteam lib) at `/data/data/com.termux/files/home/GameNative/…/service/SteamService.kt` vs our `SteamRepository.java`. Their robustness = derived login state + non-blocking pump + one bounded reconnect funnel + keep-alive/watchdog + dead-token clearing. We lost/never-had 4 of 5. We ARE ahead on one axis (download `ensureLoggedIn` gate — they have none; keep it). This is NOT the canceled full Pluvia port — it's grafting 5 patterns onto the existing stack.
+
+**Plan (priority order):**
+1. **Derive `isLoggedIn` from `steamClient` SteamID validity — delete the `loggedIn` volatile boolean.** *Highest ROI, small.* Ref GameNative SteamService.kt:425. Kills the "connected=true/loggedIn=false stuck forever" class outright.
+2. **Move library/PICS sync OFF the pump thread** (was "deferred #3", now known core). onPICSProductInfo/onLicenseList do the 229-app filter synchronously on the pump HandlerThread → blocks runWaitCallbacks ~5s → delays callbacks/heartbeats (the timing amplifier behind today's clobber). GameNative re-dispatches all heavy handler work to `scope.launch` children (SteamService.kt:4050, 3737+).
+3. **One reconnect funnel** — collapse our 3 overlapping recovery paths (onDisconnected + onLoggedOff + ensureLoggedIn, separate retry budgets) into a single cancel-and-replace job with exponential backoff (GameNative SteamService.kt:3654,3683; MAX 20, cap 60s, retryAttempt reset on connect).
+4. **Re-add dead-token clearing** — lost from abandoned `e383393`. Clear creds on InvalidPassword/Expired/Revoked/AccessDenied → stop hammering a dead token (GameNative:2876,3792) + emit SessionInvalid → route to sign-in.
+5. **Keep-alive ping + connect watchdog** — cheap, prevents idle CM drops (GameNative pingInterval 15s :3456 + post-connect BAD-CM watchdog :3563). We're TCP-only so add the watchdog; investigate a TCP heartbeat.
+
+**Guardrails:** Do 1+2 first (biggest ROI). Do NOT start editing until today's `c72d943` (CI run `28685150972`) is DEVICE-CONFIRMED on HL2 — don't stack unproven changes. One item per commit, device-verify each. Branch `feat/steam-goldberg-patcher`. Also-deferred #5 = wire the dead `updateNotification` (cosmetic).
+
+
+## 👆 CURSOR-TO-TOUCH FIX + RTS TOUCH GESTURES (2026-07-21) — branch `feat/touch-gestures`
+**Reported:** device screenshot — enabling "Cursor to Touch" (Controls > Mouse) never lights the chip.
+
+**Root cause:** `XServerDrawerState.setMoveCursorToTouchpoint()` had ZERO callers. `XServerDisplayActivity.MoveCursorToTouchpoint()` flipped the `move_cursor_to_touchpoint` pref + pushed to `TouchpadView`, but never wrote back to the StateFlow the drawer collects — so the chip was pinned false forever. The feature itself worked all along; purely a UI desync. Sibling toggles (Relative Mouse / Disable Mouse) DO call their `state.setX()`, which is why only this one looked dead.
+
+**Fixed:** push-back after the touchpad update + seed from `preferences` at wiring time (must come after `state.reset()` at :604). **Audited every other drawer toggle for the same failure mode — all clean** (Native Rendering is the best-behaved; Touch/Vibration/Gyro all seed from XServerDialogState + write their setter inline). Also dropped `state.onClose?.run()` from all 3 Controls>Mouse chips so the drawer stays open and the flip is visible.
+
+**Feature (same cut):** RTS-style gestures folded INTO the Cursor to Touch toggle (user's explicit choice over a separate/per-gesture chip), gated on `gesturesEnabled()` = `moveCursorToTouchpoint && !simTouchScreen`. Inspired by `Producdevity/gamehub-lite#73` — **nothing was code-portable** (that PR is ~40 smali patches against a decompiled closed-source APK); behaviour spec + thresholds only.
+- **Drag → box select**: past `MAX_TAP_TRAVEL_DISTANCE`, warp back to the start point, hold LMB, track ABSOLUTELY (relative deltas run through sensitivity+acceleration and would drift the selection corner off the fingertip).
+- **Long-press 300ms → RMB**: cancelled by 2nd finger / travel / finger-up. Tracks `gestureFinger`, NOT `fingers[0]` — first pointer id can be 1 when a finger rests on an InputControls overlay.
+- **Pinch → wheel**: spread-delta vs pan-delta per frame, larger wins; emits every whole `PINCH_WHEEL_STEP` (40). Spread = zoom in = SCROLL_UP. Legacy two-fingers-wide-apart LMB drag suppressed when gestures are on.
+- Stranded-button cleanup in 3 places: ACTION_CANCEL, live toggle-off mid-drag, and the finger-up short-circuit (stops a finished drag stacking a spurious tap-click).
+- **NOT done on purpose:** double-tap→double-click (free — identical warp coord means two taps already coalesce guest-side) and the configurable gesture-mapping dialog (~4000 of that PR's lines).
+
+**Branch note:** cut off `origin/main` @ `8521a4b2`, NOT off `feat/displayx-renderer` (which was checked out at the time and is unrelated). versionCode stays vc48/"2.8".
+
+**Status:** code complete, inspection-only — pushing to CI now. **NEXT (device-test once green):** verify the chip lights up, then drag-select in an RTS, long-press RMB, pinch-zoom. Highest-risk untested area = drag-select vs the InputControls overlay pointer-id case.
+
+
+## 🎞️ BIONIC-FG SHADER POOL + MODELS 2/3 BUNDLED (2026-07-22) — built off latest main, NOT device-tested
+**Why:** the frame-gen layer we ship has been `9136405c` (2026-06-21) — pre-dating every model built since. Models 1, 2 and 3 have never been in a shipped `.so`; the pooled GameScopeVK/V2 shaders have never reached a device.
+
+**Source rebased onto current upstream.** The Track-3 work sat on the *pre-squash* compat commits, so it read as diverged from `main` (`68497bf` = our own merged PR #6, squashed on merge). Replaying it hit conflicts on every compat commit — the same content arriving twice. Instead the exact 12-file delta was applied on top of `origin/main` as `feat/fsr3-on-main` (`2eb68ef`). Verified before committing: no file exists only in `main` (nothing lost), and the resulting tree is byte-identical to `603d26e`. **The rebuilt `.so` came out byte-identical too — md5 `971e6aaa` from both branches — which independently proves the rebase changed nothing functional.**
+
+**What the layer now contains** (`2eb68ef`, built by run `29886009167`):
+- shaders_embedded regenerated from current `libGameScopeVK.so`; the malformed `shader_02` replaced by the clean 50412-byte module. **Note: `shader_02` is one of the three BCN texture-decode utilities and is dispatched by NO model (model 0 uses 3-30, model 1 uses 3,4,30-53), and `IsValidSpirv` only checks the 4-byte magic — so this was never a live defect, only hygiene.**
+- 12 distinct `libGameScopeV2.so` modules pooled at idx 54-65, wired as **model 2** via `kV2ShaderMap` (13 swaps; base 14 and 20 share V2 module 60).
+- **model 3** = FidelityFX Optical Flow, 4 compute shaders at idx 66-69, MIT, attributed.
+- `IsValidSpirv` restored — the pool regen at `48a6b52` dropped the definition while `session.cpp:20` and `framegen_context.cpp:24` still called it, so `feat/shader-pool-gamescope-v2` (`b0c2e5c`) does not compile at all. Only the Track-3 line builds.
+
+**App side (this branch, off main `5e284f4a`, versionCode stays 48):** submodule repointed `xXJSONDeruloXx` → `The412Banner/bionic-fg` @ `2eb68ef`; bundled asset replaced (`9136405c` → `971e6aaa`, 6,557,856 B); `patches/bionic-fg-bannerlator-fixes.patch` **deleted** and its apply-step removed from `build-bionic-fg.yml` — those three fixes are upstream in `68497bf` now and the patch would fail against the current tree.
+
+**⚠️ NOT VERIFIED ON DEVICE. Test order (each step has a control):**
+1. **model 0** — regression baseline, must behave as the shipped layer does today. If it doesn't, the pool regen broke something.
+2. **model 1** — first time the traced graph ships at all.
+3. **model 2** — the real gamble: V2's shaders run through **model 1's** dispatch graph, which was traced from `libGameScopeVK`'s native dispatch. A 13-module delta suggests V2 changed something; if pass order/bindings moved, expect garbage or a crash.
+4. **model 3** — known deviations (subgroup-free GLSL, 3×3/±3 search, no sub-pixel): perf is the risk, not correctness.
+
+Select via `conf.toml` or `BIONIC_FG_MODEL`. Bundling (rather than hand-injecting) sidesteps the `ImageFsInstaller.installBionicFgLayer` clobber, which re-copies the bundled asset over any manual drop whenever sizes differ.
+
+
+## 🎞️ BIONIC-FG SHADER POOL + 4 MODELS — ✅ MERGED TO MAIN `763f46ed` (2026-07-22), DEVICE-PROVEN
+**versionCode STAYS 48.** Default behaviour unchanged (model 0). Branch `feat/bionic-fg-pool-on-main` merged --no-ff; final CI `29889458926` green on all 3 flavours.
+
+**Why this existed:** the shipped frame-gen layer had been `9136405c` (2026-06-21) the whole time — predating every model built since. Models 1/2/3 and the pooled shaders had never been in ANY release.
+
+**Layer now bundled = `971e6aaa`, 6,557,856 B**, built from fork `The412Banner/bionic-fg` @ `2eb68ef` (branch `feat/fsr3-on-main`), which replays the Track-3 work on top of current upstream `68497bf`. ⚠️ Do NOT `git rebase` the old branches to do this — they sit on the PRE-SQUASH compat commits so every one conflicts against main's squashed copy. Correct method = apply the 12-file delta onto main (verified `git diff --diff-filter=D origin/main 603d26e` is EMPTY first, i.e. nothing exists only in main). **The rebuilt .so came out byte-identical to the pre-rebase build — same md5 from two independent branches — proving the rebase is functionally inert.**
+
+**✅ ALL FOUR MODELS DEVICE-PROVEN** (Dirt 3, Adreno 750/Turnip, arm64ec+FEXCore+unixlib, 2× / flow 1.00). Clean `FramegenContext rebuilt` each way, zero `config rebuild failed`, zero errors. Live switching works end-to-end: chip → conf.toml → layer mtime watch → context rebuild.
+
+**📊 CONTROLLED SWEEP** (parked 000 MPH, identical scene `2:56.683`, all 4 within 31 s):
+| Model | FPS | GPU | CPU | PWR | CPU°C/GPU°C |
+|---|---|---|---|---|---|
+| 0 Default | 92.7 | 88% | 37% | 16.1W | 70/79 |
+| 1 Traced | 97.5 | 86% | 62% | 18.3W | 79/82 |
+| 2 V2 | 96.5 | 88% | 64% | 16.4W | 81/83 |
+| **3 FSR3** | **134.7** | **85%** | 74% | 18.8W | 84/88 |
+
+**FSR3 = +45% over Default while using the LEAST GPU** (FPS and GPU% move in opposite directions ⇒ not scene noise). UNDERSTATED: temps rose monotonically through the in-order sweep, so m3 was measured hottest/most-throttled. Mechanism = base render rate (at 2×, presented ≈ 2× the game's own rate ⇒ m0 ~46 real fps vs m3 ~67): the FG pass simply stops stealing GPU from the game. m1≈m2 within ~1 FPS = exactly what the 6-shader overlap predicts (`kV2ShaderMap` has 13 entries but model 1's graph only dispatches idx 3,4,30-53, so only 3/30/31/32/33/34 actually land).
+
+**⚠️ STILL UNANSWERED — model 3 QUALITY.** Parked = ~zero motion ⇒ that sweep is a clean COST measurement and a worthless QUALITY one. FSR3's cut search window (8×8/±8 → 3×3/±3, no sub-pixel, backward flow = −forward, LDR only) produces a WEAK flow field, which is both cheap AND clean-looking on a straight road with uniform forward motion — exactly what every m3 screenshot shows. **MUST stress fast LATERAL motion (tight corner, trackside fencing/posts) + occlusion edges before m3 is treated as good or considered as a default.**
+
+**🐞 TWO STAGING BUGS FIXED (both silent, both long-standing):**
+1. **Bundled layers never reached devices.** `MainActivity` calls `SplashViewModel.installIfNeeded`, which early-returns once imagefs is current — so `ImageFsInstaller.installIfNeeded`, whose else-branch stages bionic-fg/lsfg-vk/ffmpeg8, had **no callers at all**. Layers only ever landed on a full imagefs re-extract. ✅ DEVICE-VERIFIED FIX: restored the old .so, cold-started, watched it replace itself with correct owner/perms.
+2. **Staging decided by file SIZE alone** → a same-size rebuild would be skipped forever. Now stamped `versionCode:assetSize` (`.bionic-fg-stamp` / `.lsfg-vk-stamp`), with the size check KEPT alongside (stamp catches same-size updates, size catches on-disk drift). Also staged on the **direct game-launch path** (`XServerDisplayActivity` is exported; home-screen shortcuts bypass MainActivity), and both layers now land via temp-file + atomic rename.
+
+**🔑 PRECEDENCE CORRECTION (cost a near-miss test):** `readConf()` (layer.cpp:250) reads env vars as DEFAULTS FIRST, then `parseConfigFile` OVERWRITES them — *"A config file, when present, wins."* So **conf.toml beats `BIONIC_FG_MODEL`**, not the reverse. Since the app rewrites conf.toml every launch, the env var is INERT whenever the app drives. Setting it would silently keep the old model — a test that looks like it ran and didn't. Inert vars removed from the Dirt 3 and GTA IV shortcuts (backups in /sdcard/Download).
+
+**🎛️ UI DECISION (user):** keep the flow SLIDER continuous (0.2-1.0) + MODEL chips as a separate row. Rejected GameHub-style bundled presets and clintOnSky's flow chips — orthogonal controls let the user hunt the best flow×model COMBINATION, and flow has only ever been tested at 1.00. (GameHub can bundle because they ship 2 models; at our 4 that's 20 combos.)
+
+**⚠️ NEAR-MISS worth remembering:** scripted (python) edits silently converted two CRLF files to LF — `XServerDisplayActivity.java` and `ImageFsInstaller.java` — turning both into whole-file rewrites (583 changed lines for 64 real ones) and destroying blame. Caught by checking the diffstat before pushing; fixed in `91111fcc`. **Check `--stat` (and `-w`) before merging scripted edits.**
+
+**▶️ NEXT (tomorrow):** port clintOnSky's PR #96 present-path fix into the fork as real source (NOT the retired patch file) — `waitLastDispatch()` on the dispatch's own fence + bounded timeout, replacing the per-frame `vkQueueWaitIdle(device_.computeQueue())` still at `layer.cpp:1471`. Confirmed ABSENT from tonight's build, so every number above was measured with that stall in place. Prediction: all four models rise; if FSR3 rises least, part of its lead was just spending less time in the shared stall. Then the m3 lateral-motion quality test.
+
+---
+
+## 2026-07-22 — File manager: SD card always listed (branch `fix/sd-always-listed`, CI green, awaiting device test)
+
+**Bug (long-standing, 4 prior fixes all failed):** the SD card drops out of the in-app Compose file manager's drive list after exiting a container. Earlier attempts (ON_RESUME re-enumerate, re-enum on dropdown-open, settling retries + MEDIA_MOUNTED receiver, `storageTick` lifecycle keying) all failed on device because they re-ran the *same* enumeration — `File("/storage").listFiles()` — which is a filesystem read, and the volume is genuinely absent from the restarted process's stale storage sandbox.
+
+**Fix = change the source, not the timing.** New `core/StorageRoots.kt`, modelled on WinNative's `shared/android/StoragePathUtils.kt`, rewritten to our style. Merges four independent sources into one deduplicated, insertion-ordered volume set:
+1. `StorageManager.getStorageVolumes()` — authoritative, read over Binder, gated on `MEDIA_MOUNTED`. **Not affected by this process's mount view.**
+2. `Context.getExternalFilesDirs(null)` — per-app dirs on each volume, granted separately from shared storage; walked up past `Android/` to recover the volume root.
+3. `/storage` listing — what we used to do exclusively, now just a backstop.
+4. `/mnt/media_rw` listing.
+
+A volume reported by *any* source is **always** emitted. When its root is unreadable, `deepestReadable()` walks up from the app-specific dir and returns the highest listable directory instead — so the entry degrades to a partial view rather than vanishing. Unreadable entries still render (SD icon for removable) and toast on tap instead of silently doing nothing.
+
+`FileManagerScreen.kt`: `drives` was a **keyless `remember {}`** (frozen for the screen's lifetime) → now `remember(storageTick)` with an ON_RESUME `LifecycleEventObserver`, matching the Containers/Shortcuts/Saves screens. Drive menu switched from `Pair<String,File>` to `StorageRoot`.
+
+**CI GREEN run `29905312058`** (3 flavors, headSha `420c9033` verified). Staged `/sdcard/Download/Bannerlator-sd-always-standard.apk`, sha256 `9029cef4b7c62f30…` verified host↔device. vc stays 48 per the release-versioning rule.
+
+**⬜ DEVICE TEST:** launch a container → exit → open File Manager → drive chip → SD card must still be listed *and* openable. Also check it survives a second cycle, and that Internal/Drive C:/Drive Z: are unregressed.
+
+**Honest caveat:** sources (1) and (2) will always *report* the volume, so the entry can no longer disappear. Whether `/storage/<uuid>` is still *readable* in the stale-sandbox state is the open question — if not, the fallback should land us in the SD's `Android/data/<pkg>/files` subtree, which is a reduced but non-empty view. If the device test shows the entry present but empty, the remaining gap is the mount-namespace layer (options A–D in the memory file), not enumeration.
+
+**🔁 ITER-2 `d1f0cc5b` — one entry per VOLUME, not per path (device-found).** Device test of `420c9033` showed the SD **listed and working** (entry opened `/storage/7B7F-E3AA` fine) but emitted **twice**: `/storage/7B7F-E3AA` (readable, labelled "android" from the framework volume description) and `/mnt/media_rw/7B7F-E3AA` (raw vold mount, `root:external_storage 0750`, unreadable → toast "mounted but not readable"). Cause: dedup keyed on **path**, so two paths to one card both survived. Fix: group candidate paths by **volume identity** (uuid, or `primary`), emit ONE entry per volume pointing at the first path we can list; `/mnt/media_rw/<uuid>` demoted to last-resort candidate and can never become an entry of its own. Removable volumes labelled **"SD card"** (matches the path bar) instead of the framework description, which on this device is a bare disk name "android"; duplicate labels get the volume id appended. CI GREEN run **`29906300503`**, staged `/sdcard/Download/Bannerlator-sd-dedupe-standard.apk` sha256 `dc2f142ea300258c…`.
+
+**▶️ NEXT (scoped, NOT built): container Drives folder-picker returns an unusable `/mnt/media_rw/...` path.** `FileUtils.getFilePathFromUriUsingSAF():583-588` hardcodes `"/mnt/media_rw/" + type + "/" + path` for every non-primary volume. `ContainerDetailScreen.kt:1203-1208` is still on SAF `ACTION_OPEN_DOCUMENT_TREE` → that helper. **Fix = swap it to the in-app picker** (`InAppFilePicker.buildDirIntent` + `pickedPath`), which returns a real absolute path — same mechanism as the Games "+" flow (which users already prefer *because* it gets this right) and the log-folder picker at `SettingsScreen.kt:914`. Secondary: fix the helper itself for the other 12 SAF call sites. User says they hand-fix the path today, so **no auto-migration of stored paths**.
+
+**✅ CONTAINER DRIVES PICKER + DUPLICATE-LETTER CHECK `917dad1d`** (CI GREEN run **`29908330926`**, staged `/sdcard/Download/Bannerlator-drives-fix-standard.apk` sha256 `aa7cc2e2e39c1fd7…`). Supersedes the dedupe APK — contains all three fixes.
+- **Picker swap (`ContainerDetailScreen.kt`):** the drives 📁 button no longer uses SAF `ACTION_OPEN_DOCUMENT_TREE` → `FileUtils.getFilePathFromUri`. Now `InAppFilePicker.buildDirIntent(context, title, initialDir = drive's current path)` + `pickedPath()`, which returns a **real absolute path** (`/storage/<uuid>/…`) with no URI mapping. Same mechanism as the Games "+" import and `SettingsScreen.kt:914`'s log-folder picker. Dead imports removed (`Intent`, `Environment`, `DocumentsContract`). ⚠️ `FileUtils.getFilePathFromUriUsingSAF:583` is **still wrong** for its other 12 SAF call sites — deliberately left, decide separately.
+- **Duplicate drive letters (device-found in the same screenshot: rows 1 and 3 both `F:`):** root cause = `addDrive()` used `driveLetterOptions[drives.size]`, which hands out a letter an existing drive already holds whenever assigned letters aren't the first N in order (F:,D: → next = index 2 = F:). Now takes the **first unused** letter. Plus `duplicateDriveLetters` on the VM, an error border on colliding letter dropdowns, an inline error line, and the ✓ FAB **blocks save** (jumps to DRIVES + toast) rather than writing two drives onto one letter.
+- **NO migration of already-stored bad paths** (user: they hand-fix them).
+
+**✅✅ ALL THREE FIXES DEVICE-CONFIRMED + MERGED TO MAIN 2026-07-22** — user: *"works correctly"*. Fast-forward `cd98620e` → **`e78c7beb`**, branch `fix/sd-always-listed` deleted (local + remote). 5 files: `core/StorageRoots.kt` (new, 214 lines), `FileManagerScreen.kt`, `ContainerDetailScreen.kt`, `ContainerDetailViewModel.kt`, `PROGRESS_LOG.md`. **vc STAYS 48** — no release cut.
+
+**The five-attempt lesson, worth keeping:** four earlier SD fixes failed because they all re-ran the *same* enumeration (`File("/storage").listFiles()`) at different times — a filesystem read, which is precisely what goes blind when the process lands on a stale storage sandbox. The fix was to change the **source** (framework Binder calls: `StorageManager.getStorageVolumes` + `getExternalFilesDirs`), and then, after the first device round, to key dedup on **volume identity instead of path** — the path key had emitted one card twice, once on a readable path and once on the unreadable raw mount. Timing was never the problem.
+
+**▶️ NEXT SESSION (user asked to discuss at work): the other 12 SAF call sites.** `FileUtils.getFilePathFromUriUsingSAF:583` still hardcodes `/mnt/media_rw/<uuid>/` for every non-primary volume. Container drives no longer reaches it, but these still do: Winlator-folder setting (`SettingsFragment.java:176,192,765,788`, `SettingsScreen.kt:146,155,259,269`), box64 presets (`Box64PresetManager.java:330`), FEXCore presets (`FEXCorePresetManager.java:218`), input-control profiles (`InputControlsManager.java:194`), shortcuts folder (`ShortcutsScreen.kt:5119`), log dir (`LogView.java:199`), CDS payload (`ui/cds/payload:533`). **Two candidate directions to weigh:** (A) fix the helper itself — resolve the SAF volume id via `StorageManager` to its real directory, fall back to `/storage/<id>`, handle an empty relpath so there's no trailing slash; one function, fixes every caller at once. (B) migrate the remaining call sites to `InAppFilePicker` like drives, retiring the helper — more churn, but removes the URI→path mapping entirely and makes every picker consistent. (A) and (B) aren't exclusive: (A) is the cheap safety net, (B) the end state.
+
+
+## 📱 XIAOMI/HYPEROS FRAME-GEN FIX — ✅ MERGED TO MAIN `6d66a9b2` (2026-07-22), COMMUNITY-CONFIRMED
+**versionCode stays 48.** Gated to Xiaomi only; every other device is untouched (verified no-op on AYANEO).
+
+**The bug:** on Xiaomi/HyperOS **neither** frame-gen layer loaded — frame generation silently did nothing for an entire vendor's users. Their patched `libhwui.so` drags `/system_ext/lib64/libjpeg-hyper.so` into any `dlopen` closure that touches `libandroid.so` (both layers do, for AHardwareBuffer); `libjpeg-hyper`'s own `libjpeg.so` dependency then resolves via `LD_LIBRARY_PATH` to the symlink our imagefs ships, which does not export the `jsimd_*` SIMD symbols — the failed relocation aborts the WHOLE dlopen. Symptom in logs: *"Requested layer … failed to load"*, and **both engines failing together is the tell**.
+
+**Fix** (`ImageFsInstaller.disableLibjpegShadowOnXiaomi`, called from `stageBundledComponents`): rename `usr/lib/libjpeg.so` → `libjpeg.so.disabled` so the linker falls through to Xiaomi's own `/system/lib64/libjpeg.so`, which does export them. **Renamed, NOT deleted** (clintOnSky's version deletes) so it's reversible and a support report can be answered by asking whether the parked file exists. Clears a stale parked copy first, since an imagefs re-extract recreates the symlink. Runs on app start AND the direct game-launch path, so shortcut-launched games get it too — and needs **no imagefs reinstall**, which only works because of last night's staging fix.
+
+**Why it was safe to land without Xiaomi hardware:** the gate is a single `File.isFile()` on `libjpeg-hyper.so` (verified absent on AYANEO → immediate return), and **nothing in the imagefs consumes the bare `libjpeg.so` soname** — verified by scanning `usr/lib`: `libgstopengl`, `libgdk_pixbuf` and `libtiff` all link `libjpeg.so.8`. Only the *benefit* was unverifiable, never the safety.
+
+**✅ CONFIRMED ON REAL HARDWARE by @Devaspe (HyperOS device): bionic-fg works, then lsfg-vk confirmed after.** Both layers load. This validates clintOnSky's entire diagnosis.
+
+**Credits (for the release notes):** **@clintOnSky** — diagnosis + fix, PR #96, code contributor (his PR also carries a native present-path fix, not yet landed). **@Shalaykin1** — issue **#40 "Fix framegeneration on HyperOS 3"** ("HyperOS 2 works normally, HyperOS 3 not working, works only in GameHub app" — GameHub ships its own imagefs, hence no symlink). **@Devaspe** — device confirmation on HyperOS. ⚠️ #40 is still CLOSED and its reporter has not been told it's fixed. Also possibly the same bug: **@EddyGameDev** #58 ("tried bionic and LSFG, neither want to work" = the exact both-layers signature, device unstated). **NOT this bug:** @132edsaz #43 (Galaxy A14 / Dimensity 700 — MediaTek/Mali, no libjpeg-hyper).
+
+
+---
+
+## 🏁 2026-07-26 — 2.8.2 HOTFIX CUT + Controller-overlay fix (pinned) + FusionHUD v1.0 first release
+
+**Context:** main had the whole HUD-accuracy pass + the HONOR/mA battery-watts fix merged but unreleased (main `6a14c4a2`, ahead of the 2.8.1 stable tag). This session: built a controller-overlay fix (device-proven, then pinned), then cut 2.8.2 to ship the pile-up.
+
+### 🎮 Controller-overlay fix — HUD renders BENEATH on-screen controls (✅ device-proven, PINNED, NOT in 2.8.2)
+Problem: the in-game perf HUD drew OVER the touchscreen control buttons, so a **locked** HUD on top of e.g. R2 ate the button press. **User rejected Solution A** (make the locked HUD touch-transparent) because it dropped long-press-unlock-while-locked: *"the long press to lock and unlock needs to stay in place."*
+**Solution B (shipped on branch `fix/hud-under-controls` @ `4427571d`, off main `6a14c4a2`):**
+- `XServerDisplayActivity.placeHudBelowControls(View)` drops each built HUD one z-slot BELOW `inputControlsView` (surgical `removeView`+`addView(hud, controlsIndex)` — leaves the DrawerLayout menu + `dialogHostView` ComposeView untouched). Called after all 5 `rootView.addView` HUD sites.
+- `InputControlsView` gains `setHudFallThroughViews(View...)` + `hudAt(x,y)` + `hudTarget`: a touch NOT grabbed by a control ELEMENT (buttons checked first → a button under the HUD wins) that lands on a VISIBLE HUD candidate is forwarded (whole gesture, latched on DOWN / reset on UP) to that HUD — so long-press/drag/tap still reach it. Candidate list = all 5 HUD views (nulls/GONE skipped → classic h/v pair auto-resolves). Controls-off path unchanged (HUD topmost, gets touches directly).
+- `HudLockController` untouched (still always-consumes → long-press intact).
+- **Build snag caught+fixed:** first CI run failed — my field block split an `@Override` from `onTouchEvent` (`error: annotation type not applicable`). Fixed by restoring `@Override` on the method. Green rebuild = run `30219099604` (all 3 flavors), standard APK sha256 `e060ba55…aa807`, staged to Downloads.
+- **User device-verified:** *"R2 works and long press still locks."* Then: *"put a pin in this"* → left UNMERGED, queued for 2.9.
+
+### 🚀 Stable 2.8.2 cut (vc51, tag `2.8.2` → `dc1a78d3`, run `30220212231`)
+HOTFIX over 2.8.1. Version bump on main (vc 50→51, vn 2.8.1→2.8.2, commit `dc1a78d3`), dispatched `release.yml --ref main` (JSON inputs via `gh workflow run --json` stdin — clean multi-line notes). **Verified live:** isPrerelease=false, draft=false, `releases/latest`→2.8.2, **tag→built commit** (release.yml default-branch quirk was harmless: main HEAD == built commit), `update.json` vc51/2.8.2 + all 3 APKs.
+- **Ships:** HONOR/mA battery-watts fix + HUD-accuracy pass (live engine-API label, per-core CPU%, FPS decay+binding-reclaim, follow-active-window) + GL-FPS doc.
+- **Description** (proper format, added post-cut via `gh release edit`): logo/badge header · hotfix framing + "What's fixed" list · Credits (Angel + winlator_ludashi_plus/squalle0nhart) · repeated ⚠️ 2.9-pre VC-Pro-loss warning · expandable `<details>` on OpenGL/DirectDraw-vs-benchmark FPS in the AIO Graphics Test · "🧩 Fusion HUD is open source" section linking the FusionHUD release + repo.
+
+### 🧩 FusionHUD v1.0 — first release of the standalone library
+The repo (`The412Banner/FusionHUD`) had NO releases. Cut **`v1.0`** at `d171774` (`--latest`), attaching `fusionhud-1.0-release.aar` (95 KB library) + `fusionhud-1.0-demo-debug.apk` (3.3 MB preview) from CI run `30217601607`. Notes: what-it-is / adopt-via-JitPack(`com.github.The412Banner:FusionHUD:v1.0`)-or-fork / GPL-3.0 §7(b) attribution. Linked from the 2.8.2 description for other projects to adopt. ⚠️ `gh release create --target` needs a FULL sha (12-char abbrev → HTTP 422).
+
+**▶️ NEXT: 2.9** = merge PR #156 (Virtual Controller Pro) + the pinned `fix/hud-under-controls` + newer work.
+
+## 2026-08-08 — External display swap spike (Version A)
+Branch `feat/external-display-swap` off origin/main `ab6be8ed`. New `ExternalDisplayController` (clean-room Android Presentation API): auto-reparents XServerView onto a connected external/wireless display (TV), handheld = controller; moves back on unplug. Wired into XServerDisplayActivity (setupUI start / onResume recheck / onDestroy stop). Auto-swap, no UI — proves mechanic before production toggle + phone-side input. Recon: GameNative has full Version A (externaldisplay pkg); WinNative has none. DeX onboards for free on the same path later. UNVERIFIED — device test after CI. vc frozen 69.
+
+## 2026-08-08 — TV Options tab + pause-on-TV + display-mode/HDR (Version A increment 2)
+On `feat/external-display-swap`. (1) Pause indicator on the TV when backgrounded (plain-view '▶ Paused' pill; ComposeView would stop composing while backgrounded). (2) TV-connected + moved notifications via the existing Compose toast (added ControllerToastData.message + showInfoToast; converted spike Toasts). (3) New TabType.TV (shown only when connected): Play-on-TV, Auto-switch, Move/Bring-back; controller gates auto vs notify-and-wait. (4) Display-mode picker (resolution+refresh) via getSupportedModes()+preferredDisplayModeId — fixes 4K@30. (5) HDR capability readout (detection only; true HDR output deferred). UNVERIFIED (CI). vc frozen 69.
+
+## 2026-08-08 — Audio reset + on-device external-mode indicator (Version A increment 3)
+Device feedback fixes on feat/external-display-swap: (1) resetGuestAudio() restarts PulseAudio to recover sound lost after background→foreground on the TV — auto on resume (gameOnExternal) + manual 'Reset audio' button in the TV tab. (2) ExternalModeOverlay: on-handheld '📺 Playing on external display' badge (Compose Dialog, non-interactive) so the phone isn't a black screen when the game is on the TV. Note: AYANEO built-in casting owns the display, so the resolution/refresh picker is a no-op there (works on direct-HDMI/DeX). UNVERIFIED (CI). vc frozen 69.
+
+## 2026-08-08 — Badge-overlap fix + correct audio reset (suspend/resume sink)
+Screenshot feedback: (1) hide the 'playing on external display' badge while the side menu is open (menuOpen state from DrawerLayout listener; badge = playingOnExternal && !menuOpen). (2) Audio reset reworked from daemon-restart (broke wine's connection, didn't work) to suspend/resume the AAudio sink over module-cli-protocol-unix — reopens the output route while keeping the daemon + guest audio connection. Device-confirmed HDMI is standard audio + full pulse module set bundled. UNVERIFIED (CI).
+
+## 2026-08-09 — EOD reboot checkpoint (device wedged, NOT a code bug)
+TV/external-display feature (Version A) LANDED on main e936b4c2 (game-on-TV swap, TV tab, resolution/refresh picker, HDR readout, badge+hide-under-menu, external-mode indicator, best-effort Reset-audio). Audio-recovery-on-background PARKED (needs GameNative suspend-sink-before-pause via a version-matched 13.0 pactl; will revisit). CURRENT DEVICE ISSUE: games black-screen because the device is wedged from today crash/test cycle — no pulse daemon + no PS0 socket → winepulse init fails → stack overflow. Installed APK verified = fixed build (987f019a == main); same code that booted games earlier. FIX = REBOOT (clears frozen session + dead pulse), then relaunch. If still black-screens after clean reboot, it is the DiRT-3 container/prefix, not the app.
+
+## 2026-08-09 — Root-owned pulse leftover fixed + TV Options v1-polish/v2/v3-scaffold build
+DEVICE FIX (no code): the "no sound + games black-screen after reboot" was NOT a code bug — my earlier on-device root debugging (19:46) left root:root-owned `pulseaudio/.config/pulse` + `/data/local/tmp/pulse-*` inside the app data; app user (u0_a248) got EACCES → daemon never created PS0 → winepulse "No driver" on every game. Deleted both (pulse recreates as app user); user confirmed "working now". Rule: after any root guest debugging, `find files -user root` and clean up. → memory reference_root_debug_pulse_leftover_eacces.
+
+TV OPTIONS build on feat/external-display-swap (vc FROZEN 69). Extends the shipped Version-A TV tab:
+- v1 polish (all reuse existing wired callbacks): Aspect (FullscreenModeButtons→onSetFullscreenMode), Latency mode (PresentModeSection, Vulkan-only, grayed on GL), Frame cap (drives fps limiter), Frame generation (FrameGenSection reused), Scaling filter (UpscalerModeButtons, GL-only, grayed on Vulkan), TV Game-Mode tip.
+- v2 (new, TV-scoped via tv.* container extras): Overscan/safe-area slider 0-8% (ExternalDisplayController.setOverscanPercent pads Presentation root, re-asserted on (re)create + move); Audio output routing (best-effort AudioManager setCommunicationDevice API31+, EXPERIMENTAL — guest AAudio sink may not follow); Dim-handheld-while-on-TV (window.screenBrightness 0.02 when gameOnExternal, restored on return/resume); TV render resolution (Match TV/handheld/1080p/1440p — applied next launch, guarded to a TV present at bring-up, overrides screenSize before ScreenInfo).
+- v3 scaffold: grayed "Streaming (requires WiFi streaming)" section (bitrate/codec/transport/res placeholders). DeX works for free via the Presentation path (no code). GN suspend-sink audio fix DEFERRED — needs a device-verified 13.0 pactl over the native PS0 socket (Termux's is 17.0, unverified); not bundling unverified audio into a feature build (hard lesson: audio-startup regressions). Audio-on-background stays parked.
+Files: XServerDrawerState.kt (v2 state+callbacks), ExternalDisplayController.java (overscan), XServerDrawer.kt (TvContent sections), XServerDisplayActivity.java (wiring+seed+dim+audio-route+render-res override). User's unrelated LogcatCapture/DebugDialog/LogManager WIP left uncommitted. UNVERIFIED (CI) — awaiting device test.
+
+## 2026-08-09 — TV Options build GREEN + staged (⏸️ user testing in the morning)
+CI run 31289917556 ✅ success (headSha f5c8291d verified == pushed). ✅ STAGED /sdcard/Download/Bannerlator-tv-options-pubg.apk sha256 331e7a9ee5684f69c88e93b6902685345ca49d3df274df6e833aeb1853bd7bcc. vc FROZEN 69. UNVERIFIED — user will device-test in the AM (TV tab: overscan pad, dim-handheld, aspect/latency/framecap/framegen/scaling, audio-route experiment, render-res next-launch). NOT merged to main; user's LogcatCapture/DebugDialog/LogManager WIP left uncommitted. Resume = read device feedback → fix → merge to main. GN pactl audio fix + Version-B streaming engine remain separate follow-on tracks.
+
+## 2026-08-09 — TV Options device feedback #1 + overscan fix (staged)
+User device-tested Bannerlator-tv-options (sha 331e7a9e). Feedback: (1) OVERSCAN drew a WHITE border — bug: Presentation root padding revealed the window's default light bg. FIXED: paint root + Presentation window black (ExternalDisplayController.GamePresentation.onCreate). (2) Dim-handheld works, just hard to tell (baseline brightness already low). (3) TV render-res "can't change" = AYANEO caster owns the OUTPUT mode (4K@30); the guest render-res is separate + only applies on next launch WITH TV connected — clarified, no code change. (4) Audio output "needs work": setCommunicationDevice only routes VoIP/comms audio, NOT the guest's media AAudio stream (owned by pulse module-aaudio-sink), so the dropdown no-ops. USER CHOSE the deep GameNative fix (suspend-sink via a device-verified 13.0 pactl over native PS0) as the next DEDICATED task — needs a live daemon on-device to verify, so it's a with-device session.
+Overscan-fix build: CI run 31316118705 ✅ success (headSha b7a6f847 verified). ✅ RESTAGED /sdcard/Download/Bannerlator-tv-options-pubg.apk sha256 73bcb9f6fa7b8688b2fb76d96dbfd6af8ba254518547250aa67c9523fd3df20c. vc FROZEN 69. Still NOT merged to main; user retests overscan in the AM.
+
+## 2026-08-09 — GN audio fix implemented (native pasink libpulse client)
+LIVE TEST proved the mechanism: Termux's 17.0 pactl drove our 13.0 daemon over PS0 (protocol 35<->33), listed AAudioSink, and suspend-sink 1/0 both rc=0. So a libpulse client CAN steer the 13.0 daemon — bundling a stock pactl was rejected (drags libsndfile→FLAC/vorbis/opus/ogg/mp3lame + dbus/iconv). KEY: our OWN bundled 13.0 libsndfile is MINIMAL (only libm/dl/c), so the whole 13.0 libpulse tree = 3 files already in files/pulseaudio.
+IMPLEMENTED: new native helper cpp/pasink/pasink.c = a JNI lib (libpasink.so, built by our cmake, no pulse link deps — pure dlopen/dlsym) that dlopens libsndfile→libpulsecommon-13.0→libpulse from files/pulseaudio and calls pa_context_suspend_sink_by_name over a threaded mainloop. PulseAudioComponent: System.loadLibrary(pasink) + native nativeSuspendSink(dir,server,sink,suspend); resetAudioSink() rewritten to JNI suspend(true)→200ms→suspend(false) (NO daemon restart fallback — that broke wine); added setSinkSuspended() for future prevent-the-drop; default.pa cleaned (dropped the dead 17.0 module-cli line). Activity: wasBackgrounded flag set on real onPause background → onResume rebuilds the sink (broadened from gameOnExternal-only to handheld too).
+Files: cpp/pasink/pasink.c (new), cpp/CMakeLists.txt (pasink target), PulseAudioComponent.java, XServerDisplayActivity.java. User's LogcatCapture/DebugDialog/LogManager WIP still untouched. Building on feat/external-display-swap, vc FROZEN 69. UNVERIFIED (CI) — device test = background/foreground a game (TV or handheld) and confirm sound returns.
+
+## 2026-08-09 — Audio pasink build GREEN + staged; killed a runaway find
+CI run 31323697303 ✅ success (headSha 2e3117f2). Verified libpasink.so (7752B) IS packaged in lib/arm64-v8a/ (native cmake target built + AGP-packaged). ✅ STAGED /sdcard/Download/Bannerlator-tv-options-pubg.apk sha256 76b490c15d1f68b83879533b9f626dbdb6cbdf9895174b3bfc04048fabdda651. vc FROZEN 69. Device test = background/foreground a game (TV or handheld) → sound should return.
+OPS: a `find / -name pactl` I'd launched earlier (ran as `bfs` under proot) never finished and burned 61+ min CPU crawling the whole FS → user's fans ramped. Killed PID; CPU idle recovered 285%→593%. Reinforce the rule: NEVER run filesystem-wide find under proot; scope the path or nohup+poll+timeout.
+
+## 2026-08-09 — Version B v1: in-app Cast button (no-install screen mirroring)
+Recon on-device (my proot shares the WiFi): discovered the user's cast targets — 4 Google Cast (onn. 4K pro Google TV x2, Chromecast Ultra, Eureka dongle) + 3 Roku (Sharp/TCL Roku TVs, Roku Stick 4K) via mDNS _googlecast._tcp + SSDP. So an in-app device list is feasible; GMS present (com.google.android.gms + CastRemoteDisplay MediaRouter provider). KEY LIMITATION: apps CANNOT silently start screen mirroring (security) — Google-Cast whole-screen mirroring is system-only (Quick Settings Cast tile); Miracast reachable via Settings. And Roku only accepts Miracast (no custom receiver possible; DLNA too laggy). So NO custom low-latency stream reaches Roku.
+BUILT v1 = "Cast to a TV (wireless)" button in the TV tab (tab now shows when tvConnected OR castSupported). Button opens the SYSTEM cast/wireless-display picker (Settings.ACTION_CAST_SETTINGS → on this device = WifiDisplaySettingsActivity/Miracast; fallback ACTION_WIRELESS_SETTINGS → toast pointing to the Quick Settings Cast tile). Honest explainer: mirrors whole screen, adds lag, wired HDMI still best. TvContent restructured: wireless-cast section always on top; wired-display controls (mode picker/HDR/Play-on-TV/Move) gated on tvConnected. New state castSupported + onOpenCastPicker.
+Files: XServerDrawerState.kt (castSupported+onOpenCastPicker), XServerDrawer.kt (tab gate + TvContent restructure), XServerDisplayActivity.java (CAST_SETTINGS intent + availability). Building on feat/external-display-swap, vc FROZEN 69. UNVERIFIED (CI). NOTE: v1 best serves Miracast on this device; Chromecast mirroring via Quick Settings. Premium low-latency Google-TV path still = optional receiver app (deferred).
+
+## 2026-08-09 — Version B: in-app Cast device picker (Part 1 of the no-receiver-app path)
+User wants everything IN-APP (custom dialog listing found devices + refresh + per-device Connecting/Connected status + Disconnect), NO receiver app for now (that's a later upgrade), NOT the Android system cast screen. HONEST CONSTRAINT re-confirmed: without a TV-side app, the only fully-in-app push path is Google Cast media-streaming = laggy (buffered, seconds); low-latency no-app (CastRemoteDisplay) is dead. So this direction ships a watchable-not-playable stream later; crisp = the deferred receiver app.
+BUILT Part 1 = the in-app PICKER (replaces the system-intent button):
+- NEW app/.../cast/CastDiscovery.java — native NsdManager mDNS discovery of _googlecast._tcp (Google Cast only; Roku excluded — needs system Miracast, can't receive our stream). refresh() re-scans. No new dependency.
+- XServerDialogState.kt — ActiveDialog.CAST + CastStatus{IDLE,CONNECTING,CONNECTED,FAILED} + castDevices/castScanning/castStatus/castTargetName/castStatusDetail + onCastRefresh/onCastConnect/onCastDisconnect.
+- NEW ui/dialogs/CastDialog.kt — Compose dialog: title + Refresh (spinner while scanning) + device list (name+model), tap a device → status line under it (Connecting…→Connected/Failed) + Disconnect; Close.
+- XServerDialogHost.kt — CAST case. XServerDrawer.kt — Cast section text updated (in-app list, streaming = next update). XServerDisplayActivity.java — castDiscovery field + onOpenCastPicker shows the dialog + starts discovery; onCastConnect does a real TCP reachability probe (honest Connecting→Connected/"live streaming next update"); onCastDisconnect resets; stop() on destroy.
+Files: cast/CastDiscovery.java (new), ui/dialogs/CastDialog.kt (new), XServerDialogState.kt, XServerDialogHost.kt, XServerDrawer.kt, XServerDisplayActivity.java. vc FROZEN 69. Building on feat/external-display-swap. UNVERIFIED (CI). Part 2 (next) = the game→HEVC→stream pipeline + real Cast media session. NOTE: NsdManager service type "_googlecast._tcp." — if device shows no devices, try dropping the trailing dot.
+
+## 2026-08-09 — Cast dialog "?" help (options + pros/cons)
+Per user: the wireless-casting box must carry a "?" help button so users understand the available options + pros/cons. Added to CastDialog.kt: round "?" button in the title row toggles an in-dialog help view (scrollable) with 4 blocks, each ✓pros/✗cons: (1) Cast no-app (this screen) — no TV setup / laggy + Google-Cast-only; (2) Cast with receiver app (later) — crisp+phone-free / one-time install + no Roku; (3) Wired cable — lowest lag / needs cable; (4) Roku — no app / uses Android system screen + depends on Miracast. Back button returns to the list. DURABLE REQUIREMENT: keep this "?" help current as the casting tiers evolve.
+
+## 2026-08-09 — Cast picker DEVICE-VERIFIED + TV tab icon → "TV" text
+User screenshots (5) confirm Part 1 works end-to-end: in-app dialog discovered ALL 4 Google Cast devices by name (Living Room TV/Bedroom onn 4K pro, Living Room Monitor Chromecast Ultra, Picture frame Chromecast); tap→Connected→"streaming next update"→Disconnect flow works; "?" help renders all 4 option blocks with pros/cons. Per user: TV tab button in the side menu now shows a "TV" text pill (new TvTabButton, mirrors FpsTabButton) instead of icon_monitor. Building on feat/external-display-swap, vc 69.
+
+## 2026-08-09 — Version B Part 2 Step 1: game capture + H.264 encode (de-risk, records to file)
+TV-text-tab build staged sha e1465ce1cbd8886a2eea7c4fcb5e0274c6d2ba1b9b6c9221635cc8a72815bc34. CREDITS for next stable recorded in reference_bannerlator_next_release_notes (external-display + audio = GameNative concept/mechanism, clean-room impl; casting = 100% ours). 
+PART 2 STEP 1 BUILT: new cast/GameCaster.java = renders the game onto a private VirtualDisplay (FLAG_OWN_CONTENT_ONLY|PRESENTATION, NO MediaProjection/permission) whose Surface is a MediaCodec H.264 encoder input, drains to a MediaMuxer .mp4 FILE (/storage/emulated/0/Download/bannerlator-cast-test.mp4). Proves capture+encode of the emulated game before the network+Cast half (Step 2). ExternalDisplayController.pauseForCast()/resumeAfterCast() added (unregister/register the display listener so it does not fight GameCaster over the game view). Activity: gameCaster field + Listener→dialog status; onCastConnect now pauses extDisp + starts GameCaster (1280x720@8Mbps) instead of the reachability probe; onCastDisconnect stops it + resumes extDisp; stop() on destroy. UNVERIFIED (CI + DEVICE) — device test = cast dialog → tap a device → game should keep running (phone may go black, mirrors Version A) → Disconnect → verify the .mp4 has real frames. RISK: VirtualDisplay+Presentation+reparent of the live Vulkan surface encoding correctly is the unknown; safe-fails to "Failed". vc 69. Files: cast/GameCaster.java (new), display/ExternalDisplayController.java, XServerDisplayActivity.java.
+
+## 2026-08-09 — Part 2 Step 1 DEVICE-PROVEN (capture works) + Cast dialog UX fix
+CAPTURE DE-RISK PROVEN: GameCaster trace showed ALL steps (encoder→virtualdisplay→presentation→reparent→STREAMING). Output cast-test.mp4 = valid H.264 1280x720 ~13fps 2m51s 29MB; extracted frame = actual DiRT 3 gameplay (NOT black). So game→VirtualDisplay(private)→MediaCodec H.264 capture WORKS under the emulator. Earlier "stuck on Connecting" was the old silent null-path (fixed) + game log-spam drowning GameCaster logs (used logcat -s GameCaster to see them). File was for de-risk only; live casting streams encoder→local HTTP server→Chromecast URL, no disk file.
+UX FIX (user): tap-to-connect was misleading. CastDialog now: tap a device = SELECT (expand, show name/type/host) + explicit Connect button; when active = status line + Disconnect. New local `selected` state; no auto-connect on tap.
+Step 2 next = local HTTP/HLS server + Cast v2 LOAD to the picked device. vc 69.
+
+## 2026-08-09 — Version B Part 2 STEP 2a: Cast v2 protocol + HTTP server (clip → Chromecast → TV)
+Goal: prove the capture→phone-web-server→Chromecast→TV chain (Step 2b makes it live). NEW cast/CastSession.java = hand-rolled Google Cast v2 protocol client (NO Cast SDK dep): TLS trust-all to host:8009, length-prefixed CastMessage protobuf (hand-serialized), CONNECT→LAUNCH default media receiver CC1AD845→grab launched-app transportId from RECEIVER_STATUS→CONNECT to it→LOAD media URL; PING/PONG heartbeat. NEW cast/HttpFileServer.java = single-file HTTP/1.1 server w/ Range support + localIpv4() helper. Activity: onCastConnect now records ~8s (GameCaster) then startCastPlayback() finalizes the clip, hosts it (http://phoneIp:port/cast.mp4), and CastSession.connectAndLoad(video/mp4, BUFFERED); status Recording→Sending→Loading→Playing. onCastDisconnect=stopCast() (cancel pending, close session/server, game back). Cleartext note: app is the SERVER (Chromecast fetches) so usesCleartextTraffic n/a; Cast link is TLS(untrusted cert). vc 69. UNVERIFIED — Cast protocol WILL need device iteration (transportId timing, cert, LOAD payload).
+
+## 2026-08-09 — Version B Part 2 STEP 2a: DEVICE-PROVEN (clip on TV, no app!)
+User: "it showed up almost immediately on the TV". The WHOLE no-app chain works FIRST TRY: game capture (GameCaster) -> phone HttpFileServer -> Chromecast via hand-rolled Cast v2 (CastSession) -> plays on TV. Log clean. staged sha 2ec1204ae78abf0145c0fc4997ac51ab6dbebd3cdceb7ce7c4eb4b17427a3032 (build 31330972117). Cast v2 (TLS trust-all :8009, hand CastMessage protobuf, LAUNCH CC1AD845, LOAD url, PING/PONG) + HTTP server WORK on real Chromecast Ultra / onn Google TV. NEXT = STEP 2b: live stream (continuous HLS segmenting of encoder output, streamType LIVE) — hard part = live TS/fMP4 segmenting. vc 69.
+
+## 2026-08-09 — Version B Part 2 STEP 2b: LIVE streaming (HLS) + EXPERIMENTAL label
+Step 2a proved the chain with a recorded clip; 2b makes it LIVE. NEW cast/TsSegmenter.java = hand-rolled MPEG-TS muxer (Android MediaMuxer cannot emit TS): PAT+PMT (H.264 type 0x1B) per segment, PES with 90kHz PTS, PCR in video-PID adaptation field, 188-byte alignment, SPS/PPS prepended to each keyframe; segments start on IDR (~2s), rolling window of 5, live m3u8 playlist — all in memory. GameCaster.startStream()/drainStreamLoop feed the encoder H.264 (CODEC_CONFIG→setCodecConfig, frames→feed w/ KEY_FRAME flag) into the segmenter (no file). HttpFileServer gets an HLS mode (new ctor + serveHls: /live.m3u8 application/vnd.apple.mpegurl + /segN.ts video/mp2t from memory). Activity onCastConnect → TsSegmenter + gameCaster.startStream(1280x720@6Mbps) → startLiveCast waits for first segment (≤15s) → HttpFileServer(seg) + CastSession.connectAndLoad(http://ip:port/live.m3u8, application/vnd.apple.mpegurl, LIVE). "Live on your TV (a few seconds behind)". Per user: TV-tab cast section now has an "⚠ EXPERIMENTAL" label at top. Latency-smoothing (adaptive jitter/segment tuning) = user-requested FOLLOW-UP after 2b works. vc 69. UNVERIFIED — TS muxer WILL need device iteration (PCR/PES/CRC correctness = Chromecast play-or-not).
+
+## 2026-08-09 — ▶️ RESUME CHECKPOINT (Version B casting, in progress on feat/external-display-swap)
+Branch `feat/external-display-swap` tip = 44983e4f (over origin/main a17d2363 = TV Options + audio fix, already merged). Cast work NOT merged.
+STATE OF THE NO-APP WIRELESS CAST FEATURE:
+- Part 1 (in-app picker): DONE+device-proven. cast/CastDiscovery.java (NsdManager mDNS _googlecast._tcp), ui/dialogs/CastDialog.kt (tap-to-SELECT + explicit Connect/Disconnect + "?" help w/ pros-cons + tap shows name/type/host). TV-tab "TV" text pill (not icon). "⚠ EXPERIMENTAL" label at top of the cast section.
+- Part 2 Step 1 (capture): DONE+proven. cast/GameCaster.java renders game onto private VirtualDisplay(OWN_CONTENT_ONLY|PRESENTATION, no perm) -> MediaCodec H.264; start()=file (proven DiRT 3 1280x720), startStream()=feeds TsSegmenter.
+- Part 2 Step 2a (clip->Chromecast): DONE+proven ("showed up almost immediately on TV"). cast/CastSession.java = hand-rolled Cast v2 (TLS trust-all :8009, CastMessage protobuf, LAUNCH CC1AD845, LOAD url, PING/PONG). cast/HttpFileServer.java (file + HLS modes, Range).
+- Part 2 Step 2b (LIVE): built + OOM CRASH FIXED. cast/TsSegmenter.java = hand-rolled MPEG-TS muxer (PAT/PMT/PES/PCR, rolling m3u8, in-memory). BUG hit on device: writePes adaptation-field math left bytes unconsumed -> infinite loop -> 394MB OOM -> app crashed casting to any device. FIXED in 44983e4f (exact adaptation sizing, payload always advances). Activity onCastConnect -> startStream + startLiveCast (waits first segment, casts http://ip:port/live.m3u8 streamType LIVE).
+- ✅ STAGED (OOM-fix build) /sdcard/Download/Bannerlator-tv-options-pubg.apk sha256 1db6bbb8c348e84db2b83fac63e1e1a70fbc742d9011bc05ada5858310dd1498 (run 31332445180). vc 69.
+▶️ NEXT: device-test the OOM-fix build — Connect should NOT crash now; does the Chromecast DECODE the TS stream (play vs black)? If black/frozen, iterate TsSegmenter correctness (PCR/CRC/PTS). Re-arm `logcat -s CastSession:V TsSegmenter:V GameCaster:V HttpFileServer:V` for the trace. Then Phase A latency (docs/cast-latency-smoothing.md): 1s->0.5s segments, low-latency encoder (KEY_LATENCY=1, no B-frames), WiFi high-perf lock. Then Phase B smart server (adaptive bitrate from HTTP fetch cadence). Then Tier 2 = Android-TV receiver app (~100ms, true low latency).
+
+## 2026-08-09 — ✅ NO-APP WIRELESS CASTING WORKING + MERGED TO MAIN (004b3dc0)
+Version B no-app wireless casting is DEVICE-VERIFIED WORKING and MERGED. User: "I have video now on TV via casting, about 8s behind, audio and controller input on my device" — playerState:PLAYING confirmed. Full chain, NO app on the TV: game → private VirtualDisplay → MediaCodec H.264 → hand-rolled MPEG-TS live HLS (TsSegmenter) → phone HttpFileServer → Chromecast/Google TV via hand-rolled Cast v2 (CastSession).
+THE WALL (Chromecast downloaded a valid stream but stayed playerState:LOADING forever) was THREE missing decoder-init requirements, fixed together: (1) AUD — Access Unit Delimiter (NAL 9, 00 00 00 01 09 F0) per frame; (2) DTS — write PTS+DTS on every video frame (=PTS, no B-frames); (3) codec-declaring MASTER playlist (master.m3u8 with CODECS="avc1.42E01F,mp4a.40.2", cast that not the media playlist). Earlier fixes en route: OOM infinite-loop, silent AAC audio track (video-only stalls), consistent segments + dynamic TARGETDURATION, frequent PCR (every frame), continuous continuity counters, Baseline profile. Diagnosed each by curl-fetching the live stream from the phone over WiFi + ffmpeg validation.
+MERGE: FF feat/external-display-swap -> origin/main a17d2363..004b3dc0 (22 commits: cast picker+discovery, GameCaster capture, CastSession, HttpFileServer, TsSegmenter, SilentAac, TV-tab "Cast" section, "TV" text pill, reopen-state fix, EXPERIMENTAL·VIDEO-ONLY labels). Main artifacts build run 31338722581 (headSha 004b3dc0). vc FROZEN 69, NO release cut. User's LogcatCapture/DebugDialog/LogManager WIP still uncommitted.
+LABELED in-app "⚠ EXPERIMENTAL · VIDEO ONLY" (TV tab + "?" help). DEFERRED FOLLOW-UPS (user "save for later"): Phase-A latency ~8s→~3-4s (small segments + low-latency encoder + WiFi high-perf lock), REAL TV audio (tap PulseAudio AAudioSink.monitor via libpulse → AAC → mux w/ A/V sync; optional mute phone), Phase-B smart-server adaptive bitrate, cross-device reliability. RELEASE POSTURE: recommend WIRED external display as primary; wireless = experimental/video-only until it matures. Plan → docs/cast-latency-smoothing.md.
+
+## 2026-08-09 — ✅ #333 AUTO-HIDE ON-SCREEN CONTROLS + CONTROLLER BINDINGS — COMPLETE, DEVICE-VERIFIED, ON MAIN (3e2990b8)
+GitHub issue #333 (auto-hide OSC when a controller connects) built end-to-end and device-proven on a Fold 7 (phone) + AYANEO (handheld). Branch feat/autohide-osc-controls was FF'd to main incrementally; main = 3e2990b8, artifacts-only build autohide-333j (run 31349659218). NOT in a stable release (2.9.7 still shipped stable, vc frozen 69) — lands in the next cut. User's LogcatCapture/DebugDialog/LogManager WIP left uncommitted throughout.
+
+CHUNK A — auto-hide (all paths device-proven):
+- Data model: Container.autoHideControlsOnPad extra (default FALSE = existing containers untouched); GlobalControllerPrefs default ON; seeded into NEW containers only (user decision "ON for new containers only"). 3-tier toggle: app-drawer global On/Off, container switch, per-game shortcut tri-state (inherit/On/Off).
+- Smart default: fresh user with no profile gets the bundled "Virtual Gamepad" layout (controls-3.icp) so there's a working touch pad out of the box (gated behind auto-hide).
+- Slot-aware runtime (updateAutoHideForControllers): hides only when a controller OCCUPIES the on-screen slot (keyed on resolved currentSlot, not the pin). Locked disambiguation rule: unpinned pad = solo takeover -> hide (pad YIELDs onto the OSC slot); pad pinned to a DIFFERENT player = 2-player -> overlay stays; pad pinned to OSC slot = hide. Never forces controls on (baseline userWantsControlsShown); editor-open guard; live re-eval on manual slot change + Reset Input. Junk-device filter (AYANEO aux, uinput-fpc) reused from 2.9.7.
+- Proven: no-controller show; connect->hide,P1; disconnect->restore; connect-before-launch->hidden; pin-to-P2->overlay stays; set-to-Auto->solo takeover; pins persist across relaunch.
+
+CHUNK B — controller bindings (reporter's 2nd ask):
+- ExternalController.copyBindingsFrom; ControlsProfile.DEFAULT_CONTROLLER_ID ("__default__") template + seed-on-add + runtime auto-inherit in getController(int) so an unconfigured pad inherits the Default mid-game (never blank). Out-of-game UI: "Default / Any Controller" row + per-controller "copy bindings from…" (reload-fresh + guard empty = non-destructive).
+- Proven: a connected pad inherits the Default mapping (shows correct binding count), copy works.
+
+FIXES FOUND DURING DEVICE TESTING (all on main):
+- Hot-plug list refresh (in-game Players tab + out-of-game External Controllers via InputManager.InputDeviceListener + ON_RESUME).
+- Dropdown outline+dividers on ALL menus (out-of-game slot pickers, in-game slot dropdown, copy popup) via shared outlinedMenuCard()/MenuItemDivider().
+- Duplicate "Default / Any Controller" box removed (filter __default__ from the list).
+- illegal-forward-reference build break (winHandler in fireControllerToast field initializer -> moved to a method).
+- **The subtle one:** External Controllers list showed stale "0 Bindings" even though data was correct. Root-caused via a branch-only debug build (ICS333 logcat): the Compose `controllers` state held ExternalController objects whose equals() is id-only (bindings ignored, by design for slot dedup), so [pad:0]->[pad:1] looked structurally equal and Compose skipped the update. Fix = neverEqualPolicy() on that state.
+
+REMAINING (optional, not built): "?" help text on the auto-hide toggles (cosmetic). Everything functional is done.
+
+## 2026-08-10 — issue #339: DeX external-display misfire fix (branch fix/dex-external-display-339)
+Reported: on 2.9.8 in Samsung DeX, launching a game half-fullscreens, FPS HUD vanishes, mouse dies.
+Root cause: DeX's virtual desktop is a DISPLAY_CATEGORY_PRESENTATION display that the app already runs
+on; ExternalDisplayController auto-swapped the game into a Presentation over that same display.
+Fix (2 parts, clean branch off origin/main ca98c930):
+- ExternalDisplayController.findPresentationDisplay(): skip the display the activity window is on
+  (activity.getDisplay() API30+, getDefaultDisplay() fallback). Real HDMI TV = different displayId, unaffected.
+- XServerDisplayActivity: seed tv.enabled/tv.autoSwap from container BEFORE start() (start() runs the first
+  auto-swap), and persist both master switches on change (previously reset to ON every launch).
+Status: compile-level only, NOT device-proven. CI build dispatched for DeX device test.
+
+## 2026-08-10 — TV feature kill-switch (branch fix/dex-external-display-339, on top of #339 fix)
+User wants the whole TV/external-display feature dormant ("as if it never existed") until finished.
+- New com/winlator/star/FeatureFlags.java: TV_OUTPUT_ENABLED = false.
+- XServerDisplayActivity: the entire ExternalDisplayController + wireless-cast setup block is wrapped in
+  `if (FeatureFlags.TV_OUTPUT_ENABLED) { ... }`. While off, controller/castDiscovery/gameCaster are never
+  constructed, so a TV/DeX connection NEVER auto-swaps (onResume/onPause/onDestroy all null-guard through).
+  onResetAudio (Audio tab, unrelated) was pulled OUT of the block so audio reset still works.
+- XServerDrawer.kt: TV tab gated `if (FeatureFlags.TV_OUTPUT_ENABLED && (tvConnected || castSupported))` —
+  tab hidden entirely.
+Reversible: flip the boolean to true to restore the feature + the #339 DeX guard + persisted toggle.
+NOTE: parallel session is working feat/pulseaudio-adaptive-aaudio-sink; #339 branch is separate.
+
+## 2026-08-10 — 🏁 2.9.9 HOTFIX cut (vc 71, over 2.9.8)
+Contents on main since 2.9.8: #338 controller/touch fix (already merged) + THIS cut's changes:
+- TV feature fully disabled via FeatureFlags.TV_OUTPUT_ENABLED=false (no auto-swap, tab hidden) + #339 DeX
+  guard/persist underneath (dormant). Device-verified on user's device: tab gone, plug-in does nothing, audio OK.
+- LogcatCapture.DEFAULT_LINES 1000 -> 10000 (deeper bug-report logs; still app-scoped + redacted).
+- build.gradle versionCode 70->71, versionName 2.9.8->2.9.9. README What's New 2.9.9 + version box.
+Release: release.yml dispatch, release_tag=2.9.9, prerelease=false, make_latest=true. Notes = full markdown
+blob (matches 2.9.8 pattern) from scratchpad notes-2.9.9.md. ⚠️ release.yml tags DEFAULT branch (main) — pushed
+docs+version to main FIRST so tag lands on the cut commit; verify headSha==pushed + curl update.json after.
+
+## 2026-08-10 — 🔊 ALSA adaptive audio + full settings mirror + strict per-scope/per-engine config — ✅ MERGED to main
+Branch feat/alsa-adaptive-aaudio (tested @ ec5bbbb5, "alsa-hier") merged to main (fast-forward). Sibling
+to the merged PulseAudio adaptive stack; applies the same treatment to the ALSA path and unifies the
+settings model across BOTH engines. Device-proven end to end. Staging flavor = pubg.
+
+CRACKLE FIX (cpp/winlator/alsa_client.c, DEVICE-PROVEN via logcat `alsa_client`):
+- AlsaStream wrapper: grow buffer on xrun (getXRunCount+setBufferSizeInFrames), reopen on
+  AAUDIO_ERROR_DISCONNECTED (-899) to follow headphone/BT route changes, 200ms reopen throttle,
+  measurement logging (open/grow/hb).
+- Measurement caught two bugs the ear missed: stored REQUESTED buffer not device-capped actual (heartbeat
+  lied buf>cap + adaptBuffer cap-guard tripped so it never grew); LOW_LATENCY caps AAudio capacity to a
+  tiny FAST buffer (~3844 @48k) vs winealsa's ~13454 = starvation. Fix = PERFORMANCE_MODE_NONE + capture
+  actual got. Re-test: buf<=cap, adaptive grows, xruns 0->12-climbing collapsed to flat 0, route recovery
+  intact. User: "sounded clean both ways."
+
+FULL SETTINGS MIRROR (same presets/fine-tune popup driven for the active engine):
+- ALSAClient.nativeSetAudioConfig(perf,adaptive,bufTarget,maxBuf); perf passthrough (default NONE), maxBuf
+  clamps capacity, bufTarget sets buffer, adaptive gated; config-gen bump reopens live streams so in-game
+  changes apply WITHOUT relaunch (NULL-guarded). Driver badge in the popup; cog shown for ALSA too;
+  in-game AUDIO tab shows launch engine via XServerDrawerState.audioDriverId. Device-proven live apply.
+
+STRICT PER-SCOPE + PER-ENGINE CONFIG (no bleed on any axis) — DEVICE-PROVEN:
+- PERSISTENT = each scope's env, ENGINE-SCOPED keys BANNER_AUDIO_ALSA_* / BANNER_AUDIO_PULSE_* (container
+  + shortcut each own theirs; audioConfigToEnv writes only the active engine's prefix; audioConfigFromEnv
+  engine-aware default; shortcut-over-container). RUNTIME = banner_audio_<engine> prefs, EPHEMERAL,
+  reseeded IN FULL every launch from resolved per-scope env (seedAudioPrefsForLaunch) — no cross-launch/
+  cross-game memory. IN-GAME save persists to the launching SHORTCUT's env only (persistAudioToShortcut =
+  putExtra+saveData, mirrors resetPerfKey) — per-game, per-engine, never container/other games.
+- Verified on device (alsa-hier 84c988e2): in-game Low -> DiRT3 shortcut BANNER_AUDIO_ALSA_PERF=1; Pulse
+  keys absent; all 14 other games' shortcuts clean; container .container config untouched; cog<->in-game
+  agree; live apply (gen 1->2 reopening); launch reads the shortcut's cog. Cross-engine/cross-game/
+  game->container bleed all impossible. Contract doc atop AudioSettingsDialog.kt = 3-axis model.
+- Pulse internals untouched (merged/proven stack): resolveSinkArgs just re-pointed at banner_audio_pulseaudio.
+- ⚠ Existing single-store banner_audio prefs from older builds are orphaned -> first post-merge launch
+  uses safe engine defaults (no migration; the old shared file was the polluted one).
+
+## fix/pause-longname-exe — game not pausing/backgrounding for long-exe-name games (audio kept playing)
+- **Symptom (user report + on-device `ps` proof):** with a game whose exe name is long (repro: `NINJA GAIDEN SIGMA.exe`), backgrounding / locking / manual in-game pause stopped the whole Wine tree (`T`) but the GAME engine process stayed `S` (running, RSS climbing) — so its FMV/audio kept playing. Reproduced regardless of ALSA vs PulseAudio (not an audio-stack bug).
+- **Root cause:** `ProcessHelper.listRunningWineProcesses()` matched the filter `{"wine","exe"}` against `/proc/<pid>/stat`, whose `comm` field is truncated to 15 chars (TASK_COMM_LEN). `NINJA GAIDEN SI` → `.exe` chopped off → no match → never SIGSTOP'd by `pauseAllWineProcesses()`. Short-named exes (e.g. `witcher3.exe`) keep `.exe` within 15 chars, which is why it paused correctly for most users.
+- **Fix (additive, no regression surface):** also match the FULL untruncated argv from `/proc/<pid>/cmdline` (new `readCmdline()` helper — same source `findLinuxPidByExe` already uses). A pid the stat check matched is still matched; we only ADD the previously-missed game process. Also added a `break` so a pid matching both filters is added once (was double-added). Java-only, single file.
+- Base: clean `ad03f23f` (branched off before the stray `mali-report … wine_debug.log` commits that landed on origin/main a36ecc25→8b314ef2 — those look accidental, clean up separately).

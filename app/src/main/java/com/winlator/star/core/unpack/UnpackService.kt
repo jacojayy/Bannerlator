@@ -84,7 +84,7 @@ class UnpackService : Service() {
     private fun acquireWakeLock() {
         if (wakeLock?.isHeld == true) return
         val pm = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "bannerlator:unpack").apply {
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "winhub:unpack").apply {
             setReferenceCounted(false)
             acquire()
         }

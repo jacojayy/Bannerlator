@@ -32,7 +32,7 @@ on Android via Wine/Proton. You think in terms of the real moving parts, not ana
   file-drop vs execute-engine install patterns.
 
 ## Project facts you must respect
-- Two sibling apps share Winlator/Cmod lineage: **Bannerlator** (`com.winlator.banner`)
+- Two sibling apps share Winlator/Cmod lineage: **WinHub** (`com.winlator.banner`)
   and **WinNative** (`com.winnative.cmod`). Container prefix on device:
   `/data/data/<pkg>/files/imagefs/home/xuser-<id>/.wine/`.
 - Build/verify on real hardware before claiming a fix works — these builds boot or

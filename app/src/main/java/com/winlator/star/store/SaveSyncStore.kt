@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit
  *   - Pull-to-refresh does a live cloud manifest diff to surface "cloud ahead"
  *     ([refreshFromCloud], BLOCKING — callers thread it).
  *
- * The record sidecar is `Bannerlator/SteamCloudSaves/_status.json` (mirrors
+ * The record sidecar is `WinHub/SteamCloudSaves/_status.json` (mirrors
  * [com.winlator.star.core.SaveLocator]'s JSON sidecar style — one flat JSON object keyed by appId).
  * It is written by the four [recordAfter*] hooks that [SteamCloudSaveManager]'s moves call on success.
  *
@@ -61,7 +61,7 @@ object SaveSyncStore {
     /**
      * Instant list (NO network) for the manager. The game set is the union of:
      *   1. every appId with a persisted sidecar record,
-     *   2. every on-disk Library folder under `Bannerlator/SteamCloudSaves/<appId>` that holds files,
+     *   2. every on-disk Library folder under `WinHub/SteamCloudSaves/<appId>` that holds files,
      *   3. installed Steam games (`steam_games.is_installed = 1`) that are already known to have cloud
      *      saves (last-known `cloudFileCount > 0` from their record).
      * Scope = has-cloud-saves (last-known) OR has-local-Library — kept short + relevant.
@@ -314,11 +314,11 @@ object SaveSyncStore {
     // ── Record persistence ────────────────────────────────────────────────────
 
     private fun statusJsonFile(): File =
-        File(Environment.getExternalStorageDirectory(), "Bannerlator/SteamCloudSaves/_status.json")
+        File(Environment.getExternalStorageDirectory(), "WinHub/SteamCloudSaves/_status.json")
 
     /** Root of the Library tree (parent of the per-appId folders + the sidecar). */
     private fun cloudSavesRoot(): File =
-        File(Environment.getExternalStorageDirectory(), "Bannerlator/SteamCloudSaves")
+        File(Environment.getExternalStorageDirectory(), "WinHub/SteamCloudSaves")
 
     private fun loadRoot(): JSONObject {
         val f = statusJsonFile()

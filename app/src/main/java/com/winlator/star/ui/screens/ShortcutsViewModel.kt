@@ -346,29 +346,29 @@ class ShortcutsViewModel(app: Application) : AndroidViewModel(app) {
      * falls back to per-device rows.
      *
      * BOTH namespaces are read: for every canonical folder we query BannerHub (no ns) AND our own
-     * `bannerlator` repo in parallel; each folder in [extraBannerlatorFolders] is queried in the
-     * `bannerlator` namespace ONLY (the per-shortcut sheet passes the shortcut's own sanitized folder
+     * `winhub` repo in parallel; each folder in [extraWinHubFolders] is queried in the
+     * `winhub` namespace ONLY (the per-shortcut sheet passes the shortcut's own sanitized folder
      * so the user's OWN upload — which isn't in the canonical index yet — is still found). Every entry
-     * keeps its `appSource` so the UI can badge Bannerlator-shared configs.
+     * keeps its `appSource` so the UI can badge WinHub-shared configs.
      */
     fun fetchGameConfigs(
         game: CanonicalGame,
-        extraBannerlatorFolders: List<String> = emptyList(),
+        extraWinHubFolders: List<String> = emptyList(),
         onResult: (List<Pair<String, WorkerConfigEntry>>) -> Unit,
     ) {
         viewModelScope.launch {
             val merged = withContext(Dispatchers.IO) {
                 val keys = game.folders.ifEmpty { listOf(game.name) }.distinct()
-                val extras = extraBannerlatorFolders.filter { it.isNotBlank() }.distinct()
+                val extras = extraWinHubFolders.filter { it.isNotBlank() }.distinct()
                 // Per canonical folder: BannerHub (default) + our namespaced repo, both in parallel.
                 // Per extra folder: our namespaced repo only.
                 val jobs = ArrayList<kotlinx.coroutines.Deferred<Pair<String, List<WorkerConfigEntry>>>>()
                 for (key in keys) {
                     jobs.add(async { key to CommunityConfigWorker.list(key) })
-                    jobs.add(async { key to CommunityConfigWorker.list(key, "bannerlator") })
+                    jobs.add(async { key to CommunityConfigWorker.list(key, "winhub") })
                 }
                 for (key in extras) {
-                    jobs.add(async { key to CommunityConfigWorker.list(key, "bannerlator") })
+                    jobs.add(async { key to CommunityConfigWorker.list(key, "winhub") })
                 }
                 val perFolder = jobs.awaitAll()
                 val seen = HashSet<String>()
@@ -475,7 +475,7 @@ class ShortcutsViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * PHASE 3 (online sharing) — UPLOAD. Share [shortcut]'s effective config to OUR community repo
-     * (namespace {@code bannerlator}, never seen by BannerHub users). Builds the same artifact
+     * (namespace {@code winhub}, never seen by BannerHub users). Builds the same artifact
      * [exportShortcutConfig] does, then, off the main thread: base64s the JSON and POSTs it to the
      * worker's {@code /upload}. Records the result in [UploadedConfigsStore] (reinstall-proof) so a
      * later share can offer to replace it.
@@ -667,7 +667,7 @@ class ShortcutsViewModel(app: Application) : AndroidViewModel(app) {
      * PHASE 3 (online sharing) — MY UPLOADS. Read the user's own upload records from
      * [UploadedConfigsStore] (which hydrates from the durable manifest on a fresh install, so this list
      * survives a reinstall), then re-read each one's LIVE votes / downloads from the worker
-     * ({@code list(game, "bannerlator")}, matched by sha then filename). Missing on the server →
+     * ({@code list(game, "winhub")}, matched by sha then filename). Missing on the server →
      * {@code stillOnline = false}, stats 0 (it may have been deleted, or we're offline). All IO off the
      * main thread; delivered on the main thread.
      */
@@ -675,7 +675,7 @@ class ShortcutsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val rows = withContext(Dispatchers.IO) {
                 UploadedConfigsStore.all(getApplication()).map { rec ->
-                    val live = CommunityConfigWorker.list(rec.game, "bannerlator")
+                    val live = CommunityConfigWorker.list(rec.game, "winhub")
                     val match = live.firstOrNull { it.sha == rec.sha }
                         ?: live.firstOrNull { it.filename == rec.filename }
                     MyUploadRow(

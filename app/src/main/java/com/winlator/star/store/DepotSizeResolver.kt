@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Resolves the TRUE install/download size of an owned Steam app by fetching each SELECTED depot's
  * MANIFEST (metadata only — NO chunk data) and reading the manifest's declared totals. This replaces
- * the unreliable PICS `manifests/public/size` estimate that Bannerlator sums at library sync, which
+ * the unreliable PICS `manifests/public/size` estimate that WinHub sums at library sync, which
  * both over- and under-reports real depot content.
  *
  * WHY IT EXISTS (the install-blocker): SteamDepotDownloader's false-complete guard compares the bytes

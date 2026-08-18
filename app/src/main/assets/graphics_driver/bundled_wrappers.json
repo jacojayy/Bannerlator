@@ -3,25 +3,25 @@
   "wrapper.tzst": {
     "version": "Winlator base",
     "notes": "Default Winlator wrapper (Bruno lineage).",
-    "catalogId": "bannerlator-wrapper",
+    "catalogId": "winhub-wrapper",
     "catalogVersion": 1
   },
   "wrapper-original.tzst": {
     "version": "Winlator original",
     "notes": "Bruno's original Winlator wrapper.",
-    "catalogId": "bannerlator-original",
+    "catalogId": "winhub-original",
     "catalogVersion": 1
   },
   "wrapper-legacy.tzst": {
     "version": "Winlator Bionic",
     "notes": "Pipetto-crypto's Winlator Bionic wrapper.",
-    "catalogId": "bannerlator-legacy",
+    "catalogId": "winhub-legacy",
     "catalogVersion": 1
   },
   "wrapper-leegao.tzst": {
     "version": "leegao ICD 2025-10",
     "notes": "leegao's Bionic Vulkan wrapper ICD (GameNative-packaged build).",
-    "catalogId": "bannerlator-leegao",
+    "catalogId": "winhub-leegao",
     "catalogVersion": 1
   },
   "wrapper-gamenative.tzst": {
@@ -33,7 +33,7 @@
   "leegao_bcn.tzst": {
     "version": "leegao bcn_layer 20260719",
     "notes": "leegao's BCn transcode layer with the device-hook composition fix.",
-    "catalogId": "bannerlator-bcn-leegao",
+    "catalogId": "winhub-bcn-leegao",
     "catalogVersion": 1
   }
 }

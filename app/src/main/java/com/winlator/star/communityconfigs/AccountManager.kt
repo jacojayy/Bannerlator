@@ -22,7 +22,7 @@ import java.util.concurrent.CountDownLatch
  *
  * Local state lives in TWO places, same split as [UploadedConfigsStore]:
  *  - SharedPreferences [PREFS] — the fast hot-path copy of the logged-in session.
- *  - a durable backup file [BACKUP] under {@code Download/bannerlator/game-configs/} holding just
+ *  - a durable backup file [BACKUP] under {@code Download/winhub/game-configs/} holding just
  *    {@code {username, user_id, recovery_key}} so the recovery key survives a reinstall (a logout does
  *    NOT delete it — only clears the session).
  */
@@ -380,7 +380,7 @@ object AccountManager {
     private fun backupFile(): File? =
         try {
             val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            File(File(downloads, "bannerlator/game-configs"), BACKUP)
+            File(File(downloads, "winhub/game-configs"), BACKUP)
         } catch (e: Exception) {
             null
         }

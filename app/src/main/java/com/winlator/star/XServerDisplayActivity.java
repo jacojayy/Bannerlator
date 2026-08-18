@@ -2367,7 +2367,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
             configDir.mkdirs();
             File confFile = new File(configDir, "conf.toml");
             boolean on = multiplier >= 2;
-            String toml = "# Written by Bannerlator (per-container frame generation)\n"
+            String toml = "# Written by WinHub (per-container frame generation)\n"
                     + "enabled = " + (on ? "1" : "0") + "\n"
                     + "multiplier = " + Math.max(2, Math.min(4, on ? multiplier : 2)) + "\n"
                     + "flowScale = " + String.format(java.util.Locale.US, "%.2f", flowScale) + "\n"
@@ -2387,13 +2387,13 @@ public class XServerDisplayActivity extends AppCompatActivity {
             File configDir = new File(imageFs.home_path, ".config/lsfg-vk");
             configDir.mkdirs();
             File confFile = new File(configDir, "conf.toml");
-            String toml = "# Written by Bannerlator (per-container lsfg-vk frame generation)\n"
+            String toml = "# Written by WinHub (per-container lsfg-vk frame generation)\n"
                     + "version = 1\n\n"
                     + "[global]\n"
                     + "dll = \"" + dllPath + "\"\n"
                     + "no_fp16 = false\n\n"
                     + "[[game]]\n"
-                    + "exe = \"bannerlator-lsfg\"\n"
+                    + "exe = \"winhub-lsfg\"\n"
                     + "multiplier = " + multiplier + "\n"
                     + "flow_scale = " + String.format(java.util.Locale.US, "%.2f", flowScale) + "\n"
                     + "performance_mode = " + performanceMode + "\n"
@@ -2443,7 +2443,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
             File effectsRoot = new File(configDir, "effects");
 
             StringBuilder sb = new StringBuilder();
-            sb.append("# Written by Bannerlator (per-game ReShade loadout via vkBasalt)\n");
+            sb.append("# Written by WinHub (per-game ReShade loadout via vkBasalt)\n");
 
             StringBuilder chain = new StringBuilder();       // e1:e2:...:en (CAS appended after)
             StringBuilder effectLines = new StringBuilder();  // per-effect: <ei> = fx + uniforms + _enabled
@@ -3574,7 +3574,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
 
     /**
      * On game exit, snapshot a CUSTOM (non-Steam) game's saves into the persistent local vault
-     * (<externalStorage>/Bannerlator/GameSaveVault/<key>.zip, overwriting the latest), so they
+     * (<externalStorage>/WinHub/GameSaveVault/<key>.zip, overwriting the latest), so they
      * survive the shortcut/game being removed. Local only — no cloud.
      *
      * Same robustness envelope as the Steam collect: application context (not this dying activity),
@@ -4117,7 +4117,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
                     File lsfgConf = new File(imageFs.home_path, ".config/lsfg-vk/conf.toml");
                     envVars.put("ENABLE_LSFG", "1");
                     envVars.put("LSFG_CONFIG", lsfgConf.getAbsolutePath());
-                    envVars.put("LSFG_PROCESS", "bannerlator-lsfg");
+                    envVars.put("LSFG_PROCESS", "winhub-lsfg");
                 } else {
                     Log.w("XServerDisplayActivity", "lsfg-vk selected but no Lossless.dll imported (Settings) — leaving frame gen off");
                 }

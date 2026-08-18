@@ -9,7 +9,7 @@ import org.json.JSONObject
  * Everything goes through the first-party worker (CDN/KV-cached, no rate limit) — NOT the GitHub
  * contents API. Both the per-device best-match ([fetchForDevice]) and the exact-file path
  * ([fetchForFile]) list + download via [CommunityConfigWorker], and both read BOTH namespaces
- * (BannerHub + our own `bannerlator` repo) so a Bannerlator-shared config resolves too.
+ * (BannerHub + our own `winhub` repo) so a WinHub-shared config resolves too.
  *
  * All calls are blocking — invoke from a background thread. Every failure returns null (offline / not
  * found), which the UI turns into a clear message rather than a crash.
@@ -23,7 +23,7 @@ object CommunityConfigFetcher {
 
     /**
      * Resolve and download the best-matching config for [device] across the game's folders. For every
-     * folder we merge the BannerHub listing AND our own `bannerlator` listing, score each entry's
+     * folder we merge the BannerHub listing AND our own `winhub` listing, score each entry's
      * filename (which encodes `-Mfr-Model-Soc-`) against the device tokens, pick the best match across
      * ALL merged results, then download it from the namespace it came from. Returns null when nothing
      * lists / the picked file can't be fetched or parsed.
@@ -37,12 +37,12 @@ object CommunityConfigFetcher {
         val candidates = ArrayList<Pair<String, WorkerConfigEntry>>()
         for (folder in folders) {
             for (entry in CommunityConfigWorker.list(folder)) candidates.add(folder to entry)
-            for (entry in CommunityConfigWorker.list(folder, "bannerlator")) candidates.add(folder to entry)
+            for (entry in CommunityConfigWorker.list(folder, "winhub")) candidates.add(folder to entry)
         }
         if (candidates.isEmpty()) return null
 
         val (folder, best) = pickBest(candidates, deviceTokens) ?: return null
-        val ns = if (best.appSource == "bannerlator") "bannerlator" else ""
+        val ns = if (best.appSource == "winhub") "winhub" else ""
         val body = CommunityConfigWorker.download(folder, best.filename, best.sha.ifBlank { null }, ns)
             ?: return null
         val json = try {
@@ -58,7 +58,7 @@ object CommunityConfigFetcher {
      * Download ONE exact config file by name (the per-uploaded-config path). Goes through the worker's
      * `GET /download?game=&file=` — which returns the raw config JSON (and bumps the sampled download
      * count) — so it lands on the same file the `/list` entry named, with no GitHub-contents walking.
-     * [ns] selects the repo the file lives in ("" = BannerHub, "bannerlator" = our own repo).
+     * [ns] selects the repo the file lives in ("" = BannerHub, "winhub" = our own repo).
      * Returns null when the fetch fails or the body isn't valid JSON (offline / removed).
      */
     fun fetchForFile(workerGame: String, filename: String, ns: String = ""): Fetched? {

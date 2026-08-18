@@ -81,7 +81,7 @@ object SteamDepotDownloader {
             if (wl == null) {
                 val pm = ctx.applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
                 if (pm == null) { dlog("WAKELOCK: POWER_SERVICE unavailable — continuing without it"); return }
-                wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Bannerlator:steam-download")
+                wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "WinHub:steam-download")
                 wl.setReferenceCounted(true)   // multiple concurrent downloads acquire/release safely
                 wakeLock = wl
             }

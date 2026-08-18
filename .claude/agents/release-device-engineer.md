@@ -14,12 +14,12 @@ compiles" and "it works on the device" as completely different claims and you pr
 the second one.
 
 ## CI / release
-- Apps build multiple flavors in CI (WinNative: standard/ludashi/pubg; Bannerlator its
+- Apps build multiple flavors in CI (WinNative: standard/ludashi/pubg; WinHub its
   own); CI fans out to all flavors. Every build ticks `versionCode` (the in-app updater
   compares versionCode, not the tag).
 - Watch runs to green before claiming anything; capture the run ID. Don't merge or cut
   on an in-progress run.
-- **Release versioning HARD RULE (Bannerlator)**: stable = plain numeric tag
+- **Release versioning HARD RULE (WinHub)**: stable = plain numeric tag
   (`1.8`,`1.9`), `prerelease:false`+`make_latest:true` — ONLY stables are offered by the
   default updater. Everything between = `X.Y-preN` prerelease, no make_latest, until the
   user EXPLICITLY says cut the stable. `update.json` is attached to EVERY release

@@ -11,8 +11,8 @@ import java.io.File
  * The raw-archive library backing the "Keep raw archive" toggle and the My Files tab.
  *
  * Downloaded archives the user chose to keep are filed by component type under
- * `<base>/components/<Type>/`, sibling to Bannerlator's logs and saves. The base folder is either
- *  - the default public path `Download/bannerlator/` (direct File I/O — the app holds all-files
+ * `<base>/components/<Type>/`, sibling to WinHub's logs and saves. The base folder is either
+ *  - the default public path `Download/winhub/` (direct File I/O — the app holds all-files
  *    access), or
  *  - a user-picked SAF tree (persisted uri), used through [DocumentFile].
  *
@@ -32,12 +32,12 @@ class ComponentLibrary(context: Context) {
     /** True when a SAF tree uri is the active base. */
     private fun treeUri(): Uri? = prefs.getString(KEY_TREE_URI, null)?.let { runCatching { Uri.parse(it) }.getOrNull() }
 
-    /** Absolute File base when not in SAF mode. Default: `<external>/Download/bannerlator/`. */
+    /** Absolute File base when not in SAF mode. Default: `<external>/Download/winhub/`. */
     private fun fileBase(): File {
         val stored = prefs.getString(KEY_FILE_BASE, null)
         if (stored != null) return File(stored)
         val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        return File(downloads, "bannerlator")
+        return File(downloads, "winhub")
     }
 
     /** Human-readable path shown in the UI, always ending with `components/`. */
@@ -58,7 +58,7 @@ class ComponentLibrary(context: Context) {
             .apply()
     }
 
-    /** Reset to the built-in default (`Download/bannerlator/`). */
+    /** Reset to the built-in default (`Download/winhub/`). */
     fun setDefaultBase() {
         prefs.edit().remove(KEY_FILE_BASE).remove(KEY_TREE_URI).remove(KEY_TREE_LABEL).apply()
     }
@@ -72,10 +72,10 @@ class ComponentLibrary(context: Context) {
             .apply()
     }
 
-    fun appPrivateBasePath(): String = File(appContext.getExternalFilesDir(null), "bannerlator").absolutePath
+    fun appPrivateBasePath(): String = File(appContext.getExternalFilesDir(null), "winhub").absolutePath
 
     fun defaultBasePath(): String =
-        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "bannerlator").absolutePath
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "winhub").absolutePath
 
     // ── Saved-key fast index ────────────────────────────────────────────────────
     fun savedKeys(): Set<String> {

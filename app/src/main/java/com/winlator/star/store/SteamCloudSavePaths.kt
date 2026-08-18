@@ -75,7 +75,7 @@ object SteamCloudSavePaths {
 
     /** Managed local Library folder for this game (canonical local copy). */
     fun libraryDir(ctx: Context, appId: Int): File =
-        File(Environment.getExternalStorageDirectory(), "Bannerlator/SteamCloudSaves/$appId")
+        File(Environment.getExternalStorageDirectory(), "WinHub/SteamCloudSaves/$appId")
 
     /**
      * The game's launch container — the container of the shortcut whose exec target sits under

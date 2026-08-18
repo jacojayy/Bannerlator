@@ -40,7 +40,7 @@ import java.util.zip.ZipOutputStream;
 public final class LogReport {
 
     private static final String TAG = "LogReport";
-    private static final String REPO = "The412Banner/Bannerlator";
+    private static final String REPO = "The412Banner/WinHub";
     /**
      * Per-file cap. A {@code +seh} Wine log runs to tens of MB, but it is also extremely uniform,
      * so it compresses at roughly 140:1 in the zip — 8 MB of it lands as tens of KB. Being stingy
@@ -74,7 +74,7 @@ public final class LogReport {
      * @param includeApp also attach the app logcat and any crash reports
      */
     public static Bundle build(Context context, LogInventory.Entry entry, File runDir, boolean includeApp) {
-        File reports = new File(Environment.getExternalStorageDirectory(), "Download/bannerlator/reports");
+        File reports = new File(Environment.getExternalStorageDirectory(), "Download/winhub/reports");
         //noinspection ResultOfMethodCallIgnored
         reports.mkdirs();
 
@@ -175,7 +175,7 @@ public final class LogReport {
         b.append("\n_Scrubbed as they are written: e-mail addresses, auth tokens, and the " +
                 "signed-in Steam account name. File paths are left intact so they stay useful — " +
                 "give them a glance if one of your folder names identifies you. " +
-                "Attach the zip below — it is at `Download/bannerlator/reports/")
+                "Attach the zip below — it is at `Download/winhub/reports/")
          .append(zip.getName()).append("`._\n");
         return b.toString();
     }

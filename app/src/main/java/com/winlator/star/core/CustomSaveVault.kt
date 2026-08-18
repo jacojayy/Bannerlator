@@ -18,7 +18,7 @@ import java.io.File
  * game) being removed. No cloud is ever involved.
  *
  * Layout: every custom game's backups — manual AND this auto-on-exit vault — share ONE per-game
- * folder, `Downloads/Bannerlator/game saves/<GameName>/` (see [perGameDir]). The auto snapshot is a
+ * folder, `Downloads/WinHub/game saves/<GameName>/` (see [perGameDir]). The auto snapshot is a
  * single `auto-latest.zip` overwritten each exit; the manual flow drops timestamped
  * `<GameName>_<epoch>.zip` siblings (history). The zip is a [GameSaveBackup.BackupLayout.WINLATOR]
  * archive, so it restores through the same [GameSaveBackup.restore] path used elsewhere.
@@ -35,14 +35,14 @@ object CustomSaveVault {
 
     /**
      * The one per-game backup folder shared by the manual "Back up saves" flow and the auto vault:
-     * `Downloads/Bannerlator/game saves/<sanitized game name>/`. Public so the manual flow writes its
+     * `Downloads/WinHub/game saves/<sanitized game name>/`. Public so the manual flow writes its
      * timestamped zips into the same place as the auto snapshot.
      */
     fun perGameDir(gameName: String): File =
         File(
             File(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                "Bannerlator/game saves",
+                "WinHub/game saves",
             ),
             sanitize(gameName),
         )

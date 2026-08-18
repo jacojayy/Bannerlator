@@ -26,7 +26,7 @@ object WinePath {
     fun resolveWindowsPath(container: Container, path: String): String {
         // C: first. The prefix is always reachable as C:, but it is NOT part of drivesIterator(),
         // so without this every path under drive_c missed every drive and burned a fresh letter —
-        // e.g. the component installer's windows/temp/bannerlator_components. resolveAndroidPath
+        // e.g. the component installer's windows/temp/winhub_components. resolveAndroidPath
         // has always special-cased C:, so this also makes the two directions symmetric.
         val driveC = File(container.getRootDir(), ".wine/drive_c").absolutePath.trimEnd('/')
         if (path == driveC || path.startsWith("$driveC/")) {

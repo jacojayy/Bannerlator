@@ -10,9 +10,9 @@ package com.winlator.star.communityconfigs
  *    hit the same KV bucket without re-probing).
  *  - [filename] — the exact config file to download (`/download?game=&file=`).
  *  - [sha] — the social key (votes / desc), when the `/list` entry carried one; null otherwise.
- *  - [ns] — the namespace the file lives in: "" = the default BannerHub repo, "bannerlator" = OUR own
- *    `bannerlator-game-configs` repo. Threaded into the per-file download / list so the detail + apply
- *    path reads from the SAME repo the `/list` entry came from (a Bannerlator file is invisible to the
+ *  - [ns] — the namespace the file lives in: "" = the default BannerHub repo, "winhub" = OUR own
+ *    `winhub-game-configs` repo. Threaded into the per-file download / list so the detail + apply
+ *    path reads from the SAME repo the `/list` entry came from (a WinHub file is invisible to the
  *    no-ns BannerHub download).
  */
 data class CommunityConfigRef(

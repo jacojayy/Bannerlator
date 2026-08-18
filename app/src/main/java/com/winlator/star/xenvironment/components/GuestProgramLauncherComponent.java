@@ -172,7 +172,7 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
      * unixlib {@code .so} (profile target {@code ${libdir}/wine/aarch64-unix/...}). The bundled asset
      * FEX has no profile and is DLL-only, so the slot is simply left cleared for a clean DLL run.
      *
-     * NOTE: one game runs at a time (Bannerlator), so a single shared slot is safe. Concurrent
+     * NOTE: one game runs at a time (WinHub), so a single shared slot is safe. Concurrent
      * multi-instance with different FEX versions would need per-container .so isolation (future work).
      */
     private void reconcileFexUnixlib(String fexcoreVersion) {

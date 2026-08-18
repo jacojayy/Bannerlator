@@ -35,7 +35,7 @@ object PerfDisclaimerCopy {
     const val ROOT_RISK =
         "⚠️ USE AT YOUR OWN RISK — Power-user controls write directly to your device's system files " +
         "(CPU/GPU clocks, thermal, fan). Misuse can cause overheating, instability, rapid battery " +
-        "drain, data loss, or permanent hardware damage, and may void your warranty. Bannerlator " +
+        "drain, data loss, or permanent hardware damage, and may void your warranty. WinHub " +
         "provides these tools with no warranty of any kind — you accept full responsibility for any " +
         "outcome."
 
@@ -44,7 +44,7 @@ object PerfDisclaimerCopy {
         "rolls your settings back before the device gets dangerously hot. With it OFF, your device can " +
         "reach damaging temperatures with no software intervention while a game runs — only the chip's " +
         "own emergency trip remains. Do not leave this off unattended. This setting stays OFF across " +
-        "restarts until you turn it back on yourself — Bannerlator will not re-enable it for you."
+        "restarts until you turn it back on yourself — WinHub will not re-enable it for you."
 }
 
 /**

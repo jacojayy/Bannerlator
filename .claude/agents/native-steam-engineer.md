@@ -18,7 +18,7 @@ two very different architectures the sibling apps use and never confuse them.
   client APIs. The 5-part native stack: `libwnsteam.so` (Rust CM client),
   `libsteamclient.so` (reimpl), a bootstrap, a MinGW `steam_api64.dll` bridge, and
   `steam.exe`. gbe_fork release `2026_05_16` + stubdrm.
-- **Bannerlator**: uses **JavaSteam** (`in.dragonbra:javasteam`) for the CM/store side.
+- **WinHub**: uses **JavaSteam** (`in.dragonbra:javasteam`) for the CM/store side.
   The ref4ik fork (same Cmod lineage) ported GameNative/Pluvia's Steam launch on the
   same JavaSteam — primary reference for emulation-launch work. (GPL-3.0 caveat noted.)
 

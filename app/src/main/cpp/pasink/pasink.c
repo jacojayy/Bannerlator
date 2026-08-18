@@ -191,7 +191,7 @@ Java_com_winlator_star_xenvironment_components_PulseAudioComponent_nativeSuspend
     if (api.mainloop_start(m) < 0) { api.mainloop_free(m); rc = -5; goto done; }
     api.mainloop_lock(m);
 
-    pa_context *ctx = api.context_new(api.mainloop_get_api(m), "bannerlator-pasink");
+    pa_context *ctx = api.context_new(api.mainloop_get_api(m), "winhub-pasink");
     if (!ctx) { api.mainloop_unlock(m); api.mainloop_stop(m); api.mainloop_free(m); rc = -6; goto done; }
 
     api.context_set_state_callback(ctx, state_cb, &x);
@@ -288,7 +288,7 @@ Java_com_winlator_star_xenvironment_components_PulseAudioComponent_nativeRecreat
     if (api.mainloop_start(m) < 0) { api.mainloop_free(m); rc = -5; goto done; }
     api.mainloop_lock(m);
 
-    pa_context *ctx = api.context_new(api.mainloop_get_api(m), "bannerlator-pasink");
+    pa_context *ctx = api.context_new(api.mainloop_get_api(m), "winhub-pasink");
     if (!ctx) { api.mainloop_unlock(m); api.mainloop_stop(m); api.mainloop_free(m); rc = -6; goto done; }
 
     api.context_set_state_callback(ctx, rec_state_cb, &x);

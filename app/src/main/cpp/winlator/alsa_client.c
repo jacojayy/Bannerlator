@@ -6,7 +6,7 @@
 
 // ALSA-path AAudio player (guest winealsa -> aserver -> here). Blocking-write stream.
 //
-// Bannerlator adaptive rework (mirrors the PulseAudio module): the stream used to open at a FIXED
+// WinHub adaptive rework (mirrors the PulseAudio module): the stream used to open at a FIXED
 // LOW_LATENCY buffer and do nothing on underruns or route changes, so it crackled under box64/FEX+DXVK
 // load and went silent when headphones/BT (dis)connected. Now the stream is wrapped in AlsaStream and
 // write() (a) GROWS the buffer one burst at a time on underruns (xrun-driven, up to capacity), and

@@ -53,7 +53,7 @@ object CommunityConfigWorker {
     /**
      * GET `/list?game=` — every config for [game] with votes / downloads / app_source attached. When
      * [ns] is non-blank it is appended as `&ns=` to read a NAMESPACED repo (e.g. our own
-     * `bannerlator-game-configs` via `ns=bannerlator`); a blank [ns] keeps the default BannerHub read
+     * `winhub-game-configs` via `ns=winhub`); a blank [ns] keeps the default BannerHub read
      * byte-for-byte unchanged.
      */
     fun list(game: String, ns: String = ""): List<WorkerConfigEntry> {
@@ -89,7 +89,7 @@ object CommunityConfigWorker {
     /**
      * GET `/download?game=&file=&sha=` — the raw config JSON (also bumps the sampled download count).
      * Optional: the detail page fetches raw via [CommunityConfigFetcher]; kept for completeness / reuse.
-     * When [ns] is non-blank it is appended as `&ns=` to read the NAMESPACED repo (e.g. `bannerlator`);
+     * When [ns] is non-blank it is appended as `&ns=` to read the NAMESPACED repo (e.g. `winhub`);
      * a blank [ns] keeps the default BannerHub download unchanged.
      */
     fun download(game: String, file: String, sha: String? = null, ns: String = ""): String? {
@@ -171,7 +171,7 @@ object CommunityConfigWorker {
 
     /**
      * POST `/upload?ns=` with `{game, filename, content, upload_token}` — [contentBase64] is the config
-     * JSON base64-encoded. [ns] namespaces the upload into OUR repo (default "bannerlator") so BannerHub
+     * JSON base64-encoded. [ns] namespaces the upload into OUR repo (default "winhub") so BannerHub
      * users never see it. When [session] is non-blank (the user is signed in, Phase 2) it is added so the
      * worker registers the upload under that account; a blank/null [session] keeps the anonymous shape.
      * Returns the committed [UploadResult] on success, or null on any failure.
@@ -181,7 +181,7 @@ object CommunityConfigWorker {
         filename: String,
         contentBase64: String,
         uploadToken: String,
-        ns: String = "bannerlator",
+        ns: String = "winhub",
         session: String? = null,
     ): UploadResult? {
         val body = JSONObject()
@@ -212,7 +212,7 @@ object CommunityConfigWorker {
         game: String,
         filename: String,
         uploadToken: String,
-        ns: String = "bannerlator",
+        ns: String = "winhub",
     ): Boolean {
         val body = JSONObject()
             .put("sha", sha)
@@ -233,7 +233,7 @@ object CommunityConfigWorker {
      * own config (authorized by the upload [token]). Not yet wired to UI — reserved for step 3's
      * My-uploads edit-description. Returns true on success.
      */
-    fun describe(sha: String, token: String, text: String, ns: String = "bannerlator"): Boolean {
+    fun describe(sha: String, token: String, text: String, ns: String = "winhub"): Boolean {
         val body = JSONObject()
             .put("sha", sha)
             .put("token", token)

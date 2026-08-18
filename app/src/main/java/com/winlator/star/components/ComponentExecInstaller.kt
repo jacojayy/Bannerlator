@@ -183,7 +183,7 @@ object ComponentExecInstaller {
                 i++
             }
             // Reached the end with no further installer — done. Drop the staged installer exes.
-            File(root, ".wine/drive_c/windows/temp/bannerlator_components").deleteRecursively()
+            File(root, ".wine/drive_c/windows/temp/winhub_components").deleteRecursively()
             clearPlan(context)
             // Record the install at the SOURCE so it sticks even though completion happens after the
             // container session restarts the app (the resume path lands here too). Same store/key the
@@ -233,7 +233,7 @@ object ComponentExecInstaller {
         val safe = rawName.replace(Regex("""[\\/:*?"<>|]"""), "_").ifEmpty { "installer.exe" }
 
         // Stage the installer inside the container's drive_c so it's reachable from Wine.
-        val destDir = File(container.rootDir, ".wine/drive_c/windows/temp/bannerlator_components").apply { mkdirs() }
+        val destDir = File(container.rootDir, ".wine/drive_c/windows/temp/winhub_components").apply { mkdirs() }
         val installer = File(destDir, safe)
         if (!Downloader.downloadFile(url, installer) { f -> onProgress(f) })
             throw IllegalStateException("$name: download failed ($safe)")

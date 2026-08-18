@@ -8,8 +8,8 @@ Cross-builds the **PulseAudio 13.0** stack + our **adaptive `module-aaudio-sink`
   the same module GameNative and WinNative bundle; nobody else wrote it.
 - It builds against **stock upstream PulseAudio 13.0** (`pulseaudio/pulseaudio` @ `200618b3`) — no PA
   source patches; Android/bionic adaptation is entirely via the `ac_cv_*` configure overrides carried
-  in `build-stack.sh`. 13.0 == the version Bannerlator already ships, so the output is ABI drop-in.
-- **Bannerlator's addition** (`pulseaudio-module/module-aaudio-sink.c`, same LGPL-2.1): adaptive,
+  in `build-stack.sh`. 13.0 == the version WinHub already ships, so the output is ABI drop-in.
+- **WinHub's addition** (`pulseaudio-module/module-aaudio-sink.c`, same LGPL-2.1): adaptive,
   xrun-driven buffer sizing + `adaptive`/`buffer_frames`/`max_buffer_frames` modargs. See
   `docs/adaptive-audio-plan.md`. The extra-modarg idea is inspired by WinNative; the adaptive logic is
   ours (no upstream fork has it).

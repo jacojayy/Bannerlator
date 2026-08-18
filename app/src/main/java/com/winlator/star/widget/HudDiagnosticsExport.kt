@@ -34,7 +34,7 @@ fun exportHudDiagnostics(context: Context) {
             val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             if (downloads != null && !downloads.exists()) downloads.mkdirs()
-            val out = File(downloads, "bannerlator-hud-diag-$ts.txt")
+            val out = File(downloads, "winhub-hud-diag-$ts.txt")
             out.writeText(report)
             out.setReadable(true, false)
             MediaScannerConnection.scanFile(app, arrayOf(out.absolutePath), null, null)

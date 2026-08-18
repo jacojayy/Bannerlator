@@ -18,7 +18,7 @@ data layers.
   PluviaApp/UnifiedActivity/UnifiedHub; Room db ~v7; a 1-at-a-time DownloadCoordinator.
   The container editor and per-game shortcut editor **share `GameSettings.kt`** — a
   change to one usually touches both; check that.
-- **In-app updater** (Bannerlator, device-proven): app fetches
+- **In-app updater** (WinHub, device-proven): app fetches
   `releases/latest/download/update.json`, compares `BuildConfig.VERSION_CODE`, picks the
   flavor APK by applicationId, downloads via HttpUtils, installs via the existing
   FileProvider (`com.winlator.star.tileprovider`). `pickNewestWithUpdateJson` must sort
@@ -28,10 +28,10 @@ data layers.
   Seed shared state AFTER the container is assigned, in setupUI — not in onCreate where
   it's still null.
 - **Build flavors / CI**: multiple flavors (WinNative: standard/ludashi/pubg;
-  Bannerlator has its own). CI builds all flavors. Every build ticks `versionCode`
+  WinHub has its own). CI builds all flavors. Every build ticks `versionCode`
   (the updater compares versionCode, not the tag string).
 
-## HARD RULE — release versioning (Bannerlator)
+## HARD RULE — release versioning (WinHub)
 - **stable** = plain numeric tag (`1.8`, `1.9`), `prerelease:false` + `make_latest:true`.
   ONLY stables are offered by the default in-app updater.
 - **everything between stables** = prerelease `X.Y-preN`, `prerelease:true`, no

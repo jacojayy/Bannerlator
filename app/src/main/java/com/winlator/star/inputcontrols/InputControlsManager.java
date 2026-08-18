@@ -41,7 +41,7 @@ import java.util.Map;
 import java.util.Set;
 
 public class InputControlsManager {
-    static final String ICPX_FORMAT = "bannerlator.icpx";
+    static final String ICPX_FORMAT = "winhub.icpx";
     static final int ICPX_FORMAT_VERSION = 1;
     static final int ICPX_MIN_READER_VERSION = 1;
     private static final Object PROFILE_IMPORT_LOCK = new Object();

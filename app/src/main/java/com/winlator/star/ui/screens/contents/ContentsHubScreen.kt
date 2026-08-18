@@ -1179,10 +1179,10 @@ private fun LocationDialog(vm: ContentsHubViewModel, onDismiss: () -> Unit) {
         title = { Text("Component save location", color = cs.onSurface) },
         text = {
             Column {
-                Text("Raw archives are filed under <folder>/components/<type>/ — next to Bannerlator's logs and saves.",
+                Text("Raw archives are filed under <folder>/components/<type>/ — next to WinHub's logs and saves.",
                     style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                 Spacer(Modifier.height(10.dp))
-                MenuRow(Icons.Filled.Folder, "Downloads › bannerlator (default)") {
+                MenuRow(Icons.Filled.Folder, "Downloads › winhub (default)") {
                     vm.library.setDefaultBase(); vm.refreshBase(); vm.refreshFolders(); onDismiss()
                 }
                 MenuItemDivider()

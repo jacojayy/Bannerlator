@@ -41,7 +41,7 @@ data class ShortcutConfig(
 
 /**
  * Translates a BannerHub (XiaoJi {@code com.xj.winemu}) {@code pc_ls_*} config into a [ShortcutConfig].
- * Mirrors {@code tools/translate.py} in The412Banner/bannerlator-game-configs field-for-field so the
+ * Mirrors {@code tools/translate.py} in The412Banner/winhub-game-configs field-for-field so the
  * client stays in lockstep with the CI-side reference:
  *   pc_ls_DXVK → dxwrapper + dxwrapperConfig.version; pc_ls_VK3k → dxwrapperConfig.vkd3dVersion;
  *   pc_ls_GPU_DRIVER_ → graphicsDriverConfig.version; pc_ls_GRAPHICS_WRAPPER → graphicsDriver (scalar);
@@ -146,7 +146,7 @@ object ConfigTranslator {
         val advisories = LinkedHashMap<String, String>()
         if (!proton.isNullOrBlank()) advisories["wineVersion"] = proton
 
-        // Bannerlator's additive namespaced overlay: the ~28 shortcut extras the pc_* format can't carry.
+        // WinHub's additive namespaced overlay: the ~28 shortcut extras the pc_* format can't carry.
         // Present only on OUR exports — BannerHub-origin configs have no bl_ext, so this loop is a no-op for
         // them and they translate exactly as before. Each raw key/value overlays scalars (overriding any
         // value the pc_* heuristics inferred, e.g. an explicit emulator="box64" beats the fex inference).

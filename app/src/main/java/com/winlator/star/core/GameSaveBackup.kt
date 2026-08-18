@@ -40,7 +40,7 @@ object GameSaveBackup {
      * you're restoring into.
      *
      *  - [GAMEHUB]  → "/drive_c/users/steamuser/…"  (GameHub / Proton, the default)
-     *  - [WINLATOR] → "drive_c/users/xuser/…"       (sibling Winlator / WinNative / Bannerlator builds)
+     *  - [WINLATOR] → "drive_c/users/xuser/…"       (sibling Winlator / WinNative / WinHub builds)
      *
      * Both re-import into OUR builds regardless: [remapForRestore] rewrites any non-Public user
      * segment to [ImageFs.USER], so steamuser→xuser and xuser→xuser both land correctly.
@@ -133,7 +133,7 @@ object GameSaveBackup {
     /**
      * GameHub bundles launcher shortcuts in its backups — a "proton_shortcuts/" tree (its own
      * frontend) and .lnk/.desktop files on the Wine Desktop. Restoring the Desktop ones drops
-     * phantom game cards into Bannerlator's Games grid, because ContainerManager.loadShortcuts()
+     * phantom game cards into WinHub's Games grid, because ContainerManager.loadShortcuts()
      * scans the container's Desktop dir and auto-imports every .lnk as a shortcut. These are
      * never save data, so skip them on restore.
      */

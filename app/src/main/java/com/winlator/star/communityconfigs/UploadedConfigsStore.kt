@@ -13,7 +13,7 @@ import java.io.File
  *
  * Backed by BOTH:
  *  - SharedPreferences [PREFS] — the fast local cache read on every hot path.
- *  - a manifest file [MANIFEST] under {@code Download/bannerlator/game-configs/} — the durable copy the
+ *  - a manifest file [MANIFEST] under {@code Download/winhub/game-configs/} — the durable copy the
  *    upload_token backup lives in, surviving app uninstall so a reinstalled app can recover the tokens
  *    needed to delete/replace/describe past uploads.
  *
@@ -145,7 +145,7 @@ object UploadedConfigsStore {
     private fun manifestFile(): File? =
         try {
             val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            File(File(downloads, "bannerlator/game-configs"), MANIFEST)
+            File(File(downloads, "winhub/game-configs"), MANIFEST)
         } catch (e: Exception) {
             null
         }

@@ -446,7 +446,7 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                         type = "application/json"
                         putExtra(Intent.EXTRA_STREAM, uri)
                         putExtra(Intent.EXTRA_SUBJECT, res.game)
-                        putExtra(Intent.EXTRA_TEXT, "Bannerlator config for ${res.game}")
+                        putExtra(Intent.EXTRA_TEXT, "WinHub config for ${res.game}")
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
                     context.startActivity(Intent.createChooser(send, "Share config"))
@@ -461,8 +461,8 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
         scope.launch(Dispatchers.IO) {
             val ok = try {
                 val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                // Exported configs live under Download/bannerlator/game-configs/ (created if absent).
-                val exportDir = File(downloads, "bannerlator/game-configs")
+                // Exported configs live under Download/winhub/game-configs/ (created if absent).
+                val exportDir = File(downloads, "winhub/game-configs")
                 if (!exportDir.exists()) exportDir.mkdirs()
                 val out = File(exportDir, res.fileName)
                 out.writeText(res.json)
@@ -585,7 +585,7 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
     // ── Save Backup / Restore (custom-import games only) ──────────────────────────────────────────
     // In-app file picker for a backup .zip; on pick we hold the uri and show a target-container picker.
     // (GameSaveBackup.restore auto-detects the layout — GameHub steamuser <-> our xuser — so a GameHub
-    // or Bannerlator save both restore through this one path; no format prompt needed.)
+    // or WinHub save both restore through this one path; no format prompt needed.)
     val restoreSaveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) InAppFilePicker.pickedUri(result.data)?.let { restoreZipUri = it }
     }
@@ -1730,7 +1730,7 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                     }
                 }
                 // Phase 3 (online sharing) — UPLOAD this shortcut's effective config to OUR community repo
-                // (ns=bannerlator). Disabled + spinner while in flight; if the user already shared one for
+                // (ns=winhub). Disabled + spinner while in flight; if the user already shared one for
                 // this game, [replaceUploadPrompt] surfaces a replace-confirm before the upload proceeds.
                 OutlinedButton(
                     onClick = {
@@ -1916,10 +1916,10 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                             // works (no vote counts in that mode). Whole card taps → the chooser; the
                             // in-context shortcut `s` is carried so details can preview the diff.
                             // Also look under THIS shortcut's own folder (sanitized the SAME way the
-                            // exporter keys uploads) so the user's OWN Bannerlator upload shows up even
+                            // exporter keys uploads) so the user's OWN WinHub upload shows up even
                             // though it isn't in the canonical index yet.
                             val myFolder = s.name.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
-                            val cfg = rememberGameConfigs(vm, game, extraBannerlatorFolders = listOf(myFolder))
+                            val cfg = rememberGameConfigs(vm, game, extraWinHubFolders = listOf(myFolder))
                             when {
                                 cfg.loading -> Text("Loading configs…", color = OnSurfaceVariant)
                                 cfg.entries.isNotEmpty() -> {
@@ -1936,7 +1936,7 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                                             CommunityConfigEntryCard(entry = e, isMatch = isMatch) {
                                                 configAction = CommunityPick.File(
                                                     game,
-                                                    CommunityConfigRef(game, folder, e.filename, e.sha.ifBlank { null }, ns = if (e.appSource == "bannerlator") "bannerlator" else ""),
+                                                    CommunityConfigRef(game, folder, e.filename, e.sha.ifBlank { null }, ns = if (e.appSource == "winhub") "winhub" else ""),
                                                     e,
                                                 ) to s
                                             }
@@ -2573,11 +2573,11 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
     }
 }
 
-// Small "BANNERLATOR" source pill for configs shared through our own repo (app_source=bannerlator), so
+// Small "BANNERLATOR" source pill for configs shared through our own repo (app_source=winhub), so
 // users can tell them apart from BannerHub-sourced configs. Subtle orange fill, same pill shape as
 // [CommunityStoreBadge].
 @Composable
-private fun BannerlatorSourceBadge() {
+private fun WinHubSourceBadge() {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(4.dp))
@@ -3818,20 +3818,20 @@ private data class GameConfigsState(
 )
 
 // Fetch (once per [game]) the uploaded configs for a game from the worker and expose them as Compose
-// state. Shared by the per-shortcut sheet and the catalog browser's device panel. [extraBannerlatorFolders]
-// (the per-shortcut sheet passes the shortcut's own sanitized folder name) is queried in the bannerlator
+// state. Shared by the per-shortcut sheet and the catalog browser's device panel. [extraWinHubFolders]
+// (the per-shortcut sheet passes the shortcut's own sanitized folder name) is queried in the winhub
 // namespace ONLY, so a user's own upload is surfaced even before it lands in the canonical index.
 @Composable
 private fun rememberGameConfigs(
     vm: ShortcutsViewModel,
     game: CanonicalGame,
-    extraBannerlatorFolders: List<String> = emptyList(),
+    extraWinHubFolders: List<String> = emptyList(),
 ): GameConfigsState {
     var loading by remember(game) { mutableStateOf(true) }
     var entries by remember(game) { mutableStateOf<List<Pair<String, WorkerConfigEntry>>>(emptyList()) }
     LaunchedEffect(game) {
         loading = true
-        vm.fetchGameConfigs(game, extraBannerlatorFolders) { list ->
+        vm.fetchGameConfigs(game, extraWinHubFolders) { list ->
             entries = list
             loading = false
         }
@@ -3859,7 +3859,7 @@ internal fun CommunityConfigEntryCard(entry: WorkerConfigEntry, isMatch: Boolean
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (entry.appSource == "bannerlator") BannerlatorSourceBadge()
+            if (entry.appSource == "winhub") WinHubSourceBadge()
             Text("★ ${entry.votes}", style = MaterialTheme.typography.labelMedium, color = OnSurface)
             Text("↓ ${entry.downloads}", style = MaterialTheme.typography.labelMedium, color = OnSurfaceVariant)
         }
@@ -3947,7 +3947,7 @@ private fun CommunityDevicePanel(
         if (cfg.entries.isNotEmpty()) shownEntries.map { (folder, e) ->
             CommunityPick.File(
                 game,
-                CommunityConfigRef(game, folder, e.filename, e.sha.ifBlank { null }, ns = if (e.appSource == "bannerlator") "bannerlator" else ""),
+                CommunityConfigRef(game, folder, e.filename, e.sha.ifBlank { null }, ns = if (e.appSource == "winhub") "winhub" else ""),
                 e,
             )
         } else shownDevs.map { CommunityPick.Device(game, it) }
@@ -4005,7 +4005,7 @@ private fun CommunityDevicePanel(
                                     onPick(
                                         CommunityPick.File(
                                             game,
-                                            CommunityConfigRef(game, folder, e.filename, e.sha.ifBlank { null }, ns = if (e.appSource == "bannerlator") "bannerlator" else ""),
+                                            CommunityConfigRef(game, folder, e.filename, e.sha.ifBlank { null }, ns = if (e.appSource == "winhub") "winhub" else ""),
                                             e,
                                         )
                                     )
@@ -4085,11 +4085,11 @@ private fun CommunityDevicePanel(
 }
 
 // Human display name for a config's meta.app_source — the actual project that produced it. BannerHub
-// and BannerHub Lite are distinct apps writing "bannerhub" / "bannerhub_lite"; ours would be "bannerlator".
+// and BannerHub Lite are distinct apps writing "bannerhub" / "bannerhub_lite"; ours would be "winhub".
 private fun communitySourceLabel(appSource: String?): String = when (appSource?.lowercase()?.trim()) {
     "bannerhub" -> "BannerHub"
     "bannerhub_lite" -> "BannerHub Lite"
-    "bannerlator" -> "Bannerlator"
+    "winhub" -> "WinHub"
     null, "" -> "BannerHub"
     else -> appSource.split('_', ' ').filter { it.isNotBlank() }
         .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
@@ -4261,7 +4261,7 @@ private fun CommunityConfigDetailDialog(
                 CommunityStoreBadge(isSteam = game.isSteam)
                 if (meta != null) {
                     // Name the actual source project (meta.app_source distinguishes BannerHub vs
-                    // BannerHub Lite vs a future Bannerlator upload), with the version appended if present.
+                    // BannerHub Lite vs a future WinHub upload), with the version appended if present.
                     val label = "From ${communitySourceLabel(meta.appSource)}" + (meta.bhVersion?.let { " $it" } ?: "")
                     Surface(
                         color = SurfaceVariantColor,

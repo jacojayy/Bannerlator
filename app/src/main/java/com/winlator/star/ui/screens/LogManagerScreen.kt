@@ -250,7 +250,7 @@ fun LogManagerScreen(onClose: () -> Unit) {
                     dxvkLogs = it; putBool("enable_dxvk_logs", it)
                 }
                 LogToggle("Android logcat", logcat,
-                    hint = "Bannerlator's own output only",
+                    hint = "WinHub's own output only",
                     onInfo = { info = "Android logcat" to LogCopy.LOGCAT }) {
                     logcat = it; putBool("enable_logcat", it)
                 }
@@ -400,7 +400,7 @@ fun LogManagerScreen(onClose: () -> Unit) {
                 "E-mail addresses, auth tokens and your Steam account name are scrubbed as logs are " +
                     "written. File paths are kept so they stay useful for debugging — glance over " +
                     "them before sharing if a folder name identifies you. Logcat only ever contains " +
-                    "Bannerlator's own output.",
+                    "WinHub's own output.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp,
                 modifier = Modifier.padding(top = 4.dp)
             )
@@ -482,11 +482,11 @@ fun LogManagerScreen(onClose: () -> Unit) {
                     // Reachable: the loose bucket counts every log-shaped file it finds, but only
                     // the ones we wrote are deletable. A folder holding nothing but a user's own
                     // files lands here, and must not imply we are about to touch them.
-                        "Nothing here was written by Bannerlator, so there is nothing to delete. " +
+                        "Nothing here was written by WinHub, so there is nothing to delete. " +
                             "The files in this folder are yours and are left alone."
                     else
                         "Deletes $count log file${if (count == 1) "" else "s"}, including any kept " +
-                            "history.\n\nOnly files Bannerlator wrote are removed — anything else in " +
+                            "history.\n\nOnly files WinHub wrote are removed — anything else in " +
                             "that folder is left alone."
                 )
             },
@@ -520,7 +520,7 @@ fun LogManagerScreen(onClose: () -> Unit) {
                 Text(
                     "Deletes $count log file${if (count == 1) "" else "s"} across ${entries.size} " +
                         "folder${if (entries.size == 1) "" else "s"}, including kept history.\n\n" +
-                        "Only files Bannerlator wrote are removed. Other files in your log folder — " +
+                        "Only files WinHub wrote are removed. Other files in your log folder — " +
                         "including anything you put there yourself — are left alone."
                 )
             },
@@ -1147,7 +1147,7 @@ private object LogCopy {
 
     const val LOGCAT =
         "No performance cost.\n\n" +
-        "Android's own system log, as it relates to Bannerlator. It is captured on demand — when you " +
+        "Android's own system log, as it relates to WinHub. It is captured on demand — when you " +
         "tap \"Capture logcat now\", or when the app crashes — not continuously, so switching it on " +
         "does not cost you any frames.\n\n" +
         "It contains BANNERLATOR'S OUTPUT ONLY. Android does not let an app read other apps' logs " +
@@ -1157,19 +1157,19 @@ private object LogCopy {
 
     const val CRASH =
         "No performance cost — nothing runs until something actually crashes.\n\n" +
-        "If Bannerlator itself crashes, a report is saved with your device model, Android version, " +
+        "If WinHub itself crashes, a report is saved with your device model, Android version, " +
         "app version, what went wrong, and the last few hundred lines of the app's log. That is " +
         "exactly what's needed to work out a crash after the fact.\n\n" +
         "Reports are kept with your other logs under \"App & crash logs\"."
 
     const val CAPTURE_NOW =
-        "Takes a snapshot of Bannerlator's recent Android log right now and saves it with your other " +
+        "Takes a snapshot of WinHub's recent Android log right now and saves it with your other " +
         "logs.\n\n" +
         "Useful when something went wrong but the app didn't crash — capture it while the problem is " +
         "fresh, then share it."
 
     const val EXIT_REASONS =
-        "Reads Android's own record of why Bannerlator last shut down or crashed — no root needed.\n\n" +
+        "Reads Android's own record of why WinHub last shut down or crashed — no root needed.\n\n" +
         "This is the ONLY way to see a NATIVE crash on an unrooted device: those die in a separate " +
         "system process, so they never show up in the logcat capture or the Java crash report, and " +
         "the app just restarts looking fine. For a native crash this shows the signal (e.g. SIGSEGV) " +

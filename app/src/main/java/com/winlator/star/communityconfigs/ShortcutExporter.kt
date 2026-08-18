@@ -125,7 +125,7 @@ object ShortcutExporter {
         // when logged in; an anonymous export leaves both null (no uploader block), unchanged behaviour.
         val account = AccountManager.current(context)
         val meta = ConfigExporter.ExportMeta(
-            appSource = "bannerlator",
+            appSource = "winhub",
             device = device,
             soc = soc,
             version = BuildConfig.VERSION_NAME,

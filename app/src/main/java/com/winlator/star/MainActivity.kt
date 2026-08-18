@@ -568,7 +568,7 @@ private fun AboutDialog(onDismiss: () -> Unit) {
                         .padding(horizontal = 8.dp)
                 )
                 Text(
-                    text = "Bannerlator Bionic",
+                    text = "WinHub Bionic",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface
@@ -612,7 +612,7 @@ private fun AboutDialog(onDismiss: () -> Unit) {
                 AboutSection(title = "Credits") {
                     AboutRow("brunodev85",      "Winlator — original project")
                     AboutRow("MishaMixXx",      "Winlator Bionic")
-                    AboutRow("The412Banner",    "Bannerlator")
+                    AboutRow("The412Banner",    "WinHub")
                     AboutRow("ptitSeb",         "Box64")
                     AboutRow("WineHQ",          "Wine project")
                     AboutRow("Mesa / Freedreno","Turnip Vulkan driver")

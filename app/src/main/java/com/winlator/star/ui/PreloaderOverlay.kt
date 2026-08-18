@@ -284,7 +284,7 @@ private fun StepPips(stepIndex: Int, stepTotal: Int) {
 
 /**
  * Full-bleed "working…" screen for shutdown and other indeterminate operations (backup, restore,
- * install, create-container). The branded Bannerlator neon art fills the screen behind a scrim; the
+ * install, create-container). The branded WinHub neon art fills the screen behind a scrim; the
  * message + slim indeterminate bar sit low so they clear the centered logo art above.
  */
 @Composable

@@ -35,8 +35,8 @@ public final class LogLocation {
     /** RETIRED — getExternalFilesDir(null) (Android/data/&lt;pkg&gt;) crashed MediaProvider FUSE under
      *  log rotation. Kept only so stored prefs still parse; resolveLogDir() migrates it to Documents. */
     public static final String MODE_APP_DATA = "app_data";
-    public static final String MODE_DOWNLOAD = "download";    // /sdcard/Download/bannerlator
-    public static final String MODE_DOCUMENTS = "documents";  // /sdcard/Documents/bannerlator — default
+    public static final String MODE_DOWNLOAD = "download";    // /sdcard/Download/winhub
+    public static final String MODE_DOCUMENTS = "documents";  // /sdcard/Documents/winhub — default
     public static final String MODE_CUSTOM = "custom";        // user-picked folder
 
     private LogLocation() {}
@@ -57,11 +57,11 @@ public final class LogLocation {
             String mode = PreferenceManager.getDefaultSharedPreferences(context)
                     .getString(PREF_MODE, MODE_DOCUMENTS);
             File storage = Environment.getExternalStorageDirectory();
-            File documents = new File(storage, "Documents/bannerlator");
+            File documents = new File(storage, "Documents/winhub");
             File dir;
             switch (mode != null ? mode : MODE_DOCUMENTS) {
                 case MODE_DOWNLOAD:
-                    dir = new File(storage, "Download/bannerlator");
+                    dir = new File(storage, "Download/winhub");
                     break;
                 case MODE_CUSTOM:
                     String custom = PreferenceManager.getDefaultSharedPreferences(context)

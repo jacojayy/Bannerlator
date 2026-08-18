@@ -13,7 +13,7 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * In-app updater for Bannerlator.
+ * In-app updater for WinHub.
  *
  * Source of truth = the integer [BuildConfig.VERSION_CODE] (gradle `versionCode`).
  * Each STABLE GitHub release attaches an `update.json` asset; because the
@@ -27,14 +27,14 @@ import java.io.File
  *   "notes": "What changed…",
  *   "minSupported": 1,
  *   "apk": {
- *     "com.winlator.banner":    "Bannerlator-1.8-standard.apk",
- *     "com.ludashi.benchmark":  "Bannerlator-1.8-ludashi.apk",
- *     "com.tencent.ig":         "Bannerlator-1.8-pubg.apk"
+ *     "com.winlator.banner":    "WinHub-1.8-standard.apk",
+ *     "com.ludashi.benchmark":  "WinHub-1.8-ludashi.apk",
+ *     "com.tencent.ig":         "WinHub-1.8-pubg.apk"
  *   }
  * }
  */
 object UpdateManager {
-    private const val REPO = "The412Banner/Bannerlator"
+    private const val REPO = "The412Banner/WinHub"
     const val RELEASES_PAGE = "https://github.com/$REPO/releases/latest"
     private const val UPDATE_JSON_URL =
         "https://github.com/$REPO/releases/latest/download/update.json"
@@ -248,7 +248,7 @@ object UpdateManager {
             return
         }
         if (!canInstallPackages(activity)) {
-            AppUtils.showToast(activity, "Allow installing apps from Bannerlator, then tap Update again")
+            AppUtils.showToast(activity, "Allow installing apps from WinHub, then tap Update again")
             requestInstallPermission(activity)
             onDone(false)
             return
@@ -259,7 +259,7 @@ object UpdateManager {
         // ever applied would accumulate here (~560 MB each) and never be reclaimed
         // until the OS cache-clears — one user hit ~10 GB of stale APKs this way.
         pruneUpdateDir(dir)
-        val apk = File(dir, info.apkName ?: "Bannerlator-update.apk")
+        val apk = File(dir, info.apkName ?: "WinHub-update.apk")
         HttpUtils.download(activity, url, apk) { ok ->
             if (ok) install(activity, apk) else AppUtils.showToast(activity, "Update download failed")
             onDone(ok)

@@ -16,7 +16,7 @@ import org.junit.Test
 class ConfigExporterTest {
 
     private val meta = ConfigExporter.ExportMeta(
-        appSource = "bannerlator",
+        appSource = "winhub",
         device = "Pixel 8",
         soc = "Adreno 750",
         version = "2.6-pre1",
@@ -133,10 +133,10 @@ class ConfigExporterTest {
     }
 
     @Test
-    fun export_meta_isBannerlatorNamespaced() {
+    fun export_meta_isWinHubNamespaced() {
         val root = JSONObject(ConfigExporter.export(emptyMap(), meta))
         val m = root.getJSONObject("meta")
-        assertEquals("bannerlator", m.getString("app_source"))
+        assertEquals("winhub", m.getString("app_source"))
         assertEquals("deadbeef", m.getString("upload_token"))
         assertEquals("Adreno 750", m.getString("soc"))
         assertEquals("2.6-pre1", m.getString("bh_version"))

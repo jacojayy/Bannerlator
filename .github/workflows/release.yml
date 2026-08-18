@@ -16,9 +16,9 @@ on:
         required: true
         default: '1.0'
       release_title:
-        description: 'Release title (e.g. Bannerlator 1.0)'
+        description: 'Release title (e.g. WinHub 1.0)'
         required: true
-        default: 'Bannerlator 1.0'
+        default: 'WinHub 1.0'
       release_number:
         description: 'Release number for APK name (e.g. 1.7, 1.9-pre1)'
         required: true
@@ -55,7 +55,7 @@ jobs:
     - name: Download built APKs
       uses: actions/download-artifact@v4
       with:
-        pattern: Bannerlator-${{ inputs.release_number }}-*
+        pattern: WinHub-${{ inputs.release_number }}-*
         path: dist
         merge-multiple: true   # all 3 flavor APKs land flat in dist/
 
@@ -86,9 +86,9 @@ jobs:
           --argjson vc "$VERSION_CODE" \
           --arg vn "$VERSION" \
           --arg notes "$NOTES" \
-          --arg std "Bannerlator-${N}-standard.apk" \
-          --arg lud "Bannerlator-${N}-ludashi.apk" \
-          --arg pbg "Bannerlator-${N}-pubg.apk" \
+          --arg std "WinHub-${N}-standard.apk" \
+          --arg lud "WinHub-${N}-ludashi.apk" \
+          --arg pbg "WinHub-${N}-pubg.apk" \
           '{versionCode:$vc, versionName:$vn, notes:$notes, minSupported:1,
             apk:{"com.winlator.banner":$std,"com.ludashi.benchmark":$lud,"com.tencent.ig":$pbg}}' \
           > update.json
@@ -105,9 +105,9 @@ jobs:
         # stacked above the real notes at the top of every release.
         body: ${{ inputs.release_notes }}
         files: |
-          dist/Bannerlator-${{ inputs.release_number }}-standard.apk
-          dist/Bannerlator-${{ inputs.release_number }}-ludashi.apk
-          dist/Bannerlator-${{ inputs.release_number }}-pubg.apk
+          dist/WinHub-${{ inputs.release_number }}-standard.apk
+          dist/WinHub-${{ inputs.release_number }}-ludashi.apk
+          dist/WinHub-${{ inputs.release_number }}-pubg.apk
           update.json
         prerelease: ${{ inputs.make_prerelease == 'true' }}
         # Only a stable cut becomes "latest"; pre-releases never do, so the

@@ -3672,7 +3672,7 @@ internal fun FpsCounterConfigDialog(
                         "gamehub" -> "Rich overlay: skins, colored fields, live FPS graph."
                         "gamenative" -> "GameNative-style overlay: compact pill or stacked list with live graphs."
                         "fusion" -> "Fusion overlay: one color-coded look in 5 sizes (Full/Tiles/Pill/Minimal/Mega) with percentile lows, VRAM + a Mega everything-view."
-                        else -> "Classic Bannerlator overlay."
+                        else -> "Classic WinHub overlay."
                     },
                     style = MaterialTheme.typography.bodySmall
                 )

@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * native lib) fed an AHardwareBuffer; SurfaceFlinger composites them directly — there is no
  * GL/Vulkan compositor pass.</p>
  *
- * <p>Structure mirrors Bannerlator's own {@code VulkanRenderer} (same X-server API, {@link XLock}
+ * <p>Structure mirrors WinHub's own {@code VulkanRenderer} (same X-server API, {@link XLock}
  * idioms, {@code collectWindows} scene walk, cursor path) so it slots into the existing
  * {@link WindowManager.OnWindowModificationListener} / {@link Pointer.OnPointerMotionListener}
  * machinery. Frame content is only pushed for windows that already carry a real AHardwareBuffer

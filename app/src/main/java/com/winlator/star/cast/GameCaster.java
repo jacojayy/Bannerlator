@@ -93,7 +93,7 @@ public class GameCaster {
 
             int dpi = activity.getResources().getDisplayMetrics().densityDpi;
             virtualDisplay = displayManager.createVirtualDisplay(
-                    "BannerlatorCast", w, h, dpi, inputSurface,
+                    "WinHubCast", w, h, dpi, inputSurface,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
                             | DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION);
             if (virtualDisplay == null) {
@@ -150,7 +150,7 @@ public class GameCaster {
             inputSurface = encoder.createInputSurface();
             encoder.start();
             int dpi = activity.getResources().getDisplayMetrics().densityDpi;
-            virtualDisplay = displayManager.createVirtualDisplay("BannerlatorCast", w, h, dpi, inputSurface,
+            virtualDisplay = displayManager.createVirtualDisplay("WinHubCast", w, h, dpi, inputSurface,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY | DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION);
             if (virtualDisplay == null) { cleanup(); notifyState("FAILED", "Couldn't create the capture display."); return false; }
             presentation = new CastPresentation(activity, virtualDisplay.getDisplay());

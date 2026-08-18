@@ -1236,7 +1236,7 @@ public class HudMetrics {
         Snapshot s = snapshot();
 
         StringBuilder sb = new StringBuilder();
-        sb.append("Bannerlator HUD diagnostics\n");
+        sb.append("WinHub HUD diagnostics\n");
         sb.append("Generated: ")
           .append(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date())).append('\n');
         sb.append("Device: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append('\n');

@@ -18,7 +18,7 @@ public abstract class HttpUtils {
         try {
             HttpURLConnection connection = (HttpURLConnection)(new URL(url)).openConnection();
             // api.github.com rejects requests with no User-Agent (403).
-            connection.setRequestProperty("User-Agent", "Bannerlator");
+            connection.setRequestProperty("User-Agent", "WinHub");
             if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
                 onDownloadComplete.call(null);
                 return;
@@ -43,7 +43,7 @@ public abstract class HttpUtils {
         try {
             HttpURLConnection connection = (HttpURLConnection)(new URL(url)).openConnection();
             connection.setRequestMethod("POST");
-            connection.setRequestProperty("User-Agent", "Bannerlator");
+            connection.setRequestProperty("User-Agent", "WinHub");
             connection.setRequestProperty("Content-Type", "application/json");
             connection.setDoOutput(true);
             try (OutputStream outStream = connection.getOutputStream()) {
@@ -92,7 +92,7 @@ public abstract class HttpUtils {
         try {
             HttpURLConnection connection = (HttpURLConnection)(new URL(url)).openConnection();
             connection.setRequestMethod("POST");
-            connection.setRequestProperty("User-Agent", "Bannerlator");
+            connection.setRequestProperty("User-Agent", "WinHub");
             connection.setRequestProperty("Content-Type", "application/json");
             connection.setDoOutput(true);
             try (OutputStream outStream = connection.getOutputStream()) {

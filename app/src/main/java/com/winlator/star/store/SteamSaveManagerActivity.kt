@@ -647,7 +647,7 @@ private fun CustomSaveTab(modifier: Modifier = Modifier, columns: Int = 1) {
         }
     }
 
-    // Restore a browsed save zip (GameHub or Bannerlator) into the chosen container.
+    // Restore a browsed save zip (GameHub or WinHub) into the chosen container.
     fun runFileRestore(s: CustomSaveVault.CustomGameStatus, uri: Uri, target: Container) {
         val key = s.shortcut.file.path
         busyKeys = busyKeys + key
@@ -778,7 +778,7 @@ private fun CustomSaveTab(modifier: Modifier = Modifier, columns: Int = 1) {
                             .padding(vertical = 8.dp),
                     ) {
                         Text("Restore from a file…", color = MaterialTheme.colorScheme.primary)
-                        Text("Browse for a GameHub or Bannerlator save .zip", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Text("Browse for a GameHub or WinHub save .zip", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             },
@@ -888,7 +888,7 @@ private fun CustomSaveRow(
             Column(horizontalAlignment = Alignment.End) {
                 TextButton(onClick = onBackup) { Text("Back up") }
                 // Restore is always available: latest vault snapshot if present, else browse for a
-                // GameHub/Bannerlator save file (the chooser decides).
+                // GameHub/WinHub save file (the chooser decides).
                 TextButton(onClick = onRestore) { Text("Restore") }
             }
         }

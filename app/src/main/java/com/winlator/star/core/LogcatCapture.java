@@ -100,12 +100,12 @@ public final class LogcatCapture {
         } catch (Exception e) {
             appVersion = "unknown";
         }
-        return "=== Bannerlator log ===\n"
+        return "=== WinHub log ===\n"
                 + "Captured: " + timestamp() + "\n"
                 + "App: " + appVersion + "\n"
                 + "Device: " + deviceName() + "\n"
                 + "Android: " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")\n"
-                + "Scope: Bannerlator only (system-wide capture is deliberately not offered)\n\n";
+                + "Scope: WinHub only (system-wide capture is deliberately not offered)\n\n";
     }
 
     /**

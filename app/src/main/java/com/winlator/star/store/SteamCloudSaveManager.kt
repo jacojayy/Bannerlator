@@ -901,7 +901,7 @@ object SteamCloudSaveManager {
         return md.digest()
     }
 
-    private fun machineName(): String = "Bannerlator (${Build.MODEL})"
+    private fun machineName(): String = "WinHub (${Build.MODEL})"
 
     private fun plural(n: Int) = if (n == 1) "" else "s"
 }

@@ -1,7 +1,5 @@
 package com.winlator.star.ui
 
-import android.content.Intent
-import android.net.Uri
 import android.os.Environment
 import android.os.StatFs
 import androidx.compose.foundation.Canvas
@@ -23,11 +21,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.HelpOutline
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Storefront
-import androidx.compose.material3.AlertDialog
 import com.winlator.star.ui.screens.OutlinedAlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -47,7 +42,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -80,22 +74,11 @@ fun AppDrawerContent(
     currentRoute: String,
     onNavigate: (Screen) -> Unit,
     onLaunchStore: (Screen) -> Unit,
-    onAbout: () -> Unit,
     // PHASE 3 (optional accounts): null = logged out (subtle "Sign in" row); non-null = profile header.
     account: AccountManager.Account? = null,
     onMyAccount: () -> Unit = {},
 ) {
-    var showHelp by remember { mutableStateOf(false) }
     val context = LocalContext.current
-
-    if (showHelp) {
-        HelpSupportDialog(
-            onDismiss = { showHelp = false },
-            onOpenUrl = { url ->
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-            }
-        )
-    }
 
     Column(
         modifier = Modifier
@@ -130,22 +113,6 @@ fun AppDrawerContent(
                 DrawerStoreItem(screen, onLaunchStore)
             }
         }
-
-        HorizontalDivider(
-            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-            modifier = Modifier.padding(start = 20.dp, top = 8.dp, end = 20.dp, bottom = 6.dp)
-        )
-
-        DrawerIconItem(
-            label = "About",
-            icon = Icons.Filled.Info,
-            onClick = onAbout,
-        )
-        DrawerIconItem(
-            label = "Help and Support",
-            icon = Icons.Filled.HelpOutline,
-            onClick = { showHelp = true },
-        )
 
         StorageWidget()
         Spacer(Modifier.height(12.dp))
@@ -465,31 +432,7 @@ private fun DrawerStoreItem(screen: Screen, onLaunchStore: (Screen) -> Unit) {
 }
 
 @Composable
-private fun DrawerIconItem(label: String, icon: ImageVector, onClick: () -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 22.dp, vertical = 12.dp),
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(14.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-    }
-}
-
-@Composable
-private fun HelpSupportDialog(onDismiss: () -> Unit, onOpenUrl: (String) -> Unit) {
+fun HelpSupportDialog(onDismiss: () -> Unit, onOpenUrl: (String) -> Unit) {
     OutlinedAlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Help & Support") },

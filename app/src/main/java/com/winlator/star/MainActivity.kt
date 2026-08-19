@@ -119,7 +119,6 @@ class MainActivity : AppCompatActivity() {
     private var contentReady = false
 
     private val showAllFilesDialog = mutableStateOf(false)
-    private val showAboutDialog = mutableStateOf(false)
 
     // Route requested via EXTRA_OPEN_SCREEN on a relaunch (onNewIntent); consumed
     // by AppShell, which navigates to it and clears it.
@@ -198,7 +197,6 @@ class MainActivity : AppCompatActivity() {
                         pendingRoute = pendingRoute.value,
                         onPendingRouteConsumed = { pendingRoute.value = null },
                         showAllFilesDialog = showAllFilesDialog.value,
-                        showAboutDialog = showAboutDialog.value,
                         onDismissAllFilesDialog = { showAllFilesDialog.value = false },
                         onConfirmAllFilesDialog = {
                             showAllFilesDialog.value = false
@@ -206,8 +204,6 @@ class MainActivity : AppCompatActivity() {
                             intent.data = Uri.parse("package:$packageName")
                             startActivity(intent)
                         },
-                        onDismissAboutDialog = { showAboutDialog.value = false },
-                        onAboutRequested = { showAboutDialog.value = true },
                         onLaunchStore = { screen -> launchStore(screen) },
                     )
 
@@ -322,11 +318,8 @@ private fun AppShell(
     pendingRoute: String?,
     onPendingRouteConsumed: () -> Unit,
     showAllFilesDialog: Boolean,
-    showAboutDialog: Boolean,
     onDismissAllFilesDialog: () -> Unit,
     onConfirmAllFilesDialog: () -> Unit,
-    onDismissAboutDialog: () -> Unit,
-    onAboutRequested: () -> Unit,
     onLaunchStore: (Screen) -> Unit,
 ) {
     val navController = rememberNavController()
@@ -415,10 +408,6 @@ private fun AppShell(
                     scope.launch { drawerState.close() }
                     onLaunchStore(screen)
                 },
-                onAbout = {
-                    scope.launch { drawerState.close() }
-                    onAboutRequested()
-                },
                 // The My-account sheet lives on the Shortcuts screen; land there, then ask it to open.
                 onMyAccount = {
                     scope.launch { drawerState.close() }
@@ -488,10 +477,6 @@ private fun AppShell(
             onDismiss = onDismissAllFilesDialog,
         )
     }
-
-    if (showAboutDialog) {
-        AboutDialog(onDismiss = onDismissAboutDialog)
-    }
 }
 
 @Composable
@@ -537,7 +522,7 @@ private fun UpdateBanner(versionName: String, onUpdate: () -> Unit, onDismiss: (
 }
 
 @Composable
-private fun AboutDialog(onDismiss: () -> Unit) {
+fun AboutDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val activity = context as? MainActivity
     var update by remember { mutableStateOf<UpdateManager.UpdateInfo?>(null) }

@@ -6,15 +6,19 @@ import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,6 +36,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.painterResource
@@ -85,6 +90,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.Surface
 import com.winlator.star.R
+import com.winlator.star.AboutDialog
 import com.winlator.star.XServerDisplayActivity
 import com.winlator.star.XrActivity
 import com.winlator.star.container.Container
@@ -96,6 +102,7 @@ import com.winlator.star.util.InAppFilePicker
 import com.winlator.star.core.SaveLocator
 import com.winlator.star.core.StringUtils
 import com.winlator.star.store.UninstallResultBar
+import com.winlator.star.ui.HelpSupportDialog
 import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -138,6 +145,9 @@ fun ContainersScreen(
     var confirmDialog by remember { mutableStateOf<ConfirmAction?>(null) }
     var storageInfoContainer by remember { mutableStateOf<Container?>(null) }
     var showImportPicker by remember { mutableStateOf(false) }
+    // Bottom row card — About / Help and Support (moved out of the drawer, see AboutHelpRowCard).
+    var showAbout by remember { mutableStateOf(false) }
+    var showHelp by remember { mutableStateOf(false) }
 
     // Backup / Restore game save flow (see SaveFlow). The engine posts its result on the main
     // thread, so we just flip these bits of Compose state as the flow advances.
@@ -266,7 +276,27 @@ fun ContainersScreen(
             UninstallResultBar(message = msg, onTimeout = { resultMessage = null })
         }
         } // end inner Box(weight)
+
+        // Standalone bottom card: About | Help and Support. Lives below the container list so it
+        // pins to the bottom in portrait and stretches full-width on landscape.
+        AboutHelpRowCard(
+            onAbout = { showAbout = true },
+            onHelp = { showHelp = true },
+        )
     } // end Column
+
+    // About / Help and Support dialogs — opened from the bottom row card (AboutHelpRowCard).
+    if (showAbout) {
+        AboutDialog(onDismiss = { showAbout = false })
+    }
+    if (showHelp) {
+        HelpSupportDialog(
+            onDismiss = { showHelp = false },
+            onOpenUrl = { url ->
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            },
+        )
+    }
 
     // Import picker dialog
     if (showImportPicker) {
@@ -1113,4 +1143,72 @@ private fun StorageInfoDialog(container: Container, onDismiss: () -> Unit) {
             }) { Text("Clear Cache") }
         },
     )
+}
+
+@Composable
+private fun AboutHelpRowCard(onAbout: () -> Unit, onHelp: () -> Unit) {
+    val accent = MaterialTheme.colorScheme.primary
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            // Pin this Row to its content height (IntrinsicSize.Min) so the fillMaxHeight()
+            // divider below fills ONLY the sibling rows' height — otherwise it resolves against
+            // the full incoming max height and stretches this card to the whole screen.
+            .height(IntrinsicSize.Min)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, Color(0xFF242424), RoundedCornerShape(12.dp)),
+    ) {
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = onAbout)
+                .padding(vertical = 14.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Info,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "About",
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(1.dp)
+                .background(Color(0xFF242424)),
+        )
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = onHelp)
+                .padding(vertical = 14.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.HelpOutline,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "Help and Support",
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+    }
 }

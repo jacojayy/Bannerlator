@@ -16,7 +16,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -1149,6 +1151,10 @@ private fun AboutHelpRowCard(onAbout: () -> Unit, onHelp: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // Pin this Row to its content height (IntrinsicSize.Min) so the fillMaxHeight()
+            // divider below fills ONLY the sibling rows' height — otherwise it resolves against
+            // the full incoming max height and stretches this card to the whole screen.
+            .height(IntrinsicSize.Min)
             .padding(horizontal = 16.dp, vertical = 10.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surface)

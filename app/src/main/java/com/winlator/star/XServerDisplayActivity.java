@@ -3406,7 +3406,12 @@ public class XServerDisplayActivity extends AppCompatActivity {
                     if (savePrefs.getBoolean("auto_backup_custom_on_exit", true)) autoSnapshotCustomSavesBlocking();
                 }
                 preloaderDialog.closeOnUiThread();
-                AppUtils.restartApplication(getApplicationContext());
+                if (getIntent().getBooleanExtra("launched_from_frontend", false)) {
+                    finishAndRemoveTask();
+                    Runtime.getRuntime().exit(0);
+                } else {
+                    AppUtils.restartApplication(getApplicationContext());
+                }
             }
         }, 1000);
     }

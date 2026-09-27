@@ -129,8 +129,8 @@ fun AppDrawerContent(
         DrawerItem(Screen.InputControls, currentRoute, onNavigate)
         DrawerItem(Screen.Contents,      currentRoute, onNavigate)
 
-        // Hideable from Appearance — the whole section, header included, so turning it off
-        // leaves no orphaned divider behind.
+        // Hideable from Settings → Side Menu — the whole section, header included, so turning
+        // it off leaves no orphaned divider behind.
         val showStores by AppThemeState.showStores.collectAsState()
         if (showStores) {
             DrawerSectionHeader("Stores", note = "· unchanged", showDivider = true)

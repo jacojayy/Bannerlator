@@ -75,6 +75,10 @@ private fun iconFor(screen: Screen): Int = when (screen) {
     else                 -> R.drawable.icon_container
 }
 
+// Show the My Account / Sign in row at the top of the nav drawer. Off by default: the account
+// entry is hidden from the menu, while sign-in stays reachable from the Games header avatar.
+private const val SIGN_IN_IN_DRAWER = false
+
 @Composable
 fun AppDrawerContent(
     currentRoute: String,
@@ -107,7 +111,12 @@ fun AppDrawerContent(
     ) {
         Spacer(Modifier.height(18.dp))
 
-        DrawerAccountHeader(account = account, onMyAccount = onMyAccount)
+        // My Account / Sign in header — hidden from the drawer (SIGN_IN_IN_DRAWER = false), so the
+        // library section opens the menu. Sign-in itself is still reachable from the Games header
+        // avatar and the Shortcuts screen icon, which drive AccountUiBus directly.
+        if (SIGN_IN_IN_DRAWER) {
+            DrawerAccountHeader(account = account, onMyAccount = onMyAccount)
+        }
 
         DrawerSectionHeader("Library")
         DrawerItem(Screen.Games,         currentRoute, onNavigate)

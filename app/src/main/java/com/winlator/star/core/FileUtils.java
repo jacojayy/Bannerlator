@@ -561,7 +561,8 @@ public abstract class FileUtils {
         if (path == null) return "";
         path = StringUtils.removeEndSlash(path);
         int index = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-        return path.substring(0, index);
+        // A bare name ("notepad.exe") has no directory part: return "" instead of substring(0, -1).
+        return index < 0 ? "" : path.substring(0, index);
     }
 
     public static void chmod(File file, int mode) {

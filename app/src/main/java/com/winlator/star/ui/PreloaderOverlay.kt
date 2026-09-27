@@ -27,7 +27,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -41,6 +44,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -81,7 +87,7 @@ fun PreloaderOverlay() {
 
     // Centered status/shutdown screen — calm logo + message + slim indeterminate bar.
     if (ui.centered) {
-        CenteredStatus(ui.tailLabel.ifEmpty { ui.title })
+        CenteredStatus(ui.tailLabel.ifEmpty { ui.title }, ui.hint, ui.elapsed, ui.percent)
         return
     }
 
@@ -177,6 +183,7 @@ fun PreloaderOverlay() {
                         driverLabel = spec.driverLabel,
                         vkd3dVersion = spec.vkd3dVersion,
                         backendLabel = spec.backendLabel,
+                        eosEnabled = spec.eosEnabled,
                     )
                 }
                 Spacer(Modifier.height(18.dp))
@@ -284,11 +291,11 @@ private fun StepPips(stepIndex: Int, stepTotal: Int) {
 
 /**
  * Full-bleed "working…" screen for shutdown and other indeterminate operations (backup, restore,
- * install, create-container). The branded WinHub neon art fills the screen behind a scrim; the
+ * install, create-container). The branded Bannerlator neon art fills the screen behind a scrim; the
  * message + slim indeterminate bar sit low so they clear the centered logo art above.
  */
 @Composable
-private fun CenteredStatus(message: String) {
+private fun CenteredStatus(message: String, subMessage: String? = null, elapsed: String? = null, percent: Int = -1) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -329,17 +336,54 @@ private fun CenteredStatus(message: String) {
                     fontWeight = FontWeight.Bold,
                     color = HeroText,
                 )
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(if (!subMessage.isNullOrEmpty()) 8.dp else 20.dp))
             }
-            LinearProgressIndicator(
-                color = HeroAccent,
-                trackColor = Color.White.copy(alpha = 0.16f),
-                strokeCap = StrokeCap.Round,
-                modifier = Modifier
-                    .width(190.dp)
-                    .height(5.dp)
-                    .clip(RoundedCornerShape(4.dp)),
-            )
+            // Live sub-status (e.g. "Backing up your saves…" / "Uploading: <file>") — lets slow
+            // operations like the GOG cloud upload show they're actively working, not frozen.
+            AnimatedVisibility(visible = !subMessage.isNullOrEmpty()) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = subMessage ?: "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = HeroText.copy(alpha = 0.75f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(16.dp))
+                }
+            }
+            // Determinate while something measurable is happening (the Steam client's download,
+            // read out of the session log), the slim indeterminate bar otherwise.
+            val barModifier = Modifier
+                .width(190.dp)
+                .height(5.dp)
+                .clip(RoundedCornerShape(4.dp))
+            if (percent >= 0) {
+                LinearProgressIndicator(
+                    progress = { percent.coerceIn(0, 100) / 100f },
+                    color = HeroAccent,
+                    trackColor = Color.White.copy(alpha = 0.16f),
+                    strokeCap = StrokeCap.Round,
+                    modifier = barModifier,
+                )
+            } else {
+                LinearProgressIndicator(
+                    color = HeroAccent,
+                    trackColor = Color.White.copy(alpha = 0.16f),
+                    strokeCap = StrokeCap.Round,
+                    modifier = barModifier,
+                )
+            }
+            // The clock: a first run is minutes of nothing on screen, and a number that keeps
+            // moving is what separates "still working" from "hung" for the person watching.
+            AnimatedVisibility(visible = !elapsed.isNullOrEmpty()) {
+                Text(
+                    text = elapsed ?: "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = HeroText.copy(alpha = 0.55f),
+                    modifier = Modifier.padding(top = 10.dp),
+                )
+            }
         }
     }
 }
@@ -462,6 +506,39 @@ private fun GuestProgress(tailLabel: String) {
     }
 }
 
+/**
+ * One-line help for the failure card's extra actions, keyed on the label the activity sends
+ * ([com.winlator.star.core.FailureAction] carries no copy of its own). Unknown labels get a
+ * neutral line rather than nothing, so a new action is never left unexplained.
+ */
+private fun actionHelp(label: String): String = when (label) {
+    "Retry" -> "runs the Steam checks again and relaunches the game through SteamLite."
+    "Launch with Goldberg" -> "relaunches offline with the stand-in Steam — no online play, no VAC."
+    "Keep going" -> "ignores this and keeps waiting for the game; online features may not work."
+    else -> "does what it says; the log folder has the details if it doesn't help."
+}
+
+/** The launch popup's corner "?" (LaunchMethodSheet.HelpDot), on the card's primary accent. */
+@Composable
+private fun ActionHelpDot(highlighted: Boolean, onClick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Box(
+        Modifier.size(16.dp).clip(CircleShape)
+            .background(if (highlighted) cs.primary.copy(alpha = 0.16f) else cs.surfaceVariant)
+            .border(1.dp, if (highlighted) cs.primary.copy(alpha = 0.55f) else cs.outline, CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "?",
+            style = MaterialTheme.typography.labelSmall,
+            fontSize = 10.sp,
+            color = if (highlighted) cs.primary else cs.onSurfaceVariant,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
 @Composable
 private fun FailureCard(failure: Failure?) {
     failure ?: return
@@ -501,6 +578,43 @@ private fun FailureCard(failure: Failure?) {
                 )
             }
             Spacer(Modifier.height(14.dp))
+            // Extra actions (SteamLite: "Retry" / "Launch with Goldberg") sit on their own row so
+            // the standard Close / Open-log pair below never reflows. A "?" at the row's start
+            // toggles a one-line-per-button explainer (keyed on this failure so it resets per card).
+            if (failure.actions.isNotEmpty()) {
+                var showActionHelp by remember(failure) { mutableStateOf(false) }
+                Row(
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    ActionHelpDot(highlighted = showActionHelp) { showActionHelp = !showActionHelp }
+                    Spacer(Modifier.weight(1f))
+                    failure.actions.forEachIndexed { i, a ->
+                        if (i > 0) Spacer(Modifier.width(8.dp))
+                        if (a.primary) Button(onClick = { a.run.run() }) { Text(a.label) }
+                        else OutlinedButton(onClick = { a.run.run() }) { Text(a.label) }
+                    }
+                }
+                if (showActionHelp) {
+                    Spacer(Modifier.height(8.dp))
+                    Box(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                            .clickable { showActionHelp = false }
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            text = failure.actions.joinToString("\n") { "${it.label} — ${actionHelp(it.label)}" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+            }
             if (failure.loggingEnabled && !failure.logDir.isNullOrEmpty()) {
                 Text(
                     text = "Log saved to ${failure.logDir}",
@@ -513,7 +627,7 @@ private fun FailureCard(failure: Failure?) {
                         Text("Open log folder")
                     }
                     Spacer(Modifier.width(8.dp))
-                    Button(onClick = { PreloaderState.onClose?.run() }) {
+                    Button(onClick = { PreloaderState.close() }) {
                         Text("Close")
                     }
                 }
@@ -525,7 +639,7 @@ private fun FailureCard(failure: Failure?) {
                 )
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                    Button(onClick = { PreloaderState.onClose?.run() }) {
+                    Button(onClick = { PreloaderState.close() }) {
                         Text("Close")
                     }
                 }

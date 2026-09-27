@@ -37,13 +37,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FileCopy
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.ContentCut
@@ -196,6 +199,91 @@ private fun isWithin(child: File, ancestor: File): Boolean {
     return c == a || c.startsWith(a + File.separator)
 }
 
+// ── DOS file attributes (Read-only / Hidden) ──
+// The in-container file manager (wfm.exe) exposes these in its Properties dialog; this mirrors the
+// same two toggles for files browsed from the app side. No root — we only touch permission bits the
+// app owns (container files) and the Wine DOS-attribute xattr.
+
+// FILE_ATTRIBUTE_HIDDEN, as Wine encodes it in the user.DOSATTRIB extended attribute.
+private const val FILE_ATTRIBUTE_HIDDEN = 0x2
+private const val DOSATTRIB_XATTR = "user.DOSATTRIB"
+
+// Snapshot of a file's two toggleable attributes. hiddenSupported is false when the underlying
+// filesystem can't store the DOSATTRIB xattr (the FUSE /storage volumes) — the Hidden toggle is then
+// disabled while Read-only keeps working.
+private data class FileAttrState(
+    val readOnly: Boolean,
+    val hidden: Boolean,
+    val hiddenSupported: Boolean,
+)
+
+// Wine (and Samba) store user.DOSATTRIB as an ASCII hex string ("0x22"), sometimes with trailing
+// Samba fields after a separator. We only need the leading DOS-attribute hex, so read from the "0x"
+// prefix and stop at the first non-hex character.
+private fun parseDosAttrib(raw: ByteArray): Int {
+    val s = String(raw, Charsets.US_ASCII).trim()
+    val hex = if (s.startsWith("0x") || s.startsWith("0X")) s.substring(2) else s
+    val digits = hex.takeWhile { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+    return digits.toIntOrNull(16) ?: 0
+}
+
+// Read the current read-only + Wine-hidden state. Never throws: an xattr-unsupported filesystem
+// comes back hiddenSupported=false (Hidden toggle disabled), Read-only always resolves.
+private fun readFileAttrs(file: File): FileAttrState {
+    val path = file.absolutePath
+    // Read-only reflects the OWNER write bit — that's what Wine maps to FILE_ATTRIBUTE_READONLY.
+    val readOnly = runCatching {
+        (android.system.Os.stat(path).st_mode and android.system.OsConstants.S_IWUSR) == 0
+    }.getOrDefault(!file.canWrite())
+
+    var hidden = false
+    var supported = true
+    try {
+        hidden = (parseDosAttrib(android.system.Os.getxattr(path, DOSATTRIB_XATTR)) and FILE_ATTRIBUTE_HIDDEN) != 0
+    } catch (e: android.system.ErrnoException) {
+        // ENODATA: xattr namespace works, the attribute just isn't set yet -> still toggleable.
+        // ENOTSUP/EOPNOTSUPP/anything else: the fs can't store it -> disable the Hidden toggle.
+        supported = e.errno == android.system.OsConstants.ENODATA
+    } catch (e: Exception) {
+        supported = false
+    }
+    return FileAttrState(readOnly, hidden, supported)
+}
+
+// Toggle read-only by flipping the write bits, preserving every other permission bit. Setting
+// read-only clears owner/group/other write (so Wine sees FILE_ATTRIBUTE_READONLY regardless of which
+// write bit it checks); clearing it restores owner write. Falls back to File.setWritable if chmod is
+// somehow refused. Returns true on success.
+private fun setReadOnly(file: File, readOnly: Boolean): Boolean = runCatching {
+    val path = file.absolutePath
+    val mode = android.system.Os.stat(path).st_mode
+    val writeBits = android.system.OsConstants.S_IWUSR or
+        android.system.OsConstants.S_IWGRP or android.system.OsConstants.S_IWOTH
+    val newMode = if (readOnly) mode and writeBits.inv()
+        else mode or android.system.OsConstants.S_IWUSR
+    android.system.Os.chmod(path, newMode)
+    true
+}.getOrElse { file.setWritable(!readOnly, true) }
+
+// Flip Wine's DOS hidden bit in user.DOSATTRIB, preserving the other DOS-attribute bits
+// (archive/system/read-only) already encoded there, and synthesizing a minimal value when absent.
+// Writes Wine's own "0x%x" format, which Wine reads back natively. Returns false when the fs can't
+// store the xattr, so the caller can disable just the Hidden toggle.
+private fun setHidden(file: File, hidden: Boolean): Boolean = try {
+    val path = file.absolutePath
+    var attr = try {
+        parseDosAttrib(android.system.Os.getxattr(path, DOSATTRIB_XATTR))
+    } catch (e: android.system.ErrnoException) {
+        if (e.errno == android.system.OsConstants.ENODATA) 0 else throw e
+    }
+    attr = if (hidden) attr or FILE_ATTRIBUTE_HIDDEN else attr and FILE_ATTRIBUTE_HIDDEN.inv()
+    val value = "0x%x".format(attr).toByteArray(Charsets.US_ASCII)
+    android.system.Os.setxattr(path, DOSATTRIB_XATTR, value, 0)
+    true
+} catch (e: Exception) {
+    false
+}
+
 // ── Favorites: origin resolution ──
 
 enum class FavStorage { INTERNAL, SD, CONTAINER, OTHER }
@@ -278,6 +366,12 @@ fun FileManagerScreen(
     pickExtensions: List<String> = emptyList(),
     initialDir: File? = null,
     pickerTitle: String? = null,
+    // The chosen container's C: drive (`<container>/.wine/drive_c`), passed only by the add-a-game
+    // flow which already knows the target container. When non-null AND it exists, the picker offers a
+    // working "Drive C:" location (rail item + drive-chip menu) so the user can browse/pick a game
+    // that lives on C: — some games only boot (or boot faster) from the container's own C: drive. The
+    // default landing is unchanged (internal root); C: is an opt-in jump. Null for every other picker.
+    driveCPath: File? = null,
     onPick: ((File) -> Unit)? = null,
 ) {
     val context = LocalContext.current
@@ -300,22 +394,31 @@ fun FileManagerScreen(
     val pickPrefs = remember { androidx.preference.PreferenceManager.getDefaultSharedPreferences(context) }
     val browsePrefs = pickPrefs
     val rootDir = remember {
-        if (pickMode) {
-            val remembered = pickPrefs.getString("lastFilePickerDir", null)?.let { File(it) }?.takeIf { it.isDirectory }
-            initialDir?.takeIf { it.isDirectory }
-                ?: remembered
-                ?: File("/sdcard/Download/").takeIf { it.isDirectory }
-                ?: File("/storage/emulated/0")
-        } else {
-            // Browse mode used to ignore initialDir entirely and always open at internal storage.
-            // The Log Manager passes a game's log folder here, so honour it in both modes; falling
-            // back to internal storage keeps the plain File Manager destination unchanged.
-            initialDir?.takeIf { it.isDirectory } ?: File("/storage/emulated/0")
-        }
+        // Both modes: honour an explicit caller-supplied start dir (e.g. Log Manager's game-log
+        // folder), else open at the INTERNAL STORAGE ROOT. Selection screens (drive-folder pick,
+        // local component pick, imports) previously defaulted to Download which — combined with the
+        // currentRoot floor below — trapped users in Download with no way up (reported bug).
+        initialDir?.takeIf { it.isDirectory } ?: File("/storage/emulated/0")
     }
 
     var currentDir by remember { mutableStateOf(rootDir) }
-    var currentRoot by remember { mutableStateOf(rootDir) }
+    // The up/back FLOOR — back + the up-arrow are disabled while currentDir == currentRoot. It MUST be
+    // the VOLUME ROOT of the start dir (internal /storage/emulated/0, or an SD card /storage/XXXX-XXXX),
+    // NOT the start dir itself: otherwise opening at any subfolder disables up/back and traps the user
+    // there. (Mirrors the volume-root logic in favLocationOf above.)
+    fun volumeRootOf(dir: File): File {
+        val abs = dir.absolutePath
+        val internal = "/storage/emulated/0"
+        return when {
+            abs == internal || abs.startsWith("$internal/") -> File(internal)
+            abs.startsWith("/storage/") -> {
+                val name = abs.removePrefix("/storage/").substringBefore('/')
+                if (name.isNotEmpty() && name != "emulated" && name != "self") File("/storage/$name") else dir
+            }
+            else -> dir
+        }
+    }
+    var currentRoot by remember { mutableStateOf(volumeRootOf(rootDir)) }
     var entries by remember { mutableStateOf(listOf<File>()) }
     var selectedEntry by remember { mutableStateOf<File?>(null) }
     var showMenuFor by remember { mutableStateOf<File?>(null) }
@@ -352,6 +455,8 @@ fun FileManagerScreen(
     var compactRows by remember { mutableStateOf(browsePrefs.getBoolean("fmCompactRows", false)) }
     var showNewFolderDialog by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<File?>(null) }
+    // Properties sheet (basic info + Read-only / Hidden toggles) target; null when closed.
+    var propertiesTarget by remember { mutableStateOf<File?>(null) }
     var pendingRun by remember { mutableStateOf<File?>(null) }
     var pendingAddShortcut by remember { mutableStateOf<File?>(null) }
     var isOperationRunning by remember { mutableStateOf(false) }
@@ -401,7 +506,25 @@ fun FileManagerScreen(
         loadDirectory(dir)
     }
 
-    LaunchedEffect(Unit) { openDrive(rootDir) }
+    // Jump to an arbitrary folder (favourite, quick location, caller-supplied start dir) WITHOUT
+    // pinning it as the floor: the floor stays the folder's volume root (or the container's C:
+    // drive when the target lives inside it), so up/back keep working above the jump target.
+    // Pinning the target itself was issue #476: after opening a favourite, the up arrow was greyed
+    // out and Back did nothing, because the favourite had become "the root".
+    fun jumpTo(dir: File) {
+        val dc = driveCPath?.takeIf { it.isDirectory }
+        currentRoot = if (dc != null && isWithin(dir, dc)) dc else volumeRootOf(dir)
+        loadDirectory(dir)
+    }
+
+    // One folder up, bounded at the current floor. Shared by the toolbar arrow, system Back and
+    // the ".." row at the top of every listing.
+    fun goUp() {
+        val parent = currentDir.parentFile
+        if (currentDir != currentRoot && parent != null && parent.exists()) loadDirectory(parent)
+    }
+
+    LaunchedEffect(Unit) { jumpTo(rootDir) }
 
     // System/gesture Back: while the Favorites view is open it closes that first; otherwise
     // it goes up one directory. Only at the current drive's root with Favorites closed is it
@@ -411,8 +534,7 @@ fun FileManagerScreen(
             showFavorites = false
             return@BackHandler
         }
-        val parent = currentDir.parentFile
-        if (parent != null && parent.exists()) loadDirectory(parent)
+        goUp()
     }
 
     fun canRun(file: File): Boolean {
@@ -513,6 +635,35 @@ fun FileManagerScreen(
             containers.size == 1 -> addShortcutInContainer(file, containers.first())
             else -> pendingAddShortcut = file   // ask which container
         }
+    }
+
+    // Shared by both the list rows and the grid tiles so the big Fast-Extract when-branch and the
+    // Unpack-screen launch aren't duplicated per call site. Both close the context menu first.
+    fun launchFastExtract(file: File) {
+        showMenuFor = null
+        scope.launch {
+            when (val o = com.winlator.star.core.unpack.FastExtract.start(context, file)) {
+                is com.winlator.star.core.unpack.FastExtract.Outcome.Started ->
+                    Toast.makeText(context, "Unpacking ${o.name}…", Toast.LENGTH_SHORT).show()
+                com.winlator.star.core.unpack.FastExtract.Outcome.Busy ->
+                    Toast.makeText(context, "Another unpack is already in progress", Toast.LENGTH_SHORT).show()
+                is com.winlator.star.core.unpack.FastExtract.Outcome.NotArchive ->
+                    Toast.makeText(context, "Not a recognized archive — nothing to unpack", Toast.LENGTH_SHORT).show()
+                is com.winlator.star.core.unpack.FastExtract.Outcome.OpenScreen -> {
+                    o.toast?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+                    context.startActivity(
+                        com.winlator.star.UnpackArchiveActivity.intent(context, o.archivePath)
+                    )
+                }
+            }
+        }
+    }
+
+    fun launchUnpack(file: File) {
+        showMenuFor = null
+        context.startActivity(
+            com.winlator.star.UnpackArchiveActivity.intent(context, file.absolutePath)
+        )
     }
 
     // Resolve a non-colliding destination in [dir] for [name] (foo.txt -> "foo (1).txt").
@@ -729,6 +880,16 @@ fun FileManagerScreen(
                 }) { Text("Rename") }
             },
             dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } },
+        )
+    }
+
+    propertiesTarget?.let { file ->
+        FilePropertiesDialog(
+            file = file,
+            onDismiss = { propertiesTarget = null },
+            // Attribute changes affect Hidden/read-only which the listing filters/sorts on, so refresh
+            // in place (keeping scroll) after any toggle applies.
+            onChanged = { loadDirectory(currentDir, resetScroll = false) },
         )
     }
 
@@ -971,15 +1132,15 @@ fun FileManagerScreen(
                 .background(MaterialTheme.colorScheme.surfaceContainer)
                 .padding(horizontal = 8.dp, vertical = 6.dp),
         ) {
-            IconButton(onClick = {
-                val parent = currentDir.parentFile
-                // Don't climb above the current drive's root.
-                if (currentDir != currentRoot && parent != null && parent.exists()) loadDirectory(parent)
-            }, enabled = currentDir != currentRoot) {
-                Icon(Icons.Filled.ArrowBack, "Back", tint = MaterialTheme.colorScheme.primary)
+            IconButton(onClick = { goUp() }, enabled = currentDir != currentRoot) {
+                Icon(Icons.Filled.ArrowBack, "Parent folder", tint = MaterialTheme.colorScheme.primary)
             }
 
-            val currentDriveLabel = describeLocation(currentDir, containers, imagefsDir).driveLabel
+            // describeLocation labels C: by matching against the container list, which is empty in the
+            // picker (FilePickerActivity has no MainActivity) — so when we were handed the C: drive
+            // directly, label it from that instead of falling through to a generic "Storage".
+            val currentDriveLabel = if (driveCPath != null && isWithin(currentDir, driveCPath)) "Drive C:"
+                else describeLocation(currentDir, containers, imagefsDir).driveLabel
             // Dim the drive chip while the Favorites list is open (it's not the active context).
             val driveChipAlpha = if (showFavorites) 0.45f else 1f
             Box {
@@ -1011,10 +1172,15 @@ fun FileManagerScreen(
                         },
                         onClick = {
                             showDriveMenu = false
-                            if (containers.size == 1) {
+                            // Prefer the container the picker was launched with (add-a-game flow): its
+                            // C: is known even though FilePickerActivity has no MainActivity/container
+                            // list (that's why this menu item did nothing in the picker before).
+                            val dc = driveCPath?.takeIf { it.isDirectory }
+                            if (dc != null) {
+                                openDrive(dc)
+                            } else if (containers.size == 1) {
                                 openDrive(File(containers.first().rootDir, ".wine/drive_c"))
-                            }
-                            else if (containers.size > 1) {
+                            } else if (containers.size > 1) {
                                 showContainerPicker = true
                             }
                         },
@@ -1231,11 +1397,17 @@ fun FileManagerScreen(
                     fontSize = 13.sp,
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = {
-                    selectedPaths = if (selectedPaths.size == entries.size) emptySet()
-                    else entries.map { it.absolutePath }.toSet()
-                }) { Text(if (selectedPaths.size == entries.size) "None" else "All", fontSize = 12.sp) }
-                TextButton(
+                // Compact outlined buttons so all five fit one row alongside the count.
+                val selBarPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                OutlinedButton(
+                    onClick = {
+                        selectedPaths = if (selectedPaths.size == entries.size) emptySet()
+                        else entries.map { it.absolutePath }.toSet()
+                    },
+                    contentPadding = selBarPadding,
+                ) { Text(if (selectedPaths.size == entries.size) "None" else "All", fontSize = 12.sp) }
+                Spacer(Modifier.width(4.dp))
+                OutlinedButton(
                     enabled = selectedPaths.isNotEmpty(),
                     onClick = {
                         clipboardFiles = entries.filter { it.absolutePath in selectedPaths }
@@ -1243,8 +1415,10 @@ fun FileManagerScreen(
                         selectionMode = false
                         selectedPaths = emptySet()
                     },
+                    contentPadding = selBarPadding,
                 ) { Text("Copy", fontSize = 12.sp) }
-                TextButton(
+                Spacer(Modifier.width(4.dp))
+                OutlinedButton(
                     enabled = selectedPaths.isNotEmpty(),
                     onClick = {
                         clipboardFiles = entries.filter { it.absolutePath in selectedPaths }
@@ -1252,14 +1426,20 @@ fun FileManagerScreen(
                         selectionMode = false
                         selectedPaths = emptySet()
                     },
+                    contentPadding = selBarPadding,
                 ) { Text("Cut", fontSize = 12.sp) }
-                TextButton(
+                Spacer(Modifier.width(4.dp))
+                OutlinedButton(
                     enabled = selectedPaths.isNotEmpty(),
                     onClick = { pendingBulkDelete = entries.filter { it.absolutePath in selectedPaths } },
+                    contentPadding = selBarPadding,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
                 ) { Text("Delete", color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
-                TextButton(onClick = { selectionMode = false; selectedPaths = emptySet() }) {
-                    Text("Done", fontSize = 12.sp)
-                }
+                Spacer(Modifier.width(4.dp))
+                OutlinedButton(
+                    onClick = { selectionMode = false; selectedPaths = emptySet() },
+                    contentPadding = selBarPadding,
+                ) { Text("Done", fontSize = 12.sp) }
             }
         }
 
@@ -1351,14 +1531,27 @@ fun FileManagerScreen(
                     showFavorites = false; if (d.readable) openDrive(d.dir)
                 })
             }
+            // Add-a-game-from-C: (add-game flow only). openDrive() pins currentRoot = drive_c so
+            // up/back is bounded at C:\ and the user can't wander up into the Linux prefix. RailItem
+            // carries no per-item colour — C: gets the standard accent highlight like Internal/SD
+            // (the amber Drive C: identity lives on the Favorites badge, not the rail).
+            driveCPath?.takeIf { it.isDirectory }?.let { dc ->
+                add(locItem("Drive C:", Icons.Filled.Storage, dc))
+            }
         }
+        // Quick locations are shortcuts INTO internal storage, not drives: jump there but keep the
+        // floor at the storage root so the user can still climb out of Download/Games/Pictures.
+        fun quickItem(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, dir: File) =
+            RailItem(label, icon, !showFavorites && currentDir.absolutePath == dir.absolutePath) {
+                showFavorites = false; jumpTo(dir)
+            }
         val quickItems = buildList {
-            File("/storage/emulated/0/Download").takeIf { it.isDirectory }?.let { add(locItem("Downloads", Icons.Filled.Download, it)) }
-            File("/storage/emulated/0/Winlator/Games").takeIf { it.isDirectory }?.let { add(locItem("Games", Icons.Filled.SportsEsports, it)) }
-            File("/storage/emulated/0/Pictures").takeIf { it.isDirectory }?.let { add(locItem("Pictures", Icons.Filled.Image, it)) }
+            File("/storage/emulated/0/Download").takeIf { it.isDirectory }?.let { add(quickItem("Downloads", Icons.Filled.Download, it)) }
+            File("/storage/emulated/0/Winlator/Games").takeIf { it.isDirectory }?.let { add(quickItem("Games", Icons.Filled.SportsEsports, it)) }
+            File("/storage/emulated/0/Pictures").takeIf { it.isDirectory }?.let { add(quickItem("Pictures", Icons.Filled.Image, it)) }
         }
         val favItems = remember(favTick) { FavoritesStore.list(context).map(::File).filter { it.exists() } }
-            .map { d -> RailItem(d.name, Icons.Filled.Star, false) { showFavorites = false; openDrive(d) } }
+            .map { d -> RailItem(d.name, Icons.Filled.Star, false) { showFavorites = false; jumpTo(d) } }
         val locationSections = buildList {
             add(RailSection("STORAGE", storageItems))
             if (quickItems.isNotEmpty()) add(RailSection("QUICK", quickItems))
@@ -1366,7 +1559,10 @@ fun FileManagerScreen(
         }
 
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            if (!pickMode) {
+            // The slim picker normally hides the rail; the add-a-game-from-C: flow (driveCPath set) is
+            // the exception — it shows the rail so the "Drive C:" location item is reachable. Pickers
+            // that don't pass driveCPath keep the rail hidden exactly as before.
+            if (!pickMode || driveCPath != null) {
                 CollapsibleRail(state = fmRailState, title = "Files", sections = locationSections, outlinedItems = true)
             }
             Box(modifier = Modifier.weight(1f).fillMaxSize()) {
@@ -1384,7 +1580,7 @@ fun FileManagerScreen(
                 },
                 onJump = { dir ->
                     showFavorites = false
-                    openDrive(dir)
+                    jumpTo(dir)
                 },
                 onUnpin = { dir ->
                     FavoritesStore.remove(context, dir.absolutePath)
@@ -1409,15 +1605,28 @@ fun FileManagerScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(8.dp),
                 ) {
+                    if (searchQuery.isBlank() && currentDir != currentRoot) {
+                        item(key = "..") { ParentFolderTile(onTap = { goUp() }) }
+                    }
                     items(shownEntries, key = { it.absolutePath }) { file ->
+                        val isFav = remember(file.absolutePath, favTick) {
+                            FavoritesStore.isFavorite(context, file.absolutePath)
+                        }
                         FileGridTile(
                             file = file,
                             selectionMode = selectionMode,
                             selected = file.absolutePath in selectedPaths,
                             onLongPress = {
                                 if (!pickMode) {
-                                    selectionMode = true
-                                    selectedPaths = selectedPaths + file.absolutePath
+                                    // In selection mode a long-press toggles; otherwise it opens the
+                                    // same context menu the list rows show (the tile has no ⋮ button).
+                                    if (selectionMode) {
+                                        selectedPaths = if (file.absolutePath in selectedPaths)
+                                            selectedPaths - file.absolutePath
+                                        else selectedPaths + file.absolutePath
+                                    } else {
+                                        showMenuFor = file
+                                    }
                                 }
                             },
                             onToggleSelect = {
@@ -1435,11 +1644,44 @@ fun FileManagerScreen(
                                 } else if (canRun(file)) runFile(file)
                             },
                             onMenu = { showMenuFor = file },
+                            menuExpanded = showMenuFor == file,
+                            onDismissMenu = { showMenuFor = null },
+                            isFavorite = isFav,
+                            onSelect = {
+                                selectionMode = true
+                                selectedPaths = selectedPaths + file.absolutePath
+                                showMenuFor = null
+                            },
+                            onRun = { runFile(file) },
+                            onAddToShortcuts = { addToShortcuts(file) },
+                            onUnpack = { launchUnpack(file) },
+                            onFastExtract = { launchFastExtract(file) },
+                            onRename = { renameTarget = file; showMenuFor = null },
+                            onCopy = { clipboardFiles = listOf(file); isCutOperation = false; showMenuFor = null },
+                            onCut = { clipboardFiles = listOf(file); isCutOperation = true; showMenuFor = null },
+                            onDelete = { selectedEntry = file; showMenuFor = null },
+                            onToggleFavorite = {
+                                val nowFav = FavoritesStore.toggle(context, file.absolutePath)
+                                favTick++
+                                showMenuFor = null
+                                Toast.makeText(
+                                    context,
+                                    if (nowFav) "Added \"${file.name}\" to Favorites"
+                                    else "Removed \"${file.name}\" from Favorites",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            },
+                            onProperties = { propertiesTarget = file; showMenuFor = null },
                         )
                     }
                 }
             } else
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                // ".." as the first row of every listing below the floor — the Android file-manager
+                // convention (issue #476); hidden at the root and while a search filter is active.
+                if (searchQuery.isBlank() && currentDir != currentRoot) {
+                    item(key = "..") { ParentFolderRow(compact = compactRows, onTap = { goUp() }) }
+                }
                 if (entries.isEmpty()) {
                     item {
                         Box(
@@ -1462,11 +1704,16 @@ fun FileManagerScreen(
                             selectionMode = selectionMode,
                             selected = file.absolutePath in selectedPaths,
                             onLongPress = {
-                                // Long-press is the only entry point into selection mode, matching
-                                // how every Android file manager behaves.
+                                // In selection mode a long-press toggles; otherwise it opens the
+                                // per-item context menu (matching the grid tiles).
                                 if (!pickMode) {
-                                    selectionMode = true
-                                    selectedPaths = selectedPaths + file.absolutePath
+                                    if (selectionMode) {
+                                        selectedPaths = if (file.absolutePath in selectedPaths)
+                                            selectedPaths - file.absolutePath
+                                        else selectedPaths + file.absolutePath
+                                    } else {
+                                        showMenuFor = file
+                                    }
                                 }
                             },
                             onToggleSelect = {
@@ -1487,37 +1734,19 @@ fun FileManagerScreen(
                             onMenu = { showMenuFor = file },
                             menuExpanded = showMenuFor == file,
                             onDismissMenu = { showMenuFor = null },
+                            onSelect = {
+                                selectionMode = true
+                                selectedPaths = selectedPaths + file.absolutePath
+                                showMenuFor = null
+                            },
                             onRun = { runFile(file) },
                             onAddToShortcuts = { addToShortcuts(file) },
                             onCopy = { clipboardFiles = listOf(file); isCutOperation = false; showMenuFor = null },
                             onCut = { clipboardFiles = listOf(file); isCutOperation = true; showMenuFor = null },
                             onDelete = { selectedEntry = file; showMenuFor = null },
                             onRename = { renameTarget = file; showMenuFor = null },
-                            onFastExtract = {
-                                showMenuFor = null
-                                scope.launch {
-                                    when (val o = com.winlator.star.core.unpack.FastExtract.start(context, file)) {
-                                        is com.winlator.star.core.unpack.FastExtract.Outcome.Started ->
-                                            Toast.makeText(context, "Unpacking ${o.name}…", Toast.LENGTH_SHORT).show()
-                                        com.winlator.star.core.unpack.FastExtract.Outcome.Busy ->
-                                            Toast.makeText(context, "Another unpack is already in progress", Toast.LENGTH_SHORT).show()
-                                        is com.winlator.star.core.unpack.FastExtract.Outcome.NotArchive ->
-                                            Toast.makeText(context, "Not a recognized archive — nothing to unpack", Toast.LENGTH_SHORT).show()
-                                        is com.winlator.star.core.unpack.FastExtract.Outcome.OpenScreen -> {
-                                            o.toast?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
-                                            context.startActivity(
-                                                com.winlator.star.UnpackArchiveActivity.intent(context, o.archivePath)
-                                            )
-                                        }
-                                    }
-                                }
-                            },
-                            onUnpack = {
-                                showMenuFor = null
-                                context.startActivity(
-                                    com.winlator.star.UnpackArchiveActivity.intent(context, file.absolutePath)
-                                )
-                            },
+                            onFastExtract = { launchFastExtract(file) },
+                            onUnpack = { launchUnpack(file) },
                             isFavorite = isFav,
                             onToggleFavorite = {
                                 val nowFav = FavoritesStore.toggle(context, file.absolutePath)
@@ -1530,6 +1759,7 @@ fun FileManagerScreen(
                                     Toast.LENGTH_SHORT,
                                 ).show()
                             },
+                            onProperties = { propertiesTarget = file; showMenuFor = null },
                         )
                     }
                 }
@@ -1550,6 +1780,130 @@ fun FileManagerScreen(
     }
 }
 
+// The context-menu item list shared by the list rows (FileItemRow) and the grid tiles
+// (FileGridTile), so both open the identical menu. Gating (isDir/canRun/isInno/looksLikeArchive) is
+// recomputed from [file] here — one source of truth for what each item shows. Every item dismisses
+// the menu first, then runs its action.
+@Composable
+private fun FileContextMenuItems(
+    file: File,
+    isFavorite: Boolean,
+    onSelect: () -> Unit,
+    onRun: () -> Unit,
+    onAddToShortcuts: () -> Unit,
+    onUnpack: () -> Unit,
+    onFastExtract: () -> Unit,
+    onRename: () -> Unit,
+    onCopy: () -> Unit,
+    onCut: () -> Unit,
+    onDelete: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onProperties: () -> Unit,
+    onDismissMenu: () -> Unit,
+) {
+    val isDir = file.isDirectory
+    val canRun = isDir || file.name.lowercase().let { it.endsWith(".exe") || it.endsWith(".bat") || it.endsWith(".msi") || it.endsWith(".sh") }
+    // Enter multi-select on this item (replaces the old long-press-only entry point).
+    DropdownMenuItem(
+        text = { Text("Select") },
+        leadingIcon = { Icon(Icons.Filled.Checklist, null, tint = MaterialTheme.colorScheme.primary) },
+        onClick = { onDismissMenu(); onSelect() },
+    )
+    MenuItemDivider()
+    // Properties: basic info + Read-only / Hidden toggles, for ANY file or folder (handy for config
+    // files like .txt/.cfg/.ini). Kept near the top since it's a common reason to open this menu.
+    DropdownMenuItem(
+        text = { Text("Properties") },
+        leadingIcon = { Icon(Icons.Filled.Info, null, tint = MaterialTheme.colorScheme.primary) },
+        onClick = { onDismissMenu(); onProperties() },
+    )
+    MenuItemDivider()
+    // Favorites are directories — only folders get the pin toggle.
+    if (isDir) {
+        DropdownMenuItem(
+            text = { Text(if (isFavorite) "Remove from Favorites" else "Add to Favorites") },
+            leadingIcon = {
+                Icon(
+                    if (isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
+                    null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            },
+            onClick = { onToggleFavorite() },
+        )
+        MenuItemDivider()
+    }
+    if (canRun) {
+        DropdownMenuItem(
+            text = { Text("Run") },
+            leadingIcon = { Icon(Icons.Filled.PlayArrow, null, tint = MaterialTheme.colorScheme.primary) },
+            onClick = { onDismissMenu(); onRun() },
+        )
+        MenuItemDivider()
+    }
+    // Only real PE executables can become a permanent Games tile — this reuses the
+    // same importer the Games-tab "+" button uses (Exec=wine <path>), which is only
+    // correct for .exe, so we don't offer it for .bat/.sh/.msi.
+    if (!isDir && file.name.lowercase().endsWith(".exe")) {
+        DropdownMenuItem(
+            text = { Text("Add to Shortcuts") },
+            leadingIcon = { Icon(Icons.Filled.Add, null, tint = MaterialTheme.colorScheme.primary) },
+            onClick = { onDismissMenu(); onAddToShortcuts() },
+        )
+        MenuItemDivider()
+    }
+    // The SINGLE extraction action: the bundled 7-Zip engine handles a strict superset
+    // of everything the old in-app extractor did (zip, 7z, tar, gzip, bzip2, xz, zstd)
+    // PLUS disc images (ISO/UDF), RAR, cab, wim, split volumes and 80 GB+ single files.
+    // For an InnoSetup repack (Setup.exe + Setup-*.bin) it becomes "Unpack / Install…",
+    // where the screen decides between 7-Zip payload extraction and running Setup.exe in
+    // a container (FreeArc repacks). The screen also content-sniffs (`7zz l`) so a file
+    // is judged by content, not extension.
+    val isInno = com.winlator.star.core.unpack.SevenZip.isInnoSetup(file)
+    // Content-aware: extension OR a cheap magic-byte sniff, so a .wcp/.bin/renamed
+    // archive with an unlisted extension still gets the option (menu opens per row,
+    // so this reads only a few header bytes on demand — never `7zz l` per entry).
+    if (isInno || com.winlator.star.core.unpack.SevenZip.looksLikeArchive(file)) {
+        DropdownMenuItem(
+            text = { Text(if (isInno) "Unpack / Install…" else "Unpack Archive…") },
+            leadingIcon = { Icon(Icons.Filled.Unarchive, null, tint = MaterialTheme.colorScheme.primary) },
+            onClick = { onDismissMenu(); onUnpack() },
+        )
+        MenuItemDivider()
+        // Convenience: one tap, no screen — pre-fill defaults (new sibling folder, Auto
+        // power) and start straight into the progress pill. Same engines/throughput.
+        DropdownMenuItem(
+            text = { Text("Fast Extract") },
+            leadingIcon = { Icon(Icons.Filled.Bolt, null, tint = MaterialTheme.colorScheme.primary) },
+            onClick = { onDismissMenu(); onFastExtract() },
+        )
+        MenuItemDivider()
+    }
+    DropdownMenuItem(
+        text = { Text("Rename") },
+        leadingIcon = { Icon(Icons.Filled.Edit, null, tint = MaterialTheme.colorScheme.primary) },
+        onClick = { onDismissMenu(); onRename() },
+    )
+    MenuItemDivider()
+    DropdownMenuItem(
+        text = { Text("Copy") },
+        leadingIcon = { Icon(Icons.Filled.FileCopy, null, tint = MaterialTheme.colorScheme.primary) },
+        onClick = { onDismissMenu(); onCopy() },
+    )
+    MenuItemDivider()
+    DropdownMenuItem(
+        text = { Text("Cut") },
+        leadingIcon = { Icon(Icons.Filled.ContentCut, null, tint = MaterialTheme.colorScheme.primary) },
+        onClick = { onDismissMenu(); onCut() },
+    )
+    MenuItemDivider()
+    DropdownMenuItem(
+        text = { Text("Delete") },
+        leadingIcon = { Icon(Icons.Filled.Delete, null, tint = MaterialTheme.colorScheme.primary) },
+        onClick = { onDismissMenu(); onDelete() },
+    )
+}
+
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
 private fun FileItemRow(
@@ -1564,6 +1918,7 @@ private fun FileItemRow(
     onMenu: () -> Unit,
     menuExpanded: Boolean,
     onDismissMenu: () -> Unit,
+    onSelect: () -> Unit = {},
     onRun: () -> Unit,
     onAddToShortcuts: () -> Unit,
     onCopy: () -> Unit,
@@ -1574,10 +1929,10 @@ private fun FileItemRow(
     onFastExtract: () -> Unit = {},
     isFavorite: Boolean = false,
     onToggleFavorite: () -> Unit = {},
+    onProperties: () -> Unit = {},
 ) {
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
     val isDir = file.isDirectory
-    val canRun = isDir || file.name.lowercase().let { it.endsWith(".exe") || it.endsWith(".bat") || it.endsWith(".msi") || it.endsWith(".sh") }
     val isExe = !isDir && file.name.lowercase().let { it.endsWith(".exe") || it.endsWith(".bat") || it.endsWith(".msi") || it.endsWith(".sh") }
     // Image files show a real thumbnail instead of the generic file icon (handy when picking a
     // wallpaper/icon). Coil sizes the decode to the 36dp slot and caches it, so scrolling stays smooth.
@@ -1685,89 +2040,21 @@ private fun FileItemRow(
                     onDismissRequest = onDismissMenu,
                     modifier = Modifier.outlinedMenuCard(),
                 ) {
-                    // Favorites are directories — only folders get the pin toggle.
-                    if (isDir) {
-                        DropdownMenuItem(
-                            text = { Text(if (isFavorite) "Remove from Favorites" else "Add to Favorites") },
-                            leadingIcon = {
-                                Icon(
-                                    if (isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder,
-                                    null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            },
-                            onClick = { onToggleFavorite() },
-                        )
-                        MenuItemDivider()
-                    }
-                    if (canRun) {
-                        DropdownMenuItem(
-                            text = { Text("Run") },
-                            leadingIcon = { Icon(Icons.Filled.PlayArrow, null, tint = MaterialTheme.colorScheme.primary) },
-                            onClick = { onDismissMenu(); onRun() },
-                        )
-                        MenuItemDivider()
-                    }
-                    // Only real PE executables can become a permanent Games tile — this reuses the
-                    // same importer the Games-tab "+" button uses (Exec=wine <path>), which is only
-                    // correct for .exe, so we don't offer it for .bat/.sh/.msi.
-                    if (!isDir && file.name.lowercase().endsWith(".exe")) {
-                        DropdownMenuItem(
-                            text = { Text("Add to Shortcuts") },
-                            leadingIcon = { Icon(Icons.Filled.Add, null, tint = MaterialTheme.colorScheme.primary) },
-                            onClick = { onDismissMenu(); onAddToShortcuts() },
-                        )
-                        MenuItemDivider()
-                    }
-                    // The SINGLE extraction action: the bundled 7-Zip engine handles a strict superset
-                    // of everything the old in-app extractor did (zip, 7z, tar, gzip, bzip2, xz, zstd)
-                    // PLUS disc images (ISO/UDF), RAR, cab, wim, split volumes and 80 GB+ single files.
-                    // For an InnoSetup repack (Setup.exe + Setup-*.bin) it becomes "Unpack / Install…",
-                    // where the screen decides between 7-Zip payload extraction and running Setup.exe in
-                    // a container (FreeArc repacks). The screen also content-sniffs (`7zz l`) so a file
-                    // is judged by content, not extension.
-                    val isInno = com.winlator.star.core.unpack.SevenZip.isInnoSetup(file)
-                    // Content-aware: extension OR a cheap magic-byte sniff, so a .wcp/.bin/renamed
-                    // archive with an unlisted extension still gets the option (menu opens per row,
-                    // so this reads only a few header bytes on demand — never `7zz l` per entry).
-                    if (isInno || com.winlator.star.core.unpack.SevenZip.looksLikeArchive(file)) {
-                        DropdownMenuItem(
-                            text = { Text(if (isInno) "Unpack / Install…" else "Unpack Archive…") },
-                            leadingIcon = { Icon(Icons.Filled.Unarchive, null, tint = MaterialTheme.colorScheme.primary) },
-                            onClick = { onDismissMenu(); onUnpack() },
-                        )
-                        MenuItemDivider()
-                        // Convenience: one tap, no screen — pre-fill defaults (new sibling folder, Auto
-                        // power) and start straight into the progress pill. Same engines/throughput.
-                        DropdownMenuItem(
-                            text = { Text("Fast Extract") },
-                            leadingIcon = { Icon(Icons.Filled.Bolt, null, tint = MaterialTheme.colorScheme.primary) },
-                            onClick = { onDismissMenu(); onFastExtract() },
-                        )
-                        MenuItemDivider()
-                    }
-                    DropdownMenuItem(
-                        text = { Text("Rename") },
-                        leadingIcon = { Icon(Icons.Filled.Edit, null, tint = MaterialTheme.colorScheme.primary) },
-                        onClick = { onDismissMenu(); onRename() },
-                    )
-                    MenuItemDivider()
-                    DropdownMenuItem(
-                        text = { Text("Copy") },
-                        leadingIcon = { Icon(Icons.Filled.FileCopy, null, tint = MaterialTheme.colorScheme.primary) },
-                        onClick = { onDismissMenu(); onCopy() },
-                    )
-                    MenuItemDivider()
-                    DropdownMenuItem(
-                        text = { Text("Cut") },
-                        leadingIcon = { Icon(Icons.Filled.ContentCut, null, tint = MaterialTheme.colorScheme.primary) },
-                        onClick = { onDismissMenu(); onCut() },
-                    )
-                    MenuItemDivider()
-                    DropdownMenuItem(
-                        text = { Text("Delete") },
-                        leadingIcon = { Icon(Icons.Filled.Delete, null, tint = MaterialTheme.colorScheme.primary) },
-                        onClick = { onDismissMenu(); onDelete() },
+                    FileContextMenuItems(
+                        file = file,
+                        isFavorite = isFavorite,
+                        onSelect = onSelect,
+                        onRun = onRun,
+                        onAddToShortcuts = onAddToShortcuts,
+                        onUnpack = onUnpack,
+                        onFastExtract = onFastExtract,
+                        onRename = onRename,
+                        onCopy = onCopy,
+                        onCut = onCut,
+                        onDelete = onDelete,
+                        onToggleFavorite = onToggleFavorite,
+                        onProperties = onProperties,
+                        onDismissMenu = onDismissMenu,
                     )
                 }
             }
@@ -1977,6 +2264,20 @@ private fun FileGridTile(
     onToggleSelect: () -> Unit,
     onTap: () -> Unit,
     onMenu: () -> Unit,
+    menuExpanded: Boolean = false,
+    onDismissMenu: () -> Unit = {},
+    isFavorite: Boolean = false,
+    onSelect: () -> Unit = {},
+    onRun: () -> Unit = {},
+    onAddToShortcuts: () -> Unit = {},
+    onUnpack: () -> Unit = {},
+    onFastExtract: () -> Unit = {},
+    onRename: () -> Unit = {},
+    onCopy: () -> Unit = {},
+    onCut: () -> Unit = {},
+    onDelete: () -> Unit = {},
+    onToggleFavorite: () -> Unit = {},
+    onProperties: () -> Unit = {},
 ) {
     val isDir = file.isDirectory
     val isImage = !isDir && file.extension.lowercase() in IMAGE_THUMB_EXTS
@@ -1987,66 +2288,301 @@ private fun FileGridTile(
             if (bmp != null) exeIcon = bmp.asImageBitmap()
         }
     }
-    Card(
-        modifier = Modifier
-            .padding(4.dp)
-            .combinedClickable(
-                onClick = { if (selectionMode) onToggleSelect() else onTap() },
-                onLongClick = onLongPress,
+    // The tile has no ⋮ button — long-press opens this menu, anchored to the Box around the Card.
+    Box {
+        Card(
+            modifier = Modifier
+                .padding(4.dp)
+                .combinedClickable(
+                    onClick = { if (selectionMode) onToggleSelect() else onTap() },
+                    onLongClick = onLongPress,
+                ),
+            shape = RoundedCornerShape(10.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                else MaterialTheme.colorScheme.surfaceContainer,
             ),
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-            else MaterialTheme.colorScheme.surfaceContainer,
-        ),
-        border = BorderStroke(
-            1.dp,
-            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-        ),
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            border = BorderStroke(
+                1.dp,
+                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+            ),
         ) {
-            Box(modifier = Modifier.size(56.dp), contentAlignment = Alignment.Center) {
-                when {
-                    exeIcon != null -> Image(bitmap = exeIcon!!, contentDescription = null, modifier = Modifier.size(48.dp))
-                    isDir -> Icon(
-                        Icons.Filled.Folder, null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(48.dp),
-                    )
-                    isImage -> AsyncImage(
-                        model = file,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        placeholder = rememberVectorPainter(Icons.Filled.InsertDriveFile),
-                        error = rememberVectorPainter(Icons.Filled.InsertDriveFile),
-                        modifier = Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)),
-                    )
-                    else -> Icon(
-                        Icons.Filled.InsertDriveFile, null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(44.dp),
-                    )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
+            ) {
+                Box(modifier = Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+                    when {
+                        exeIcon != null -> Image(bitmap = exeIcon!!, contentDescription = null, modifier = Modifier.size(48.dp))
+                        isDir -> Icon(
+                            Icons.Filled.Folder, null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(48.dp),
+                        )
+                        isImage -> AsyncImage(
+                            model = file,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            placeholder = rememberVectorPainter(Icons.Filled.InsertDriveFile),
+                            error = rememberVectorPainter(Icons.Filled.InsertDriveFile),
+                            modifier = Modifier.size(56.dp).clip(RoundedCornerShape(6.dp)),
+                        )
+                        else -> Icon(
+                            Icons.Filled.InsertDriveFile, null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(44.dp),
+                        )
+                    }
+                    if (selectionMode) {
+                        androidx.compose.material3.Checkbox(
+                            checked = selected,
+                            onCheckedChange = { onToggleSelect() },
+                            modifier = Modifier.align(Alignment.TopStart),
+                        )
+                    }
                 }
-                if (selectionMode) {
-                    androidx.compose.material3.Checkbox(
-                        checked = selected,
-                        onCheckedChange = { onToggleSelect() },
-                        modifier = Modifier.align(Alignment.TopStart),
-                    )
-                }
+                Spacer(Modifier.height(4.dp))
+                // Always reserve two lines (issue #475): a one-line name used to make its card shorter than
+                // its neighbours, so grid rows had ragged heights. Fixed min/max keeps every tile the same size.
+                Text(
+                    file.name,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 11.sp,
+                    minLines = 2,
+                    maxLines = 2,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                file.name,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 11.sp,
-                maxLines = 2,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                overflow = TextOverflow.Ellipsis,
+        }
+        DropdownMenu(
+            expanded = menuExpanded,
+            onDismissRequest = onDismissMenu,
+            modifier = Modifier.outlinedMenuCard(),
+        ) {
+            FileContextMenuItems(
+                file = file,
+                isFavorite = isFavorite,
+                onSelect = onSelect,
+                onRun = onRun,
+                onAddToShortcuts = onAddToShortcuts,
+                onUnpack = onUnpack,
+                onFastExtract = onFastExtract,
+                onRename = onRename,
+                onCopy = onCopy,
+                onCut = onCut,
+                onDelete = onDelete,
+                onToggleFavorite = onToggleFavorite,
+                onProperties = onProperties,
+                onDismissMenu = onDismissMenu,
             )
         }
+    }
+}
+
+/**
+ * Properties sheet for a single file or folder: basic info plus the two Windows/Wine file attributes
+ * the in-container file manager (wfm.exe) also exposes — Read-only and Hidden. Each toggle applies
+ * immediately (off the main thread) and refreshes the listing via [onChanged].
+ *
+ * State is keyed on the file so it always reflects the entry it was opened for. On a filesystem that
+ * can't store Wine's DOSATTRIB xattr (the FUSE /storage volumes) only the Hidden toggle is disabled;
+ * Read-only keeps working everywhere.
+ */
+@Composable
+private fun FilePropertiesDialog(
+    file: File,
+    onDismiss: () -> Unit,
+    onChanged: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()) }
+    var attrs by remember(file.absolutePath) { mutableStateOf<FileAttrState?>(null) }
+    // Guards against a second toggle landing while the first is still being applied off-thread.
+    var busy by remember(file.absolutePath) { mutableStateOf(false) }
+    LaunchedEffect(file.absolutePath) {
+        attrs = withContext(Dispatchers.IO) { readFileAttrs(file) }
+    }
+
+    OutlinedAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Properties") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                // ── Basic info ──
+                Text(
+                    text = file.name,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(6.dp))
+                PropertyLine("Location", file.parent ?: "—")
+                PropertyLine(
+                    "Type",
+                    if (file.isDirectory) "Folder"
+                    else file.extension.uppercase().let { if (it.isBlank()) "File" else "$it file" },
+                )
+                if (!file.isDirectory) PropertyLine("Size", StringUtils.formatBytes(file.length()))
+                PropertyLine("Modified", dateFormat.format(Date(file.lastModified())))
+
+                Spacer(Modifier.height(10.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                Spacer(Modifier.height(6.dp))
+
+                val state = attrs
+                // ── Read-only ── checked when the owner can't write (Wine's FILE_ATTRIBUTE_READONLY).
+                AttributeToggleRow(
+                    label = "Read-only",
+                    description = "Stops games (and Wine) from overwriting or deleting this file.",
+                    checked = state?.readOnly == true,
+                    enabled = state != null && !busy,
+                    onToggle = { want ->
+                        busy = true
+                        scope.launch {
+                            val ok = withContext(Dispatchers.IO) { setReadOnly(file, want) }
+                            busy = false
+                            if (ok) {
+                                attrs = attrs?.copy(readOnly = want)
+                                onChanged()
+                            } else {
+                                Toast.makeText(context, "Couldn't change Read-only", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                )
+                Spacer(Modifier.height(2.dp))
+                // ── Hidden ── Wine's DOS hidden bit in the user.DOSATTRIB xattr.
+                val hiddenSupported = state?.hiddenSupported == true
+                AttributeToggleRow(
+                    label = "Hidden",
+                    description = if (state != null && !hiddenSupported)
+                        "This storage can't store the hidden flag."
+                    else "Marks the file hidden in Windows (Wine's hidden attribute).",
+                    checked = state?.hidden == true,
+                    enabled = state != null && hiddenSupported && !busy,
+                    onToggle = { want ->
+                        busy = true
+                        scope.launch {
+                            val ok = withContext(Dispatchers.IO) { setHidden(file, want) }
+                            busy = false
+                            if (ok) {
+                                attrs = attrs?.copy(hidden = want)
+                                onChanged()
+                            } else {
+                                // The write failed after all — disable the toggle rather than lie.
+                                attrs = attrs?.copy(hiddenSupported = false)
+                                Toast.makeText(context, "Couldn't change Hidden on this storage", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
+}
+
+// One "label: value" line in the Properties info block.
+@Composable
+private fun PropertyLine(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Text(
+            text = label,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 12.sp,
+            modifier = Modifier.width(76.dp),
+        )
+        Text(
+            text = value,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 12.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+// A labelled attribute switch with a one-line description, used by the Properties sheet.
+@Composable
+private fun AttributeToggleRow(
+    label: String,
+    description: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                text = description,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.sp,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        androidx.compose.material3.Switch(
+            checked = checked,
+            enabled = enabled,
+            onCheckedChange = onToggle,
+        )
+    }
+}
+
+/** The ".." row: first entry of a listing, one folder up. Mirrors the list rows' height. */
+@Composable
+private fun ParentFolderRow(compact: Boolean, onTap: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onTap)
+            .padding(horizontal = 16.dp, vertical = if (compact) 6.dp else 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.ArrowUpward,
+            contentDescription = "Parent folder",
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(if (compact) 20.dp else 24.dp),
+        )
+        Spacer(Modifier.width(16.dp))
+        Column {
+            Text("..", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+            if (!compact) Text("Parent folder", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** Grid-mode counterpart of [ParentFolderRow]. */
+@Composable
+private fun ParentFolderTile(onTap: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .padding(4.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onTap)
+            .padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Icon(
+            Icons.Filled.ArrowUpward,
+            contentDescription = "Parent folder",
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(48.dp),
+        )
+        Text("..", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
     }
 }

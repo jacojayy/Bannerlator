@@ -55,14 +55,16 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.util.Collections
+import com.winlator.star.linux.LinuxShortcuts
 
 enum class ShortcutSortOrder { NAME_ASC, NAME_DESC, CONTAINER }
 
 /**
  * How the games library is laid out. GRID is the original adaptive grid; GRID_COMPACT fixes four
- * columns so more covers fit at once. Ordinals are persisted — append, never reorder.
+ * columns so more covers fit at once; XMB is the PS3-style cross media bar (games across, that
+ * game's options down). Ordinals are persisted — append, never reorder.
  */
-enum class ShortcutViewMode { LIST, GRID, GRID_COMPACT }
+enum class ShortcutViewMode { LIST, GRID, GRID_COMPACT, XMB }
 
 sealed class ImportResult {
     /** [appId] = the Steam appId identified on disk (if any), so the confirm dialog can seed
@@ -186,11 +188,14 @@ class ShortcutsViewModel(app: Application) : AndroidViewModel(app) {
 
     val shortcuts: kotlinx.coroutines.flow.Flow<List<Shortcut>> =
         combine(_shortcuts, _sortOrder) { list, order ->
-            when (order) {
+            val sorted = when (order) {
                 ShortcutSortOrder.NAME_ASC   -> list.sortedBy { it.name.lowercase() }
                 ShortcutSortOrder.NAME_DESC  -> list.sortedByDescending { it.name.lowercase() }
                 ShortcutSortOrder.CONTAINER  -> list.sortedBy { (it.container?.name ?: "").lowercase() }
             }
+            // The Steam entry is a launcher for everything else, not one game among many, so it
+            // stays at the front of every view and sort order rather than being hunted for.
+            sorted.sortedBy { if (LinuxShortcuts.isLinuxEntry(it)) 0 else 1 }
         }
 
     private val manager = ContainerManager(app)
@@ -346,29 +351,29 @@ class ShortcutsViewModel(app: Application) : AndroidViewModel(app) {
      * falls back to per-device rows.
      *
      * BOTH namespaces are read: for every canonical folder we query BannerHub (no ns) AND our own
-     * `winhub` repo in parallel; each folder in [extraWinHubFolders] is queried in the
-     * `winhub` namespace ONLY (the per-shortcut sheet passes the shortcut's own sanitized folder
+     * `bannerlator` repo in parallel; each folder in [extraBannerlatorFolders] is queried in the
+     * `bannerlator` namespace ONLY (the per-shortcut sheet passes the shortcut's own sanitized folder
      * so the user's OWN upload — which isn't in the canonical index yet — is still found). Every entry
-     * keeps its `appSource` so the UI can badge WinHub-shared configs.
+     * keeps its `appSource` so the UI can badge Bannerlator-shared configs.
      */
     fun fetchGameConfigs(
         game: CanonicalGame,
-        extraWinHubFolders: List<String> = emptyList(),
+        extraBannerlatorFolders: List<String> = emptyList(),
         onResult: (List<Pair<String, WorkerConfigEntry>>) -> Unit,
     ) {
         viewModelScope.launch {
             val merged = withContext(Dispatchers.IO) {
                 val keys = game.folders.ifEmpty { listOf(game.name) }.distinct()
-                val extras = extraWinHubFolders.filter { it.isNotBlank() }.distinct()
+                val extras = extraBannerlatorFolders.filter { it.isNotBlank() }.distinct()
                 // Per canonical folder: BannerHub (default) + our namespaced repo, both in parallel.
                 // Per extra folder: our namespaced repo only.
                 val jobs = ArrayList<kotlinx.coroutines.Deferred<Pair<String, List<WorkerConfigEntry>>>>()
                 for (key in keys) {
                     jobs.add(async { key to CommunityConfigWorker.list(key) })
-                    jobs.add(async { key to CommunityConfigWorker.list(key, "winhub") })
+                    jobs.add(async { key to CommunityConfigWorker.list(key, "bannerlator") })
                 }
                 for (key in extras) {
-                    jobs.add(async { key to CommunityConfigWorker.list(key, "winhub") })
+                    jobs.add(async { key to CommunityConfigWorker.list(key, "bannerlator") })
                 }
                 val perFolder = jobs.awaitAll()
                 val seen = HashSet<String>()
@@ -475,7 +480,7 @@ class ShortcutsViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * PHASE 3 (online sharing) — UPLOAD. Share [shortcut]'s effective config to OUR community repo
-     * (namespace {@code winhub}, never seen by BannerHub users). Builds the same artifact
+     * (namespace {@code bannerlator}, never seen by BannerHub users). Builds the same artifact
      * [exportShortcutConfig] does, then, off the main thread: base64s the JSON and POSTs it to the
      * worker's {@code /upload}. Records the result in [UploadedConfigsStore] (reinstall-proof) so a
      * later share can offer to replace it.
@@ -667,7 +672,7 @@ class ShortcutsViewModel(app: Application) : AndroidViewModel(app) {
      * PHASE 3 (online sharing) — MY UPLOADS. Read the user's own upload records from
      * [UploadedConfigsStore] (which hydrates from the durable manifest on a fresh install, so this list
      * survives a reinstall), then re-read each one's LIVE votes / downloads from the worker
-     * ({@code list(game, "winhub")}, matched by sha then filename). Missing on the server →
+     * ({@code list(game, "bannerlator")}, matched by sha then filename). Missing on the server →
      * {@code stillOnline = false}, stats 0 (it may have been deleted, or we're offline). All IO off the
      * main thread; delivered on the main thread.
      */
@@ -675,7 +680,7 @@ class ShortcutsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val rows = withContext(Dispatchers.IO) {
                 UploadedConfigsStore.all(getApplication()).map { rec ->
-                    val live = CommunityConfigWorker.list(rec.game, "winhub")
+                    val live = CommunityConfigWorker.list(rec.game, "bannerlator")
                     val match = live.firstOrNull { it.sha == rec.sha }
                         ?: live.firstOrNull { it.filename == rec.filename }
                     MyUploadRow(
@@ -948,7 +953,7 @@ class ShortcutsViewModel(app: Application) : AndroidViewModel(app) {
         prefs.edit().putInt("view_mode", mode.ordinal).apply()
     }
 
-    /** Cycles list → grid → compact grid → list, driven by the single header button. */
+    /** Cycles list → grid → compact grid → XMB → list, driven by the single header button. */
     fun cycleViewMode() {
         val next = ShortcutViewMode.entries[(_viewMode.value.ordinal + 1) % ShortcutViewMode.entries.size]
         setViewMode(next)
@@ -1149,7 +1154,10 @@ class ShortcutsViewModel(app: Application) : AndroidViewModel(app) {
         manager.reloadContainers()
         val raw = manager.loadShortcuts()
         // filter out corrupted entries (matches original Fragment logic)
-        _shortcuts.value = raw.filter { it != null && it.file != null && it.file.name.isNotEmpty() }
+        val kept = raw.filter { it != null && it.file != null && it.file.name.isNotEmpty() }
+        // Entries written before the Steam tile existed have no art; give them one on the way in.
+        kept.forEach { LinuxShortcuts.ensureArt(getApplication(), it) }
+        _shortcuts.value = kept
     }
 
     /** Replaces a shortcut in the live list, optionally applying a specific icon. */

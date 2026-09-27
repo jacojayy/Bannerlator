@@ -85,6 +85,7 @@ fun UnpackProgressPill(modifier: Modifier = Modifier) {
                         else buildString {
                             append("${state.percent}%")
                             if (state.speedBps > 0) append("  •  ${StringUtils.formatBytes(state.speedBps)}/s")
+                            if (state.etaSeconds >= 0) append("  •  ETA ${StringUtils.humanDuration(state.etaSeconds * 1000)}")
                         },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp,

@@ -36,6 +36,9 @@ class UnpackService : Service() {
         const val ACTION_START = "com.winlator.star.unpack.START"
         const val ACTION_CANCEL = "com.winlator.star.unpack.CANCEL"
         const val EXTRA_ARCHIVE = "archive"
+        // GOG DLC batch: several InnoSetup installers (base + DLC setups) extracted back-to-back into
+        // one destination. When present it supersedes EXTRA_ARCHIVE; element 0 is the primary/base.
+        const val EXTRA_ARCHIVES = "archives"
         const val EXTRA_DEST = "dest"
         const val EXTRA_MMT = "mmt"
         const val EXTRA_BUFFER = "buffer"
@@ -63,6 +66,27 @@ class UnpackService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) app.startForegroundService(i) else app.startService(i)
         }
 
+        /**
+         * Extract several InnoSetup installers ([archives], base game first, then DLC setups) one after
+         * another into the SAME [dest] — the GOG DLC auto-batch. [totalSize] is the combined `.bin`
+         * payload of the whole folder so the one progress bar climbs across the entire batch.
+         */
+        fun startBatch(ctx: Context, archives: List<String>, dest: String, totalSize: Long) {
+            val app = ctx.applicationContext
+            val i = Intent(app, UnpackService::class.java).apply {
+                action = ACTION_START
+                putStringArrayListExtra(EXTRA_ARCHIVES, ArrayList(archives))
+                putExtra(EXTRA_ARCHIVE, archives.firstOrNull() ?: "")
+                putExtra(EXTRA_DEST, dest)
+                putExtra(EXTRA_MMT, 1)
+                putExtra(EXTRA_BUFFER, ReadBuffer.MB1.bytes)
+                putExtra(EXTRA_IS_INNO, true)
+                putExtra(EXTRA_TOTAL_SIZE, totalSize)
+                putExtra(EXTRA_ENGINE, "inno")
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) app.startForegroundService(i) else app.startService(i)
+        }
+
         fun cancel(ctx: Context) {
             val app = ctx.applicationContext
             app.startService(Intent(app, UnpackService::class.java).apply { action = ACTION_CANCEL })
@@ -84,7 +108,7 @@ class UnpackService : Service() {
     private fun acquireWakeLock() {
         if (wakeLock?.isHeld == true) return
         val pm = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "winhub:unpack").apply {
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "bannerlator:unpack").apply {
             setReferenceCounted(false)
             acquire()
         }
@@ -120,25 +144,33 @@ class UnpackService : Service() {
                 val isInno = intent.getBooleanExtra(EXTRA_IS_INNO, false)
                 val totalSize = intent.getLongExtra(EXTRA_TOTAL_SIZE, 0L)
                 val engine = intent.getStringExtra(EXTRA_ENGINE) ?: "7z"
-                if (archive == null || dest == null) { stopNow(); return START_NOT_STICKY }
+                // A GOG DLC batch arrives as EXTRA_ARCHIVES (base first); a normal job as EXTRA_ARCHIVE.
+                val archives = intent.getStringArrayListExtra(EXTRA_ARCHIVES)
+                    ?.map { File(it) }?.takeIf { it.isNotEmpty() }
+                    ?: listOfNotNull(archive?.let { File(it) })
+                if (archives.isEmpty() || dest == null) { stopNow(); return START_NOT_STICKY }
                 // Refuse a second concurrent job — one at a time, like the DownloadCoordinator.
                 if (UnpackManager.current.isRunning) {
                     Log.w(TAG, "Unpack already running; ignoring start")
                     return START_NOT_STICKY
                 }
                 startForegroundCompat(buildNotification(UnpackManager.current.copy(
-                    phase = UnpackPhase.LISTING, archiveName = File(archive).name,
+                    phase = UnpackPhase.LISTING, archiveName = archives.first().name,
                 )))
-                runExtraction(File(archive), File(dest), mmt, buffer, isInno, totalSize, engine)
+                runExtraction(archives, File(dest), mmt, buffer, isInno, totalSize, engine)
                 return START_STICKY
             }
         }
         return START_NOT_STICKY
     }
 
-    private fun runExtraction(archive: File, destDir: File, mmt: Int, buffer: Int, isInno: Boolean, totalSize: Long, engine: String) {
+    private fun runExtraction(archives: List<File>, destDir: File, mmt: Int, buffer: Int, isInno: Boolean, totalSize: Long, engine: String) {
         cancelled = false
         val ctx = applicationContext
+        // The primary (base-game) installer drives the state's name/path; the rest are DLC siblings
+        // extracted into the same destDir after it (inno batch only).
+        val archive = archives.first()
+        val batchTotal = if (isInno) archives.size else 1
         // Speed/ETA and the reported size track the DATA the engine reads. For an InnoSetup installer
         // that is the Setup-*.bin payload total (passed in), not the small Setup.exe.
         val dataSize = if (totalSize > 0) totalSize else archive.length()
@@ -156,6 +188,7 @@ class UnpackService : Service() {
                     archiveSize = dataSize,
                     isInno = isInno,
                     engine = engine,
+                    batchTotal = batchTotal,
                 )
             )
             refresh()
@@ -248,15 +281,77 @@ class UnpackService : Service() {
                     if (r.exitCode == 0) files = runCatching { destDir.walkTopDown().count { it.isFile } }.getOrDefault(files)
                     SevenZip.Result(if (r.exitCode == 0) 0 else 2, r.stderrTail)
                 } else if (isInno) {
-                    val r = Innoextract.extract(
-                        ctx, archive, destDir,
-                        listener = { percent -> pushProgress(percent, null) },
-                        onProcess = { proc = it },
-                    )
+                    // innoextract's --progress percent is unreliable for GOG multi-part installers: it
+                    // sawtooths ~0-9 (per-chunk, not overall) instead of climbing 0-100, which made the
+                    // bar look deceiving. Drive progress the same way as the FreeArc path — POLL the
+                    // destination size against the payload total. innoextract still does the extraction;
+                    // we just ignore its percent for the bar.
+                    val innoTotal = dataSize.coerceAtLeast(1L)
+                    val polling = java.util.concurrent.atomic.AtomicBoolean(true)
+                    val poller = Thread {
+                        var pLastB = 0L; var pLastT = SystemClock.elapsedRealtime(); var pEma = 0L
+                        while (polling.get()) {
+                            runCatching { Thread.sleep(2500) }
+                            val (count, bytes) = runCatching {
+                                var c = 0; var b = 0L
+                                destDir.walkTopDown().forEach { if (it.isFile) { c++; b += it.length() } }
+                                c to b
+                            }.getOrDefault(0 to 0L)
+                            val now = SystemClock.elapsedRealtime()
+                            val dt = (now - pLastT).coerceAtLeast(1)
+                            val inst = ((bytes - pLastB) * 1000 / dt).coerceAtLeast(0)
+                            pEma = if (pEma == 0L) inst else (pEma * 2 + inst) / 3
+                            pLastB = bytes; pLastT = now
+                            val pct = (bytes * 100 / innoTotal).toInt().coerceIn(0, 100)
+                            val eta = if (pEma > 0) (innoTotal - bytes) / pEma else -1L
+                            files = count
+                            UnpackManager.update {
+                                it.copy(
+                                    phase = UnpackPhase.EXTRACTING, percent = pct,
+                                    bytesProcessed = bytes, speedBps = pEma, etaSeconds = eta,
+                                    elapsedMs = now - startMs, filesExtracted = count,
+                                )
+                            }
+                            refresh()
+                        }
+                    }.also { it.name = "inno-poller"; it.start() }
+                    // Run each installer — base game first, then any auto-detected DLC setups — into the
+                    // SAME destDir so the DLC files overlay the base install. The single poller above
+                    // spans the whole batch because it measures cumulative dest size, not per-installer.
+                    var primaryExit = 0
+                    var stderrTail = ""
+                    var dlcFailed = 0
+                    for ((idx, installer) in archives.withIndex()) {
+                        if (cancelled) break
+                        UnpackManager.update {
+                            it.copy(
+                                batchIndex = idx + 1,
+                                currentFile = if (batchTotal > 1) "Installer ${idx + 1}/$batchTotal — ${installer.name}" else it.currentFile,
+                            )
+                        }
+                        refresh()
+                        val r = Innoextract.extract(
+                            ctx, installer, destDir,
+                            listener = { /* innoextract percent ignored — poller above drives the bar */ },
+                            onProcess = { proc = it },
+                        )
+                        if (r.exitCode != 0) {
+                            stderrTail = r.stderrTail
+                            // The base game (idx 0) failing is fatal; a DLC failing is soft — the game is
+                            // still usable, so record it and carry on to the next sibling.
+                            if (idx == 0) { primaryExit = r.exitCode; break }
+                            dlcFailed++
+                            UnpackManager.update { it.copy(batchFailed = dlcFailed) }
+                            refresh()
+                        }
+                    }
+                    polling.set(false)
+                    runCatching { poller.join(3000) }
                     // innoextract has no per-file callback; count the extracted files for the summary.
-                    if (r.exitCode == 0) files = runCatching { destDir.walk().count { it.isFile } }.getOrDefault(0)
-                    // innoextract uses 0=ok; map any non-zero to an error code (2) for the terminal logic.
-                    SevenZip.Result(if (r.exitCode == 0) 0 else 2, r.stderrTail)
+                    if (primaryExit == 0) files = runCatching { destDir.walk().count { it.isFile } }.getOrDefault(files)
+                    // innoextract uses 0=ok; map a non-zero BASE exit to an error code (2) for the terminal
+                    // logic. Failed DLC siblings don't fail the job — they surface as batchFailed instead.
+                    SevenZip.Result(if (primaryExit == 0) 0 else 2, stderrTail)
                 } else {
                     SevenZip.extract(
                         ctx, archive, destDir, mmt, buffer,
@@ -386,8 +481,16 @@ class UnpackService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val (title, text) = when (s.phase) {
-            UnpackPhase.DONE -> "Unpacked ${s.archiveName}" to
-                "${s.filesExtracted} files • ${StringUtils.formatBytes(s.archiveSize)} in ${formatDuration(s.elapsedMs)}"
+            UnpackPhase.DONE -> {
+                // For a GOG DLC batch, say how many installers landed (and flag any DLC that failed).
+                val dlcCount = (s.batchTotal - 1).coerceAtLeast(0)
+                val doneTitle = if (dlcCount > 0) "Unpacked ${s.archiveName} + $dlcCount DLC" else "Unpacked ${s.archiveName}"
+                val doneText = buildString {
+                    append("${s.filesExtracted} files • ${StringUtils.formatBytes(s.archiveSize)} in ${formatDuration(s.elapsedMs)}")
+                    if (s.batchFailed > 0) append(" • ${s.batchFailed} DLC skipped (couldn't be read)")
+                }
+                doneTitle to doneText
+            }
             UnpackPhase.CANCELLED -> "Unpack cancelled" to s.archiveName
             else -> "Unpack failed" to (s.errorTail?.lineSequence()?.lastOrNull { it.isNotBlank() } ?: s.archiveName)
         }

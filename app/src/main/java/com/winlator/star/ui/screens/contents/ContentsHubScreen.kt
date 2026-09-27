@@ -4,17 +4,21 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -85,10 +89,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -103,31 +109,40 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.winlator.star.R
 import com.winlator.star.contents.AdrenotoolsManager
+import com.winlator.star.contents.WaylandGameDriverManager
 import com.winlator.star.contents.ContentProfile
 import com.winlator.star.contents.ContentsManager
 import com.winlator.star.store.download.ContentDownloadPhase
 import com.winlator.star.store.download.ContentDownloadRegistry
 import com.winlator.star.store.download.ContentDownloadState
+import com.winlator.star.store.download.InstallProgressDialog
 import com.winlator.star.ui.screens.adrenodownload.DriverFeed
 import com.winlator.star.ui.screens.adrenodownload.DriverSourceStore
 import com.winlator.star.ui.screens.MenuItemDivider
+import com.winlator.star.ui.screens.OfficialSourceColor
 import com.winlator.star.ui.screens.OutlinedAlertDialog
+import com.winlator.star.ui.screens.SourceTagBadge
 import com.winlator.star.ui.screens.outlinedMenuCard
 import com.winlator.star.util.InAppFilePicker
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private val InstalledGreen = Color(0xFF37C26B)
 private val SavedBlue = Color(0xFF3D9BFF)
 
 private enum class HubTab(val label: String, val railLabel: String) {
     DOWNLOAD("Download Components", "Download"),
-    MY_FILES("My Files", "My Files"),
     INSTALLED("Installed", "Installed"),
+    MY_FILES("My Files", "My Files"),
+    LINUX("Linux Runtime", "Linux"),
 }
 
 private fun tabIcon(t: HubTab): ImageVector = when (t) {
     HubTab.DOWNLOAD -> Icons.Filled.Download
     HubTab.MY_FILES -> Icons.Filled.Folder
     HubTab.INSTALLED -> Icons.Filled.CheckCircle
+    HubTab.LINUX -> Icons.Filled.DeveloperBoard
 }
 
 @Composable
@@ -184,6 +199,46 @@ fun ContentsHubScreen(vm: ContentsHubViewModel = viewModel()) {
             }
         }
     }
+
+    // ── Shared install-progress popup ──────────────────────────────────────────────
+    // The SAME composable + SAME cancel path the container-create sheet uses. It picks up any active
+    // Contents install straight off the process-lifetime registry (keys are "contents::…" — see
+    // ContentsInstaller.keyFor), so a download OR a from-file install both surface a live popup —
+    // crucially the file-install path, which otherwise had no on-screen feedback at all.
+    //
+    // The popup holds its OWN snapshot rather than reading the registry live: while the registry entry
+    // exists we keep [shown] synced to it (live progress + the terminal flip); once the launcher's
+    // finally removes the entry (~2s after done) we KEEP the last snapshot so the finished popup — real
+    // name, type chip, description, "Version … • build N" — stays up until the user taps Done/Close.
+    val registry by ContentDownloadRegistry.states.collectAsState()
+    var shownKey by remember { mutableStateOf<String?>(null) }
+    var shown by remember { mutableStateOf<ContentDownloadState?>(null) }
+    LaunchedEffect(registry) {
+        val k = shownKey
+        if (k == null) {
+            // Attach to the next active Contents install once nothing is being shown.
+            registry.entries.firstOrNull { it.key.startsWith("contents::") && !it.value.terminal }?.let {
+                shownKey = it.key
+                shown = it.value
+            }
+        } else {
+            // Sync while the entry lives; after removal keep the last snapshot (don't null it out).
+            registry[k]?.let { shown = it }
+        }
+    }
+    shown?.let { st ->
+        InstallProgressDialog(
+            state = st,
+            onCancel = { ContentDownloadRegistry.requestCancel(st.key) },
+            onDismiss = {
+                // Explicit close: drop the registry entry (frees the host to attach to the next
+                // install) and clear the held snapshot.
+                ContentDownloadRegistry.remove(st.key)
+                shown = null
+                shownKey = null
+            },
+        )
+    }
 }
 
 @Composable
@@ -194,6 +249,7 @@ private fun HubTabContent(vm: ContentsHubViewModel, tab: HubTab, wide: Boolean) 
         HubTab.DOWNLOAD -> DownloadTab(vm, wide)
         HubTab.MY_FILES -> MyFilesTab(vm)
         HubTab.INSTALLED -> InstalledTab(vm)
+        HubTab.LINUX -> LinuxRuntimeTab()
     }
 }
 
@@ -368,8 +424,17 @@ private fun RepoCard(
             tint = cs.primary, modifier = Modifier.size(26.dp))
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(source.name, style = MaterialTheme.typography.titleSmall, color = cs.onSurface,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
+            // Name takes the slack and ellipsises; the Official tag is fixed-width so it never wraps
+            // the row, narrow or wide.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(source.name, style = MaterialTheme.typography.titleSmall, color = cs.onSurface,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f, fill = false))
+                if (source.isOfficial) {
+                    Spacer(Modifier.width(8.dp))
+                    SourceTagBadge("Official", OfficialSourceColor)
+                }
+            }
             Text(source.displayFormat, style = MaterialTheme.typography.bodySmall,
                 color = cs.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (pills.isNotEmpty()) {
@@ -433,8 +498,15 @@ private fun RepoDetail(vm: ContentsHubViewModel, showBack: Boolean) {
                 IconButton(onClick = { vm.selectSource(null) }) { Icon(Icons.Filled.ArrowBack, "Back", tint = cs.onSurface) }
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text(src.name, style = MaterialTheme.typography.titleMedium, color = cs.onSurface,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(src.name, style = MaterialTheme.typography.titleMedium, color = cs.onSurface,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f, fill = false))
+                    if (src.isOfficial) {
+                        Spacer(Modifier.width(8.dp))
+                        SourceTagBadge("Official", OfficialSourceColor)
+                    }
+                }
                 Text("${src.displayFormat} · ${items.size} ${if (src.driverOnly) "drivers" else "components"}",
                     style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
             }
@@ -494,6 +566,8 @@ private fun ComponentRow(vm: ContentsHubViewModel, item: ContentsHubViewModel.Ca
     val savedKeys by vm.savedKeys.collectAsState()
     val registry by ContentDownloadRegistry.states.collectAsState()
 
+    val baseDisplay by vm.baseDisplay.collectAsState()
+
     // recompute cheap booleans against the observed sets
     val installed = installedKeys.let { vm.isInstalled(item) }
     val saved = savedKeys.let { vm.isSaved(item) }
@@ -540,10 +614,11 @@ private fun ComponentRow(vm: ContentsHubViewModel, item: ContentsHubViewModel.Ca
 
         if (state != null) {
             Spacer(Modifier.height(10.dp))
+            // A save-only run shares the key with an install; only the wording differs.
             val label = when (state.phase) {
                 ContentDownloadPhase.DOWNLOADING -> "Downloading ${(state.fraction * 100).toInt()}%"
-                ContentDownloadPhase.INSTALLING -> "Installing"
-                ContentDownloadPhase.DONE -> "Installed"
+                ContentDownloadPhase.INSTALLING -> if (state.saveOnly) "Saving to My Files" else "Installing"
+                ContentDownloadPhase.DONE -> if (state.saveOnly) "Saved" else "Installed"
                 ContentDownloadPhase.ERROR -> state.error ?: "Failed"
             }
             if (!state.terminal) {
@@ -556,7 +631,10 @@ private fun ComponentRow(vm: ContentsHubViewModel, item: ContentsHubViewModel.Ca
         }
 
         Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+        // Install button takes the slack; the save-only action is a fixed-width square matched to the
+        // button's height (IntrinsicSize.Min), so the pair never wraps in portrait or landscape.
+        Row(horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
             if (installed) {
                 PrimaryButton("Installed", Icons.Filled.CheckCircle, enabled = false,
                     container = InstalledGreen.copy(alpha = 0.16f), content = InstalledGreen, modifier = Modifier.weight(1f)) {}
@@ -569,7 +647,41 @@ private fun ComponentRow(vm: ContentsHubViewModel, item: ContentsHubViewModel.Ca
                     ) { vm.refreshStatus(); vm.refreshFolders() }
                 }
             }
+            // "Save archive only": raw archive → My Files (Contents save location), nothing installed.
+            // Already saved → dimmed, tap explains, long-press re-downloads. Available on every row
+            // (installed ones too — the archive is still worth keeping) across all repos and drivers.
+            SaveArchiveAction(
+                saved = saved, enabled = !busy,
+                onClick = {
+                    if (saved) {
+                        Toast.makeText(context, "Already saved to $baseDisplay${item.type}/. Long-press to re-download.", Toast.LENGTH_SHORT).show()
+                    } else vm.saveArchive(item)
+                },
+                onLongClick = { vm.saveArchive(item, force = true) },
+            )
         }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SaveArchiveAction(saved: Boolean, enabled: Boolean, onClick: () -> Unit, onLongClick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(46.dp)
+            .border(1.dp, if (saved) SavedBlue.copy(alpha = 0.5f) else cs.outline, RoundedCornerShape(11.dp))
+            .background(if (saved) SavedBlue.copy(alpha = 0.10f) else cs.onSurface.copy(alpha = 0.04f), RoundedCornerShape(11.dp))
+            .then(if (enabled) Modifier.combinedClickable(
+                onClickLabel = "Save archive only",
+                onLongClickLabel = "Re-download archive",
+                onClick = onClick, onLongClick = onLongClick,
+            ) else Modifier)
+            .alpha(if (!enabled) 0.4f else if (saved) 0.6f else 1f),
+    ) {
+        Icon(Icons.Filled.Save, "Save archive only", tint = if (saved) SavedBlue else cs.onSurface, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -618,8 +730,6 @@ private fun MyFilesTab(vm: ContentsHubViewModel) {
     val cs = MaterialTheme.colorScheme
     val context = LocalContext.current
     val folders by vm.savedFolders.collectAsState()
-    val baseDisplay by vm.baseDisplay.collectAsState()
-    var showLocation by remember { mutableStateOf(false) }
     val expanded = remember { mutableStateOf(setOf<String>()) }
 
     val installPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -643,22 +753,7 @@ private fun MyFilesTab(vm: ContentsHubViewModel) {
                 style = MaterialTheme.typography.bodySmall, color = cs.primary)
         }
         Spacer(Modifier.height(12.dp))
-        // Path bar
-        Row(verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
-                .border(1.dp, cs.outline, RoundedCornerShape(14.dp))
-                .background(cs.surface, RoundedCornerShape(14.dp))
-                .clickable { showLocation = true }
-                .padding(12.dp)) {
-            Icon(Icons.Filled.FolderSpecial, null, tint = cs.primary, modifier = Modifier.size(22.dp))
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text("SAVE LOCATION", style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant, fontWeight = FontWeight.Bold)
-                Text(baseDisplay, style = MaterialTheme.typography.bodySmall, color = cs.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            TextButton(onClick = { showLocation = true }) { Text("Change", color = cs.onSurface) }
-        }
-        Spacer(Modifier.height(12.dp))
+        // Save location lives once in Contents settings (the cog) — no duplicate bar here.
         PrimaryButton("Install content from file…", Icons.Filled.FolderOpen, enabled = true,
             container = cs.onSurface.copy(alpha = 0.06f), content = cs.onSurface, modifier = Modifier.fillMaxWidth()) {
             installPicker.launch(InAppFilePicker.buildIntent(context, InAppFilePicker.WCP, "Select content pack"))
@@ -667,7 +762,7 @@ private fun MyFilesTab(vm: ContentsHubViewModel) {
 
         if (folders.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text("No saved archives yet.\nEnable “Keep raw archive” before downloading.",
+                Text("No saved archives yet.\nUse the disk icon on a component to save its archive here, or enable “Keep raw archive” before installing.",
                     color = cs.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
         } else {
@@ -683,7 +778,6 @@ private fun MyFilesTab(vm: ContentsHubViewModel) {
             }
         }
     }
-    if (showLocation) LocationDialog(vm, onDismiss = { showLocation = false })
 }
 
 @Composable
@@ -720,10 +814,20 @@ private fun FolderCard(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(f.name, style = MaterialTheme.typography.bodySmall, color = cs.onSurface,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
-                        Text(RemoteSourceRepository.formatFileSize(f.sizeBytes), style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
+                        // Only the library can tell a save-only archive from one kept on install.
+                        Text(
+                            if (f.savedOnly) "${RemoteSourceRepository.formatFileSize(f.sizeBytes)} · saved only, not installed"
+                            else RemoteSourceRepository.formatFileSize(f.sizeBytes),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (f.savedOnly) SavedBlue else cs.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
                     }
                     IconButton(onClick = {
-                        ContentsInstaller.installFromFile(context.applicationContext, f.type, f.name, f.uri) { vm.refreshStatus() }
+                        // Reinstall = the normal offline install; on success the file stops being "saved only".
+                        ContentsInstaller.installFromFile(context.applicationContext, f.type, f.name, f.uri) { ok ->
+                            if (ok) vm.markInstalledFromSaved(f) else vm.refreshStatus()
+                        }
                     }) { Icon(Icons.Filled.InstallDesktop, "Install", tint = cs.primary) }
                     IconButton(onClick = { shareArchive(context, f) }) { Icon(Icons.Filled.Share, "Share", tint = cs.onSurfaceVariant) }
                     IconButton(onClick = { vm.deleteSaved(f) }) { Icon(Icons.Filled.DeleteOutline, "Delete", tint = cs.onSurfaceVariant) }
@@ -758,6 +862,19 @@ private fun InstalledTab(vm: ContentsHubViewModel) {
 
     // Metadata-only listing (name/version) — never probes a driver (a6xx-safe).
     val drivers = remember(refreshKey) { manager.enumarateInstalledDrivers().toList() }
+    // Imported Wayland GAME drivers (Linux ICDs the game renders on under the Wayland backend) — a
+    // separate kind from the adrenotools zips above, which only the X11 game path / Wayland compositor
+    // load. Listed from meta.json, never probed.
+    val waylandManager = remember { WaylandGameDriverManager(context) }
+    val waylandDrivers = remember(refreshKey) { waylandManager.enumerateInstalledDrivers().toList() }
+    var confirmRemoveWaylandDriver by remember { mutableStateOf<String?>(null) }
+    // Imported LINUX Vulkan drivers: glibc Turnip ICDs for the Linux runtime, i.e. the driver the
+    // native Steam client and the games it launches draw with. The third kind, and the only one the
+    // client can load at all - the two above are bionic. Listed from meta.json, never probed.
+    val linuxDriverManager = remember { com.winlator.star.contents.LinuxVulkanDriverManager(context) }
+    val linuxDrivers = remember(refreshKey) { linuxDriverManager.enumerateInstalledDrivers().toList() }
+    var confirmRemoveLinuxDriver by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val components = remember(refreshKey) {
         val cm = ContentsManager(context)
         cm.syncContents()
@@ -767,17 +884,55 @@ private fun InstalledTab(vm: ContentsHubViewModel) {
         }
     }
 
-    var confirmInstall by remember { mutableStateOf(false) }
     var confirmRemoveDriver by remember { mutableStateOf<String?>(null) }
     var confirmRemoveProfile by remember { mutableStateOf<ContentProfile?>(null) }
     val expanded = remember { mutableStateOf(setOf<String>()) }
 
-    // GPU-driver .zip picker — always the in-app file manager (InAppFilePicker.DRIVER), no system SAF.
+    // Install-from-file — mirrors the My Files tab: the in-app file manager (no system SAF), route by
+    // extension (.wcp/.tzst → component pipeline, anything else e.g. a driver .zip → GPU driver).
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             InAppFilePicker.pickedUri(result.data)?.let { uri ->
-                val id = manager.installDriver(uri)
-                if (id.isNotEmpty()) { refreshKey++; vm.refreshStatus() }
+                val name = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+                val type = if (name.endsWith(".wcp", true) || name.endsWith(".tzst", true)) "" else ContentsTypes.GPU_DRIVERS
+                ContentsInstaller.installFromFile(context.applicationContext, type, name, uri) { refreshKey++; vm.refreshStatus() }
+            }
+        }
+    }
+    // Wayland game-driver import: its own picker (zip only) and a direct, synchronous import — the
+    // validation reasons (no libvulkan_freedreno*.so, not an AArch64 ELF) are surfaced as a Toast.
+    val waylandDriverPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            InAppFilePicker.pickedUri(result.data)?.let { uri ->
+                val name = uri.lastPathSegment?.substringAfterLast('/') ?: "wayland-driver.zip"
+                scope.launch {
+                    val r = withContext(Dispatchers.IO) { runCatching { waylandManager.installDriver(uri, name) } }
+                    r.onSuccess { id ->
+                        Toast.makeText(context, "Imported Wayland game driver: ${waylandManager.getDriverName(id)}", Toast.LENGTH_LONG).show()
+                        refreshKey++
+                    }.onFailure { e ->
+                        Toast.makeText(context, "Not imported: ${e.message ?: e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+    }
+
+    // Linux runtime driver import: same shape as the Wayland one. The reasons a zip is refused
+    // (no libvulkan_freedreno*.so, not an AArch64 ELF, links Android's libc) reach the user as a Toast.
+    val linuxDriverPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            InAppFilePicker.pickedUri(result.data)?.let { uri ->
+                val name = uri.lastPathSegment?.substringAfterLast('/') ?: "linux-driver.zip"
+                scope.launch {
+                    val r = withContext(Dispatchers.IO) { runCatching { linuxDriverManager.installDriver(uri, name) } }
+                    r.onSuccess { id ->
+                        Toast.makeText(context, "Imported Linux runtime driver: ${linuxDriverManager.getDriverName(id)}", Toast.LENGTH_LONG).show()
+                        refreshKey++
+                    }.onFailure { e ->
+                        Toast.makeText(context, "Not imported: ${e.message ?: e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+                    }
+                }
             }
         }
     }
@@ -785,9 +940,9 @@ private fun InstalledTab(vm: ContentsHubViewModel) {
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp)) {
         InstalledSectionHeader("GPU Drivers", Icons.Filled.ViewInAr)
         Spacer(Modifier.height(10.dp))
-        PrimaryButton("Install GPU driver from file…", Icons.Filled.FolderOpen, enabled = true,
+        PrimaryButton("Install content from file…", Icons.Filled.FolderOpen, enabled = true,
             container = cs.onSurface.copy(alpha = 0.06f), content = cs.onSurface, modifier = Modifier.fillMaxWidth()) {
-            confirmInstall = true
+            filePicker.launch(InAppFilePicker.buildIntent(context, InAppFilePicker.WCP, "Select content pack"))
         }
         Spacer(Modifier.height(12.dp))
         if (drivers.isEmpty()) {
@@ -797,6 +952,61 @@ private fun InstalledTab(vm: ContentsHubViewModel) {
                 InstalledRow(icon = Icons.Filled.ViewInAr, driver = true,
                     title = manager.getDriverName(id), subtitle = manager.getDriverVersion(id),
                     onRemove = { confirmRemoveDriver = id })
+                Spacer(Modifier.height(10.dp))
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        InstalledSectionHeader("Wayland game drivers (Linux ICD)", Icons.Filled.ViewInAr)
+        Spacer(Modifier.height(6.dp))
+        Text("The Vulkan driver a game renders on under the Wayland display backend. Import a zip with a " +
+            "libvulkan_freedreno*.so built for Wayland/Linux (optional libdrm.so, meta.json). Android Turnip " +
+            "zips (vulkan.adXXXX.so) belong under GPU Drivers above and are rejected here.",
+            style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+        Spacer(Modifier.height(10.dp))
+        PrimaryButton("Import Wayland game driver (.zip)…", Icons.Filled.FolderOpen, enabled = true,
+            container = cs.onSurface.copy(alpha = 0.06f), content = cs.onSurface, modifier = Modifier.fillMaxWidth()) {
+            waylandDriverPicker.launch(InAppFilePicker.buildIntent(context, arrayOf("zip"), "Select Wayland game driver zip"))
+        }
+        Spacer(Modifier.height(12.dp))
+        if (waylandDrivers.isEmpty()) {
+            InstalledEmpty("No Wayland game drivers imported. Containers on Wayland use the Turnips bundled in the Proton.")
+        } else {
+            waylandDrivers.forEach { id ->
+                val ver = waylandManager.getDriverVersion(id)
+                val wsiNote = if (waylandManager.hasWaylandWsi(id)) "" else "  ·  no Wayland WSI detected"
+                InstalledRow(icon = Icons.Filled.ViewInAr, driver = true,
+                    title = waylandManager.getDriverName(id),
+                    subtitle = (if (ver.isEmpty()) "imported" else ver) + wsiNote,
+                    onRemove = { confirmRemoveWaylandDriver = id })
+                Spacer(Modifier.height(10.dp))
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        InstalledSectionHeader("Linux runtime drivers (Steam client)", Icons.Filled.ViewInAr)
+        Spacer(Modifier.height(6.dp))
+        Text("The Vulkan driver the Linux runtime draws with: the native Steam client\u2019s interface and every " +
+            "game it launches. Import a \"-Linux\" Turnip zip (glibc). The client and its games are Linux " +
+            "processes, so an Android (vulkan.adXXXX.so) or \"-Wayland\" zip cannot be loaded by them and is " +
+            "rejected here. Frames still reach the screen through the GPU driver above.",
+            style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+        Spacer(Modifier.height(10.dp))
+        PrimaryButton("Import Linux runtime driver (.zip)\u2026", Icons.Filled.FolderOpen, enabled = true,
+            container = cs.onSurface.copy(alpha = 0.06f), content = cs.onSurface, modifier = Modifier.fillMaxWidth()) {
+            linuxDriverPicker.launch(InAppFilePicker.buildIntent(context, arrayOf("zip"), "Select Linux runtime driver zip"))
+        }
+        Spacer(Modifier.height(12.dp))
+        if (linuxDrivers.isEmpty()) {
+            InstalledEmpty("No Linux runtime drivers imported. Linux sessions use the Turnip built into the runtime.")
+        } else {
+            linuxDrivers.forEach { id ->
+                val ver = linuxDriverManager.getDriverVersion(id)
+                val glibc = linuxDriverManager.getMinGlibc(id)
+                InstalledRow(icon = Icons.Filled.ViewInAr, driver = true,
+                    title = linuxDriverManager.getDriverName(id),
+                    subtitle = (if (ver.isEmpty()) "imported" else ver) + (if (glibc.isEmpty()) "" else "  \u00b7  glibc $glibc+"),
+                    onRemove = { confirmRemoveLinuxDriver = id })
                 Spacer(Modifier.height(10.dp))
             }
         }
@@ -819,27 +1029,6 @@ private fun InstalledTab(vm: ContentsHubViewModel) {
         }
     }
 
-    // Confirm: install GPU driver (install_drivers warning) → in-app file manager only, no system SAF.
-    if (confirmInstall) {
-        OutlinedAlertDialog(
-            onDismissRequest = { confirmInstall = false },
-            containerColor = cs.surfaceContainerHigh,
-            title = { Text(context.getString(R.string.install_drivers_message), color = cs.onSurface) },
-            text = { Text(context.getString(R.string.install_drivers_warning), color = cs.onSurface) },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmInstall = false
-                    filePicker.launch(InAppFilePicker.buildIntent(context, InAppFilePicker.DRIVER, "Select GPU driver"))
-                }) { Text("Browse files", color = cs.primary) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmInstall = false }) {
-                    Text(context.getString(android.R.string.cancel), color = cs.primary)
-                }
-            },
-        )
-    }
-
     // Confirm: remove driver (same manager.removeDriver path as AdrenoToolsScreen).
     confirmRemoveDriver?.let { id ->
         OutlinedAlertDialog(
@@ -853,6 +1042,41 @@ private fun InstalledTab(vm: ContentsHubViewModel) {
                 }) { Text("Remove", color = cs.primary) }
             },
             dismissButton = { TextButton(onClick = { confirmRemoveDriver = null }) { Text("Cancel", color = cs.primary) } },
+        )
+    }
+
+    // Confirm: remove an imported Linux runtime driver. A shortcut still set to it falls back to the
+    // runtime's own driver at launch (LinuxVulkanDriver logs that), so nothing else needs rewriting.
+    confirmRemoveLinuxDriver?.let { id ->
+        OutlinedAlertDialog(
+            onDismissRequest = { confirmRemoveLinuxDriver = null },
+            containerColor = cs.surfaceContainerHigh,
+            title = { Text("Remove Linux runtime driver?", color = cs.onSurface) },
+            text = { Text("Remove \"${linuxDriverManager.getDriverName(id)}\"? Linux sessions set to it go back to the " +
+                    "driver built into the runtime.", color = cs.onSurface) },
+            confirmButton = {
+                TextButton(onClick = {
+                    linuxDriverManager.removeDriver(id); confirmRemoveLinuxDriver = null; refreshKey++
+                }) { Text("Remove", color = cs.primary) }
+            },
+            dismissButton = { TextButton(onClick = { confirmRemoveLinuxDriver = null }) { Text("Cancel", color = cs.primary) } },
+        )
+    }
+
+    // Confirm: remove an imported Wayland game driver. Containers/games still set to it fall back to
+    // Auto at launch (WaylandGameDriver logs that), so nothing else needs rewriting.
+    confirmRemoveWaylandDriver?.let { id ->
+        OutlinedAlertDialog(
+            onDismissRequest = { confirmRemoveWaylandDriver = null },
+            containerColor = cs.surfaceContainerHigh,
+            title = { Text("Remove Wayland game driver?", color = cs.onSurface) },
+            text = { Text("Remove \"${waylandManager.getDriverName(id)}\"? Containers using it switch to Auto.", color = cs.onSurface) },
+            confirmButton = {
+                TextButton(onClick = {
+                    waylandManager.removeDriver(id); confirmRemoveWaylandDriver = null; refreshKey++
+                }) { Text("Remove", color = cs.primary) }
+            },
+            dismissButton = { TextButton(onClick = { confirmRemoveWaylandDriver = null }) { Text("Cancel", color = cs.primary) } },
         )
     }
 
@@ -1131,17 +1355,19 @@ private fun ImportExportDialog(vm: ContentsHubViewModel, onDismiss: () -> Unit) 
 private fun SettingsDialog(vm: ContentsHubViewModel, onDismiss: () -> Unit, onLocation: () -> Unit) {
     val cs = MaterialTheme.colorScheme
     val keepRaw by vm.keepRaw.collectAsState()
+    val showOfficial by vm.showOfficial.collectAsState()
     val baseDisplay by vm.baseDisplay.collectAsState()
     OutlinedAlertDialog(
         onDismissRequest = onDismiss,
         containerColor = cs.surfaceContainerHigh,
         title = { Text("Contents settings", color = cs.onSurface) },
         text = {
-            Column {
+            // Scrolls so the taller body still fits a landscape phone (dialog height is capped there).
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Keep raw archive by default", style = MaterialTheme.typography.bodyMedium, color = cs.onSurface)
-                        Text("Save every download to My Files", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                        Text("Save every install's download to My Files", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                     }
                     Switch(checked = keepRaw, onCheckedChange = { vm.setKeepRaw(it) },
                         colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = cs.primary))
@@ -1150,6 +1376,18 @@ private fun SettingsDialog(vm: ContentsHubViewModel, onDismiss: () -> Unit, onLo
                 MenuRow(Icons.Filled.FolderSpecial, "Save location") { onLocation() }
                 Text(baseDisplay, style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant,
                     modifier = Modifier.padding(start = 36.dp))
+                Text("Save-only archives (the disk icon) are filed by type in this folder too.",
+                    style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 36.dp, top = 2.dp))
+                MenuItemDivider()
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Show Official catalog in repositories", style = MaterialTheme.typography.bodyMedium, color = cs.onSurface)
+                        Text("Off hides it here; container and shortcut sheets keep it", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                    }
+                    Switch(checked = showOfficial, onCheckedChange = { vm.setShowOfficial(it) },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = cs.primary))
+                }
                 MenuItemDivider()
                 MenuRow(Icons.Filled.Restore, "Restore default repositories") { vm.restoreDefaultSources(); onDismiss() }
             }
@@ -1162,15 +1400,15 @@ private fun SettingsDialog(vm: ContentsHubViewModel, onDismiss: () -> Unit, onLo
 private fun LocationDialog(vm: ContentsHubViewModel, onDismiss: () -> Unit) {
     val cs = MaterialTheme.colorScheme
     val context = LocalContext.current
-    val treePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                val label = uri.lastPathSegment?.substringAfterLast(':') ?: "Custom folder"
-                vm.library.setTreeBase(uri, label)
+    // In-app file manager in directory-pick mode (issue #70) — returns an absolute path, stored the
+    // same way as the other two options (plain File base). No SAF, no persistable-permission dance:
+    // the app holds all-files access, so direct path writes work.
+    val dirPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            InAppFilePicker.pickedPath(result.data)?.let { path ->
+                vm.library.setFileBase(path)
+                vm.refreshBase(); vm.refreshFolders(); onDismiss()
             }
-            vm.refreshBase(); vm.refreshFolders(); onDismiss()
         }
     }
     OutlinedAlertDialog(
@@ -1179,10 +1417,10 @@ private fun LocationDialog(vm: ContentsHubViewModel, onDismiss: () -> Unit) {
         title = { Text("Component save location", color = cs.onSurface) },
         text = {
             Column {
-                Text("Raw archives are filed under <folder>/components/<type>/ — next to WinHub's logs and saves.",
+                Text("Raw archives are filed under <folder>/components/<type>/ — next to Bannerlator's logs and saves.",
                     style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                 Spacer(Modifier.height(10.dp))
-                MenuRow(Icons.Filled.Folder, "Downloads › winhub (default)") {
+                MenuRow(Icons.Filled.Folder, "Downloads › bannerlator (default)") {
                     vm.library.setDefaultBase(); vm.refreshBase(); vm.refreshFolders(); onDismiss()
                 }
                 MenuItemDivider()
@@ -1190,7 +1428,15 @@ private fun LocationDialog(vm: ContentsHubViewModel, onDismiss: () -> Unit) {
                     vm.library.setFileBase(vm.library.appPrivateBasePath()); vm.refreshBase(); vm.refreshFolders(); onDismiss()
                 }
                 MenuItemDivider()
-                MenuRow(Icons.Filled.FolderOpen, "Choose another folder…") { treePicker.launch(null) }
+                MenuRow(Icons.Filled.FolderOpen, "Choose another folder…") {
+                    dirPicker.launch(
+                        InAppFilePicker.buildDirIntent(
+                            context,
+                            title = "Select save folder",
+                            initialDir = vm.library.currentFileBasePath(),
+                        ),
+                    )
+                }
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close", color = cs.primary) } },

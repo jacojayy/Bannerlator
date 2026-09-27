@@ -27,6 +27,21 @@
         ]
     },
     {
+    "name" : "AIO Graphics Test (HDR)",
+    "children" : [
+        {
+            "name" : "AIO Graphics Test HDR (32-bit)",
+            "path" : "C:/AIO Graphics Test v2/AIO-Graphics-Test-32bit.exe",
+            "cmdArgs" : "--hdr"
+        },
+        {
+            "name" : "AIO Graphics Test HDR (64-bit)",
+            "path" : "C:/AIO Graphics Test v2/AIO-Graphics-Test-64bit.exe",
+            "cmdArgs" : "--hdr"
+        }
+        ]
+    },
+    {
     "name" : "AIO Graphics Test (Classic)",
     "children" : [
         {

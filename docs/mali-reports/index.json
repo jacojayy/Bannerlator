@@ -1,5 +1,205 @@
 [
   {
+    "id": "2026-09-27T09-19-49-af6469",
+    "created": "2026-09-27T09:19:49.024Z",
+    "reporter": "Simon",
+    "device": "Xiaomi 14T Pro",
+    "gpu": "Mali-G720-Immortalis MC12",
+    "game": "Mewgenics",
+    "symptom": "Black screen (no image)",
+    "logs": 1
+  },
+  {
+    "id": "2026-09-13T21-26-49-0ccf80",
+    "created": "2026-09-13T21:26:49.881Z",
+    "reporter": "",
+    "device": "blackview xplore 2",
+    "gpu": "mali g615 mc6",
+    "game": "spellforce platinum",
+    "symptom": "Other",
+    "logs": 0
+  },
+  {
+    "id": "2026-09-13T01-40-28-941e27",
+    "created": "2026-09-13T01:40:28.396Z",
+    "reporter": "JClone",
+    "device": "Tecno Camon 20 Pro 5G+",
+    "gpu": "Mali-G77 MP9",
+    "game": "Left 4 Dead 2",
+    "symptom": "Graphical glitches (corruption, flicker, missing textures)",
+    "logs": 4
+  },
+  {
+    "id": "2026-09-12T22-26-30-d7e7e9",
+    "created": "2026-09-12T22:26:30.443Z",
+    "reporter": "",
+    "device": "Poco M7 Pro 5G",
+    "gpu": "PowrVR MX256",
+    "game": "GTA IV",
+    "symptom": "Crashes / closes to home",
+    "logs": 0
+  },
+  {
+    "id": "2026-09-09T16-31-43-ab596c",
+    "created": "2026-09-09T16:31:43.098Z",
+    "reporter": "Ayush",
+    "device": "Vivo Y19 5G",
+    "gpu": "Mali G57 MC2",
+    "game": "Grand Theft Auto V",
+    "symptom": "Crashes / closes to home",
+    "logs": 0
+  },
+  {
+    "id": "2026-09-09T14-04-40-f63a62",
+    "created": "2026-09-09T14:04:40.059Z",
+    "reporter": "",
+    "device": "Vk",
+    "gpu": "Xghvb xkvchjh",
+    "game": "TD DvD hv xi JB f",
+    "symptom": "Acidentes / perto de casa",
+    "logs": 0
+  },
+  {
+    "id": "2026-09-06T08-16-36-41c054",
+    "created": "2026-09-06T08:16:36.608Z",
+    "reporter": "Knight",
+    "device": "Redmi 13c",
+    "gpu": "Mali. G52",
+    "game": "NFS mw 2005",
+    "symptom": "Graphical glitches (corruption, flicker, missing textures)",
+    "logs": 1
+  },
+  {
+    "id": "2026-09-04T10-45-55-3ac1d5",
+    "created": "2026-09-04T10:45:55.573Z",
+    "reporter": "Ayajo",
+    "device": "Realme 11 pro",
+    "gpu": "Mali g68 mc 4",
+    "game": "Resident evil 2 remake",
+    "symptom": "Graphical glitches (corruption, flicker, missing textures)",
+    "logs": 2
+  },
+  {
+    "id": "2026-09-02T21-28-57-ccabc8",
+    "created": "2026-09-02T21:28:57.788Z",
+    "reporter": "Fenix",
+    "device": "Tecno pova neo LE6H",
+    "gpu": "Mali-G57",
+    "game": "Star Wars battlefront 2 2005",
+    "symptom": "Pantalla negra (sin imagen)",
+    "logs": 1
+  },
+  {
+    "id": "2026-09-02T18-48-54-ad33bb",
+    "created": "2026-09-02T18:48:54.545Z",
+    "reporter": "Ali",
+    "device": "Samsung S21 fe",
+    "gpu": "Mali-G78 mp14",
+    "game": "Don't starve",
+    "symptom": "Graphical glitches (corruption, flicker, missing textures)",
+    "logs": 1
+  },
+  {
+    "id": "2026-09-02T18-25-17-d4440c",
+    "created": "2026-09-02T18:25:17.983Z",
+    "reporter": "",
+    "device": "S21 fe",
+    "gpu": "Mali-G78 mp14",
+    "game": "Need for speed most wanted 2012",
+    "symptom": "Crashes / closes to home",
+    "logs": 1
+  },
+  {
+    "id": "2026-08-31T12-36-00-7e5f08",
+    "created": "2026-08-31T12:36:00.655Z",
+    "reporter": "Air",
+    "device": "Samsung a24",
+    "gpu": "Mali G57 mc2",
+    "game": "Pes 2017",
+    "symptom": "Runs but very low FPS",
+    "logs": 0
+  },
+  {
+    "id": "2026-08-27T05-46-51-583137",
+    "created": "2026-08-27T05:46:51.511Z",
+    "reporter": "Han",
+    "device": "Infinix gt 10 pro",
+    "gpu": "Mali g77",
+    "game": "Pes 2013",
+    "symptom": "Graphical glitches (corruption, flicker, missing textures)",
+    "logs": 1
+  },
+  {
+    "id": "2026-08-26T15-41-07-15cc36",
+    "created": "2026-08-26T15:41:07.381Z",
+    "reporter": "vien",
+    "device": "realme 11 4g",
+    "gpu": "mali g57 mc2",
+    "game": "All of my games (Tomb Raider, Postal 1-2, Hotline Miami, Deadpool and others)",
+    "symptom": "Black screen (no image)",
+    "logs": 5
+  },
+  {
+    "id": "2026-08-26T13-56-04-6736f1",
+    "created": "2026-08-26T13:56:04.370Z",
+    "reporter": "Quentin",
+    "device": "Huawei mate40pro",
+    "gpu": "Mali-G78",
+    "game": "Bannerlator 3.0.1, I cannot launch any build of the Proton11-arm64 container",
+    "symptom": "Black screen (no image)黑屏（无图像）",
+    "logs": 3
+  },
+  {
+    "id": "2026-08-26T09-40-21-8b9434",
+    "created": "2026-08-26T09:40:21.334Z",
+    "reporter": "Gta",
+    "device": "S20",
+    "gpu": "M.Y65",
+    "game": "Gta",
+    "symptom": "Runs but very low FPS",
+    "logs": 0
+  },
+  {
+    "id": "2026-08-25T05-19-20-e8f9f5",
+    "created": "2026-08-25T05:19:20.584Z",
+    "reporter": "sandz",
+    "device": "anbernic rg vita",
+    "gpu": "g52",
+    "game": "red faction: dashfaction modlauncher",
+    "symptom": "Crashes / closes to home",
+    "logs": 1
+  },
+  {
+    "id": "2026-08-24T10-23-22-c4a658",
+    "created": "2026-08-24T10:23:22.827Z",
+    "reporter": "Tirtogalih",
+    "device": "Infinix Note 50x 5G",
+    "gpu": "Mali-G615 MC2",
+    "game": "Need for Speed Underground 2",
+    "symptom": "Black screen (no image)",
+    "logs": 1
+  },
+  {
+    "id": "2026-08-22T04-12-36-08d428",
+    "created": "2026-08-22T04:12:36.614Z",
+    "reporter": "Mohd Ariana Bin Ahmad",
+    "device": "Samsung Galaxy A07 5g",
+    "gpu": "Mali-G57 MC2",
+    "game": "Sarah's House",
+    "symptom": "Other",
+    "logs": 0
+  },
+  {
+    "id": "2026-08-21T06-03-05-1a0791",
+    "created": "2026-08-21T06:03:05.483Z",
+    "reporter": "Mohd Ariana Bin Ahmad",
+    "device": "Samsung Galaxy A07 5g",
+    "gpu": "Mali-G57 MC2",
+    "game": "Grand Theft Auto V",
+    "symptom": "Freezes / hangs",
+    "logs": 0
+  },
+  {
     "id": "2026-08-15T12-38-00-9521ad",
     "created": "2026-08-15T12:38:00.759Z",
     "reporter": "",

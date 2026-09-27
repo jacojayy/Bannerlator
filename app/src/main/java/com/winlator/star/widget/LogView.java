@@ -186,7 +186,9 @@ public class LogView extends View {
     }
 
     public static void setFilename(String file) {
-        fileName = file.substring(0, file.lastIndexOf("."));
+        // Strip the extension when there is one; a name without a dot ("notepad") is used as is.
+        int dot = file.lastIndexOf(".");
+        fileName = dot > 0 ? file.substring(0, dot) : file;
     }
 
     public static File getLogFile(Context context) {

@@ -11,7 +11,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 enum class TabType {
-    GRAPHICS, HUD, RESHADE, CONTROLS, ADVANCED, TASK_MANAGER, TV, AUDIO
+    GRAPHICS, HUD, RESHADE, CONTROLS, ADVANCED, TASK_MANAGER, TV, AUDIO,
+    // Steam friends + chat while playing. Only in the rail while InGameFriendsSource says a live
+    // source exists (see ui/XServerFriendsTab.kt).
+    FRIENDS
 }
 
 object XServerDrawerState {
@@ -35,6 +38,68 @@ object XServerDrawerState {
 
     private val _isRelativeMouseMovement = MutableStateFlow(false)
     val isRelativeMouseMovement: StateFlow<Boolean> = _isRelativeMouseMovement
+
+    // True while the session runs on the embedded Wayland compositor. UI-only gate: Relative Mouse
+    // needs zwp_pointer_constraints_v1 / zwp_relative_pointer_manager_v1, which the compositor
+    // doesn't implement yet, so the drawer greys the chip (the stored value is left alone).
+    private val _isWaylandMode           = MutableStateFlow(false)
+    val isWaylandMode: StateFlow<Boolean> = _isWaylandMode
+
+    // Wayland runtime capabilities, only read while isWaylandMode. Each Graphics-tab control that
+    // lives in the X11 renderer's pass is driven from ONE of these: false = greyed with the short
+    // "Not on Wayland in this build yet" reason, true = fully live with the same callbacks and
+    // labels as on X11. Both default false; the activity flips them when the compositor reports
+    // the corresponding chain (effects + scaling modes; frame generation).
+    private val _waylandEffectsAvailable  = MutableStateFlow(false)
+    val waylandEffectsAvailable: StateFlow<Boolean> = _waylandEffectsAvailable
+    private val _waylandFrameGenAvailable = MutableStateFlow(false)
+    val waylandFrameGenAvailable: StateFlow<Boolean> = _waylandFrameGenAvailable
+
+    // Zero-copy presentation. `requested` = what the toggle shows; it is applied to the running
+    // compositor at once AND written to the effective env (shortcut override else container) as the
+    // next launch's default. `active` = the compositor's live state. `frames` = its zero-copy frames
+    // in the last completed 10 s window. `live` = a zero-copy frame reached the display layer in the
+    // last ~1.5 s, which is what separates "switching..." from "running" right after a flip (the
+    // 10 s counter is far too slow for that).
+    private val _waylandZeroCopyRequested = MutableStateFlow(false)
+    val waylandZeroCopyRequested: StateFlow<Boolean> = _waylandZeroCopyRequested
+    private val _waylandZeroCopyActive    = MutableStateFlow(false)
+    val waylandZeroCopyActive: StateFlow<Boolean> = _waylandZeroCopyActive
+    private val _waylandZeroCopyFrames    = MutableStateFlow(0)
+    val waylandZeroCopyFrames: StateFlow<Int> = _waylandZeroCopyFrames
+    private val _waylandZeroCopyLive      = MutableStateFlow(false)
+    val waylandZeroCopyLive: StateFlow<Boolean> = _waylandZeroCopyLive
+    // OpenGL safe mode (Wayland): GALLIUM_THREAD=0 for the next launch of this game. True = on,
+    // which is the default. Unlike zero-copy this cannot be applied live - Mesa reads the variable
+    // when the guest's GL driver starts - so the row is a saved preference, not a live switch.
+    private val _waylandGlSafeMode        = MutableStateFlow(true)
+    val waylandGlSafeMode: StateFlow<Boolean> = _waylandGlSafeMode
+    // HDR output (Wayland, HDR sessions only). `available` = the compositor opened HDR for this session
+    // (the game/container setting was on AND this screen reports HDR10) - the row is shown only then.
+    // `output` = the live switch: on = the game's HDR frames go to the display as HDR, off = the same
+    // frames tone-mapped to SDR. Per session, starts on; the saved "HDR output" setting in the editors
+    // stays the next launch's choice. `onScreen` / `toneMapped` = what the compositor showed in the
+    // last ~1.5 s (the row's status line), refreshed once a second by the activity.
+    private val _waylandHdrAvailable      = MutableStateFlow(false)
+    val waylandHdrAvailable: StateFlow<Boolean> = _waylandHdrAvailable
+    private val _waylandHdrOutput         = MutableStateFlow(true)
+    val waylandHdrOutput: StateFlow<Boolean> = _waylandHdrOutput
+    private val _waylandHdrOnScreen       = MutableStateFlow(false)
+    val waylandHdrOnScreen: StateFlow<Boolean> = _waylandHdrOnScreen
+    // HDR frames on screen but the display has given them no headroom for 5 s+ (HDR/SDR ratio 1.00) -
+    // the brightness slider at maximum, or a screen recording (Android turns HDR headroom off while the
+    // screen is recorded - found on the Fold).
+    private val _waylandHdrNoHeadroom     = MutableStateFlow(false)
+    val waylandHdrNoHeadroom: StateFlow<Boolean> = _waylandHdrNoHeadroom
+    private val _waylandHdrToneMapped     = MutableStateFlow(false)
+    val waylandHdrToneMapped: StateFlow<Boolean> = _waylandHdrToneMapped
+    // Does the screen the game is on RIGHT NOW report HDR10? The gate above is decided once, at launch,
+    // and cannot be withdrawn from a running game - but the screen can change under it (the TV is
+    // unplugged and the session comes back to a panel with no HDR10, where Android tone-maps whatever we
+    // tag). Kept live by the activity's display watch so the row stops presenting the session as
+    // HDR-capable on a screen that isn't. True until something says otherwise.
+    private val _waylandHdrScreenCapable  = MutableStateFlow(true)
+    val waylandHdrScreenCapable: StateFlow<Boolean> = _waylandHdrScreenCapable
 
     private val _isMouseDisabled         = MutableStateFlow(false)
     val isMouseDisabled: StateFlow<Boolean> = _isMouseDisabled
@@ -94,6 +159,11 @@ object XServerDrawerState {
     private val _frameGenModel = MutableStateFlow(0)
     val frameGenModel: StateFlow<Int> = _frameGenModel
 
+    // win-fg performance preset (0 = Quality, 1 = Balanced (default), 2 = Performance). Switchable
+    // live: the layer hot-reloads conf.toml and self-rebuilds on a perf_preset change (no bg/fg pulse).
+    private val _frameGenPerfPreset = MutableStateFlow(1)
+    val frameGenPerfPreset: StateFlow<Int> = _frameGenPerfPreset
+
     // Which FG engine the container runs: "off" / "bionic" / "lsfg". Shown as a label above the
     // in-game multiplier/flow controls so the user knows which engine they're tuning.
     private val _frameGenEngine = MutableStateFlow("off")
@@ -110,6 +180,21 @@ object XServerDrawerState {
     val presentMode: StateFlow<String> = _presentMode
     fun setPresentMode(v: String) { _presentMode.value = v }
 
+    // LSFG Native generating: the limiter is locked ON and Auto refresh (VRR)
+    // locked OFF, because that is the configuration the engine was proven in
+    // and the only one that behaves. Uncapped guest x multiplier overruns the
+    // panel and FIFO stalls the compositor; a VRR mode switch mid-game stutters.
+    // The drawer greys both controls out while this is set.
+    private val _nativeFgLocks = MutableStateFlow(false)
+    val nativeFgLocks: StateFlow<Boolean> = _nativeFgLocks
+    fun setNativeFgLocks(v: Boolean) { _nativeFgLocks.value = v }
+
+    // "bionic" (win-fg) is running inside our compositor this session rather than
+    // as a guest layer. Display only: the badge reads "Win-FG Native".
+    private val _winFgNative = MutableStateFlow(false)
+    val winFgNative: StateFlow<Boolean> = _winFgNative
+    fun setWinFgNative(v: Boolean) { _winFgNative.value = v }
+
     private val _presentModeLocked = MutableStateFlow(false)
     val presentModeLocked: StateFlow<Boolean> = _presentModeLocked
     fun setPresentModeLocked(v: Boolean) { _presentModeLocked.value = v }
@@ -125,8 +210,23 @@ object XServerDrawerState {
 
     // lsfg-vk only: performance_mode (lower interpolation quality, higher FPS — for low-end devices).
     // Seeded from the container when the drawer opens; toggled live from the FG pane (rewrites conf.toml).
+    // Live readout for the native LSFG engine: what the governor currently
+    // trusts and what the panel is actually getting. Empty when it is not the
+    // running engine. Pushed from the activity, which polls the renderer.
+    private val _frameGenReadout = MutableStateFlow("")
+    val frameGenReadout: StateFlow<String> = _frameGenReadout
+
     private val _lsfgPerformanceMode = MutableStateFlow(false)
     val lsfgPerformanceMode: StateFlow<Boolean> = _lsfgPerformanceMode
+
+    // LSFG Native experimental capture resolution (FeatureFlags.LSFG_NATIVE_EXPERIMENTS_ENABLED): "panel" / "game" /
+    // a bare height. Seeded from the container, tuned live.
+    private val _fgCaptureResolution = MutableStateFlow("panel")
+    val fgCaptureResolution: StateFlow<String> = _fgCaptureResolution
+    // The panel's height in landscape (0 = unknown); the capture chips hide heights outside the
+    // renderer's [panel/4, panel) clamp.
+    private val _fgPanelHeight = MutableStateFlow(0)
+    val fgPanelHeight: StateFlow<Int> = _fgPanelHeight
 
     private val _fpsLimiterEnabled = MutableStateFlow(false)
     val fpsLimiterEnabled: StateFlow<Boolean> = _fpsLimiterEnabled
@@ -159,10 +259,50 @@ object XServerDrawerState {
     private val _currentRefreshRate = MutableStateFlow(0)
     val currentRefreshRate: StateFlow<Int> = _currentRefreshRate
 
+    // The refresh rate (Hz) the activity is currently asking the display for: the user's manual
+    // lock, a VRR vote, or the panel's top mode. 0 = not published yet. The frame-gen over-limit
+    // warning checks cap x multiplier against this, because it is the cadence native frame gen
+    // presents at under FIFO.
+    private val _displayTargetHz = MutableStateFlow(0)
+    val displayTargetHz: StateFlow<Int> = _displayTargetHz
+
+    // Native frame gen switched Auto (match FPS) on by itself for this session (the user's saved
+    // setting was off). Drives the "Auto turned on for frame generation" note until the user acts.
+    private val _fgAutoTurnedOn = MutableStateFlow(false)
+    val fgAutoTurnedOn: StateFlow<Boolean> = _fgAutoTurnedOn
+
+    // Whether turning Auto off during frame gen is remembered: true when the game was launched
+    // from a shortcut (the opt-out lives on the shortcut, never the container).
+    private val _fgAutoPerGame = MutableStateFlow(false)
+    val fgAutoPerGame: StateFlow<Boolean> = _fgAutoPerGame
+
+    // Why the selected native frame-gen engine (LSFG Native / Win-FG Native) cannot run in this
+    // session, in plain words with the fix; "" = nothing wrong (or not known yet). The drawer
+    // greys the multiplier buttons out while it is set. The detail line is the renderer's own
+    // technical verdict (e.g. "device Vulkan version below 1.3"), for support threads.
+    private val _fgUnavailableReason = MutableStateFlow("")
+    val fgUnavailableReason: StateFlow<String> = _fgUnavailableReason
+    private val _fgUnavailableDetail = MutableStateFlow("")
+    val fgUnavailableDetail: StateFlow<String> = _fgUnavailableDetail
+
     // Current fullscreen aspect-ratio mode (#71): Container.FULLSCREEN_OFF/FIT/STRETCH. Shown next
     // to the in-game "Toggle Fullscreen" row so the user sees which mode the cycle landed on.
     private val _fullscreenMode = MutableStateFlow(0)
     val fullscreenMode: StateFlow<Int> = _fullscreenMode
+
+    // Current screen alignment (#413): Container.ALIGN_CENTER/TOP/BOTTOM. Drives the drawer's
+    // Center/Top/Bottom segmented selector; 0 (CENTER) is the default.
+    private val _screenAlignment = MutableStateFlow(0)
+    val screenAlignment: StateFlow<Int> = _screenAlignment
+
+    // Swipeable OSC (Stage 2): live per-category swipe gates driving the drawer's Swipe tab.
+    // Buttons default ON; D-pad and Sticks (slide-to-engage) default OFF.
+    private val _swipeButtons = MutableStateFlow(true)
+    val swipeButtons: StateFlow<Boolean> = _swipeButtons
+    private val _swipeDpad = MutableStateFlow(false)
+    val swipeDpad: StateFlow<Boolean> = _swipeDpad
+    private val _swipeSticks = MutableStateFlow(false)
+    val swipeSticks: StateFlow<Boolean> = _swipeSticks
 
     // ---- External display / TV (Version A) --------------------------------------------------------
     // Whether a TV/external presentation display is currently connected. Gates the TV tab's visibility.
@@ -310,6 +450,13 @@ object XServerDrawerState {
     // selector picks a mode without cycling and WITHOUT closing the drawer. Takes the target
     // Container.FULLSCREEN_* value.
     @JvmField var onSetFullscreenMode:      java.util.function.IntConsumer? = null
+    // Direct set of the screen alignment (#413): the drawer's Center/Top/Bottom selector picks a
+    // value live, without closing the drawer. Takes the target Container.ALIGN_* value.
+    @JvmField var onSetScreenAlignment:     java.util.function.IntConsumer? = null
+    // Swipeable OSC (Stage 2): live per-category swipe toggles. Consumer<Boolean> for easy Java assign.
+    @JvmField var onSetSwipeButtons:        java.util.function.Consumer<Boolean>? = null
+    @JvmField var onSetSwipeDpad:           java.util.function.Consumer<Boolean>? = null
+    @JvmField var onSetSwipeSticks:         java.util.function.Consumer<Boolean>? = null
     @JvmField var onPauseResume:            Runnable? = null
     @JvmField var onPipMode:               Runnable? = null
     @JvmField var onActiveWindows:          Runnable? = null
@@ -324,6 +471,20 @@ object XServerDrawerState {
     @JvmField var onRelativeMouseMovement:  Runnable? = null
     @JvmField var onDisableMouse:           Runnable? = null
     @JvmField var onNativeRenderingToggle: Runnable? = null
+    // Zero-copy presentation toggle: applies the switch to the RUNNING compositor (nativeSetZeroCopy,
+    // which tells the game to rebuild its swapchain) and writes/removes BANNER_WAYLAND_ZERO_COPY=1 in
+    // the shortcut's (else the container's) env vars as the next launch's default. Poll: reads the
+    // compositor's last-10-s zero-copy frame count into waylandZeroCopyFrames and whether a zero-copy
+    // frame arrived just now into waylandZeroCopyLive (the drawer calls it every second while the row
+    // is on screen).
+    @JvmField var onWaylandZeroCopyToggle: java.util.function.Consumer<Boolean>? = null
+    @JvmField var onWaylandZeroCopyPoll: Runnable? = null
+    // OpenGL safe mode toggle: saves GALLIUM_THREAD=0 on/off to the shortcut (else the container)
+    // as the next launch's default. Nothing is applied to the running game.
+    @JvmField var onWaylandGlSafeModeToggle: java.util.function.Consumer<Boolean>? = null
+    // HDR output switch: applied to the RUNNING compositor at once (nativeSetHdrOutput); nothing is
+    // saved - it lasts for this session only.
+    @JvmField var onWaylandHdrOutputToggle: java.util.function.Consumer<Boolean>? = null
 
     // Whether the active renderer supports Native Rendering (direct scanout). True for Vulkan;
     // false for OpenGL (GL scanout is disabled for now — bespoke path, unresolved brightness).
@@ -368,6 +529,20 @@ object XServerDrawerState {
     // Setters called from Java
     fun setIsPaused(v: Boolean)                { _isPaused.value = v }
     fun setIsRelativeMouseMovement(v: Boolean) { _isRelativeMouseMovement.value = v }
+    fun setIsWaylandMode(v: Boolean)           { _isWaylandMode.value = v }
+    fun setWaylandEffectsAvailable(v: Boolean)  { _waylandEffectsAvailable.value = v }
+    fun setWaylandFrameGenAvailable(v: Boolean) { _waylandFrameGenAvailable.value = v }
+    fun setWaylandZeroCopyRequested(v: Boolean) { _waylandZeroCopyRequested.value = v }
+    fun setWaylandZeroCopyActive(v: Boolean)    { _waylandZeroCopyActive.value = v }
+    fun setWaylandZeroCopyFrames(v: Int)        { _waylandZeroCopyFrames.value = v }
+    fun setWaylandZeroCopyLive(v: Boolean)      { _waylandZeroCopyLive.value = v }
+    fun setWaylandGlSafeMode(v: Boolean)        { _waylandGlSafeMode.value = v }
+    fun setWaylandHdrAvailable(v: Boolean)      { _waylandHdrAvailable.value = v }
+    fun setWaylandHdrOutput(v: Boolean)         { _waylandHdrOutput.value = v }
+    fun setWaylandHdrOnScreen(v: Boolean)       { _waylandHdrOnScreen.value = v }
+    fun setWaylandHdrNoHeadroom(v: Boolean)     { _waylandHdrNoHeadroom.value = v }
+    fun setWaylandHdrToneMapped(v: Boolean)     { _waylandHdrToneMapped.value = v }
+    fun setWaylandHdrScreenCapable(v: Boolean)  { _waylandHdrScreenCapable.value = v }
     fun setIsMouseDisabled(v: Boolean)         { _isMouseDisabled.value = v }
     fun setMoveCursorToTouchpoint(v: Boolean)  { _moveCursorToTouchpoint.value = v }
     fun setGestureDragSelect(v: Boolean)          { _gestureDragSelect.value = v }
@@ -393,13 +568,23 @@ object XServerDrawerState {
 
     fun setFullscreenMode(v: Int) { _fullscreenMode.value = v }
 
+    fun setScreenAlignment(v: Int) { _screenAlignment.value = v }
+
+    fun setSwipeButtons(v: Boolean) { _swipeButtons.value = v }
+    fun setSwipeDpad(v: Boolean)    { _swipeDpad.value = v }
+    fun setSwipeSticks(v: Boolean)  { _swipeSticks.value = v }
+
     fun setBionicFgActive(v: Boolean)      { _bionicFgActive.value = v }
     fun setFrameGenEnabled(v: Boolean)     { _frameGenEnabled.value = v }
     fun setFrameGenMultiplier(v: Int)      { _frameGenMultiplier.value = v }
     fun setFrameGenFlowScale(v: Float)     { _frameGenFlowScale.value = v }
     fun setFrameGenModel(v: Int)           { _frameGenModel.value = v.coerceIn(0, 4) }
+    fun setFrameGenPerfPreset(v: Int)      { _frameGenPerfPreset.value = v.coerceIn(0, 2) }
     fun setFrameGenEngine(v: String)       { _frameGenEngine.value = v }
+    fun setFrameGenReadout(v: String)      { _frameGenReadout.value = v }
     fun setLsfgPerformanceMode(v: Boolean) { _lsfgPerformanceMode.value = v }
+    fun setFgCaptureResolution(v: String)  { _fgCaptureResolution.value = v.ifEmpty { "panel" } }
+    fun setFgPanelHeight(v: Int)           { _fgPanelHeight.value = v }
     fun setFpsLimiterEnabled(v: Boolean)   { _fpsLimiterEnabled.value = v }
     fun setFpsLimit(v: Int)                { _fpsLimit.value = v }
     fun setMatchRefreshRate(v: Boolean)    { _matchRefreshRate.value = v }
@@ -407,6 +592,13 @@ object XServerDrawerState {
     fun setManualRefreshRate(v: Int)       { _manualRefreshRate.value = v }
     fun setSupportedRefreshRates(v: List<Int>) { _supportedRefreshRates.value = v }
     fun setCurrentRefreshRate(v: Int)      { _currentRefreshRate.value = v }
+    fun setDisplayTargetHz(v: Int)         { _displayTargetHz.value = v }
+    fun setFgAutoTurnedOn(v: Boolean)      { _fgAutoTurnedOn.value = v }
+    fun setFgAutoPerGame(v: Boolean)       { _fgAutoPerGame.value = v }
+    fun setFgUnavailable(reason: String, detail: String) {
+        _fgUnavailableReason.value = reason
+        _fgUnavailableDetail.value = detail
+    }
 
     fun setFpsExpanded(v: Boolean) { _fpsExpanded.value = v }
     fun setFpsConfig(v: String) { _fpsConfig.value = v }
@@ -494,6 +686,20 @@ object XServerDrawerState {
         _controlsSubTab.value = 0
         _isPaused.value = false
         _isRelativeMouseMovement.value = false
+        _isWaylandMode.value = false
+        _waylandEffectsAvailable.value = false
+        _waylandFrameGenAvailable.value = false
+        _waylandZeroCopyRequested.value = false
+        _waylandZeroCopyActive.value = false
+        _waylandZeroCopyFrames.value = 0
+        _waylandZeroCopyLive.value = false
+        _waylandGlSafeMode.value = true
+        _waylandHdrAvailable.value = false
+        _waylandHdrOutput.value = true
+        _waylandHdrOnScreen.value = false
+        _waylandHdrNoHeadroom.value = false
+        _waylandHdrToneMapped.value = false
+        _waylandHdrScreenCapable.value = true
         _isMouseDisabled.value = false
         _moveCursorToTouchpoint.value = false
         _gestureDragSelect.value = true
@@ -509,11 +715,16 @@ object XServerDrawerState {
         _frameGenMultiplier.value = 2
         _frameGenFlowScale.value = 0.6f
         _frameGenModel.value = 0
+        _frameGenPerfPreset.value = 1
         _frameGenEngine.value = "off"
         _presentMode.value = "fifo"
         _presentModeLocked.value = false
+        _nativeFgLocks.value = false
+        _winFgNative.value = false
         _rendererIsVulkan.value = false
         _lsfgPerformanceMode.value = false
+        _fgCaptureResolution.value = "panel"
+        _fgPanelHeight.value = 0
         _fpsLimiterEnabled.value = false
         _fpsLimit.value = 60
         _matchRefreshRate.value = true
@@ -521,7 +732,15 @@ object XServerDrawerState {
         _manualRefreshRate.value = 0
         _supportedRefreshRates.value = emptyList()
         _currentRefreshRate.value = 0
+        _displayTargetHz.value = 0
+        _fgAutoTurnedOn.value = false
+        _fgAutoPerGame.value = false
+        _fgUnavailableReason.value = ""
+        _fgUnavailableDetail.value = ""
         _cursorExpanded.value = false
+        _swipeButtons.value = true
+        _swipeDpad.value = false
+        _swipeSticks.value = false
         _fpsExpanded.value = false
         _fpsConfig.value = ""
         _overlayOpacity.value = 0.75f
@@ -538,11 +757,15 @@ object XServerDrawerState {
         onResetPerfKey = null; onResetAllPerf = null
         onClose = null; onKeyboard = null; onInputControls = null
         onScreenEffects = null; onGraphicEngine = null; onVibration = null
-        onToggleFullscreen = null; onSetFullscreenMode = null; onPauseResume = null; onPipMode = null
+        onToggleFullscreen = null; onSetFullscreenMode = null; onSetScreenAlignment = null; onPauseResume = null; onPipMode = null
+        onSetSwipeButtons = null; onSetSwipeDpad = null; onSetSwipeSticks = null
         onActiveWindows = null; onTaskManager = null; onMagnifier = null
         onLogs = null; onExit = null; onMoveCursorToTouchpoint = null; onGestureConfigChange = null
         onRelativeMouseMovement = null; onDisableMouse = null
         onNativeRenderingToggle = null; onFpsConfigApply = null
+        onWaylandZeroCopyToggle = null; onWaylandZeroCopyPoll = null
+        onWaylandGlSafeModeToggle = null
+        onWaylandHdrOutputToggle = null
         onBionicFgConfigChange = null; onFpsLimitChange = null
         onPresentModeChange = null
         onMatchRefreshChange = null

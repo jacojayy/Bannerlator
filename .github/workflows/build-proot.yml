@@ -1,0 +1,91 @@
+name: Build proot (Termux fork, NDK)
+
+# proot for the Linux runtime: Termux's fork at the exact version that runs on our devices via
+# proot-distro, built with the NDK against Termux's own talloc, and made self-contained
+# (libtalloc.so beside it, RUNPATH $ORIGIN) so it ships as prebuilt jniLibs.
+#
+# Why not the tree in app/src/main/cpp/proot: on device it fails at the first exec whatever NDK
+# builds it (execve returns ENOSYS/EFAULT, then PEEKDATA EIO) — it is an old snapshot of this
+# fork, thousands of lines behind in the ptrace/exec core — while the Termux binary of this
+# version works on the same rootfs.
+
+on:
+  push:
+    branches:
+      - 'feat/linux-gamescope-runtime'
+    paths:
+      - '.github/workflows/build-proot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROOT_VERSION: 5.1.107.92
+  TALLOC_DEB: libtalloc_2.4.3_aarch64.deb
+
+jobs:
+  proot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install NDK 27
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          add-to-path: false
+
+      - name: Fetch the Termux proot fork and Termux's talloc
+        run: |
+          set -e
+          sudo apt-get install -y -qq patchelf >/dev/null
+          curl -fsSL --retry 5 -o proot.zip "https://github.com/termux/proot/archive/v${PROOT_VERSION}.zip"
+          unzip -q proot.zip && mv "proot-${PROOT_VERSION}" proot-src
+          # Termux's own libtalloc for aarch64: headers to build against, the library to ship.
+          mkdir -p talloc && cd talloc
+          IDX=$(curl -fsSL --retry 5 "https://packages.termux.dev/apt/termux-main/dists/stable/main/binary-aarch64/Packages")
+          DEB=$(printf '%s\n' "$IDX" | awk '/^Package: libtalloc$/{f=1} f&&/^Filename:/{print $2; exit}')
+          echo "talloc deb: $DEB"
+          curl -fsSL --retry 5 -o talloc.deb "https://packages.termux.dev/apt/termux-main/$DEB"
+          ar x talloc.deb && tar -xf data.tar.*
+          cd ..
+          # Deliberately NOT libandroid-shmem. PROOT_WITH_LIBANDROID_SHMEM sets
+          # shm_use_libandroid in sysvipc.c:166, which sends every shmget/shmat through
+          # libandroid-shmem's ashmem path instead of proot's own System V emulation - and that
+          # is what aborts a GTK client on the first icon it loads. The Termux binary that holds
+          # a session is built without it: its only NEEDED are libtalloc.so.2 and libc.so.
+
+      - name: Build
+        run: |
+          set -e
+          NDK="${{ steps.ndk.outputs.ndk-path }}"
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          TAL=$(cd "$(dirname "$(find talloc -name talloc.h | head -1)")" && pwd)
+          TLIB=$(cd "$(dirname "$(find talloc -name 'libtalloc.so.2' | head -1)")" && pwd)
+          # Ship it under its SONAME. Linking against a copy called libtalloc.so does not change
+          # what gets recorded as NEEDED - the SONAME does - so a file called libtalloc.so is a
+          # library the loader will never find: "library libtalloc.so.2 not found".
+          mkdir -p out/arm64-v8a && cp "$TLIB/libtalloc.so.2" out/arm64-v8a/libtalloc.so.2
+          make -C proot-src/src -j"$(nproc)" \
+            CC="$BIN/aarch64-linux-android26-clang" \
+            STRIP="$BIN/llvm-strip" OBJCOPY="$BIN/llvm-objcopy" OBJDUMP="$BIN/llvm-objdump" \
+            CPPFLAGS="-D_GNU_SOURCE -Wno-error=implicit-function-declaration -I. -I$TAL -DARG_MAX=131072 -DVERSION=\"${PROOT_VERSION}\"" \
+            LDFLAGS="-L$PWD/out/arm64-v8a -l:libtalloc.so.2 -Wl,-z,noexecstack -Wl,-rpath,\$ORIGIN" \
+            PROOT_UNBUNDLE_LOADER=/nonexistent proot loader
+          cp proot-src/src/proot out/arm64-v8a/libproot.so
+          cp proot-src/src/loader/loader out/arm64-v8a/libproot-loader.so
+          patchelf --set-rpath '$ORIGIN' out/arm64-v8a/libproot.so
+          "$BIN/llvm-readelf" -d out/arm64-v8a/libproot.so | grep -E "NEEDED|RUNPATH"
+          "$BIN/llvm-readelf" -h out/arm64-v8a/libproot-loader.so | grep -E "Type|Entry"
+          ls -la out/arm64-v8a
+          for f in out/arm64-v8a/*.so; do echo "$(sha256sum "$f" | cut -d' ' -f1)  $(basename "$f")"; done | tee out/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proot-termux-${{ github.run_number }}
+          path: out/
+          compression-level: 0
+          retention-days: 30

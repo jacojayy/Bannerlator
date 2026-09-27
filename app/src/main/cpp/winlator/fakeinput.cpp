@@ -38,10 +38,34 @@
 
 #define EXPORT __attribute__((visibility("default"))) extern "C"
 
+// bionic declares ioctl's request as int, glibc as unsigned long.
+// This file is built twice: with the NDK for Wine, and against glibc for the Linux runtime.
+// The glibc copy is preloaded into the native Steam client, which is what makes SDL see the app's pad as a real evdev device.
+// Interposing a libc function with the wrong signature is a hard compile error on glibc.
+// So the request type comes from the platform.
+#if defined(__BIONIC__) || defined(__ANDROID__)
+typedef int fakeinput_ioctl_request_t;
+#else
+typedef unsigned long fakeinput_ioctl_request_t;
+#endif
+
 static constexpr uint16_t GAMEPAD_VENDOR_ID_BASE = 0x1234;
 static constexpr uint16_t GAMEPAD_PRODUCT_ID_BASE = 0x5678;
 static constexpr uint16_t GAMEPAD_VERSION = 0x0110;
 static constexpr const char *GAMEPAD_NAME_TEMPLATE = "Generic HID Gamepad %d";
+
+// SDL and Steam key their controller mapping database on a GUID built from bus+vendor+product.
+// The generic identity above is in no such database.
+// So a client has to guess the layout, or ask the user to configure the pad by hand.
+// 045E:028E is the Xbox 360 pad, the most widely mapped GUID there is.
+// Clients apply its standard layout with no configuration.
+// Titles that hardcode Xbox glyphs also stop mislabelling buttons.
+// This is opt-in rather than a new default, because the generic identity is what every already-working Windows title under Wine currently sees.
+// The Linux runtime session sets it, and the Wine path keeps the generic identity until it is proven on device.
+static constexpr uint16_t X360_VENDOR_ID = 0x045E;
+static constexpr uint16_t X360_PRODUCT_ID = 0x028E;
+static constexpr const char *X360_NAME_TEMPLATE = "Xbox 360 Controller (%d)";
+static bool xbox360_identity = false;
 static constexpr const char *GAMEPAD_PHYS_TEMPLATE = "usb-fakeinput/input%d";
 static constexpr const char *GAMEPAD_UNIQ_TEMPLATE = "0000000000%02d";
 static constexpr uint8_t GAMEPAD_AXIS_COUNT = 8;
@@ -196,6 +220,9 @@ __attribute__((constructor)) static void library_init() {
   udev_data_dir = getenv("FAKE_UDEV_DATA_DIR");
   vibration_enabled =
       getenv("FAKE_EVDEV_VIBRATION") && atoi(getenv("FAKE_EVDEV_VIBRATION"));
+
+  const char *identity = getenv("FAKE_EVDEV_IDENTITY");
+  xbox360_identity = identity && !strcmp(identity, "xbox360");
 
   Logger::init();
 }
@@ -498,7 +525,8 @@ open_fake_input_ring(const char *event, int flags) {
 }
 
 __attribute__((visibility("hidden"))) static void
-copy_slot_ioctl_string(int op, void *argp, const char *format, int event_number) {
+copy_slot_ioctl_string(fakeinput_ioctl_request_t op, void *argp,
+                       const char *format, int event_number) {
   size_t size = _IOC_SIZE(op);
   if (!argp || size == 0)
     return;
@@ -849,7 +877,7 @@ EXPORT int inotify_add_watch(int fd, const char *pathname, uint32_t mask) {
   return ret;
 }
 
-EXPORT int ioctl(int fd, int op, ...) {
+EXPORT int ioctl(int fd, fakeinput_ioctl_request_t op, ...) {
   va_list va;
   void *argp;
 
@@ -877,14 +905,21 @@ EXPORT int ioctl(int fd, int op, ...) {
     struct input_id id;
     memset(&id, 0, sizeof(id));
     id.bustype = 0x03;
-    id.vendor = static_cast<uint16_t>(GAMEPAD_VENDOR_ID_BASE + event_number);
-    id.product = static_cast<uint16_t>(GAMEPAD_PRODUCT_ID_BASE + event_number);
+    // A real 360 pad reports the same vendor/product on every port.
+    // Offsetting per slot would yield a GUID no mapping database knows, which is the whole problem being fixed here.
+    id.vendor = xbox360_identity ? X360_VENDOR_ID
+                                 : static_cast<uint16_t>(GAMEPAD_VENDOR_ID_BASE + event_number);
+    id.product = xbox360_identity ? X360_PRODUCT_ID
+                                  : static_cast<uint16_t>(GAMEPAD_PRODUCT_ID_BASE + event_number);
     id.version = GAMEPAD_VERSION;
     memcpy(argp, (void *)&id, sizeof(id));
     return 0;
   } else if (type == 0x45 && number == 0x6) {
     Logger::log("Hooking ioctl EVIOCGNAME for event %s\n", event);
-    copy_slot_ioctl_string(op, argp, GAMEPAD_NAME_TEMPLATE, event_number);
+    copy_slot_ioctl_string(op, argp,
+                                  xbox360_identity ? X360_NAME_TEMPLATE
+                                                   : GAMEPAD_NAME_TEMPLATE,
+                                  event_number);
     return 0;
   } else if (type == 0x45 && number == 0x7) {
     Logger::log("Hooking ioctl EVIOCGPHYS for event %s\n", event);
@@ -1008,7 +1043,10 @@ EXPORT int ioctl(int fd, int op, ...) {
     return 0;
   } else if (type == 0x6A && number == 0x13) {
     Logger::log("Hooking ioctl JSIOCGNAME(len) for event %s\n", event);
-    copy_slot_ioctl_string(op, argp, GAMEPAD_NAME_TEMPLATE, event_number);
+    copy_slot_ioctl_string(op, argp,
+                                  xbox360_identity ? X360_NAME_TEMPLATE
+                                                   : GAMEPAD_NAME_TEMPLATE,
+                                  event_number);
     return 0;
   } else {
     Logger::log("Unhandled evdev ioctl, type %d number %d\n", type, number);

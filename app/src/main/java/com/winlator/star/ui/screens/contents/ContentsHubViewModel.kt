@@ -32,13 +32,16 @@ sealed interface HubSource {
     val driverOnly: Boolean
     /** true → the remove action is "Hide default"; false → "Remove". */
     val removeIsHide: Boolean
+    /** The built-in Official catalog (contents.json) — gets the green Official badge. */
+    val isOfficial: Boolean
 
     data class Component(val source: RemoteSourceRepository.RemoteSource) : HubSource {
         override val name get() = source.name
-        override val displayFormat get() = source.format.name.replace('_', ' ')
+        override val displayFormat get() = if (source.isOfficial) "contents.json" else source.format.name.replace('_', ' ')
         override val typePills get() = source.supportedTypes
         override val driverOnly get() = false
         override val removeIsHide get() = !source.isCustom
+        override val isOfficial get() = source.isOfficial
     }
 
     data class Driver(val source: RemoteDriverSource) : HubSource {
@@ -47,6 +50,7 @@ sealed interface HubSource {
         override val typePills get() = listOf(ContentsTypes.GPU_DRIVERS)
         override val driverOnly get() = true
         override val removeIsHide get() = source.builtIn
+        override val isOfficial get() = false
     }
 }
 
@@ -83,6 +87,9 @@ class ContentsHubViewModel(app: Application) : AndroidViewModel(app) {
     private val _keepRaw = MutableStateFlow(library.keepRaw())
     val keepRaw: StateFlow<Boolean> = _keepRaw.asStateFlow()
 
+    private val _showOfficial = MutableStateFlow(repo.showOfficial())
+    val showOfficial: StateFlow<Boolean> = _showOfficial.asStateFlow()
+
     private val _selected = MutableStateFlow<HubSource?>(null)
     val selected: StateFlow<HubSource?> = _selected.asStateFlow()
 
@@ -111,6 +118,9 @@ class ContentsHubViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _savedKeys = MutableStateFlow(library.savedKeys())
     val savedKeys: StateFlow<Set<String>> = _savedKeys.asStateFlow()
+
+    private val _savedOnlyKeys = MutableStateFlow(library.savedOnlyKeys())
+    val savedOnlyKeys: StateFlow<Set<String>> = _savedOnlyKeys.asStateFlow()
 
     private val _savedFolders = MutableStateFlow<Map<String, List<ComponentLibrary.SavedFile>>>(emptyMap())
     val savedFolders: StateFlow<Map<String, List<ComponentLibrary.SavedFile>>> = _savedFolders.asStateFlow()
@@ -143,6 +153,24 @@ class ContentsHubViewModel(app: Application) : AndroidViewModel(app) {
     fun setKeepRaw(value: Boolean) {
         library.setKeepRaw(value)
         _keepRaw.value = value
+    }
+
+    // ── Official catalog visibility (hub only; the container/shortcut sheet is unaffected) ──
+    fun setShowOfficial(value: Boolean) {
+        repo.setShowOfficial(value)
+        _showOfficial.value = value
+        val sel = _selected.value
+        if (!value && sel is HubSource.Component && sel.source.isOfficial) selectSource(null)
+        reloadSources()
+    }
+
+    // ── Save archive only ───────────────────────────────────────────────────────
+    /** Downloads [item]'s archive straight into My Files (no install). [force] re-downloads a saved one. */
+    fun saveArchive(item: CatalogItem, force: Boolean = false) {
+        if (!force && isSaved(item)) return
+        ContentsInstaller.saveOnly(appCtx, item.type, item.sourceName, item.versionName, item.downloadUrl) {
+            refreshStatus(); refreshFolders()
+        }
     }
 
     // ── Selection + per-source catalog ──────────────────────────────────────────
@@ -277,6 +305,7 @@ class ContentsHubViewModel(app: Application) : AndroidViewModel(app) {
     // ── Status (installed / saved) ──────────────────────────────────────────────
     fun refreshStatus() {
         _savedKeys.value = library.savedKeys()
+        _savedOnlyKeys.value = library.savedOnlyKeys()
         viewModelScope.launch {
             val (keys, driverNorms) = withContext(Dispatchers.IO) { computeInstalled() }
             _installedKeys.value = keys
@@ -324,14 +353,25 @@ class ContentsHubViewModel(app: Application) : AndroidViewModel(app) {
     fun isSaved(item: CatalogItem): Boolean =
         library.keyFor(item.type, item.fileName) in _savedKeys.value
 
+    fun isSavedOnly(item: CatalogItem): Boolean =
+        library.keyFor(item.type, item.fileName) in _savedOnlyKeys.value
+
     // ── My Files ────────────────────────────────────────────────────────────────
     fun refreshFolders() {
         viewModelScope.launch {
             val map = withContext(Dispatchers.IO) { library.listSaved() }
             _savedFolders.value = map
             _savedKeys.value = library.savedKeys()
+            _savedOnlyKeys.value = library.savedOnlyKeys()
             _baseDisplay.value = library.baseDisplay()
         }
+    }
+
+    /** A My Files archive was installed (Reinstall): it is no longer "saved only, not installed". */
+    fun markInstalledFromSaved(file: ComponentLibrary.SavedFile) {
+        library.markInstalledFromSaved(file.type, file.name)
+        refreshStatus()
+        refreshFolders()
     }
 
     fun deleteSaved(file: ComponentLibrary.SavedFile) {
@@ -369,6 +409,7 @@ class ContentsHubViewModel(app: Application) : AndroidViewModel(app) {
 
     fun restoreDefaultSources() {
         repo.restoreDefaultSources()
+        _showOfficial.value = repo.showOfficial()
         val store = DriverSourceStore(appCtx)
         DriverSources.BUILT_IN.forEach { store.setBuiltInEnabled(it.name, true) }
         reloadSources()

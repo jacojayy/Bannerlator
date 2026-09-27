@@ -97,9 +97,26 @@ fun LogManagerScreen(onClose: () -> Unit) {
     var wineDebug by remember { mutableStateOf(prefs.getBoolean("enable_wine_debug", false)) }
     var box64Logs by remember { mutableStateOf(prefs.getBoolean("enable_box64_logs", false)) }
     var dxvkLogs by remember { mutableStateOf(prefs.getBoolean("enable_dxvk_logs", true)) }
+    var steamLite by remember { mutableStateOf(prefs.getBoolean("enable_steamlite_logs", false)) }
     var logcat by remember { mutableStateOf(prefs.getBoolean("enable_logcat", true)) }
     var crashReports by remember { mutableStateOf(prefs.getBoolean("enable_crash_reports", true)) }
     var exitAutosave by remember { mutableStateOf(prefs.getBoolean(ExitReasonReporter.PREF_AUTOSAVE, false)) }
+    var rustSteamEngine by remember {
+        mutableStateOf(prefs.getBoolean(com.winlator.star.store.blsteam.BlSteamEngineFlag.PREF_KEY,
+            com.winlator.star.store.blsteam.BlSteamEngineFlag.DEFAULT))
+    }
+    var rustEpicEngine by remember {
+        mutableStateOf(prefs.getBoolean(com.winlator.star.store.blsteam.BlStoreEngineFlag.PREF_KEY_EPIC,
+            com.winlator.star.store.blsteam.BlStoreEngineFlag.DEFAULT))
+    }
+    var rustGogEngine by remember {
+        mutableStateOf(prefs.getBoolean(com.winlator.star.store.blsteam.BlStoreEngineFlag.PREF_KEY_GOG,
+            com.winlator.star.store.blsteam.BlStoreEngineFlag.DEFAULT))
+    }
+    var rustAmazonEngine by remember {
+        mutableStateOf(prefs.getBoolean(com.winlator.star.store.blsteam.BlStoreEngineFlag.PREF_KEY_AMAZON,
+            com.winlator.star.store.blsteam.BlStoreEngineFlag.DEFAULT))
+    }
 
     // Location + channels moved here from the old Settings › Logs section, which this screen
     // replaces. They used to be saved by the Settings "Save" FAB; here every change is written
@@ -160,6 +177,7 @@ fun LogManagerScreen(onClose: () -> Unit) {
     val entries = remember(refreshTick, perGame) { LogInventory.scan(context) }
 
     fun putBool(key: String, v: Boolean) = prefs.edit().putBoolean(key, v).apply()
+    var storeDlTier by remember { mutableStateOf(com.winlator.star.store.StoreDownloadTier.get(context)) }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
@@ -249,8 +267,13 @@ fun LogManagerScreen(onClose: () -> Unit) {
                     onInfo = { info = "DXVK & VKD3D" to LogCopy.DXVK }) {
                     dxvkLogs = it; putBool("enable_dxvk_logs", it)
                 }
+                LogToggle("SteamLite (Steam client)", steamLite,
+                    hint = "Only when a game launches through SteamLite",
+                    onInfo = { info = "SteamLite (Steam client)" to LogCopy.STEAMLITE }) {
+                    steamLite = it; putBool("enable_steamlite_logs", it)
+                }
                 LogToggle("Android logcat", logcat,
-                    hint = "WinHub's own output only",
+                    hint = "Bannerlator's own output only",
                     onInfo = { info = "Android logcat" to LogCopy.LOGCAT }) {
                     logcat = it; putBool("enable_logcat", it)
                 }
@@ -271,6 +294,51 @@ fun LogManagerScreen(onClose: () -> Unit) {
                     enabled = ExitReasonReporter.isSupported(),
                     onInfo = { info = "Exit reasons" to LogCopy.EXIT_REASONS }) {
                     exitAutosave = it; putBool(ExitReasonReporter.PREF_AUTOSAVE, it)
+                }
+                // Developer switch for the native Rust Steam engine (docs/STEAM_RUST_ENGINE_PLAN.md).
+                // Read once per process by SteamRepository.initialize(), so it takes effect on the
+                // next app start. OFF = JavaSteam as today; ON = the full Steam stack (auth, session,
+                // library, downloads, cloud, achievements, social, presence) runs on libblsteam.so and
+                // the engine's steam_engine.txt is folded into the SteamLite log bundle (Phase 3b-4).
+                LogToggle("Native Steam engine (restart required)", rustSteamEngine,
+                    hint = "On by default — the whole Steam session (sign-in, library, downloads, cloud, achievements, friends) runs on the native engine; its log joins the SteamLite bundle. Off = legacy Java engine",
+                    onInfo = { info = "Rust Steam engine" to LogCopy.RUST_ENGINE }) {
+                    rustSteamEngine = it
+                    putBool(com.winlator.star.store.blsteam.BlSteamEngineFlag.PREF_KEY, it)
+                }
+                // Per-store switches for the native download engines (docs/RUST_STORE_ENGINES.md).
+                // Read at download start by each store's Java manager, so a flip applies to the next
+                // download — no restart. OFF = that manager's existing Java fetch loop.
+                LogToggle("Rust engine: Epic downloads", rustEpicEngine,
+                    hint = "On by default — Epic file chunks are fetched by the native engine; takes effect on the next download. Off = Java downloader",
+                    onInfo = { info = "Rust store engines" to LogCopy.RUST_STORE_ENGINES }) {
+                    rustEpicEngine = it
+                    putBool(com.winlator.star.store.blsteam.BlStoreEngineFlag.PREF_KEY_EPIC, it)
+                }
+                LogToggle("Rust engine: GOG downloads", rustGogEngine,
+                    hint = "On by default — GOG depot chunks are fetched by the native engine; takes effect on the next download. Off = Java downloader",
+                    onInfo = { info = "Rust store engines" to LogCopy.RUST_STORE_ENGINES }) {
+                    rustGogEngine = it
+                    putBool(com.winlator.star.store.blsteam.BlStoreEngineFlag.PREF_KEY_GOG, it)
+                }
+                LogToggle("Rust engine: Amazon downloads", rustAmazonEngine,
+                    hint = "On by default — Amazon Games files are fetched by the native engine; takes effect on the next download. Off = Java downloader",
+                    onInfo = { info = "Rust store engines" to LogCopy.RUST_STORE_ENGINES }) {
+                    rustAmazonEngine = it
+                    putBool(com.winlator.star.store.blsteam.BlStoreEngineFlag.PREF_KEY_AMAZON, it)
+                }
+                // One app-wide speed tier for the three store engines (Steam keeps its per-download
+                // picker). Tap cycles Slow → Medium → Fast → Blazing; it is only the ceiling the
+                // adaptive window may ramp to, so a weak link still settles below it. Next download.
+                Spacer(Modifier.height(4.dp))
+                PickRow(
+                    "Store download speed",
+                    "Ceiling for the Rust Epic / GOG / Amazon engines. Tap to change; applies to the next download.",
+                    action = com.winlator.star.store.StoreDownloadTier.label(storeDlTier),
+                    onInfo = { info = "Rust store engines" to LogCopy.RUST_STORE_ENGINES },
+                ) {
+                    storeDlTier = com.winlator.star.store.StoreDownloadTier.next(storeDlTier)
+                    com.winlator.star.store.StoreDownloadTier.set(context, storeDlTier)
                 }
 
                 // Outlined rather than a filled button: the design keeps solid accent for switches
@@ -400,7 +468,7 @@ fun LogManagerScreen(onClose: () -> Unit) {
                 "E-mail addresses, auth tokens and your Steam account name are scrubbed as logs are " +
                     "written. File paths are kept so they stay useful for debugging — glance over " +
                     "them before sharing if a folder name identifies you. Logcat only ever contains " +
-                    "WinHub's own output.",
+                    "Bannerlator's own output.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp,
                 modifier = Modifier.padding(top = 4.dp)
             )
@@ -482,11 +550,11 @@ fun LogManagerScreen(onClose: () -> Unit) {
                     // Reachable: the loose bucket counts every log-shaped file it finds, but only
                     // the ones we wrote are deletable. A folder holding nothing but a user's own
                     // files lands here, and must not imply we are about to touch them.
-                        "Nothing here was written by WinHub, so there is nothing to delete. " +
+                        "Nothing here was written by Bannerlator, so there is nothing to delete. " +
                             "The files in this folder are yours and are left alone."
                     else
                         "Deletes $count log file${if (count == 1) "" else "s"}, including any kept " +
-                            "history.\n\nOnly files WinHub wrote are removed — anything else in " +
+                            "history.\n\nOnly files Bannerlator wrote are removed — anything else in " +
                             "that folder is left alone."
                 )
             },
@@ -520,7 +588,7 @@ fun LogManagerScreen(onClose: () -> Unit) {
                 Text(
                     "Deletes $count log file${if (count == 1) "" else "s"} across ${entries.size} " +
                         "folder${if (entries.size == 1) "" else "s"}, including kept history.\n\n" +
-                        "Only files WinHub wrote are removed. Other files in your log folder — " +
+                        "Only files Bannerlator wrote are removed. Other files in your log folder — " +
                         "including anything you put there yourself — are left alone."
                 )
             },
@@ -1145,9 +1213,25 @@ private object LogCopy {
         "This is the log to check for black screens, missing textures or a game that refuses a " +
         "graphics feature. Safe to leave on."
 
+    const val STEAMLITE =
+        "Little to no performance cost.\n\n" +
+        "Collects the REAL Steam client's own logs — the ones it writes for itself while a game runs " +
+        "under SteamLite (the online / VAC launch path). That covers your login and network connection, " +
+        "which game it launched, downloads, cloud saves and achievements. Steam writes these small files " +
+        "as it goes, so leaving this on costs you essentially nothing.\n\n" +
+        "It ONLY produces anything when a game is actually launched through SteamLite. A normal launch, " +
+        "or a Goldberg (offline) launch, writes nothing at all — so there is no output to find unless you " +
+        "played online through the real client.\n\n" +
+        "Everything is gathered into a single \"steamlite.txt\" next to that game's other logs, and it " +
+        "opens with a plain-English summary of what ran plus an auto-scan that flags common problems " +
+        "(a VAC-insecure launch, a login taken over by another device, a cloud-save conflict) so you " +
+        "don't have to read the raw logs.\n\n" +
+        "Your Steam account name and auth tokens are scrubbed out as it is written, and your Steam ID is " +
+        "partially masked — but a masked Steam ID may still remain, which is normal and safe to share."
+
     const val LOGCAT =
         "No performance cost.\n\n" +
-        "Android's own system log, as it relates to WinHub. It is captured on demand — when you " +
+        "Android's own system log, as it relates to Bannerlator. It is captured on demand — when you " +
         "tap \"Capture logcat now\", or when the app crashes — not continuously, so switching it on " +
         "does not cost you any frames.\n\n" +
         "It contains BANNERLATOR'S OUTPUT ONLY. Android does not let an app read other apps' logs " +
@@ -1157,19 +1241,19 @@ private object LogCopy {
 
     const val CRASH =
         "No performance cost — nothing runs until something actually crashes.\n\n" +
-        "If WinHub itself crashes, a report is saved with your device model, Android version, " +
+        "If Bannerlator itself crashes, a report is saved with your device model, Android version, " +
         "app version, what went wrong, and the last few hundred lines of the app's log. That is " +
         "exactly what's needed to work out a crash after the fact.\n\n" +
         "Reports are kept with your other logs under \"App & crash logs\"."
 
     const val CAPTURE_NOW =
-        "Takes a snapshot of WinHub's recent Android log right now and saves it with your other " +
+        "Takes a snapshot of Bannerlator's recent Android log right now and saves it with your other " +
         "logs.\n\n" +
         "Useful when something went wrong but the app didn't crash — capture it while the problem is " +
         "fresh, then share it."
 
     const val EXIT_REASONS =
-        "Reads Android's own record of why WinHub last shut down or crashed — no root needed.\n\n" +
+        "Reads Android's own record of why Bannerlator last shut down or crashed — no root needed.\n\n" +
         "This is the ONLY way to see a NATIVE crash on an unrooted device: those die in a separate " +
         "system process, so they never show up in the logcat capture or the Java crash report, and " +
         "the app just restarts looking fine. For a native crash this shows the signal (e.g. SIGSEGV) " +
@@ -1185,16 +1269,37 @@ private object LogCopy {
         "run's files keep their normal names, so the newest log is always the obvious one.\n\n" +
         "Set it to 0 to keep no history at all."
 
+    const val RUST_ENGINE =
+        "On by default — no performance cost in game.\n\n" +
+        "Runs the whole Steam side of Bannerlator (sign-in, library, downloads, cloud saves, " +
+        "achievements, friends) on the app's native engine. Needs an app restart to take effect.\n\n" +
+        "Turn it off only if something Steam-related misbehaves: that switches back to the legacy " +
+        "Java engine for this release — nothing is lost. While the native engine is on, its own log " +
+        "is added to the SteamLite bundle so a problem can be traced."
+
+    const val RUST_STORE_ENGINES =
+        "On by default — no performance cost in game.\n\n" +
+        "Fetches Epic, GOG and Amazon game files with the app's native download engine (the same " +
+        "adaptive multi-connection fetcher the Steam engine uses). Everything else about a download " +
+        "— what is installed, resume, shortcuts, cloud saves — is unchanged.\n\n" +
+        "Each switch is read when a download starts, so flipping one applies to the next download " +
+        "of that store without a restart. Turn a store off if its downloads misbehave: that store " +
+        "goes back to its Java downloader — nothing is lost."
+
     fun explainAll(): String = buildString {
         append("Costs performance while on\n\n")
         append("• Wine debug\n$WINE\n\n")
         append("• Box64 / FEXCore\n$BOX64\n\n")
         append("\nSafe to leave on\n\n")
         append("• DXVK & VKD3D\n$DXVK\n\n")
+        append("• SteamLite (Steam client)\n$STEAMLITE\n\n")
         append("• Android logcat\n$LOGCAT\n\n")
         append("• Crash reports\n$CRASH\n\n")
         append("\nOrganisation\n\n")
         append("• Folder for each game\n$PER_GAME\n\n")
-        append("• Keep last runs\n$KEEP_LAST\n")
+        append("• Keep last runs\n$KEEP_LAST\n\n")
+        append("\nDeveloper\n\n")
+        append("• Rust Steam engine\n$RUST_ENGINE\n\n")
+        append("• Rust store engines (Epic / GOG / Amazon downloads)\n$RUST_STORE_ENGINES\n")
     }
 }

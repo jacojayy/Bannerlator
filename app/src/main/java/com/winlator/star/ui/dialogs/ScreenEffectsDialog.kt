@@ -50,6 +50,7 @@ fun ScreenEffectsDialog(state: XServerDialogState) {
     val initBrightness by state.seBrightness.collectAsState()
     val initContrast   by state.seContrast.collectAsState()
     val initGamma      by state.seGamma.collectAsState()
+    val initSaturation by state.seSaturation.collectAsState()
     val initFxaa       by state.seFxaa.collectAsState()
     val initCrt        by state.seCrt.collectAsState()
     val initToon       by state.seToon.collectAsState()
@@ -59,6 +60,7 @@ fun ScreenEffectsDialog(state: XServerDialogState) {
     var brightness      by remember(initBrightness) { mutableFloatStateOf(initBrightness) }
     var contrast        by remember(initContrast)   { mutableFloatStateOf(initContrast) }
     var gamma           by remember(initGamma)      { mutableFloatStateOf(initGamma) }
+    var saturation      by remember(initSaturation) { mutableFloatStateOf(initSaturation) }
     var fxaa            by remember(initFxaa)       { mutableStateOf(initFxaa) }
     var crt             by remember(initCrt)        { mutableStateOf(initCrt) }
     var toon            by remember(initToon)       { mutableStateOf(initToon) }
@@ -72,7 +74,7 @@ fun ScreenEffectsDialog(state: XServerDialogState) {
     val profileItems = listOf("-- Default --") + profiles
 
     fun resetToDefault() {
-        brightness = 0f; contrast = 0f; gamma = 1.0f
+        brightness = 0f; contrast = 0f; gamma = 1.0f; saturation = 100f
         fxaa = false; crt = false; toon = false; ntsc = false
     }
 
@@ -146,6 +148,7 @@ fun ScreenEffectsDialog(state: XServerDialogState) {
                 LabeledSlider("Brightness: ${brightness.toInt()}", brightness, -100f..100f) { brightness = it }
                 LabeledSlider("Contrast: ${contrast.toInt()}",     contrast,   -100f..100f) { contrast   = it }
                 LabeledSlider("Gamma: ${"%.2f".format(gamma)}",    gamma,      0.5f..3.0f)  { gamma      = it }
+                LabeledSlider("Saturation: ${saturation.toInt()}", saturation, 0f..200f)    { saturation = it }
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
@@ -165,7 +168,7 @@ fun ScreenEffectsDialog(state: XServerDialogState) {
                     TextButton(onClick = { state.dismiss() }) { Text("Cancel") }
                     TextButton(onClick = {
                         state.onScreenEffectsApply?.invoke(
-                            brightness, contrast, gamma, fxaa, crt, toon, ntsc, profileIndex
+                            brightness, contrast, gamma, saturation, fxaa, crt, toon, ntsc, profileIndex
                         )
                         state.dismiss()
                     }) { Text("Apply") }

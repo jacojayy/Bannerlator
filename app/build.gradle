@@ -71,8 +71,8 @@ android {
         // the same number over-the-top works, so those sideload installs are unaffected).
         // NB: do NOT write the camel-case build-code token in these comments — release.yml greps
         //     for it and takes head -1; a comment match feeds jq an empty value and the job dies.
-        versionCode 72
-        versionName "3.0.0-pre1"
+        versionCode 89
+        versionName "3.1.3-pre3"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         externalNativeBuild {
@@ -89,6 +89,8 @@ android {
     buildFeatures {
         compose true
         buildConfig true
+        // Exposes the SDL3 AAR's prefab package to CMake (libsteamctrl.so links SDL3::SDL3).
+        prefab true
     }
 
     compileOptions {
@@ -147,17 +149,17 @@ android {
         standard {
             dimension "version"
             applicationId "com.winlator.banner"
-            resValue "string", "app_name", "WinHub Bionic"
+            resValue "string", "app_name", "Bannerlator Bionic"
         }
         ludashi {
             dimension "version"
             applicationId "com.ludashi.benchmark"
-            resValue "string", "app_name", "WinHub Bionic Ludashi"
+            resValue "string", "app_name", "Bannerlator Bionic Ludashi"
         }
         pubg {
             dimension "version"
             applicationId "com.tencent.ig"
-            resValue "string", "app_name", "WinHub Bionic PuBG"
+            resValue "string", "app_name", "Bannerlator Bionic PuBG"
         }
     }
 
@@ -195,6 +197,10 @@ dependencies {
     implementation 'androidx.compose.ui:ui-graphics'
     implementation 'androidx.compose.ui:ui-tooling-preview'
     implementation 'androidx.compose.material3:material3'
+    // Material's real width/height breakpoints (Compact/Medium/Expanded), used by the Steam
+    // storefront to choose top tabs vs. a NavigationRail instead of guessing a dp number.
+    // Version comes from the compose-bom above.
+    implementation 'androidx.compose.material3:material3-window-size-class'
     implementation 'androidx.compose.material:material-icons-extended'
     implementation 'androidx.activity:activity-compose:1.8.2'
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'
@@ -205,6 +211,12 @@ dependencies {
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
 
     implementation 'androidx.appcompat:appcompat:1.4.0'
+    // androidx.webkit: gives us setRequestedWithHeaderOriginAllowList(), the only supported
+    // way to stop the WebView appending X-Requested-With: <package> to every request.
+    // That header is how Google detects an embedded browser and rejects OAuth with
+    // 403 disallowed_useragent (the GOG "Sign in with Google" white screen).
+    // Feature-gated at runtime via WebViewFeature.isFeatureSupported().
+    implementation 'androidx.webkit:webkit:1.11.0'
     implementation 'androidx.preference:preference:1.2.1'
     implementation 'com.google.android.material:material:1.4.0'
     implementation 'com.github.luben:zstd-jni:1.5.2-3@aar'
@@ -213,8 +225,37 @@ dependencies {
     implementation 'androidx.activity:activity-ktx:1.8.2'
     implementation 'androidx.fragment:fragment-ktx:1.6.2'
     implementation files('libs/MidiSynth/MidiSynth.jar')
-    implementation 'in.dragonbra:javasteam:1.8.0'
-    implementation 'in.dragonbra:javasteam-depotdownloader:1.8.0'
+
+    // Samsung Galaxy Performance SDK (proprietary, not GPL) — picked up ONLY when the user has
+    // supplied the jar (see app/libs/GalaxyPerf/README.md). It is git-ignored and absent in CI;
+    // the app loads it by reflection, so this guard keeps builds green with or without it.
+    def perfSdkJar = file('libs/GalaxyPerf/perfsdk-v1.0.0.jar')
+    if (perfSdkJar.exists()) {
+        implementation files(perfSdkJar)
+        logger.lifecycle("Galaxy Performance SDK found; bundling ${perfSdkJar.name}")
+    }
+
+    // JavaSteam — GameNative's fork (joshuatam/JavaSteam @ gamenative-latest). The depot-downloader
+    // module was rewritten to disk-spool chunks (temp files, not RAM) + drop the 8 MB per-thread
+    // ThreadLocal decompress window, fixing the large-game OOM (#408/#380: HITMAN 87 GB crashed at
+    // every speed tier on the public in.dragonbra:1.8.0 in-memory pipeline). Same published artifact
+    // GameNative ships. PINNED to the exact timestamped snapshot (buildNumber 1, the only build that
+    // exists) so it is immutable — a re-published -SNAPSHOT cannot silently change what we ship, and
+    // byte-identical to the artifact the #408 device-proof build (CI run 32710611783) resolved. The
+    // jars+metadata are VENDORED in-repo under vendor/maven/ (see its README) so the build no longer
+    // reaches Sonatype at all; transitive deps still come from mavenCentral.
+    implementation 'io.github.joshuatam:javasteam:1.8.0.1-26-20260801.180149-1'
+    implementation 'io.github.joshuatam:javasteam-depotdownloader:1.8.0.1-26-20260801.180149-1'
+    // SDL3 (official 3.4.16 Android release AAR, vendored unmodified under vendor/maven/) for the
+    // optional Steam Controller support: only its HIDAPI Steam drivers are enabled at runtime, see
+    // SteamControllerBackend. @aar: upstream publishes no POM/module, so ask for the AAR explicitly.
+    implementation 'org.libsdl.android:SDL3:3.4.16@aar'
+    // JavaSteam pulls protobuf-java only at runtime scope, so the generated proto supertypes
+    // (com.google.protobuf.GeneratedMessage / MessageOrBuilder) aren't on the COMPILE classpath.
+    // Building a proto request directly from Kotlin (the chat-image web-token mint) needs them
+    // visible at compile time. Promote the exact version JavaSteam already ships to compile+runtime
+    // (Gradle dedups to one 4.31.1 jar — the same classes already loaded for every CM message).
+    implementation 'com.google.protobuf:protobuf-java:4.31.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
     implementation 'com.google.zxing:core:3.5.3'
     implementation 'androidx.recyclerview:recyclerview:1.2.0'

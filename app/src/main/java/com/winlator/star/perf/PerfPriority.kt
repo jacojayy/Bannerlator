@@ -39,7 +39,9 @@ object PerfPriority {
 
     // Our OWN threads worth boosting (the render/present ones are already hotter than any rung, so
     // never-downgrade skips them; audio/worker pumps may have headroom). Lower-cased substring match.
-    private val APP_THREAD_TOKENS = arrayOf("audio", "worker", "render", "present", "vk", "gl")
+    // "compositor" = the Wayland compositor thread ("wl-compositor", waylandcomp_jni.c): it names itself
+    // and starts at THREAD_PRIORITY_URGENT_DISPLAY, so this only lifts it where that was refused.
+    private val APP_THREAD_TOKENS = arrayOf("audio", "worker", "render", "present", "vk", "gl", "compositor")
 
     // tid -> original nice, captured on first touch, for exact restore.
     private val originalNice = ConcurrentHashMap<Int, Int>()

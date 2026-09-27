@@ -139,6 +139,30 @@ public abstract class ProcessHelper {
     }
 
     /**
+     * Run {@code command} exactly like {@link #exec(String, String[], File, Callback)} (same env, same
+     * debug-log capture) and block until it exits, or until {@code timeoutMs} has passed, in which case
+     * the process is killed. Returns the exit status, or -1 when it could not be started or timed out.
+     * Only for short, headless helpers on a worker thread (never the UI thread).
+     */
+    public static int execAndWait(String command, String[] envp, File workingDir, long timeoutMs) {
+        final java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        final int[] status = {-1};
+        int pid = exec(command, envp, workingDir, (s) -> { status[0] = s; done.countDown(); });
+        if (pid <= 0) return -1;
+        try {
+            if (!done.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                Log.w("ProcessHelper", "execAndWait: pid " + pid + " still running after " + timeoutMs + " ms, killing it: " + command);
+                killProcess(pid);
+                return -1;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -1;
+        }
+        return status[0];
+    }
+
+    /**
      * Gracefully terminate every wine process, resuming SIGSTOP'd ones first so a suspended guest can
      * answer the SIGTERM, waiting up to {@code graceMs} for a clean exit, then force-killing any
      * survivor when {@code forceKill} is set. Mirrors the teardown WinNative performs on task
@@ -185,7 +209,8 @@ public abstract class ProcessHelper {
     }
 
     public static int exec(String command, String[] envp, File workingDir, Callback<Integer> terminationCallback) {
-        Log.d("ProcessHelper", "env: " + Arrays.toString(envp) + "\ncmd: " + command);
+        // Redact secrets (Steam refresh token / steamID / email) before this env dump hits raw logcat.
+        Log.d("ProcessHelper", com.winlator.star.store.SteamLogRedactor.redact("env: " + Arrays.toString(envp) + "\ncmd: " + command));
 
         // Store env vars for future use
         EnvironmentManager.setEnvVars(envp);

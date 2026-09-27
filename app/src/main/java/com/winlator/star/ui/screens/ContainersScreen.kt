@@ -4,21 +4,18 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,17 +28,22 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import android.widget.Toast
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FileUpload
-import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SettingsBackupRestore
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.Upgrade
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.FilledTonalButton
 import java.io.File
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -90,11 +92,12 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.Surface
 import com.winlator.star.R
-import com.winlator.star.AboutDialog
 import com.winlator.star.XServerDisplayActivity
 import com.winlator.star.XrActivity
 import com.winlator.star.container.Container
+import com.winlator.star.container.ContainerLayerUpdater
 import com.winlator.star.container.Shortcut
+import com.winlator.star.store.SteamFriendsAction
 import com.winlator.star.contentdialog.GraphicsDriverConfigDialog
 import com.winlator.star.core.FileUtils
 import com.winlator.star.core.GameSaveBackup
@@ -102,7 +105,8 @@ import com.winlator.star.util.InAppFilePicker
 import com.winlator.star.core.SaveLocator
 import com.winlator.star.core.StringUtils
 import com.winlator.star.store.UninstallResultBar
-import com.winlator.star.ui.HelpSupportDialog
+import com.winlator.star.ui.components.EmuAccountConflictDialog
+import com.winlator.star.store.download.InstallProgressDialog
 import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -120,6 +124,12 @@ fun ContainersScreen(
     val containers by vm.containers.collectAsState()
     val isLoading by vm.isLoading.collectAsState()
     val message by vm.message.collectAsState()
+    val layerUpdates by vm.layerUpdates.collectAsState()
+    val layerUpdateRemote by vm.layerUpdateRemote.collectAsState()
+    val layerDownload by vm.layerDownload.collectAsState()
+    val layerSnapshots by vm.layerSnapshots.collectAsState()
+    val layerCurrentMissing by vm.layerCurrentMissing.collectAsState()
+    val layerBusy by vm.layerBusy.collectAsState()
     val context = LocalContext.current
     val activity = context as Activity
 
@@ -145,15 +155,14 @@ fun ContainersScreen(
     var confirmDialog by remember { mutableStateOf<ConfirmAction?>(null) }
     var storageInfoContainer by remember { mutableStateOf<Container?>(null) }
     var showImportPicker by remember { mutableStateOf(false) }
-    // Bottom row card — About / Help and Support (moved out of the drawer, see AboutHelpRowCard).
-    var showAbout by remember { mutableStateOf(false) }
-    var showHelp by remember { mutableStateOf(false) }
 
     // Backup / Restore game save flow (see SaveFlow). The engine posts its result on the main
     // thread, so we just flip these bits of Compose state as the flow advances.
     var saveFlow by remember { mutableStateOf<SaveFlow?>(null) }
     var busyMessage by remember { mutableStateOf<String?>(null) }
     var resultMessage by remember { mutableStateOf<String?>(null) }
+    // Emulator account ids a restore held back because the container already runs a different one.
+    var emuConflicts by remember { mutableStateOf<List<GameSaveBackup.EmuIdConflict>>(emptyList()) }
     var pendingRestoreContainer by remember { mutableStateOf<Container?>(null) }
 
     // Restore a GameHub backup .zip. Shared for both the in-app picker (file:// path) and SAF.
@@ -186,6 +195,8 @@ fun ContainersScreen(
     // clear would steamroll it on first navigation to this screen.
     LaunchedEffect(Unit) {
         topBarActions.value = {
+            // Steam friends + chat — only renders when signed in to Steam (login-gated internally).
+            SteamFriendsAction()
             // New Container Defaults — opens the SAME container editor in "defaults mode" (the ✓ saves
             // the field state as the seed for future new containers) via the EDIT_DEFAULTS_ID sentinel.
             // Containers screen only. Sits next to the import action.
@@ -214,6 +225,9 @@ fun ContainersScreen(
                             if (!XrActivity.isEnabled(context)) {
                                 val intent = Intent(context, XServerDisplayActivity::class.java)
                                 intent.putExtra("container_id", container.id)
+                                if (container.displayBackend ==
+                                        com.winlator.star.container.Container.DISPLAY_BACKEND_WAYLAND)
+                                    intent.putExtra("wayland_mode", true)
                                 context.startActivity(intent)
                             } else {
                                 XrActivity.openIntent(activity, container.id, null)
@@ -237,6 +251,23 @@ fun ContainersScreen(
                         },
                         onInfo = { storageInfoContainer = container },
                         onBackupRestore = { saveFlow = SaveFlow.Fork(container) },
+                        layerUpdate = layerUpdates[container.id],
+                        layerUpdateRemote = layerUpdateRemote[container.id],
+                        layerSnapshot = layerSnapshots[container.id],
+                        onUpdateLayer = { target ->
+                            confirmDialog = ConfirmAction.UpdateLayer(
+                                container, target,
+                                revertable = container.id !in layerCurrentMissing,
+                                remote = layerUpdateRemote[container.id]?.takeIf { it.entryName == target },
+                            )
+                        },
+                        onRevertLayer = { snapshot -> confirmDialog = ConfirmAction.RevertLayer(container, snapshot) },
+                        onLayerHelp = { target ->
+                            confirmDialog = ConfirmAction.LayerHelp(
+                                container, target, layerSnapshots[container.id],
+                                remote = layerUpdateRemote[container.id]?.takeIf { it.entryName == target },
+                            )
+                        },
                     )
                 }
             }
@@ -276,27 +307,7 @@ fun ContainersScreen(
             UninstallResultBar(message = msg, onTimeout = { resultMessage = null })
         }
         } // end inner Box(weight)
-
-        // Standalone bottom card: About | Help and Support. Lives below the container list so it
-        // pins to the bottom in portrait and stretches full-width on landscape.
-        AboutHelpRowCard(
-            onAbout = { showAbout = true },
-            onHelp = { showHelp = true },
-        )
     } // end Column
-
-    // About / Help and Support dialogs — opened from the bottom row card (AboutHelpRowCard).
-    if (showAbout) {
-        AboutDialog(onDismiss = { showAbout = false })
-    }
-    if (showHelp) {
-        HelpSupportDialog(
-            onDismiss = { showHelp = false },
-            onOpenUrl = { url ->
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-            },
-        )
-    }
 
     // Import picker dialog
     if (showImportPicker) {
@@ -370,7 +381,131 @@ fun ContainersScreen(
                     },
                 )
             }
+            is ConfirmAction.UpdateLayer -> {
+                val newLabel = ContainerLayerUpdater.codeLabel(action.target)
+                val oldLabel = ContainerLayerUpdater.codeLabel(action.container.wineVersion)
+                val remote = action.remote
+                OutlinedAlertDialog(
+                    onDismissRequest = { confirmDialog = null },
+                    title = { Text(if (remote != null) "Download and update layer to $newLabel?" else "Update layer to $newLabel?") },
+                    text = {
+                        Text(
+                            "\"${action.container.name}\" moves from ${action.container.wineVersion} to ${action.target}.\n\n" +
+                                (if (remote != null)
+                                    "The $newLabel layer is not on this device yet: it is downloaded from the catalog" +
+                                        layerSizeHint(remote) + " and installed first, then the container is updated.\n\n"
+                                else "") +
+                                "What changes: the Wine/Proton layer files (system32/syswow64 builtin DLLs are refreshed; " +
+                                "DXVK, FEX/Box64 and game-installed files are left as they are). Wine finishes its own " +
+                                "prefix update on the next launch.\n\n" +
+                                "What is kept: games, saves, shortcuts and container settings.\n\n" +
+                                (if (action.revertable)
+                                    "The $oldLabel layer stays installed and a backup of the registry is taken, so you can " +
+                                        "revert from this menu. "
+                                else
+                                    "The $oldLabel layer is no longer installed on this device, so this update cannot be " +
+                                        "reverted afterwards (a registry backup is still taken). ") +
+                                "Make sure nothing is running in this container."
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            confirmDialog = null
+                            if (remote != null) vm.downloadAndUpdateLayer(action.container, remote)
+                            else vm.updateLayer(action.container, action.target)
+                        }) { Text(if (remote != null) "Download & update" else "Update") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmDialog = null }) { Text("Cancel") }
+                    },
+                )
+            }
+            is ConfirmAction.LayerHelp -> {
+                val newLabel = ContainerLayerUpdater.codeLabel(action.target)
+                OutlinedAlertDialog(
+                    onDismissRequest = { confirmDialog = null },
+                    title = { Text("About layer updates") },
+                    text = {
+                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                            Text(
+                                "A layer is the set of Wine/Proton files a container runs on. " +
+                                    "\"${action.container.name}\" runs on ${action.container.wineVersion}; a newer build " +
+                                    "of the same layer, ${action.target}, is " +
+                                    (if (action.remote != null) "available in the catalog. The $newLabel layer will be " +
+                                        "downloaded" + layerSizeHint(action.remote) + " first."
+                                    else "installed.") + "\n\n" +
+                                    "What the update changes: only Wine's own files inside the container are refreshed to " +
+                                    "the new version. DXVK, FEX/Box64 and anything a game installed are left as they are; " +
+                                    "Wine finishes its own prefix update on the next launch.\n\n" +
+                                    "What is kept: installed games, saves, shortcuts and container settings.\n\n" +
+                                    "The old layer stays installed and a backup of the registry is taken first, so " +
+                                    "\"Revert layer\" is available from this container's menu afterwards.\n\n" +
+                                    "Close the game before updating."
+                            )
+                            if (action.snapshot != null) {
+                                Text(
+                                    text = "A ${ContainerLayerUpdater.codeLabel(action.snapshot.oldEntry)} snapshot from an " +
+                                        "earlier update exists — revert is available in the menu.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = OnSurfaceVariant,
+                                    modifier = Modifier.padding(top = 12.dp),
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            confirmDialog = ConfirmAction.UpdateLayer(
+                                action.container, action.target,
+                                revertable = action.container.id !in layerCurrentMissing,
+                                remote = action.remote,
+                            )
+                        }) { Text(if (action.remote != null) "Download & update to $newLabel…" else "Update to $newLabel…") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmDialog = null }) { Text("Close") }
+                    },
+                )
+            }
+            is ConfirmAction.RevertLayer -> {
+                val oldLabel = ContainerLayerUpdater.codeLabel(action.snapshot.oldEntry)
+                OutlinedAlertDialog(
+                    onDismissRequest = { confirmDialog = null },
+                    title = { Text("Revert layer to $oldLabel?") },
+                    text = {
+                        Text(
+                            "\"${action.container.name}\" goes back from ${action.container.wineVersion} to " +
+                                "${action.snapshot.oldEntry}.\n\n" +
+                                "The registry is restored from the backup taken before the update (registry changes made " +
+                                "since then are discarded) and the builtin DLLs are refreshed from the $oldLabel layer. " +
+                                "Games, saves, shortcuts and container settings are kept. Requires the $oldLabel layer to " +
+                                "still be installed."
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            confirmDialog = null
+                            vm.revertLayer(action.container, action.snapshot)
+                        }) { Text("Revert") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmDialog = null }) { Text("Cancel") }
+                    },
+                )
+            }
         }
+    }
+
+    layerBusy?.let { SaveFlowProgressDialog(message = it) }
+    // Catalog download+install that precedes a remote layer update — the same popup the component
+    // sheet and the Contents hub use (live phase/percent, Cancel while running). On success the VM
+    // closes it itself and continues with the update; a failure stays up until closed.
+    layerDownload?.let { st ->
+        InstallProgressDialog(
+            state = st,
+            onCancel = { vm.cancelLayerDownload() },
+            onDismiss = { vm.layerDownloadDismissed() },
+        )
     }
 
     // Storage info dialog
@@ -449,6 +584,7 @@ fun ContainersScreen(
                         busyMessage = null
                         resultMessage = if (r.ok) "Restored ${r.filesWritten} files to \"${c.name}\""
                         else "Restore failed: ${r.error ?: "unknown error"}"
+                        emuConflicts = r.emuConflicts
                     }
                 }) { Text("Restore") }
             },
@@ -536,6 +672,11 @@ fun ContainersScreen(
     }
 
     busyMessage?.let { SaveFlowProgressDialog(message = it) }
+
+    EmuAccountConflictDialog(conflicts = emuConflicts) { applied, _ ->
+        emuConflicts = emptyList()
+        if (applied > 0) resultMessage = "Emulator account switched to the backup's — relaunch the game"
+    }
 }
 
 @Composable
@@ -548,14 +689,32 @@ private fun ContainerItem(
     onExport: () -> Unit,
     onInfo: () -> Unit,
     onBackupRestore: () -> Unit,
+    layerUpdate: String? = null,
+    layerUpdateRemote: ContainerLayerUpdater.CatalogCandidate? = null,
+    layerSnapshot: ContainerLayerUpdater.Snapshot? = null,
+    onUpdateLayer: (target: String) -> Unit = {},
+    onRevertLayer: (snapshot: ContainerLayerUpdater.Snapshot) -> Unit = {},
+    onLayerHelp: (target: String) -> Unit = {},
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+
+    // Layer-update target for both the card button and the overflow menu: an INSTALLED newer layer
+    // wins over a catalog-only one (no download needed then).
+    val layerTarget = layerUpdate ?: layerUpdateRemote?.entryName
+    val layerNeedsDownload = layerUpdate == null && layerUpdateRemote != null
 
     // Resolved component metadata (same theme as the Shortcuts game cards).
     val (dxvkVersion, vkd3dVersion) = parseDxwrapperConfig(container.getDXWrapperConfig())
     val driverCfg = container.getGraphicsDriverConfig()
     val driverLabel = if (driverCfg.isNotEmpty()) GraphicsDriverConfigDialog.getVersion(driverCfg) else ""
-    val rendererLabel = rendererLabelOf(container.renderer)
+    // Renderer chip: a Wayland container renders through the compositor, so its stored renderer id
+    // is the X11 setting and nothing runs it. Same effective-backend rule as the editors, keyed on
+    // the inputs of that rule so the layer probe runs once per card.
+    val cardContext = LocalContext.current
+    val waylandContainer = remember(container.wineVersion, container.displayBackend) {
+        com.winlator.star.core.WineWaylandSupport.runsOnWayland(cardContext, container)
+    }
+    val rendererLabel = rendererLabelOf(container.renderer, waylandContainer)
     val frameGenLabel = frameGenLabelOf(container.frameGenEngine)
     val backendLabel = run {
         val id = container.emulator
@@ -616,6 +775,54 @@ private fun ContainerItem(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                }
+                // A newer build of this container's layer line is installed — or, failing that, in the
+                // online catalog (ContainerLayerUpdater): compact update button + "?" explainer right
+                // under the layer subtitle. The catalog case adds a download glyph in front of the
+                // label (the layer is fetched first). The overflow menu carries the same action (and
+                // Revert) for discoverability.
+                if (layerTarget != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 4.dp),
+                    ) {
+                        // Outline a shade lighter than the tonal fill so the pair reads as one control
+                        // against the dark card (user request on the r1 screenshot).
+                        val layerOutline = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+                        FilledTonalButton(
+                            onClick = { onUpdateLayer(layerTarget) },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                            border = BorderStroke(1.dp, layerOutline),
+                            modifier = Modifier.height(26.dp),
+                        ) {
+                            if (layerNeedsDownload) {
+                                Icon(
+                                    imageVector = Icons.Filled.CloudDownload,
+                                    contentDescription = "Download needed",
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            Text(
+                                text = "Update layer \u2192 ${ContainerLayerUpdater.codeLabel(layerTarget)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        IconButton(
+                            onClick = { onLayerHelp(layerTarget) },
+                            modifier = Modifier.size(26.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.HelpOutline,
+                                contentDescription = "About layer updates",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
                 }
                 SpecChipRows(
                     rendererLabel = rendererLabel,
@@ -691,6 +898,26 @@ private fun ContainerItem(
                         leadingIcon = { Icon(Icons.Filled.SettingsBackupRestore, null) },
                         onClick = { menuExpanded = false; onBackupRestore() },
                     )
+                    if (layerTarget != null) {
+                        val menuTarget: String = layerTarget
+                        MenuItemDivider()
+                        DropdownMenuItem(
+                            text = {
+                                val label = ContainerLayerUpdater.codeLabel(menuTarget)
+                                Text(if (layerNeedsDownload) "Download & update layer to $label…" else "Update layer to $label…")
+                            },
+                            leadingIcon = { Icon(if (layerNeedsDownload) Icons.Filled.CloudDownload else Icons.Filled.Upgrade, null) },
+                            onClick = { menuExpanded = false; onUpdateLayer(menuTarget) },
+                        )
+                    }
+                    if (layerSnapshot != null) {
+                        MenuItemDivider()
+                        DropdownMenuItem(
+                            text = { Text("Revert layer to ${ContainerLayerUpdater.codeLabel(layerSnapshot.oldEntry)}…") },
+                            leadingIcon = { Icon(Icons.Filled.SettingsBackupRestore, null) },
+                            onClick = { menuExpanded = false; onRevertLayer(layerSnapshot) },
+                        )
+                    }
                     MenuItemDivider()
                     DropdownMenuItem(
                         text = { Text("Info") },
@@ -706,7 +933,30 @@ private fun ContainerItem(
 private sealed class ConfirmAction {
     data class Duplicate(val container: Container) : ConfirmAction()
     data class Remove(val container: Container) : ConfirmAction()
+    /**
+     * In-place layer update to [target] (ContainerLayerUpdater). [remote] is set when the target is a
+     * catalog-only build that has to be downloaded and installed first.
+     */
+    data class UpdateLayer(
+        val container: Container,
+        val target: String,
+        val revertable: Boolean = true,
+        val remote: ContainerLayerUpdater.CatalogCandidate? = null,
+    ) : ConfirmAction()
+    /** Revert a previous layer update using its [snapshot]. */
+    data class RevertLayer(val container: Container, val snapshot: ContainerLayerUpdater.Snapshot) : ConfirmAction()
+    /** The "?" explainer next to the card's update button. */
+    data class LayerHelp(
+        val container: Container,
+        val target: String,
+        val snapshot: ContainerLayerUpdater.Snapshot?,
+        val remote: ContainerLayerUpdater.CatalogCandidate? = null,
+    ) : ConfirmAction()
 }
+
+/** " (~340 MB)" when the catalog download size is known, "" otherwise. */
+private fun layerSizeHint(remote: ContainerLayerUpdater.CatalogCandidate): String =
+    remote.sizeBytes?.let { " (~${ContainerLayerUpdater.formatSize(it)})" } ?: ""
 
 /** Steps of the Backup / Restore game-save flow launched from a container's overflow menu. */
 private sealed class SaveFlow {
@@ -1143,72 +1393,4 @@ private fun StorageInfoDialog(container: Container, onDismiss: () -> Unit) {
             }) { Text("Clear Cache") }
         },
     )
-}
-
-@Composable
-private fun AboutHelpRowCard(onAbout: () -> Unit, onHelp: () -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            // Pin this Row to its content height (IntrinsicSize.Min) so the fillMaxHeight()
-            // divider below fills ONLY the sibling rows' height — otherwise it resolves against
-            // the full incoming max height and stretches this card to the whole screen.
-            .height(IntrinsicSize.Min)
-            .padding(horizontal = 16.dp, vertical = 10.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .border(1.dp, Color(0xFF242424), RoundedCornerShape(12.dp)),
-    ) {
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .clickable(onClick = onAbout)
-                .padding(vertical = 14.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Info,
-                contentDescription = null,
-                tint = accent,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "About",
-                color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-            )
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .width(1.dp)
-                .background(Color(0xFF242424)),
-        )
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .clickable(onClick = onHelp)
-                .padding(vertical = 14.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Filled.HelpOutline,
-                contentDescription = null,
-                tint = accent,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "Help and Support",
-                color = MaterialTheme.colorScheme.onSurface,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-            )
-        }
-    }
 }

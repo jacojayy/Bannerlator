@@ -1,6 +1,19 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 #include "VulkanRendererContext.h"
+#include "lsfg/lsfg_engine.h"
+#include "lsfg/lsfg_vkd.h"
+#include "winfg/winfg_engine.h"
+
+// Set by CMake from the copied win-fg chain (upstream tag + a hash over the
+// chain sources). Defaulted so this still compiles if it is ever built without
+// them - an "unknown" in a log is a missing stamp, not a broken build.
+#ifndef WINFG_UPSTREAM
+#define WINFG_UPSTREAM "unknown"
+#endif
+#ifndef WINFG_CHAIN_HASH
+#define WINFG_CHAIN_HASH "unknown"
+#endif
 #include <stdexcept>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +25,7 @@
 #include "window_frag.h"
 #include "upscale_vert.h"
 #include "sgsr_frag.h"
+#include "sgsr_quality_frag.h"
 #include "nis_frag.h"
 #include "fsr_easu_frag.h"
 #include "fsr_rcas_frag.h"
@@ -64,9 +78,10 @@ static void fsrRcasCon(uint32_t con[4], float rcasScale) {
     con[3] = 0;
 }
 
-VulkanRendererContext::VulkanRendererContext(ANativeWindow* win, int cW, int cH, void* aHandle)
+VulkanRendererContext::VulkanRendererContext(ANativeWindow* win, int cW, int cH, void* aHandle,
+                                             bool lsfgVk11Compat)
     : window(win), surfaceWidth(cW), surfaceHeight(cH), containerWidth(cW), containerHeight(cH),
-      adrenotoolsHandle(aHandle)
+      adrenotoolsHandle(aHandle), lsfgVk11Compat_(lsfgVk11Compat)
 {
     // Seed the renderer-neutral scanout impl with the owner's window/sizes.
     scanout.setFallbackWindow(window);
@@ -108,6 +123,7 @@ VulkanRendererContext::~VulkanRendererContext() {
     destroyColorTarget(fx1Img, fx1Mem, fx1View, fx1FB, fx1DS);
     destroyColorTarget(fx2Img, fx2Mem, fx2View, fx2FB, fx2DS);
     if (sgsrPipeline      != VK_NULL_HANDLE) vk_.DestroyPipeline(device, sgsrPipeline, nullptr);
+    if (sgsrQualityPipeline != VK_NULL_HANDLE) vk_.DestroyPipeline(device, sgsrQualityPipeline, nullptr);
     if (nisPipeline       != VK_NULL_HANDLE) vk_.DestroyPipeline(device, nisPipeline, nullptr);
     if (easuPipeline      != VK_NULL_HANDLE) vk_.DestroyPipeline(device, easuPipeline, nullptr);
     if (rcasPipeline      != VK_NULL_HANDLE) vk_.DestroyPipeline(device, rcasPipeline, nullptr);
@@ -129,6 +145,8 @@ VulkanRendererContext::~VulkanRendererContext() {
     if (debandPipelineSwap!= VK_NULL_HANDLE) vk_.DestroyPipeline(device, debandPipelineSwap, nullptr);
     if (postPipeLayout    != VK_NULL_HANDLE) vk_.DestroyPipelineLayout(device, postPipeLayout, nullptr);
     if (offscreenRenderPass != VK_NULL_HANDLE) vk_.DestroyRenderPass(device, offscreenRenderPass, nullptr);
+    if (compositeRenderPass != VK_NULL_HANDLE) { vk_.DestroyRenderPass(device, compositeRenderPass, nullptr); compositeRenderPass = VK_NULL_HANDLE; }
+    if (cursorOverlayRenderPass != VK_NULL_HANDLE) { vk_.DestroyRenderPass(device, cursorOverlayRenderPass, nullptr); cursorOverlayRenderPass = VK_NULL_HANDLE; }
     if (upscaleSampler    != VK_NULL_HANDLE) vk_.DestroySampler(device, upscaleSampler, nullptr);
 
     vk_.DestroySampler(device, sampler, nullptr);
@@ -136,11 +154,16 @@ VulkanRendererContext::~VulkanRendererContext() {
     vk_.DestroyPipeline(device, pipeline, nullptr);
     vk_.DestroyPipelineLayout(device, pipeLayout, nullptr);
     vk_.DestroyDescriptorSetLayout(device, dsLayout, nullptr);
-    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    // Semaphores are per pending present, fences per frame slot.
+    for (size_t i = 0; i < renderDoneSems.size(); i++)
         vk_.DestroySemaphore(device, renderDoneSems[i], nullptr);
+    for (size_t i = 0; i < imgAvailSems.size(); i++)
         vk_.DestroySemaphore(device, imgAvailSems[i], nullptr);
+    for (size_t i = 0; i < inFlightFences.size(); i++)
         vk_.DestroyFence(device, inFlightFences[i], nullptr);
-    }
+    lsfgEngine_.reset();
+    winfgEngine_.reset();
+    destroyFgQueryPool();
     vk_.DestroyCommandPool(device, cmdPool, nullptr);
     vk_.DestroyRenderPass(device, renderPass, nullptr);
     vk_.DestroyDevice(device, nullptr);
@@ -161,6 +184,8 @@ void VulkanRendererContext::loadInstanceDispatch() {
     LOAD_I2(GetPhysicalDeviceSurfacePresentModesKHR);
     LOAD_I2(GetPhysicalDeviceQueueFamilyProperties);
     LOAD_I2(GetPhysicalDeviceSurfaceSupportKHR);
+    LOAD_I2(GetPhysicalDeviceFormatProperties);
+    LOAD_I2(GetPhysicalDeviceFeatures2);
     LOAD_I2(CreateDevice);
     LOAD_I2(DestroySurfaceKHR);
     LOAD_I2(CreateAndroidSurfaceKHR);
@@ -181,6 +206,11 @@ void VulkanRendererContext::loadDeviceDispatch() {
     LOAD_D2(AcquireNextImageKHR);
     LOAD_D2(QueuePresentKHR);
     LOAD_D2(QueueSubmit);
+    LOAD_D2(CreateQueryPool);
+    LOAD_D2(DestroyQueryPool);
+    LOAD_D2(CmdResetQueryPool);
+    LOAD_D2(CmdWriteTimestamp);
+    LOAD_D2(GetQueryPoolResults);
     LOAD_D2(CreateRenderPass);
     LOAD_D2(DestroyRenderPass);
     LOAD_D2(CreateFramebuffer);
@@ -218,6 +248,11 @@ void VulkanRendererContext::loadDeviceDispatch() {
     LOAD_D2(FreeCommandBuffers);
     LOAD_D2(BeginCommandBuffer);
     LOAD_D2(EndCommandBuffer);
+    LOAD_D2(CmdDispatch);
+    LOAD_D2(CreateComputePipelines);
+    LOAD_D2(UnmapMemory);
+    LOAD_D2(CmdClearColorImage);
+    LOAD_D2(ResetDescriptorPool);
     LOAD_D2(ResetCommandBuffer);
     LOAD_D2(CmdBeginRenderPass);
     LOAD_D2(CmdEndRenderPass);
@@ -229,6 +264,7 @@ void VulkanRendererContext::loadDeviceDispatch() {
     LOAD_D2(CmdSetScissor);
     LOAD_D2(CmdPipelineBarrier);
     LOAD_D2(CmdCopyImage);
+    LOAD_D2(CmdBlitImage);
     LOAD_D2(CmdCopyBufferToImage);
     LOAD_D2(CreateSampler);
     LOAD_D2(DestroySampler);
@@ -290,6 +326,7 @@ void VulkanRendererContext::pickPhysicalDevice() {
             if ((qProps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && present) {
                 physicalDevice = d;
                 graphicsQueueFamilyIndex = i;
+                fgTimestampsOk_ = qProps[i].timestampValidBits > 0;
                 return;
             }
         }
@@ -304,8 +341,9 @@ void VulkanRendererContext::createLogicalDevice() {
 
     PFN_vkEnumerateDeviceExtensionProperties enumDevExts =
         (PFN_vkEnumerateDeviceExtensionProperties)gipa(instance, "vkEnumerateDeviceExtensionProperties");
+    std::vector<VkExtensionProperties> av;
     { uint32_t n=0; if(enumDevExts) enumDevExts(physicalDevice,nullptr,&n,nullptr);
-      std::vector<VkExtensionProperties> av(n);
+      av.resize(n);
       if(enumDevExts) enumDevExts(physicalDevice,nullptr,&n,av.data());
       for (auto& e:av) {
           if (strcmp(e.extensionName,"VK_EXT_filter_cubic")==0
@@ -318,8 +356,68 @@ void VulkanRendererContext::createLogicalDevice() {
     if (cubicSupported) extList.push_back("VK_EXT_filter_cubic");
     VkDeviceCreateInfo ci{}; ci.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     ci.pQueueCreateInfos=&qi; ci.queueCreateInfoCount=1;
+
+    // --- Native LSFG frame generation: enable the three features its shaders
+    // need. The renderer has historically enabled NO features at all
+    // (pEnabledFeatures = nullptr, no pNext), so all three are off by default.
+    // Only chain anything when the device passes every gate: on any other
+    // device this block is inert and vkCreateDevice is called exactly as it
+    // always has been. With the experimental Vulkan 1.1 compat flag the probe
+    // may also accept a 1.1/1.2 device through extensions (lsfg_probe.h); those
+    // are then enabled here and the memory model is requested through the KHR
+    // struct, which a 1.1 driver understands.
+    lsfgCaps_ = lsfg::Caps{};
+    lsfgCaps_.features = lsfg::queryFeatures(vk_, physicalDevice, av, lsfgVk11Compat_);
+
+    // Copy so a rejected feature chain can fall back to the pre-LSFG list.
+    const std::vector<const char*> baseExtList = extList;
+    VkPhysicalDeviceVulkan12Features             lsfgV12{};
+    VkPhysicalDeviceVulkanMemoryModelFeaturesKHR lsfgMM{};
+    VkPhysicalDeviceFeatures2                    lsfgF2{};
+    if (lsfgCaps_.features.deviceGatesPass()) {
+        const bool khrPath = lsfgCaps_.features.deviceApiVersion < VK_API_VERSION_1_2;
+        if (khrPath) {
+            lsfgMM.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES_KHR;
+            lsfgMM.vulkanMemoryModel = VK_TRUE;
+            lsfgMM.vulkanMemoryModelDeviceScope =
+                lsfgCaps_.features.vulkanMemoryModelDeviceScope ? VK_TRUE : VK_FALSE;
+            for (const char* e : lsfg::extensionNames(lsfgCaps_.features)) extList.push_back(e);
+            RLOG("createLogicalDevice: LSFG Vulkan 1.1 compat - enabling spirv_1_4 + vulkan_memory_model");
+        } else {
+            lsfgV12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+            lsfgV12.vulkanMemoryModel = VK_TRUE;
+            // Device scope is a separate SPIR-V capability; enable it only when the
+            // driver offers it, so a driver without it still gets the base model.
+            lsfgV12.vulkanMemoryModelDeviceScope =
+                lsfgCaps_.features.vulkanMemoryModelDeviceScope ? VK_TRUE : VK_FALSE;
+        }
+
+        lsfgF2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        lsfgF2.pNext = khrPath ? (void*)&lsfgMM : (void*)&lsfgV12;
+        lsfgF2.features.shaderStorageImageWriteWithoutFormat = VK_TRUE;
+        lsfgF2.features.shaderStorageImageExtendedFormats    = VK_TRUE;
+
+        // pEnabledFeatures MUST stay null while a VkPhysicalDeviceFeatures2 is
+        // chained — the two are mutually exclusive.
+        ci.pNext = &lsfgF2;
+        lsfgCaps_.featuresEnabled = true;
+    }
     ci.enabledExtensionCount=(uint32_t)extList.size(); ci.ppEnabledExtensionNames=extList.data();
-    if (vk_.CreateDevice(physicalDevice,&ci,nullptr,&device)!=VK_SUCCESS) throw std::runtime_error("device");
+
+    if (vk_.CreateDevice(physicalDevice,&ci,nullptr,&device)!=VK_SUCCESS) {
+        // A driver that rejects the feature chain must not cost us the whole
+        // renderer: retry once with the pre-LSFG device create, unchanged.
+        if (lsfgCaps_.featuresEnabled) {
+            RLOG_E("createLogicalDevice: CreateDevice failed WITH LSFG features; retrying without");
+            ci.pNext = nullptr;
+            ci.enabledExtensionCount=(uint32_t)baseExtList.size(); ci.ppEnabledExtensionNames=baseExtList.data();
+            lsfgCaps_.featuresEnabled = false;
+            if (vk_.CreateDevice(physicalDevice,&ci,nullptr,&device)!=VK_SUCCESS)
+                throw std::runtime_error("device");
+        } else {
+            throw std::runtime_error("device");
+        }
+    }
     vk_.GetDeviceProcAddr = (PFN_vkGetDeviceProcAddr)gipa(instance, "vkGetDeviceProcAddr");
     loadDeviceDispatch();
     vk_.GetDeviceQueue(device,graphicsQueueFamilyIndex,0,&graphicsQueue);
@@ -329,6 +427,7 @@ void VulkanRendererContext::createLogicalDevice() {
     VkPhysicalDeviceProperties props{};
     vk_.GetPhysicalDeviceProperties(physicalDevice, &props);
     maxAnisotropy = props.limits.maxSamplerAnisotropy;
+    fgTimestampPeriodNs_ = props.limits.timestampPeriod;
 }
 
 void VulkanRendererContext::createSwapchain() {
@@ -338,7 +437,32 @@ void VulkanRendererContext::createSwapchain() {
     uint32_t fmtN=0; vk_.GetPhysicalDeviceSurfaceFormatsKHR(physicalDevice,surface,&fmtN,nullptr);
     std::vector<VkSurfaceFormatKHR> fmts(fmtN); vk_.GetPhysicalDeviceSurfaceFormatsKHR(physicalDevice,surface,&fmtN,fmts.data());
     swapchainFmt = VK_FORMAT_R8G8B8A8_UNORM;
+
+    // Native LSFG: the composite target carries the swapchain's format so the
+    // effect pipelines stay render-pass compatible with both paths, and
+    // `generate` writes it through a storage image. Probe it here, where the
+    // format is finally known, and settle the capability verdict.
+    lsfgCaps_.probedFormat = swapchainFmt;
+    lsfgCaps_.storageOnSwapchainFormat =
+        lsfg::probeStorageFormat(vk_, physicalDevice, swapchainFmt);
+    lsfgCaps_.linearBlitOnSwapchainFormat =
+        lsfg::probeLinearBlit(vk_, physicalDevice, swapchainFmt);
+    lsfg::explain(lsfgCaps_);
+    RLOG("lsfg-native: %s (features enabled=%d, storage-on-fmt=%d)",
+         lsfgCaps_.reason, (int)lsfgCaps_.featuresEnabled,
+         (int)lsfgCaps_.storageOnSwapchainFormat);
+
     uint32_t imgCount=caps.minImageCount+1;
+    // Frame gen presents several images per source frame, so the queue needs
+    // depth to keep them in flight without stalling on AcquireNextImageKHR.
+    // Only while armed: extra images cost memory.
+    if (fgArmed_.load(std::memory_order_relaxed)) {
+        // Enough depth for base + generated in flight, but capped: Android's
+        // BufferQueue does not enjoy very deep swapchains, and the surface's
+        // own maxImageCount is not always the real limit.
+        const uint32_t want = std::min<uint32_t>(caps.minImageCount + kMaxPresentsPerFrame, 8u);
+        if (want > imgCount) imgCount = want;
+    }
     if (caps.maxImageCount>0&&imgCount>caps.maxImageCount) imgCount=caps.maxImageCount;
 
     uint32_t pmCount=0;
@@ -367,6 +491,17 @@ void VulkanRendererContext::createSwapchain() {
     ci.surface=surface; ci.minImageCount=imgCount; ci.imageFormat=swapchainFmt;
     ci.imageColorSpace=VK_COLOR_SPACE_SRGB_NONLINEAR_KHR; ci.imageExtent=swapchainExt;
     ci.imageArrayLayers=1; ci.imageUsage=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    // The composite path copies INTO the swapchain image, which needs
+    // TRANSFER_DST. Requested only while frame gen is armed, so a normal
+    // session never trades away framebuffer compression for a flag it never
+    // uses. Toggling arming recreates the swapchain (see setFrameGenArmed).
+    if (fgArmed_.load(std::memory_order_relaxed) &&
+        (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
+        ci.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        swapchainTransferDst = true;
+    } else {
+        swapchainTransferDst = false;
+    }
     ci.imageSharingMode=VK_SHARING_MODE_EXCLUSIVE; ci.preTransform=pre;
     ci.compositeAlpha=compositeAlpha; ci.presentMode=presentMode; ci.clipped=VK_TRUE;
     ci.oldSwapchain=oldSwapchain;
@@ -570,6 +705,8 @@ void VulkanRendererContext::createPostPipelines() {
     // SGSR & RCAS write the swapchain -> renderPass.
     easuPipeline = createPostPipeline(fsr_easu_code, sizeof(fsr_easu_code), offscreenRenderPass);
     sgsrPipeline = createPostPipeline(sgsr_code,     sizeof(sgsr_code),     renderPass);
+    // SGSR Quality (mode 8): same single pass + push constants, edge-direction weights.
+    sgsrQualityPipeline = createPostPipeline(sgsr_quality_code, sizeof(sgsr_quality_code), renderPass);
     // NIS NVScaler is single-pass and writes the swapchain directly -> renderPass.
     nisPipeline  = createPostPipeline(nis_code,      sizeof(nis_code),      renderPass);
     rcasPipeline = createPostPipeline(fsr_rcas_code, sizeof(fsr_rcas_code), renderPass);
@@ -625,6 +762,673 @@ bool VulkanRendererContext::createColorTarget(int w, int h, VkImage& img, VkDevi
     VkWriteDescriptorSet wr{}; wr.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; wr.dstSet=ds; wr.dstBinding=0; wr.descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; wr.descriptorCount=1; wr.pImageInfo=&dii;
     vk_.UpdateDescriptorSets(device,1,&wr,0,nullptr);
     return true;
+}
+
+// ======================= Native LSFG: composite target ring ==================
+// See VulkanRendererContext.h. When frame generation is armed the final pass
+// draws into a composite image we own instead of the acquired swapchain image,
+// and a copy moves it across at the end of the command buffer. The composite
+// carries the SWAPCHAIN's format, so every existing pipeline stays render-pass
+// compatible with both targets and none of them has to be rebuilt.
+
+bool VulkanRendererContext::createCompositeRenderPass() {
+    if (compositeRenderPass != VK_NULL_HANDLE) return true;
+
+    // Format-identical to renderPass (and to offscreenRenderPass — both are
+    // R8G8B8A8_UNORM today), so pipelines built against either remain
+    // compatible: render-pass compatibility is attachment format + sample
+    // count, not load/store ops or layouts.
+    VkAttachmentDescription att{}; att.format=swapchainFmt; att.samples=VK_SAMPLE_COUNT_1_BIT;
+    att.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR; att.storeOp=VK_ATTACHMENT_STORE_OP_STORE;
+    att.stencilLoadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE; att.stencilStoreOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att.initialLayout=VK_IMAGE_LAYOUT_UNDEFINED;
+    // GENERAL, so both a compute dispatch (generate) and the copy can touch the
+    // finished frame without another layout transition per use.
+    att.finalLayout=VK_IMAGE_LAYOUT_GENERAL;
+
+    VkAttachmentReference ref{0,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription sub{}; sub.pipelineBindPoint=VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.colorAttachmentCount=1; sub.pColorAttachments=&ref;
+
+    VkSubpassDependency deps[2]{};
+    // A previous frame may still be sampling or computing on this target.
+    deps[0].srcSubpass=VK_SUBPASS_EXTERNAL; deps[0].dstSubpass=0;
+    deps[0].srcStageMask=VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT;
+    deps[0].dstStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[0].srcAccessMask=VK_ACCESS_SHADER_READ_BIT|VK_ACCESS_TRANSFER_READ_BIT;
+    deps[0].dstAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    // Make this pass's writes visible to the copy and to the LSFG chain.
+    deps[1].srcSubpass=0; deps[1].dstSubpass=VK_SUBPASS_EXTERNAL;
+    deps[1].srcStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[1].dstStageMask=VK_PIPELINE_STAGE_TRANSFER_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    deps[1].srcAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    deps[1].dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT|VK_ACCESS_SHADER_READ_BIT;
+
+    VkRenderPassCreateInfo ci{}; ci.sType=VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    ci.attachmentCount=1; ci.pAttachments=&att; ci.subpassCount=1; ci.pSubpasses=&sub;
+    ci.dependencyCount=2; ci.pDependencies=deps;
+    if (vk_.CreateRenderPass(device,&ci,nullptr,&compositeRenderPass)!=VK_SUCCESS) {
+        RLOG_E("createCompositeRenderPass failed");
+        compositeRenderPass = VK_NULL_HANDLE;
+        return false;
+    }
+    return true;
+}
+
+bool VulkanRendererContext::ensureCompositeTargets(uint32_t w, uint32_t h, uint32_t count) {
+    if (w == 0 || h == 0 || count == 0) return false;
+    if (count > kMaxCompositeTargets) count = kMaxCompositeTargets;
+
+    if (compositeW == w && compositeH == h && compositeTargets.size() == count) return true;
+    if (!createCompositeRenderPass()) return false;
+
+    // Changing the multiplier resizes the ring, and the images being replaced
+    // may still be referenced by a submitted command buffer. Destroying them
+    // under the GPU is a use-after-free; wait first.
+    if (!compositeTargets.empty()) vk_.DeviceWaitIdle(device);
+    destroyCompositeTargets();
+
+    compositeTargets.resize(count);
+    for (uint32_t i = 0; i < count; i++) {
+        CompositeTarget& t = compositeTargets[i];
+
+        VkImageCreateInfo ii{}; ii.sType=VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        ii.imageType=VK_IMAGE_TYPE_2D; ii.extent={w,h,1};
+        ii.mipLevels=1; ii.arrayLayers=1; ii.format=swapchainFmt;
+        ii.tiling=VK_IMAGE_TILING_OPTIMAL; ii.initialLayout=VK_IMAGE_LAYOUT_UNDEFINED;
+        // The full set the frame-gen path needs: drawn into by the effect
+        // chain, sampled as the next frame's LSFG input, written by `generate`
+        // through a storage view, and copied into the swapchain image.
+        ii.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                 | VK_IMAGE_USAGE_SAMPLED_BIT
+                 | VK_IMAGE_USAGE_STORAGE_BIT
+                 | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+                 | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        ii.samples=VK_SAMPLE_COUNT_1_BIT; ii.sharingMode=VK_SHARING_MODE_EXCLUSIVE;
+        if (vk_.CreateImage(device,&ii,nullptr,&t.img)!=VK_SUCCESS) { destroyCompositeTargets(); return false; }
+
+        VkMemoryRequirements req; vk_.GetImageMemoryRequirements(device,t.img,&req);
+        VkMemoryAllocateInfo ai{}; ai.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        ai.allocationSize=req.size;
+        ai.memoryTypeIndex=findMemType(req.memoryTypeBits,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (vk_.AllocateMemory(device,&ai,nullptr,&t.mem)!=VK_SUCCESS) { destroyCompositeTargets(); return false; }
+        vk_.BindImageMemory(device,t.img,t.mem,0);
+
+        VkImageViewCreateInfo vci{}; vci.sType=VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        vci.image=t.img; vci.viewType=VK_IMAGE_VIEW_TYPE_2D; vci.format=swapchainFmt;
+        vci.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+        vci.components={VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,
+                        VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY};
+        if (vk_.CreateImageView(device,&vci,nullptr,&t.view)!=VK_SUCCESS) { destroyCompositeTargets(); return false; }
+        // Storage views must carry identity swizzle and no component mapping;
+        // same descriptor otherwise.
+        if (vk_.CreateImageView(device,&vci,nullptr,&t.storageView)!=VK_SUCCESS) { destroyCompositeTargets(); return false; }
+
+        VkImageView att[]={t.view};
+        VkFramebufferCreateInfo fi{}; fi.sType=VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fi.renderPass=compositeRenderPass; fi.attachmentCount=1; fi.pAttachments=att;
+        fi.width=w; fi.height=h; fi.layers=1;
+        if (vk_.CreateFramebuffer(device,&fi,nullptr,&t.fb)!=VK_SUCCESS) { destroyCompositeTargets(); return false; }
+
+        VkDescriptorSetAllocateInfo dsai{}; dsai.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        dsai.descriptorPool=winTexPool; dsai.descriptorSetCount=1; dsai.pSetLayouts=&dsLayout;
+        if (vk_.AllocateDescriptorSets(device,&dsai,&t.ds)!=VK_SUCCESS) { t.ds=VK_NULL_HANDLE; destroyCompositeTargets(); return false; }
+        VkDescriptorImageInfo dii{}; dii.imageLayout=VK_IMAGE_LAYOUT_GENERAL;
+        dii.imageView=t.view; dii.sampler=upscaleSampler;
+        VkWriteDescriptorSet wr{}; wr.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        wr.dstSet=t.ds; wr.dstBinding=0;
+        wr.descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; wr.descriptorCount=1;
+        wr.pImageInfo=&dii;
+        vk_.UpdateDescriptorSets(device,1,&wr,0,nullptr);
+    }
+
+    compositeW = w; compositeH = h; compositeIndex = 0;
+    RLOG("composite ring: %ux%u x%u targets", w, h, count);
+    return true;
+}
+
+void VulkanRendererContext::destroyCompositeTargets() {
+    for (CompositeTarget& t : compositeTargets) {
+        if (t.ds          !=VK_NULL_HANDLE){ vk_.FreeDescriptorSets(device,winTexPool,1,&t.ds); t.ds=VK_NULL_HANDLE; }
+        if (t.fb          !=VK_NULL_HANDLE){ vk_.DestroyFramebuffer(device,t.fb,nullptr); t.fb=VK_NULL_HANDLE; }
+        if (t.storageView !=VK_NULL_HANDLE){ vk_.DestroyImageView(device,t.storageView,nullptr); t.storageView=VK_NULL_HANDLE; }
+        if (t.view        !=VK_NULL_HANDLE){ vk_.DestroyImageView(device,t.view,nullptr); t.view=VK_NULL_HANDLE; }
+        if (t.img         !=VK_NULL_HANDLE){ vk_.DestroyImage(device,t.img,nullptr); t.img=VK_NULL_HANDLE; }
+        if (t.mem         !=VK_NULL_HANDLE){ vk_.FreeMemory(device,t.mem,nullptr); t.mem=VK_NULL_HANDLE; }
+    }
+    compositeTargets.clear();
+    compositeW = compositeH = 0;
+    compositeIndex = 0;
+}
+
+// ===================== Native LSFG: generation passes ========================
+
+bool VulkanRendererContext::ensureLsfgEngine() {
+    if (lsfgEngine_) return lsfgEngine_->valid();
+    if (lsfgEngineTried_) return false;      // failed once; don't retry every frame
+    lsfgEngineTried_ = true;
+
+    if (lsfgCachePath_.empty()) {
+        RLOG_E("lsfg-native: no shader cache path set");
+        return false;
+    }
+    if (!lsfgVkdInit(vk_)) {
+        RLOG_E("lsfg-native: dispatch incomplete; frame generation unavailable");
+        return false;
+    }
+
+    auto engine = std::make_unique<lsfg::Engine>();
+    if (!engine->init(device, physicalDevice, lsfgCachePath_, lsfgCaps_.features.spirvTarget)) {
+        RLOG_E("lsfg-native: engine init failed (cache %s, spirv target 0x%x)",
+               lsfgCachePath_.c_str(), lsfgCaps_.features.spirvTarget);
+        return false;
+    }
+    lsfgEngine_ = std::move(engine);
+    fgConfigDirty_.store(true, std::memory_order_relaxed);
+    RLOG("lsfg-native: engine ready (spirv target 0x%x)", lsfgCaps_.features.spirvTarget);
+    return true;
+}
+
+void VulkanRendererContext::ensureFgQueryPool() {
+    if (fgQueryPool_ != VK_NULL_HANDLE || !fgTimestampsOk_ || !vk_.CreateQueryPool) return;
+    VkQueryPoolCreateInfo qi{}; qi.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    qi.queryType = VK_QUERY_TYPE_TIMESTAMP; qi.queryCount = MAX_FRAMES_IN_FLIGHT * 2;
+    if (vk_.CreateQueryPool(device, &qi, nullptr, &fgQueryPool_) != VK_SUCCESS) {
+        fgQueryPool_ = VK_NULL_HANDLE;
+        fgTimestampsOk_ = false;
+        RLOG_E("lsfg-native: timestamp query pool unavailable; chain cost will not be reported");
+    }
+}
+
+void VulkanRendererContext::destroyFgQueryPool() {
+    if (fgQueryPool_ != VK_NULL_HANDLE && vk_.DestroyQueryPool)
+        vk_.DestroyQueryPool(device, fgQueryPool_, nullptr);
+    fgQueryPool_ = VK_NULL_HANDLE;
+    for (auto& p : fgQueryPending_) p = false;
+}
+
+void VulkanRendererContext::readFgQueryResult() {
+    if (fgQueryPool_ == VK_NULL_HANDLE || !fgQueryPending_[currentFrame]) return;
+    fgQueryPending_[currentFrame] = false;      // one attempt per sample; a miss is dropped
+    uint64_t ts[2] = {0, 0};
+    const VkResult r = vk_.GetQueryPoolResults(device, fgQueryPool_, currentFrame * 2, 2,
+                                               sizeof(ts), ts, sizeof(uint64_t),
+                                               VK_QUERY_RESULT_64_BIT);
+    if (r != VK_SUCCESS || ts[1] <= ts[0]) return;
+    const double ms = (double)(ts[1] - ts[0]) * (double)fgTimestampPeriodNs_ / 1.0e6;
+    const float perGen = (float)(ms / (double)std::max(1u, fgQueryGens_[currentFrame]));
+    fgChainMsPerGen_ = fgChainMsPerGen_ < 0.0f
+        ? perGen
+        : fgChainMsPerGen_ + (perGen - fgChainMsPerGen_) * 0.1f;
+    // Same cadence as the engine's own telemetry, so a log carries the cost
+    // next to the rates it explains.
+    if ((fgChainLogCount_++ % 120u) == 0u)
+        RLOG("lsfg-native: chain %.2f ms per generated frame (%.2f ms for %u, smoothed %.2f)",
+             perGen, (float)ms, fgQueryGens_[currentFrame], fgChainMsPerGen_);
+}
+
+bool VulkanRendererContext::ensureWinFgEngine() {
+    if (winfgEngine_) return winfgEngine_->valid();
+    if (winfgEngineTried_) return false;     // failed once; don't retry every frame
+    winfgEngineTried_ = true;
+
+    auto engine = std::make_unique<winfg::Engine>();
+    if (!engine->init(vk_, physicalDevice, device, graphicsQueueFamilyIndex, graphicsQueue)) {
+        RLOG_E("winfg-native: engine init failed");
+        return false;
+    }
+    winfgEngine_ = std::move(engine);
+    fgConfigDirty_.store(true, std::memory_order_relaxed);
+    // Says WHICH win-fg is running. The chain is copied into this tree rather
+    // than linked, so without this a log can only name the Bannerlator commit.
+    RLOG("winfg-native: engine ready (chain %s, src %s)", WINFG_UPSTREAM, WINFG_CHAIN_HASH);
+    return true;
+}
+
+bool VulkanRendererContext::fgCapsOk() const {
+    if (fgEngineKind_.load(std::memory_order_relaxed) == 1)
+        return lsfgCaps_.storageOnSwapchainFormat;
+    return lsfgCaps_.supported();
+}
+
+int VulkanRendererContext::frameGenProblem() const {
+    // explain() replaces "not probed" once the swapchain format has been checked;
+    // before that the caps are incomplete, so "unsupported" would be a guess.
+    if (std::strcmp(lsfgCaps_.reason, "not probed") == 0) return -1;
+    if (!fgCapsOk()) return 1;
+    // Read without renderMutex, like frameGenStats: a stale answer here only
+    // delays the notice by one poll.
+    // An engine that came up (its modules loaded) can still fail to build the
+    // chain at vkCreateComputePipelines - proprietary drivers often do the real
+    // compile there, so a lowered module (Vulkan 1.1 compat) may pass module
+    // creation and be rejected here. The engine object stays alive with
+    // unavailable() set; report that as a start failure too, or the drawer
+    // would show frame gen armed while nothing generates.
+    if (fgEngineKind_.load(std::memory_order_relaxed) == 1)
+        return ((winfgEngineTried_ && !winfgEngine_) || (winfgEngine_ && winfgEngine_->unavailable())) ? 2 : 0;
+    return ((lsfgEngineTried_ && !lsfgEngine_) || (lsfgEngine_ && lsfgEngine_->unavailable())) ? 2 : 0;
+}
+
+void VulkanRendererContext::setFrameGenEngine(int kind) {
+    std::lock_guard<std::mutex> lk(renderMutex);
+    const int was = fgEngineKind_.exchange(kind, std::memory_order_relaxed);
+    if (was == kind) return;
+    RLOG("native-fg: engine %s -> %s", was == 1 ? "win-fg" : "lsfg", kind == 1 ? "win-fg" : "lsfg");
+    // Only one engine holds GPU resources at a time; the other is rebuilt on
+    // demand if the user switches back.
+    lsfgEngine_.reset();   lsfgEngineTried_ = false;
+    winfgEngine_.reset();  winfgEngineTried_ = false;
+    fgConfigDirty_.store(true, std::memory_order_relaxed);
+}
+
+void VulkanRendererContext::setWinFgTuning(int model, int perfPreset) {
+    fgModel_.store(model, std::memory_order_relaxed);
+    fgPerfPreset_.store(perfPreset, std::memory_order_relaxed);
+    fgConfigDirty_.store(true, std::memory_order_relaxed);
+}
+
+void VulkanRendererContext::recordFrameGenProcess(VkCommandBuffer cb) {
+    // Which engine generates is a runtime choice: LSFG needs the user's
+    // Lossless.dll, win-fg carries its own shaders. They are mutually
+    // exclusive and only one holds GPU resources at a time.
+    const bool useWinFg = fgEngineKind_.load(std::memory_order_relaxed) == 1;
+    if (!compositeActive() || compositeTargets.empty()) return;
+    if (useWinFg ? !winfgEngine_ : !lsfgEngine_) return;
+    const CompositeTarget& src = compositeTargets[compositeIndex];
+    ensureFgQueryPool();
+    if (fgQueryPool_ != VK_NULL_HANDLE && fgPlan_.generations > 0) {
+        vk_.CmdResetQueryPool(cb, fgQueryPool_, currentFrame * 2, 2);
+        vk_.CmdWriteTimestamp(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, fgQueryPool_, currentFrame * 2);
+    }
+    // Take frame N as the chain's newest input and run everything that is
+    // shared across generations (mipmaps -> alpha -> beta -> gamma -> delta).
+    if (useWinFg) winfgEngine_->process(cb, src.img, compositeW, compositeH, fgPlan_.generations);
+    else          lsfgEngine_->process(cb, src.img, compositeW, compositeH, fgPlan_.generations);
+}
+
+void VulkanRendererContext::recordFrameGenGeneration(VkCommandBuffer cb, uint32_t g) {
+    const bool useWinFg = fgEngineKind_.load(std::memory_order_relaxed) == 1;
+    if (!compositeActive() || compositeTargets.empty()) return;
+    if (useWinFg ? !winfgEngine_ : !lsfgEngine_) return;
+    if (g >= fgPlan_.generations) return;
+    const uint32_t w = compositeW, h = compositeH;
+    {
+        const size_t slot = (compositeIndex + 1 + g) % compositeTargets.size();
+        const CompositeTarget& dst = compositeTargets[slot];
+        if (dst.img == VK_NULL_HANDLE || dst.storageView == VK_NULL_HANDLE) return;
+
+        if (useWinFg) winfgEngine_->generateInto(cb, g, fgPlan_.generations, dst.img, dst.storageView, w, h);
+        else          lsfgEngine_->generateInto(cb, g, g, dst.img, dst.storageView, w, h);
+
+        if (fgQueryPool_ != VK_NULL_HANDLE && g + 1 == fgPlan_.generations) {
+            vk_.CmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, fgQueryPool_, currentFrame * 2 + 1);
+            fgQueryPending_[currentFrame] = true;
+            fgQueryGens_[currentFrame]    = fgPlan_.generations;
+        }
+
+        // dst is left in GENERAL by the chain; move it and the target
+        // swapchain image into transfer layouts, copy, then hand the swapchain
+        // image to the presentation engine.
+        const uint32_t imgIdx = fgPlan_.imgIdx[g];
+        VkImageMemoryBarrier pre[2]{};
+        pre[0].sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        pre[0].oldLayout=VK_IMAGE_LAYOUT_GENERAL; pre[0].newLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        pre[0].srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED; pre[0].dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+        pre[0].image=dst.img; pre[0].subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+        pre[0].srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT; pre[0].dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+
+        pre[1].sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        pre[1].oldLayout=VK_IMAGE_LAYOUT_UNDEFINED; pre[1].newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        pre[1].srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED; pre[1].dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+        pre[1].image=swapchainImages[imgIdx]; pre[1].subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+        pre[1].srcAccessMask=0; pre[1].dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,nullptr, 0,nullptr, 2,pre);
+
+        // Copy at panel resolution, blit up when the ring is smaller.
+        recordCompositeToSwapchainTransfer(cb, dst.img, imgIdx);
+
+        // Restore the generation target first; the swapchain image's own final
+        // transition depends on whether the cursor overlay runs for it.
+        VkImageMemoryBarrier post[2]{};
+        post[0].sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        post[0].oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; post[0].newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        post[0].srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED; post[0].dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+        post[0].image=swapchainImages[imgIdx]; post[0].subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+        post[0].srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT; post[0].dstAccessMask=0;
+        // Put the generation target back in GENERAL for the next dispatch.
+        post[1].sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        post[1].oldLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL; post[1].newLayout=VK_IMAGE_LAYOUT_GENERAL;
+        post[1].srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED; post[1].dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+        post[1].image=dst.img; post[1].subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+        post[1].srcAccessMask=VK_ACCESS_TRANSFER_READ_BIT; post[1].dstAccessMask=VK_ACCESS_SHADER_WRITE_BIT;
+
+        if (cursorDrawnPerPresent() && cursorOverlay_.draw) {
+            // Only the generation target goes back to GENERAL here; the
+            // overlay pass takes the swapchain image to PRESENT_SRC.
+            vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0,nullptr, 0,nullptr, 1,&post[1]);
+            recordCursorOverlay(cb, imgIdx);
+        } else {
+            vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                0, 0,nullptr, 0,nullptr, 2,post);
+        }
+    }
+}
+
+void VulkanRendererContext::setLsfgCachePath(const char* path) {
+    std::lock_guard<std::mutex> lk(renderMutex);
+    const std::string next = path ? path : "";
+    // Only a genuinely NEW cache justifies throwing the engine away. This is
+    // called on every multiplier change, and rebuilding here meant the chain,
+    // the pacer's rate history and the governor's accepted level were all
+    // discarded each time - so the governor restarted at zero generations and
+    // never survived long enough to probe. Frame generation reported gen=0
+    // forever while looking perfectly healthy.
+    if (next == lsfgCachePath_ && lsfgEngine_) return;
+    lsfgCachePath_ = next;
+    lsfgEngineTried_ = false;    // a new cache deserves a fresh attempt
+    lsfgEngine_.reset();
+}
+
+void VulkanRendererContext::setFrameGenTuning(float flowScale, float refreshHz,
+                                              int32_t captureHeight) {
+    if (captureHeight < 0) captureHeight = kFgCaptureGame;
+    fgFlowScale_.store(flowScale, std::memory_order_relaxed);
+    // A zero here means the display could not be read, not "0 Hz". Keeping the
+    // last good value stops the pacer's refresh ceiling flapping between 144
+    // and unknown, which was visible in the logs as max= alternating.
+    if (refreshHz > 1.0f) fgRefreshHz_.store(refreshHz, std::memory_order_relaxed);
+    const int32_t wasCapture = fgCaptureHeight_.exchange(captureHeight, std::memory_order_relaxed);
+    if (wasCapture != captureHeight)
+        RLOG("native-fg: tuning captureHeight=%d->%d (-1 = game, 0 = panel)", wasCapture, captureHeight);
+    // A capture-height change resizes the composite ring on the next armed
+    // frame (ensureCompositeTargets sees a new extent) and the engine's
+    // prepare() rebuilds the chain for it; nothing else has to be forced.
+    fgConfigDirty_.store(true, std::memory_order_relaxed);
+}
+
+void VulkanRendererContext::compositeExtentFor(uint32_t& w, uint32_t& h) const {
+    w = swapchainExt.width; h = swapchainExt.height;
+    const int32_t sel = fgCaptureHeight_.load(std::memory_order_relaxed);
+    // "Game" is resolved here, not in Java: containerHeight is the X screen the
+    // game really renders to (shortcut override, TV resolution and render scale
+    // already applied when nativeInit received it).
+    const uint32_t want = sel == kFgCaptureGame ? (uint32_t)std::max(containerHeight, 0)
+                                                : (uint32_t)std::max(sel, 0);
+    if (want == 0 || swapchainExt.width == 0 || swapchainExt.height == 0) return;
+    // Never below a quarter of the panel (the chain's 7-level pyramid needs
+    // pixels to work with) and never above it (that is just the panel).
+    const uint32_t minH = std::max(16u, swapchainExt.height / 4u);
+    uint32_t H = std::min(std::max(want, minH), swapchainExt.height);
+    if (H >= swapchainExt.height) return;
+    uint32_t W = (uint32_t)std::lround((double)H * (double)swapchainExt.width / (double)swapchainExt.height);
+    W &= ~1u; H &= ~1u;
+    if (W < 2u || H < 2u) return;
+    w = W; h = H;
+}
+
+void VulkanRendererContext::recordCompositeToSwapchainTransfer(VkCommandBuffer cb, VkImage src,
+                                                               uint32_t imgIdx) {
+    const bool sameExtent = compositeW == swapchainExt.width && compositeH == swapchainExt.height;
+    if (sameExtent || !vk_.CmdBlitImage) {
+        // Same format and same extent, so a copy is enough — no filtering.
+        VkImageCopy region{};
+        region.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
+        region.dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
+        region.extent={compositeW, compositeH, 1};
+        vk_.CmdCopyImage(cb, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         swapchainImages[imgIdx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        return;
+    }
+    // Capture resolution below the panel: the ring is smaller than the
+    // swapchain, so the frame - real or generated - is upscaled on its way
+    // out. NEAREST is the filter every blittable format supports; LINEAR
+    // additionally needs SAMPLED_IMAGE_FILTER_LINEAR on the source format
+    // (mandatory for the usual swapchain formats, probed once in
+    // createSwapchain), so fall back when it is missing.
+    const VkFilter filter = lsfgCaps_.linearBlitOnSwapchainFormat ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    VkImageBlit blit{};
+    blit.srcSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
+    blit.srcOffsets[1]={(int32_t)compositeW,(int32_t)compositeH,1};
+    blit.dstSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};
+    blit.dstOffsets[1]={(int32_t)swapchainExt.width,(int32_t)swapchainExt.height,1};
+    vk_.CmdBlitImage(cb, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     swapchainImages[imgIdx], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     1, &blit, filter);
+}
+
+// ================== Native LSFG: per-present software cursor =================
+// LSFG warps whatever it is handed along the estimated flow field. A cursor
+// composited into the frame is therefore smeared across the generated frames,
+// which is very visible on a Wine desktop. So while frame gen is armed the
+// cursor is left OUT of the composite and drawn once into every presented
+// image - real and generated alike - by a load-op pass that also performs the
+// final transition to PRESENT_SRC.
+
+bool VulkanRendererContext::cursorDrawnPerPresent() const {
+    return compositeActive() && cursorOverlayRenderPass != VK_NULL_HANDLE;
+}
+
+bool VulkanRendererContext::createCursorOverlayRenderPass() {
+    if (cursorOverlayRenderPass != VK_NULL_HANDLE) return true;
+
+    // Format-compatible with renderPass, so the existing swapchain
+    // framebuffers and the window pipeline can both be reused as they are;
+    // only the load op and the layouts differ.
+    VkAttachmentDescription att{}; att.format=swapchainFmt; att.samples=VK_SAMPLE_COUNT_1_BIT;
+    att.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;       // keep the frame we just copied in
+    att.storeOp=VK_ATTACHMENT_STORE_OP_STORE;
+    att.stencilLoadOp=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    att.stencilStoreOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att.initialLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    att.finalLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    VkAttachmentReference ref{0,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription sub{}; sub.pipelineBindPoint=VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.colorAttachmentCount=1; sub.pColorAttachments=&ref;
+
+    VkSubpassDependency dep{}; dep.srcSubpass=VK_SUBPASS_EXTERNAL; dep.dstSubpass=0;
+    dep.srcStageMask=VK_PIPELINE_STAGE_TRANSFER_BIT;
+    dep.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+    dep.dstStageMask=VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dep.dstAccessMask=VK_ACCESS_COLOR_ATTACHMENT_READ_BIT|VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    VkRenderPassCreateInfo ci{}; ci.sType=VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    ci.attachmentCount=1; ci.pAttachments=&att; ci.subpassCount=1; ci.pSubpasses=&sub;
+    ci.dependencyCount=1; ci.pDependencies=&dep;
+    if (vk_.CreateRenderPass(device,&ci,nullptr,&cursorOverlayRenderPass)!=VK_SUCCESS) {
+        RLOG_E("createCursorOverlayRenderPass failed");
+        cursorOverlayRenderPass = VK_NULL_HANDLE;
+        return false;
+    }
+    return true;
+}
+
+void VulkanRendererContext::recordCursorOverlay(VkCommandBuffer cb, uint32_t imgIdx) {
+    if (!cursorDrawnPerPresent()) return;
+    const CursorOverlay& c = cursorOverlay_;
+    if (!c.draw || cursorDS == VK_NULL_HANDLE || imgIdx >= swapchainFBs.size()) return;
+
+    // The copy left the image in TRANSFER_DST; the render pass wants
+    // COLOR_ATTACHMENT_OPTIMAL and hands it on as PRESENT_SRC itself.
+    VkImageMemoryBarrier toAttachment{};
+    toAttachment.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toAttachment.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toAttachment.newLayout=VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    toAttachment.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+    toAttachment.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+    toAttachment.image=swapchainImages[imgIdx];
+    toAttachment.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+    toAttachment.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+    toAttachment.dstAccessMask=VK_ACCESS_COLOR_ATTACHMENT_READ_BIT|VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0,nullptr, 0,nullptr, 1,&toAttachment);
+
+    VkRenderPassBeginInfo rpi{}; rpi.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rpi.renderPass=cursorOverlayRenderPass; rpi.framebuffer=swapchainFBs[imgIdx];
+    rpi.renderArea={{0,0},swapchainExt};
+    rpi.clearValueCount=0; rpi.pClearValues=nullptr;   // LOAD_OP_LOAD: nothing to clear
+    vk_.CmdBeginRenderPass(cb,&rpi,VK_SUBPASS_CONTENTS_INLINE);
+
+    VkViewport vp{0,0,(float)swapchainExt.width,(float)swapchainExt.height,0,1};
+    VkRect2D   sc{{0,0},swapchainExt};
+    vk_.CmdSetViewport(cb,0,1,&vp);
+    vk_.CmdSetScissor(cb,0,1,&sc);
+    // `pipeline` is the alpha-blended window pipeline, built against renderPass;
+    // format compatibility is what makes it usable with the overlay pass too.
+    vk_.CmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline);
+    vk_.CmdBindDescriptorSets(cb,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeLayout,0,1,&cursorDS,0,nullptr);
+
+    const float cx=(float)std::max(0,(int)c.ptrX-c.hotX), cy=(float)std::max(0,(int)c.ptrY-c.hotY);
+    WindowPushConstants pc{};
+    pc.ndcX0=(c.ox+cx*c.sx)/c.cw*2.f-1.f;
+    pc.ndcY0=(c.oy+cy*c.sy)/c.ch*2.f-1.f;
+    pc.ndcX1=(c.ox+(cx+c.w)*c.sx)/c.cw*2.f-1.f;
+    pc.ndcY1=(c.oy+(cy+c.h)*c.sy)/c.ch*2.f-1.f;
+    pc.useTexAlpha=1;
+    vk_.CmdPushConstants(cb,pipeLayout,VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT,
+                         0,sizeof(pc),&pc);
+    vk_.CmdDraw(cb,4,1,0,0);
+    vk_.CmdEndRenderPass(cb);
+}
+
+void VulkanRendererContext::frameGenStats(float out[6]) const {
+    out[0] = out[1] = out[2] = 0.0f;
+    out[4] = -1.0f;
+    // The presented rate is measured by the renderer itself, per present, and is
+    // valid for EVERY engine - including win-fg, whose generated frames arrive
+    // from inside the guest. It is reported even with no LSFG engine present.
+    out[3] = fgPresentedRate_;
+    out[5] = fgChainMsPerGen_;
+    if (fgEngineKind_.load(std::memory_order_relaxed) == 1) {
+        // win-fg has no governor: what is planned is what is generated.
+        if (!winfgEngine_) return;
+        out[0] = out[1] = (float)fgPlan_.generations;
+        out[2] = fgSourceRate_;
+        return;
+    }
+    if (!lsfgEngine_) return;
+    out[0] = (float)lsfgEngine_->acceptedGenerations();
+    out[1] = (float)fgPlan_.generations;
+    out[2] = lsfgEngine_->sourceRate();
+    out[4] = (float)lsfgEngine_->thermalStatus();
+}
+
+void VulkanRendererContext::trackPresentedRate(uint32_t presents) {
+    const auto now = std::chrono::steady_clock::now();
+    if (!fgRateWindowOpen_) {
+        fgRateWindowStart_ = now;
+        fgRateWindowOpen_  = true;
+        fgPresentAccum_    = 0;
+        fgSourceAccum_     = 0;
+    }
+    fgPresentAccum_ += presents;
+    fgSourceAccum_  += 1;
+
+    const float elapsed = std::chrono::duration<float>(now - fgRateWindowStart_).count();
+    if (elapsed < 0.5f) return;                    // half-second window
+    const float rate = (float)fgPresentAccum_ / elapsed;
+    // Same smoothing shape the pacer uses, so the two numbers are comparable.
+    fgPresentedRate_ = fgPresentedRate_ > 0.0f
+        ? fgPresentedRate_ + (rate - fgPresentedRate_) * 0.25f
+        : rate;
+    const float srcRate = (float)fgSourceAccum_ / elapsed;
+    fgSourceRate_ = fgSourceRate_ > 0.0f
+        ? fgSourceRate_ + (srcRate - fgSourceRate_) * 0.25f
+        : srcRate;
+    fgRateWindowStart_ = now;
+    fgPresentAccum_    = 0;
+    fgSourceAccum_     = 0;
+}
+
+void VulkanRendererContext::setFrameGenArmed(bool armed, int multiplier) {
+    const bool was = fgArmed_.load(std::memory_order_relaxed);
+    const int  wasMult = fgMultiplier_.load(std::memory_order_relaxed);
+    fgMultiplier_.store(multiplier, std::memory_order_relaxed);
+    // A multiplier change must reach the pacer, or it keeps capping at the
+    // level it was built with.
+    if (wasMult != multiplier) {
+        fgConfigDirty_.store(true, std::memory_order_relaxed);
+        // Logged because a multiplier change that does NOT flip the armed state
+        // takes the early return below and was previously invisible - exactly
+        // the case the r3 run could not explain.
+        RLOG("native-fg: multiplier %d -> %d (armed=%d)", wasMult, multiplier, (int)armed);
+    }
+    if (was == armed) return;
+
+    fgArmed_.store(armed, std::memory_order_relaxed);
+    RLOG("native-fg: frame gen %s (multiplier=%d) - recreating swapchain",
+         armed ? "ARMED" : "disarmed", multiplier);
+    // The swapchain's usage flags and image count both depend on this, so it
+    // has to be rebuilt. The existing resize path already does that safely.
+    fbResized.store(true);
+    dirtyCV.notify_one();
+}
+
+bool VulkanRendererContext::compositeActive() const {
+    // Every gate must hold, or we run the pre-LSFG path unchanged.
+    if (!fgArmed_.load(std::memory_order_relaxed)) return false;
+    if (!fgCapsOk()) return false;
+    if (scanoutActive.load()) return false;   // direct scanout bypasses the compositor entirely
+    return compositeArmed;
+}
+
+VkRenderPass VulkanRendererContext::targetRenderPass() const {
+    return compositeActive() ? compositeRenderPass : renderPass;
+}
+
+VkFramebuffer VulkanRendererContext::targetFramebuffer(uint32_t imgIdx) const {
+    if (compositeActive() && compositeIndex < compositeTargets.size())
+        return compositeTargets[compositeIndex].fb;
+    return swapchainFBs[imgIdx];
+}
+
+void VulkanRendererContext::copyCompositeToSwapchain(VkCommandBuffer cb, uint32_t imgIdx) {
+    if (!compositeActive() || compositeIndex >= compositeTargets.size()) return;
+    const CompositeTarget& t = compositeTargets[compositeIndex];
+
+    // composite: GENERAL (render pass left it there) -> TRANSFER_SRC
+    // swapchain: UNDEFINED (nothing has touched it this frame) -> TRANSFER_DST
+    VkImageMemoryBarrier pre[2]{};
+    pre[0].sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    pre[0].oldLayout=VK_IMAGE_LAYOUT_GENERAL; pre[0].newLayout=VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    pre[0].srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED; pre[0].dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+    pre[0].image=t.img; pre[0].subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+    pre[0].srcAccessMask=VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT|VK_ACCESS_SHADER_WRITE_BIT;
+    pre[0].dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+
+    pre[1].sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    pre[1].oldLayout=VK_IMAGE_LAYOUT_UNDEFINED; pre[1].newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    pre[1].srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED; pre[1].dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+    pre[1].image=swapchainImages[imgIdx]; pre[1].subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+    pre[1].srcAccessMask=0; pre[1].dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+
+    vk_.CmdPipelineBarrier(cb,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0,nullptr, 0,nullptr, 2,pre);
+
+    // Same format: a copy at panel resolution, a linear blit when the ring is
+    // smaller (experimental capture resolution).
+    recordCompositeToSwapchainTransfer(cb, t.img, imgIdx);
+
+    // The cursor overlay, when it runs, takes the image from TRANSFER_DST to
+    // PRESENT_SRC itself; only do it here when there is no overlay.
+    if (cursorDrawnPerPresent() && cursorOverlay_.draw) {
+        recordCursorOverlay(cb, imgIdx);
+        return;
+    }
+
+    VkImageMemoryBarrier post{};
+    post.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    post.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; post.newLayout=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    post.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED; post.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
+    post.image=swapchainImages[imgIdx]; post.subresourceRange={VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1};
+    post.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT; post.dstAccessMask=0;
+    vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0,nullptr, 0,nullptr, 1,&post);
 }
 
 void VulkanRendererContext::destroyColorTarget(VkImage& img, VkDeviceMemory& mem, VkImageView& view,
@@ -706,24 +1510,60 @@ void VulkanRendererContext::createCursorDS() {
 }
 
 void VulkanRendererContext::createCmdBufs() {
-    cmdBufs.resize(MAX_FRAMES_IN_FLIGHT);
+    cmdBufs.resize(MAX_FRAMES_IN_FLIGHT * kMaxPresentsPerFrame);
     VkCommandBufferAllocateInfo ai{}; ai.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    ai.commandPool=cmdPool; ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; ai.commandBufferCount=MAX_FRAMES_IN_FLIGHT;
+    ai.commandPool=cmdPool; ai.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY; ai.commandBufferCount=(uint32_t)cmdBufs.size();
     if (vk_.AllocateCommandBuffers(device,&ai,cmdBufs.data())!=VK_SUCCESS) throw std::runtime_error("cmdbuf");
 }
 
 void VulkanRendererContext::createSyncObjects() {
-    imgAvailSems.resize(MAX_FRAMES_IN_FLIGHT); renderDoneSems.resize(MAX_FRAMES_IN_FLIGHT); inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+    // One semaphore PAIR per pending present (frame slot x presents), but still
+    // one fence per frame slot: all presents of a source frame come from a
+    // single submit, so they share its completion.
+    const uint32_t semCount = MAX_FRAMES_IN_FLIGHT * kMaxPresentsPerFrame;
+    imgAvailSems.resize(semCount); renderDoneSems.resize(semCount); inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
     VkSemaphoreCreateInfo si{}; si.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     VkFenceCreateInfo fi{}; fi.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO; fi.flags=VK_FENCE_CREATE_SIGNALED_BIT;
-    for (uint32_t i=0;i<MAX_FRAMES_IN_FLIGHT;i++) {
+    for (uint32_t i=0;i<semCount;i++) {
         if (vk_.CreateSemaphore(device,&si,nullptr,&imgAvailSems[i])!=VK_SUCCESS||
-            vk_.CreateSemaphore(device,&si,nullptr,&renderDoneSems[i])!=VK_SUCCESS||
-            vk_.CreateFence(device,&fi,nullptr,&inFlightFences[i])!=VK_SUCCESS) throw std::runtime_error("sync");
+            vk_.CreateSemaphore(device,&si,nullptr,&renderDoneSems[i])!=VK_SUCCESS)
+            throw std::runtime_error("sync");
+    }
+    for (uint32_t i=0;i<MAX_FRAMES_IN_FLIGHT;i++) {
+        if (vk_.CreateFence(device,&fi,nullptr,&inFlightFences[i])!=VK_SUCCESS)
+            throw std::runtime_error("sync");
     }
 }
 
+void VulkanRendererContext::recreateSyncObjects() {
+    // Caller has already waited on every fence, so nothing is executing; the
+    // only thing that can still be outstanding is an acquire semaphore that was
+    // signalled for a frame which never got submitted.
+    vk_.DeviceWaitIdle(device);
+
+    for (size_t i = 0; i < imgAvailSems.size(); i++)
+        if (imgAvailSems[i] != VK_NULL_HANDLE) vk_.DestroySemaphore(device, imgAvailSems[i], nullptr);
+    for (size_t i = 0; i < renderDoneSems.size(); i++)
+        if (renderDoneSems[i] != VK_NULL_HANDLE) vk_.DestroySemaphore(device, renderDoneSems[i], nullptr);
+
+    const uint32_t semCount = MAX_FRAMES_IN_FLIGHT * kMaxPresentsPerFrame;
+    imgAvailSems.assign(semCount, VK_NULL_HANDLE);
+    renderDoneSems.assign(semCount, VK_NULL_HANDLE);
+
+    VkSemaphoreCreateInfo si{}; si.sType=VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    for (uint32_t i = 0; i < semCount; i++) {
+        if (vk_.CreateSemaphore(device,&si,nullptr,&imgAvailSems[i])!=VK_SUCCESS ||
+            vk_.CreateSemaphore(device,&si,nullptr,&renderDoneSems[i])!=VK_SUCCESS)
+            throw std::runtime_error("sync");
+    }
+    currentFrame = 0;
+}
+
 void VulkanRendererContext::cleanupSwapchain() {
+    // The composite ring is sized to the swapchain extent and its framebuffers
+    // reference compositeRenderPass, so it goes with the swapchain.
+    destroyCompositeTargets();
+    compositeArmed = false;
     for (auto fb:swapchainFBs) vk_.DestroyFramebuffer(device,fb,nullptr); swapchainFBs.clear();
     for (auto iv:swapchainViews) vk_.DestroyImageView(device,iv,nullptr); swapchainViews.clear();
     if (!cmdBufs.empty()){vk_.FreeCommandBuffers(device,cmdPool,(uint32_t)cmdBufs.size(),cmdBufs.data());cmdBufs.clear();}
@@ -1017,6 +1857,21 @@ void VulkanRendererContext::recordCmdBuf(VkCommandBuffer cb, uint32_t imgIdx,
     }
 
     bool cursorDrawn = curVis && cursorImg!=VK_NULL_HANDLE && cursorDS!=VK_NULL_HANDLE;
+
+    // Frame gen: keep the cursor OUT of the composite - LSFG would warp it
+    // along the flow field and smear it - and draw it into every presented
+    // image instead, real and generated alike.
+    cursorOverlay_ = CursorOverlay{};
+    if (cursorDrawnPerPresent()) {
+        cursorOverlay_.draw = cursorDrawn;
+        cursorOverlay_.ox = ox; cursorOverlay_.oy = oy;
+        cursorOverlay_.sx = sx; cursorOverlay_.sy = sy;
+        cursorOverlay_.cw = cw; cursorOverlay_.ch = ch;
+        cursorOverlay_.ptrX = ptrX; cursorOverlay_.ptrY = ptrY;
+        cursorOverlay_.hotX = curHotX; cursorOverlay_.hotY = curHotY;
+        cursorOverlay_.w = curW; cursorOverlay_.h = curH;
+        cursorDrawn = false;
+    }
     bool hasCursorCopy = hasCursorUpload && cursorImg!=VK_NULL_HANDLE && cursorUpload!=VK_NULL_HANDLE;
     if (hasCursorCopy) {
         VkImageMemoryBarrier b{}; b.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -1038,22 +1893,56 @@ void VulkanRendererContext::recordCmdBuf(VkCommandBuffer cb, uint32_t imgIdx,
         vk_.CmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
             0, 0, nullptr, 0, nullptr, (uint32_t)postUpload.size(), postUpload.data());
 
+    // Experimental capture resolution: while frame gen runs on a composite
+    // ring smaller than the swapchain, the whole scene is drawn at the ring's
+    // size and blitted up on the way out. Both paths below size themselves by
+    // renderExtent(), so the effect chain, the spatial upscalers and the
+    // render-scale downscale keep working on the smaller ring.
+    const VkExtent2D targetExt = renderExtent();
+
     if (upFrame.active) {
-        // Spatial-upscaler path: composite to an offscreen target at game res,
-        // then SGSR/FSR-upscale it into the swapchain (see recordUpscalePasses).
+        // Spatial-upscaler / effects path: composite to an offscreen target at
+        // game res, then upscale / run the effect chain into the render target
+        // (see recordUpscalePasses).
         recordUpscalePasses(cb, imgIdx, draws, cursorDrawn,
             ptrX, ptrY, curHotX, curHotY, curW, curH,
             ox, oy, sx, sy, cw, ch);
     } else {
 
     VkRenderPassBeginInfo rpi{}; rpi.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    rpi.renderPass=renderPass; rpi.framebuffer=swapchainFBs[imgIdx]; rpi.renderArea={{0,0},swapchainExt};
+    // Frame gen redirects the final target to a composite image we own; the
+    // accessors return the swapchain pair unchanged when it is off.
+    rpi.renderPass=targetRenderPass(); rpi.framebuffer=targetFramebuffer(imgIdx); rpi.renderArea={{0,0},targetExt};
     VkClearValue clr={{{0.f,0.f,0.f,1.f}}}; rpi.clearValueCount=1; rpi.pClearValues=&clr;
 
     vk_.CmdBeginRenderPass(cb, &rpi, VK_SUBPASS_CONTENTS_INLINE);
-    VkViewport vp{0,0,(float)swapchainExt.width,(float)swapchainExt.height,0,1};
+    // The window quads are placed in NDC (normalised to the surface), so a
+    // same-aspect smaller target needs only a smaller viewport, not new maths.
+    VkViewport vp{0,0,(float)targetExt.width,(float)targetExt.height,0,1};
     vk_.CmdSetViewport(cb, 0, 1, &vp);
-    VkRect2D sc{{0,0},swapchainExt}; vk_.CmdSetScissor(cb, 0, 1, &sc);
+    // #413: clip the compositor draws to the game region (a half of the surface on TOP/BOTTOM alignment)
+    // so a FILL/STRETCH game that overflows the region is cropped and can't bleed into the on-screen-
+    // controls half. The renderpass clear still covers the whole renderArea (full swapchain, above), so
+    // the controls half is painted black each frame. A full-surface (or w<=0) clip region disables the
+    // crop, making the scissor the whole swapchain -> byte-identical to the historical CENTER output.
+    VkRect2D sc{{0,0},targetExt};
+    {
+        int32_t cx = clipRegionX.load(std::memory_order_relaxed);
+        int32_t cy = clipRegionY.load(std::memory_order_relaxed);
+        int32_t cw = clipRegionW.load(std::memory_order_relaxed);
+        int32_t ch = clipRegionH.load(std::memory_order_relaxed);
+        if (cw > 0 && ch > 0) {
+            // The clip rect is in surface pixels; scale it onto a downsized ring.
+            const float kx = (float)targetExt.width  / (float)std::max(1u, swapchainExt.width);
+            const float ky = (float)targetExt.height / (float)std::max(1u, swapchainExt.height);
+            int32_t l = std::max(0, (int32_t)std::lround(cx * kx));
+            int32_t t = std::max(0, (int32_t)std::lround(cy * ky));
+            int32_t r = std::min((int32_t)targetExt.width,  (int32_t)std::lround((cx + cw) * kx));
+            int32_t b = std::min((int32_t)targetExt.height, (int32_t)std::lround((cy + ch) * ky));
+            if (r > l && b > t) { sc.offset = {l, t}; sc.extent = {(uint32_t)(r - l), (uint32_t)(b - t)}; }
+        }
+    }
+    vk_.CmdSetScissor(cb, 0, 1, &sc);
 
     vk_.CmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     for (auto& d : draws) {
@@ -1083,6 +1972,22 @@ void VulkanRendererContext::recordCmdBuf(VkCommandBuffer cb, uint32_t imgIdx,
     vk_.CmdEndRenderPass(cb);
     } // end !upFrame.active
 
+    // Frame gen: the chain's shared passes and the FIRST generated frame go in
+    // this command buffer. Every later generated frame and the real frame are
+    // recorded into their own buffers in renderFrame, each submitted and
+    // presented as soon as it is done. With no generation this is just the
+    // real frame's copy (a no-op off the composite path).
+    //
+    // process() runs EVERY composite frame, generating or not: it is where the
+    // engine counts frames and seeds its input history, and it only starts
+    // generating once it has seen enough of them. r1 of this change called it
+    // only when a generation was already planned, so the count never advanced,
+    // the engine stayed cold for the whole session and plan() returned 0 every
+    // frame - presented rate equal to the guest rate, exactly.
+    recordFrameGenProcess(cb);
+    if (fgPlan_.generations > 0) recordFrameGenGeneration(cb, 0);
+    else                         copyCompositeToSwapchain(cb, imgIdx);
+
     VkResult endStatus = vk_.EndCommandBuffer(cb);
     if (endStatus!=VK_SUCCESS) {
         RLOG_E("recordCmdBuf: EndCommandBuffer failed with status=%d (swapRB=%d draws=%zu imgIdx=%u)",
@@ -1097,10 +2002,13 @@ void VulkanRendererContext::recordUpscalePasses(VkCommandBuffer cb, uint32_t img
     float ox, float oy, float sx, float sy, float scw, float sch)
 {
     const VkClearValue blk={{{0.f,0.f,0.f,1.f}}};
-    const VkViewport fullVp{0,0,(float)swapchainExt.width,(float)swapchainExt.height,0,1};
-    const VkRect2D   fullSc{{0,0},swapchainExt};
+    // The output extent: the swapchain, or the composite ring while frame gen
+    // runs below panel resolution (planUpscaleFrame sized everything by it).
+    const VkExtent2D outExt = renderExtent();
+    const VkViewport fullVp{0,0,(float)outExt.width,(float)outExt.height,0,1};
+    const VkRect2D   fullSc{{0,0},outExt};
 
-    const bool hasScaling = (upFrame.mode>=3 && upFrame.mode<=7) || upFrame.mode==UPMODE_DOWNSCALE;
+    const bool hasScaling = (upFrame.mode>=3 && upFrame.mode<=8) || upFrame.mode==UPMODE_DOWNSCALE;
     // Must include EVERY chainable effect (matches planUpscaleFrame's fxOn) — else a
     // scaling mode (SGSR/FSR/Sharpen/downscale) treats the scale as final and writes
     // straight to the swapchain, skipping the effect chain (CRT/NTSC/etc. silently dropped).
@@ -1158,8 +2066,8 @@ void VulkanRendererContext::recordUpscalePasses(VkCommandBuffer cb, uint32_t img
     auto postPass=[&](VkPipeline pl, VkFramebuffer fb, bool toSwapchain,
                       VkDescriptorSet srcDS, const void* pcd, uint32_t pcsz){
         VkRenderPassBeginInfo rpi{}; rpi.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        rpi.renderPass = toSwapchain ? renderPass : offscreenRenderPass;
-        rpi.framebuffer=fb; rpi.renderArea={{0,0},swapchainExt};
+        rpi.renderPass = toSwapchain ? targetRenderPass() : offscreenRenderPass;
+        rpi.framebuffer=fb; rpi.renderArea={{0,0},outExt};
         rpi.clearValueCount=1; rpi.pClearValues=&blk;
         vk_.CmdBeginRenderPass(cb,&rpi,VK_SUBPASS_CONTENTS_INLINE);
         vk_.CmdSetViewport(cb,0,1,&fullVp); vk_.CmdSetScissor(cb,0,1,&fullSc);
@@ -1180,14 +2088,15 @@ void VulkanRendererContext::recordUpscalePasses(VkCommandBuffer cb, uint32_t img
         // renderPass post pipeline into an offscreenRenderPass fx target reuses the
         // exact pattern the composite stage already uses (window `pipeline` -> offscreen).
         const bool scaleFinal = !fxOn;
-        VkFramebuffer stFB = scaleFinal ? swapchainFBs[imgIdx] : fx1FB;
-        if (upFrame.mode==3 || upFrame.mode==6 || upFrame.mode==7 || upFrame.mode==UPMODE_DOWNSCALE) {
+        VkFramebuffer stFB = scaleFinal ? targetFramebuffer(imgIdx) : fx1FB;
+        if (upFrame.mode==3 || upFrame.mode==6 || upFrame.mode==7 || upFrame.mode==8 || upFrame.mode==UPMODE_DOWNSCALE) {
             VkPipeline   pl   = (upFrame.mode==3) ? sgsrPipeline
+                              : (upFrame.mode==8) ? sgsrQualityPipeline
                               : (upFrame.mode==7) ? nisPipeline
                               : (upFrame.mode==6) ? rcasPipeline
                               :                     downscalePipeline;
             const void*  pcd; uint32_t pcsz;
-            if (upFrame.mode==3)      { pcd=&upFrame.sgsrPC; pcsz=sizeof(upFrame.sgsrPC); }
+            if (upFrame.mode==3 || upFrame.mode==8) { pcd=&upFrame.sgsrPC; pcsz=sizeof(upFrame.sgsrPC); }
             else if (upFrame.mode==7) { pcd=&upFrame.nisPC;  pcsz=sizeof(upFrame.nisPC);  }
             else if (upFrame.mode==6) { pcd=&upFrame.rcasPC; pcsz=sizeof(upFrame.rcasPC); }
             else                      { pcd=&upFrame.dsPC;   pcsz=sizeof(upFrame.dsPC);   }
@@ -1212,8 +2121,8 @@ void VulkanRendererContext::recordUpscalePasses(VkCommandBuffer cb, uint32_t img
         curDS = fx1DS;
     } else {
         // Effects-only (no scaling mode active): composite with the normal scene
-        // transform straight into fx1 (full swapchain), then run the effect chain.
-        composite(fx1FB, (int)swapchainExt.width, (int)swapchainExt.height, /*identity*/false, scw, sch);
+        // transform straight into fx1 (full output extent), then run the effect chain.
+        composite(fx1FB, (int)outExt.width, (int)outExt.height, /*identity*/false, scw, sch);
         curDS = fx1DS;
     }
 
@@ -1239,7 +2148,7 @@ void VulkanRendererContext::recordUpscalePasses(VkCommandBuffer cb, uint32_t img
     for (int i=0;i<n;i++) {
         const bool toSwap = (i==n-1);
         VkFramebuffer tgtFB; VkDescriptorSet tgtDS;
-        if (toSwap)               { tgtFB=swapchainFBs[imgIdx]; tgtDS=VK_NULL_HANDLE; }
+        if (toSwap)               { tgtFB=targetFramebuffer(imgIdx); tgtDS=VK_NULL_HANDLE; }
         else if (curDS==fx1DS)    { tgtFB=fx2FB; tgtDS=fx2DS; }
         else                      { tgtFB=fx1FB; tgtDS=fx1DS; }
         switch (effects[i]) {
@@ -1278,19 +2187,23 @@ void VulkanRendererContext::planUpscaleFrame() {
     // Any of the 7 composable effects engages the post chain (even at mode 0/1/2).
     const bool fxOn = casOn || hdrEnabled || fxaaEnabled || toonEnabled ||
                       colorEnabled || ntscEnabled || crtEnabled || debandEnabled;
-    const float scW=(float)swapchainExt.width, scH=(float)swapchainExt.height;
+    // Everything below is sized by the output extent: the swapchain, or the
+    // composite ring while frame gen runs below panel resolution (experimental
+    // capture resolution). renderFrame arms/resizes the ring before this runs.
+    const VkExtent2D outExt = renderExtent();
+    const float scW=(float)outExt.width, scH=(float)outExt.height;
     const bool renderAboveDisplay =
-        ((int)swapchainExt.width<containerWidth || (int)swapchainExt.height<containerHeight);
+        ((int)outExt.width<containerWidth || (int)outExt.height<containerHeight);
     const bool renderBelowDisplay =
-        ((int)swapchainExt.width>containerWidth || (int)swapchainExt.height>containerHeight);
+        ((int)outExt.width>containerWidth || (int)outExt.height>containerHeight);
 
-    // Aspect-fit letterbox rect for the swapchain (used by all fit paths).
+    // Aspect-fit letterbox rect for the output extent (used by all fit paths).
     auto fitRect=[&](int& outX,int& outY,int& outW,int& outH){
         float a=std::min(scW/(float)containerWidth, scH/(float)containerHeight);
         outW=(int)((float)containerWidth*a+0.5f);
         outH=(int)((float)containerHeight*a+0.5f);
-        outX=((int)swapchainExt.width-outW)/2;
-        outY=((int)swapchainExt.height-outH)/2;
+        outX=((int)outExt.width-outW)/2;
+        outY=((int)outExt.height-outH)/2;
     };
 
     bool scaling=false;
@@ -1315,8 +2228,8 @@ void VulkanRendererContext::planUpscaleFrame() {
         if (mode>=3 && (mode==6 || renderBelowDisplay)) {
             int outX,outY,outW,outH;
             if (mode==4) {                               // fsr (fill / stretch)
-                outX=0; outY=0; outW=(int)swapchainExt.width; outH=(int)swapchainExt.height;
-            } else {                                     // sgsr(3) / fsr_fit(5) / sharpen(6)
+                outX=0; outY=0; outW=(int)outExt.width; outH=(int)outExt.height;
+            } else {                                     // sgsr(3/8) / fsr_fit(5) / sharpen(6) / nis(7)
                 fitRect(outX,outY,outW,outH);
             }
             bool ok = (outW>0 && outH>0) && ensureOffscreen(containerWidth,containerHeight);
@@ -1327,7 +2240,7 @@ void VulkanRendererContext::planUpscaleFrame() {
                 upFrame.active=true; upFrame.mode=mode; scaling=true;
                 upFrame.outX=outX; upFrame.outY=outY; upFrame.outW=outW; upFrame.outH=outH;
 
-                if (mode==3) {
+                if (mode==3 || mode==8) {                // sgsr / sgsr quality share the layout
                     SgsrPushConstants& p=upFrame.sgsrPC;
                     p.ndc[0]=nx0; p.ndc[1]=ny0; p.ndc[2]=nx1; p.ndc[3]=ny1;
                     p.viewportInfo[0]=1.f/(float)containerWidth;
@@ -1380,12 +2293,12 @@ void VulkanRendererContext::planUpscaleFrame() {
         if (!fxOn) return;                       // nothing to do -> direct path
         upFrame.active=true; upFrame.mode=0;
         upFrame.outX=0; upFrame.outY=0;
-        upFrame.outW=(int)swapchainExt.width; upFrame.outH=(int)swapchainExt.height;
+        upFrame.outW=(int)outExt.width; upFrame.outH=(int)outExt.height;
     }
 
     // ---- Ensure the effect-chain intermediates and pack each effect's push const.
     if (fxOn && upFrame.active) {
-        const int fw=(int)swapchainExt.width, fh=(int)swapchainExt.height;
+        const int fw=(int)outExt.width, fh=(int)outExt.height;
         const int nEffects=(int)fxaaEnabled+(int)toonEnabled+(int)colorEnabled+
                            (int)casOn+(int)hdrEnabled+(int)ntscEnabled+(int)crtEnabled+
                            (int)debandEnabled;
@@ -1414,6 +2327,7 @@ void VulkanRendererContext::planUpscaleFrame() {
             ColorPushConstants& c=upFrame.colorPC;
             c.ndc[0]=full[0]; c.ndc[1]=full[1]; c.ndc[2]=full[2]; c.ndc[3]=full[3];
             c.brightness=colorBrightness; c.contrast=colorContrast; c.gamma=colorGamma;
+            c.saturation=colorSaturation;
         }
         if (casOn) {
             CasPushConstants& c=upFrame.casPC;
@@ -1518,13 +2432,25 @@ void VulkanRendererContext::renderFrame() {
         if (!fencesOk) return;
         cleanupSwapchain();
         bool ok=false;
-        try{createSwapchain();createFramebuffers();createCmdBufs();imgInFlight.assign(swapchainImages.size(),VK_NULL_HANDLE);
+        try{
+            // Rebuild the acquire/present semaphores along with the swapchain.
+            // A frame that acquired an image and then bailed out - which any
+            // early return between AcquireNextImageKHR and QueueSubmit does,
+            // and arming/disarming frame gen forces mid-flight - leaves its
+            // image-available semaphore SIGNALLED with nothing left to wait on
+            // it. Reusing such a semaphore in the next AcquireNextImageKHR is
+            // invalid, and Adreno answers with VK_ERROR_OUT_OF_DATE_KHR, which
+            // sets fbResized again: a swapchain-recreate loop that never
+            // presents another frame. Recreating them is the only way to
+            // guarantee no pending signal survives.
+            recreateSyncObjects();
+            createSwapchain();createFramebuffers();createCmdBufs();imgInFlight.assign(swapchainImages.size(),VK_NULL_HANDLE);
 ok=true;}catch(...){}
         if (ok) fbResized.store(false);
         return;
     }
 
-    if (currentFrame >= cmdBufs.size() || cmdBufs[currentFrame] == VK_NULL_HANDLE) return;
+    if (cmdSlot(kMaxPresentsPerFrame - 1) >= cmdBufs.size() || cmdBufs[cmdSlot(0)] == VK_NULL_HANDLE) return;
     bool currentFenceWaited = false;
     if (!vk_.GetFenceStatus || vk_.GetFenceStatus(device, inFlightFences[currentFrame]) == VK_NOT_READY) {
         if (vk_.WaitForFences(device,1,&inFlightFences[currentFrame],VK_TRUE,2000000000ULL) != VK_SUCCESS) {
@@ -1533,31 +2459,159 @@ ok=true;}catch(...){}
         }
         currentFenceWaited = true;
     }
+    // This slot's previous frame is complete, so its chain timestamps are final.
+    readFgQueryResult();
 
-    uint32_t imgIdx;
-    // ERL bug report #9: real timeout so VK_TIMEOUT is reachable; existing non-success guard below returns on it.
-    VkResult res=vk_.AcquireNextImageKHR(device,swapchain,2000000000ULL,imgAvailSems[currentFrame],VK_NULL_HANDLE,&imgIdx);
-    if (res==VK_ERROR_OUT_OF_DATE_KHR||res==VK_ERROR_SURFACE_LOST_KHR){fbResized.store(true);return;}
-    if (res!=VK_SUCCESS&&res!=VK_SUBOPTIMAL_KHR) return;
-    if (imgIdx >= swapchainFBs.size() || imgIdx >= swapchainImages.size()) {
-        RLOG_E("renderFrame: invalid acquired image index=%u (fb=%zu images=%zu)",
-            imgIdx, swapchainFBs.size(), swapchainImages.size());
-        return;
+    // --- Frame gen: decide whether THIS frame composites off-swapchain. The
+    // targets are created lazily on the first armed frame and torn down when it
+    // disarms, so a session that never turns frame gen on never allocates them.
+    if (fgArmed_.load(std::memory_order_relaxed) && fgCapsOk() && !scanoutActive.load()) {
+        const int mult = fgMultiplier_.load(std::memory_order_relaxed);
+        const uint32_t want = (uint32_t)std::min(std::max(mult, 2), 4) + 1u;
+        // Experimental capture resolution: the ring (and so the whole chain)
+        // can run below the panel and be blitted up on the way out.
+        uint32_t ringW = 0, ringH = 0;
+        compositeExtentFor(ringW, ringH);
+        compositeArmed = ensureCompositeTargets(ringW, ringH, want);
+        if (compositeArmed) createCursorOverlayRenderPass();
+        if (compositeArmed && !compositeTargets.empty())
+            compositeIndex = (compositeIndex + 1) % (uint32_t)compositeTargets.size();
+    } else if (compositeArmed || !compositeTargets.empty()) {
+        // Disarmed (or the swapchain went away): drop the ring so the direct
+        // path is byte-identical to a session that never armed it.
+        compositeArmed = false;
+        vk_.DeviceWaitIdle(device);
+        destroyCompositeTargets();
     }
 
-    if (imgInFlight.size()!=swapchainImages.size()) imgInFlight.assign(swapchainImages.size(),VK_NULL_HANDLE);
-    if (imgInFlight[imgIdx]!=VK_NULL_HANDLE &&
-        (!currentFenceWaited || imgInFlight[imgIdx] != inFlightFences[currentFrame])) {
-        if (!vk_.GetFenceStatus || vk_.GetFenceStatus(device, imgInFlight[imgIdx]) == VK_NOT_READY) {
-            if (vk_.WaitForFences(device,1,&imgInFlight[imgIdx],VK_TRUE,2000000000ULL) != VK_SUCCESS) {
-                RLOG_E("renderFrame: in-flight image fence wait timed out (2s), skipping frame");
-                return;
+    // --- Frame gen: decide how many frames to synthesise for this source
+    // frame, BEFORE acquiring, since that sets how many images we need.
+    fgPlan_ = FrameGenPlan{};
+    const uint32_t fgCapacity = (uint32_t)std::min<size_t>(
+        kMaxPresentsPerFrame - 1,
+        compositeTargets.empty() ? 0 : compositeTargets.size() - 1);
+    if (fgEngineKind_.load(std::memory_order_relaxed) == 1) {
+        // win-fg: no cache, no governor, no pacer. Configure AFTER ensure so a
+        // freshly built engine is prepared at the right preset straight away
+        // instead of at the default and then rebuilt one frame later.
+        if (compositeActive() && ensureWinFgEngine()) {
+            if (fgConfigDirty_.exchange(false, std::memory_order_relaxed)) {
+                winfgEngine_->configure(
+                    (uint32_t)std::max(fgMultiplier_.load(std::memory_order_relaxed), 2),
+                    fgModel_.load(std::memory_order_relaxed),
+                    fgPerfPreset_.load(std::memory_order_relaxed),
+                    fgFlowScale_.load(std::memory_order_relaxed));
+            }
+            if (winfgEngine_->prepare(compositeW, compositeH, swapchainFmt)) {
+                fgPlan_.generations = winfgEngine_->plan(fgCapacity);
+                ++fgSourceFrames_;
             }
         }
-    }
-    imgInFlight[imgIdx]=inFlightFences[currentFrame];
+    } else {
+        if (compositeActive() && ensureLsfgEngine()) {
+            // Configure AFTER ensure, as win-fg does above. ensureLsfgEngine()
+            // marks the config dirty when it creates the engine, but this used
+            // to run before it, while lsfgEngine_ was still null - so a fresh
+            // engine was prepared at its default flow scale (1.00), and the
+            // user's scale arrived one frame later and forced a second chain
+            // build. A dirty config seen while disarmed now simply waits for
+            // the next armed frame; nothing reads it in between.
+            if (fgConfigDirty_.exchange(false, std::memory_order_relaxed)) {
+                lsfgEngine_->configure(
+                    (uint32_t)std::max(fgMultiplier_.load(std::memory_order_relaxed), 2), 0,
+                    fgFlowScale_.load(std::memory_order_relaxed),
+                    fgRefreshHz_.load(std::memory_order_relaxed));
+            }
+            // Tell the engine how large the GUEST actually renders BEFORE asking
+            // it to build anything. The flow pyramid's resolution is derived from
+            // that ratio, so preparing first builds the most expensive chain
+            // there is - the pyramid at full composite resolution - and then
+            // throws all 25 pipelines away one frame later, when the guest extent
+            // arrives and the scale changes. Both calls were already here; only
+            // the order was wrong, and it cost an entire second chain build every
+            // time frame generation armed.
+            //
+            // Device log 2026-09-09, arming at 1080p on a 720p game:
+            //   16:49:51.400  chain built ... flow 1920x1080 scale 1.00 (guest 0x0)
+            //   16:49:53.769  chain built ... flow 1344x756  scale 0.70 (guest 1280x720)
+            // ~2.4 s apiece, and the game visibly froze for about five seconds on
+            // the toggle. containerWidth/Height are set in the constructor, so a
+            // real guest extent is always available here - no first frame
+            // legitimately needs the 0x0 path.
+            if (containerWidth > 0 && containerHeight > 0)
+                lsfgEngine_->setGuestExtent((uint32_t)containerWidth, (uint32_t)containerHeight);
+            if (lsfgEngine_->prepare(compositeW, compositeH, swapchainFmt)) {
+                // The governor judges whether an extra generated frame paid off,
+                // so it must be given the rate that actually reaches the PANEL,
+                // not the guest rate wearing a different name.
+                lsfgEngine_->setPresentedRate(fgPresentedRate_);
+                fgPlan_.generations = lsfgEngine_->plan(fgCapacity, ++fgSourceFrames_);
+            }
+        }
+    }   // lsfg
+    fgPlan_.presents = fgPlan_.generations + 1;
 
-    vk_.ResetCommandBuffer(cmdBufs[currentFrame],0);
+    // ERL bug report #9: real timeout so VK_TIMEOUT is reachable; existing non-success guard below returns on it.
+    for (uint32_t k = 0; k < fgPlan_.presents; k++) {
+        uint32_t idx = 0;
+        VkResult ar = vk_.AcquireNextImageKHR(device,swapchain,2000000000ULL,
+                                              imgAvailSems[syncSlot(k)],VK_NULL_HANDLE,&idx);
+        if (ar==VK_ERROR_OUT_OF_DATE_KHR||ar==VK_ERROR_SURFACE_LOST_KHR){
+            // Logged deliberately: when this fires every frame it IS the
+            // swapchain-recreate loop, and it used to be invisible.
+            if ((fgAcquireFailLog_++ % 60u) == 0u)
+                RLOG_E("renderFrame: acquire %u/%u -> %s (recreating swapchain)",
+                       k, fgPlan_.presents,
+                       ar==VK_ERROR_OUT_OF_DATE_KHR ? "OUT_OF_DATE" : "SURFACE_LOST");
+            fbResized.store(true);
+            return;
+        }
+        if (ar!=VK_SUCCESS&&ar!=VK_SUBOPTIMAL_KHR) {
+            // Could not get every image we planned for. Anything already
+            // acquired has a semaphore nobody will wait on, so the only safe
+            // move is to drop this frame entirely rather than leak a signal.
+            if (k == 0) return;
+            RLOG_E("renderFrame: acquire %u/%u failed (res=%d) - dropping frame",
+                   k, fgPlan_.presents, (int)ar);
+            fbResized.store(true);
+            return;
+        }
+        if (idx >= swapchainFBs.size() || idx >= swapchainImages.size()) {
+            RLOG_E("renderFrame: invalid acquired image index=%u (fb=%zu images=%zu)",
+                idx, swapchainFBs.size(), swapchainImages.size());
+            // Everything acquired so far has a signalled image-available
+            // semaphore that nothing will ever wait on. Leaving one behind is
+            // the swapchain-recreate freeze, so ask for the rebuild that
+            // recreates the semaphores rather than just dropping the frame.
+            fbResized.store(true);
+            return;
+        }
+        fgPlan_.imgIdx[k] = idx;
+    }
+    // Real frame N is presented LAST; generated frames take the earlier slots.
+    const uint32_t imgIdx = fgPlan_.imgIdx[fgPlan_.presents - 1];
+    VkResult res = VK_SUCCESS;
+
+    if (imgInFlight.size()!=swapchainImages.size()) imgInFlight.assign(swapchainImages.size(),VK_NULL_HANDLE);
+    for (uint32_t k = 0; k < fgPlan_.presents; k++) {
+        const uint32_t idx = fgPlan_.imgIdx[k];
+        if (imgInFlight[idx]!=VK_NULL_HANDLE &&
+            (!currentFenceWaited || imgInFlight[idx] != inFlightFences[currentFrame])) {
+            if (!vk_.GetFenceStatus || vk_.GetFenceStatus(device, imgInFlight[idx]) == VK_NOT_READY) {
+                if (vk_.WaitForFences(device,1,&imgInFlight[idx],VK_TRUE,2000000000ULL) != VK_SUCCESS) {
+                    RLOG_E("renderFrame: in-flight image fence wait timed out (2s), skipping frame");
+                    // Same reasoning as the acquire failures above: this frame
+                    // has already acquired every image it planned to present,
+                    // and returning here strands their semaphores signalled.
+                    fbResized.store(true);
+                    return;
+                }
+            }
+        }
+        imgInFlight[idx]=inFlightFences[currentFrame];
+    }
+
+    for (uint32_t k = 0; k < fgPlan_.presents; k++) vk_.ResetCommandBuffer(cmdBufs[cmdSlot(k)],0);
 
     float ox,oy,sx,sy,cw,ch;
     short ptrX,ptrY,curHotX,curHotY,curW,curH; bool curVis;
@@ -1616,31 +2670,100 @@ ok=true;}catch(...){}
         memcpy(cursorStgP, cursorPixels.data(), cursorUploadSize);
 
     bool effectiveCurVis = curVis && !scanoutActive.load();
+
     planUpscaleFrame();   // decide/prepare spatial-upscaler passes for this frame
-    recordCmdBuf(cmdBufs[currentFrame],imgIdx,frameDraws,
+    recordCmdBuf(cmdBufs[cmdSlot(0)],imgIdx,frameDraws,
         frameAhbTransitions,framePreUpload,framePostUpload,
         curUpload,hasCurUpload,
         ox,oy,sx,sy,cw,ch,ptrX,ptrY,curHotX,curHotY,curW,curH,effectiveCurVis);
 
-    VkSemaphore wSem[]={imgAvailSems[currentFrame]}, sSem[]={renderDoneSems[currentFrame]};
-    VkPipelineStageFlags wStage[]={VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    VkSubmitInfo si{}; si.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.waitSemaphoreCount=1; si.pWaitSemaphores=wSem; si.pWaitDstStageMask=wStage;
-    si.commandBufferCount=1; si.pCommandBuffers=&cmdBufs[currentFrame];
-    si.signalSemaphoreCount=1; si.pSignalSemaphores=sSem;
-
-    vk_.ResetFences(device,1,&inFlightFences[currentFrame]);
-    if (vk_.QueueSubmit(graphicsQueue,1,&si,inFlightFences[currentFrame])!=VK_SUCCESS) {
-        vk_.DestroyFence(device,inFlightFences[currentFrame],nullptr);
-        VkFenceCreateInfo fi{}; fi.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO; fi.flags=VK_FENCE_CREATE_SIGNALED_BIT;
-        vk_.CreateFence(device,&fi,nullptr,&inFlightFences[currentFrame]);
-        return;
-    }
+    // Each pending present gets its own submit. cmdBufs[cmdSlot(0)] (recorded
+    // above) carries the composite, the chain's shared passes and generated
+    // frame 0; every later generated frame and finally the real frame are
+    // recorded and submitted here one at a time, each presented the moment its
+    // submit is queued. With one submit for everything, nothing reached the
+    // presentation engine until the chain had finished for EVERY generated
+    // frame; now the first one is on its way while the GPU is still working on
+    // the next. FIFO still spaces them onto consecutive vblanks.
+    //
+    // On the composite path the first thing to touch an acquired swapchain
+    // image is the copy, a TRANSFER write - and TRANSFER precedes
+    // COLOR_ATTACHMENT_OUTPUT in pipeline order, so waiting only on the latter
+    // would let the copy run before the presentation engine released the image.
+    const VkPipelineStageFlags waitStage = compositeActive()
+        ? (VkPipelineStageFlags)(VK_PIPELINE_STAGE_TRANSFER_BIT|VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT)
+        : (VkPipelineStageFlags)VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSwapchainKHR scs[]={swapchain};
-    VkPresentInfoKHR pi{}; pi.sType=VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    pi.waitSemaphoreCount=1; pi.pWaitSemaphores=sSem; pi.swapchainCount=1; pi.pSwapchains=scs; pi.pImageIndices=&imgIdx;
-    res=vk_.QueuePresentKHR(graphicsQueue,&pi);
-    if (res==VK_ERROR_OUT_OF_DATE_KHR||res==VK_ERROR_SURFACE_LOST_KHR) fbResized.store(true);
+
+    // The slot's fence rides on the LAST submit. A fence signal is ordered
+    // after every command submitted earlier on the same queue, so it still
+    // covers all of this frame's work.
+    vk_.ResetFences(device,1,&inFlightFences[currentFrame]);
+    uint32_t presented = 0;
+    bool fenceSubmitted = false;
+    // Generated frames belong between N-1 and N, so they go out first and the
+    // real frame is presented last.
+    for (uint32_t k = 0; k < fgPlan_.presents; k++) {
+        VkCommandBuffer cb = cmdBufs[cmdSlot(k)];
+        if (k > 0) {
+            VkCommandBufferBeginInfo bi{}; bi.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            if (vk_.BeginCommandBuffer(cb,&bi)!=VK_SUCCESS) { fbResized.store(true); break; }
+            // Order this buffer after everything already submitted for this
+            // frame: the chain's shared passes and the earlier generations.
+            // Barriers span command buffers on one queue, so this is enough.
+            VkMemoryBarrier mb{}; mb.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            mb.srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT;
+            mb.dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT;
+            vk_.CmdPipelineBarrier(cb,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT|VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT|VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0, 1,&mb, 0,nullptr, 0,nullptr);
+            if (k < fgPlan_.generations) recordFrameGenGeneration(cb, k);
+            else                          copyCompositeToSwapchain(cb, imgIdx);
+            if (vk_.EndCommandBuffer(cb)!=VK_SUCCESS) {
+                RLOG_E("renderFrame: EndCommandBuffer failed for present %u/%u", k, fgPlan_.presents);
+                fbResized.store(true);
+                break;
+            }
+        }
+        const bool last = (k + 1 == fgPlan_.presents);
+        VkSemaphore wSem = imgAvailSems[syncSlot(k)];
+        VkSemaphore sSem = renderDoneSems[syncSlot(k)];
+        VkSubmitInfo si{}; si.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        si.waitSemaphoreCount=1; si.pWaitSemaphores=&wSem; si.pWaitDstStageMask=&waitStage;
+        si.commandBufferCount=1; si.pCommandBuffers=&cb;
+        si.signalSemaphoreCount=1; si.pSignalSemaphores=&sSem;
+        if (vk_.QueueSubmit(graphicsQueue,1,&si, last ? inFlightFences[currentFrame] : VK_NULL_HANDLE)!=VK_SUCCESS) {
+            // The fence was reset above and may now never signal; replace it
+            // with a signalled one so the next use of this slot does not wait
+            // on it forever.
+            vk_.DestroyFence(device,inFlightFences[currentFrame],nullptr);
+            VkFenceCreateInfo fi{}; fi.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO; fi.flags=VK_FENCE_CREATE_SIGNALED_BIT;
+            vk_.CreateFence(device,&fi,nullptr,&inFlightFences[currentFrame]);
+            return;
+        }
+        fenceSubmitted = last;
+        VkPresentInfoKHR pi{}; pi.sType=VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        pi.waitSemaphoreCount=1; pi.pWaitSemaphores=&sSem;
+        pi.swapchainCount=1; pi.pSwapchains=scs; pi.pImageIndices=&fgPlan_.imgIdx[k];
+        res=vk_.QueuePresentKHR(graphicsQueue,&pi);
+        presented++;
+        if (res==VK_ERROR_OUT_OF_DATE_KHR||res==VK_ERROR_SURFACE_LOST_KHR) {
+            // The swapchain recreate this triggers also rebuilds the
+            // semaphores, so the acquires we never waited on cannot strand a
+            // signal into the next swapchain (recreateSyncObjects).
+            fbResized.store(true);
+            break;
+        }
+    }
+    if (!fenceSubmitted) {
+        // Left early before the last submit: an empty submit carrying the
+        // fence is ordered after everything queued above, so the slot's fence
+        // still means "this frame's work is done".
+        VkSubmitInfo si{}; si.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        vk_.QueueSubmit(graphicsQueue,1,&si,inFlightFences[currentFrame]);
+    }
+    trackPresentedRate(presented);
     currentFrame=(currentFrame+1)%MAX_FRAMES_IN_FLIGHT;
 }
 
@@ -1700,6 +2823,16 @@ bool VulkanRendererContext::reattachSurface(ANativeWindow* newWindow) {
 
 void VulkanRendererContext::setTransform(float ox, float oy, float sx, float sy) {
     { std::lock_guard<std::mutex> lk(renderMutex); sceneOffsetX=ox;sceneOffsetY=oy;sceneScaleX=sx;sceneScaleY=sy; }
+    needsRender.store(true); dirtyCV.notify_one();
+}
+
+void VulkanRendererContext::setClipRegion(int x, int y, int w, int h) {
+    // #413 game-region scissor (surface px), consumed by recordCmdBuf. Atomics only (no renderMutex) —
+    // it composes with setTransform, which already kicks a render.
+    clipRegionX.store(x, std::memory_order_relaxed);
+    clipRegionY.store(y, std::memory_order_relaxed);
+    clipRegionW.store(w, std::memory_order_relaxed);
+    clipRegionH.store(h, std::memory_order_relaxed);
     needsRender.store(true); dirtyCV.notify_one();
 }
 
@@ -1919,7 +3052,7 @@ void VulkanRendererContext::setFilterMode(int mode) {
 }
 
 void VulkanRendererContext::setUpscaler(int mode) {
-    if (mode<0||mode>7) mode=0;   // 0=none 1=linear 2=nearest 3=sgsr 4=fsr 5=fsr_fit 6=sharpen 7=nis
+    if (mode<0||mode>8) mode=0;   // 0=none 1=linear 2=nearest 3=sgsr 4=fsr 5=fsr_fit 6=sharpen 7=nis 8=sgsr_quality
     if (upscalerMode==mode) { RLOG("setUpscaler: already %d, skipping", mode); return; }
     RLOG("setUpscaler: %d -> %d", upscalerMode, mode);
     upscalerMode=mode;
@@ -1990,16 +3123,20 @@ void VulkanRendererContext::setNtsc(bool enabled) {
 }
 
 // Color grade: inputs are GL slider values (brightness/contrast -100..100, gamma
-// 0.5..3.0). Replicate ColorEffect: map slider/100 then apply ColorEffectMaterial.use()
-// clamps; "enabled" only when not at the neutral (0,0,1) grade (GL removes it then).
-void VulkanRendererContext::setColorGrade(float brightness, float contrast, float gamma) {
-    bool enabled = !(brightness==0.0f && contrast==0.0f && gamma==1.0f);
+// 0.5..3.0, saturation 0..200 percent). Replicate ColorEffect: map slider/100 then apply
+// ColorEffectMaterial.use() clamps; "enabled" only when not at the neutral (0,0,1,100)
+// grade (GL removes it then) — saturation is part of that neutral test, so a Look that
+// only moves saturation still switches the Color pass on.
+void VulkanRendererContext::setColorGrade(float brightness, float contrast, float gamma, float saturation) {
+    bool enabled = !(brightness==0.0f && contrast==0.0f && gamma==1.0f && saturation==100.0f);
     float b = brightness / 100.0f; if (b<-1.0f) b=-1.0f; if (b>1.0f) b=1.0f;
     float c = contrast   / 100.0f; if (c< 0.0f) c= 0.0f; if (c>2.0f) c=2.0f;
+    float s = saturation / 100.0f; if (s< 0.0f) s= 0.0f; if (s>2.0f) s=2.0f;
     float g = gamma;               if (g< 0.1f) g= 0.1f; if (g>5.0f) g=5.0f;
-    if (colorEnabled==enabled && colorBrightness==b && colorContrast==c && colorGamma==g) return;
-    RLOG("setColorGrade: en=%d b=%.3f c=%.3f g=%.3f", (int)enabled, b, c, g);
-    colorEnabled=enabled; colorBrightness=b; colorContrast=c; colorGamma=g;
+    if (colorEnabled==enabled && colorBrightness==b && colorContrast==c && colorGamma==g &&
+        colorSaturation==s) return;
+    RLOG("setColorGrade: en=%d b=%.3f c=%.3f g=%.3f s=%.3f", (int)enabled, b, c, g, s);
+    colorEnabled=enabled; colorBrightness=b; colorContrast=c; colorGamma=g; colorSaturation=s;
     needsRender.store(true); dirtyCV.notify_one();
 }
 

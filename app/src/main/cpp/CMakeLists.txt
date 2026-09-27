@@ -11,6 +11,12 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -Wno-unused-function -Wimplicit-function
 add_subdirectory(OpenXR-SDK)
 add_subdirectory(patchelf)
 add_subdirectory(adrenotools)
+
+# DXVK's DXBC->SPIR-V translator (zlib licence), vendored under thirdparty/dxbc
+# from the same subset upstream lsfg-vk uses. Required by native LSFG frame
+# generation: the Lossless Scaling shader chain is DXBC in every build that is
+# downloadable from Steam, so the precompiled-SPIR-V path alone is not enough.
+add_subdirectory(thirdparty/dxbc)
 # lsfg-vk is built separately by build-lsfg.yml (standalone cmake)
 # and its .so is copied to jniLibs. AGP's cmake integration enables
 # clang-tidy which fails on NDK cross-compile of the lsfg-vk headers.
@@ -78,7 +84,64 @@ add_library(vulkan_renderer SHARED
         winlator/vulkan_jni.cpp
         winlator/VulkanRendererContext.cpp
         winlator/VulkanRendererScanout.cpp
+        winlator/lsfg/lsfg_probe.cpp
+        winlator/lsfg/lsfg_dll.cpp
+        winlator/lsfg/lsfg_dxbc.cpp
+        winlator/lsfg/lsfg_vkd.cpp
+        winlator/lsfg/lsfg_common.cpp
+        winlator/lsfg/lsfg_shaders.cpp
+        winlator/lsfg/lsfg_mipmaps.cpp
+        winlator/lsfg/lsfg_alpha.cpp
+        winlator/lsfg/lsfg_beta.cpp
+        winlator/lsfg/lsfg_gamma.cpp
+        winlator/lsfg/lsfg_delta.cpp
+        winlator/lsfg/lsfg_generate.cpp
+        winlator/lsfg/lsfg_chain.cpp
+        winlator/lsfg/lsfg_pacer.cpp
+        winlator/lsfg/lsfg_engine.cpp
+        winlator/lsfg/lsfg_governor.cpp
+        winlator/lsfg/lsfg_jni.cpp
+        winlator/winfg/framegen.cpp
+        winlator/winfg/winfg_vkd.cpp
+        winlator/winfg/winfg_engine.cpp
         scanout/ScanoutContext.cpp
+)
+
+# --- win-fg chain provenance -------------------------------------------------
+# The win-fg chain is COPIED into this tree from github.com/The412Banner/win-fg
+# rather than linked, so nothing about it self-identifies: a device log could
+# say which Bannerlator commit it came from, but not which win-fg. The layer
+# build solves this by stamping `git describe` into libwin_fg.so; the native
+# path needs its own answer.
+#
+# Two halves, deliberately:
+#   WINFG_UPSTREAM   the upstream tag the sources were copied from. Hand-set,
+#                    so UPDATE IT when you re-copy the chain.
+#   WINFG_CHAIN_HASH a hash over the chain sources themselves, computed here at
+#                    configure time. This one cannot rot - edit any chain file
+#                    and it changes, including a local edit that never went
+#                    upstream, which is exactly the case a hand-set tag hides.
+set(WINFG_UPSTREAM "v0.3.0")
+set(WINFG_CHAIN_SRC
+        winlator/winfg/framegen.cpp
+        winlator/winfg/framegen.hpp
+        winlator/winfg/record_impl.inc
+        winlator/winfg/config.hpp
+        winlator/winfg/embedded_shaders.hpp
+        winlator/winfg/winfg_engine.cpp
+)
+set(WINFG_HASH_INPUT "")
+foreach(f ${WINFG_CHAIN_SRC})
+    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/${f}" _h)
+    string(APPEND WINFG_HASH_INPUT "${_h}")
+endforeach()
+string(SHA256 WINFG_CHAIN_HASH_FULL "${WINFG_HASH_INPUT}")
+string(SUBSTRING "${WINFG_CHAIN_HASH_FULL}" 0 12 WINFG_CHAIN_HASH)
+message(STATUS "win-fg chain: ${WINFG_UPSTREAM} (src ${WINFG_CHAIN_HASH})")
+
+target_compile_definitions(vulkan_renderer PRIVATE
+        WINFG_UPSTREAM="${WINFG_UPSTREAM}"
+        WINFG_CHAIN_HASH="${WINFG_CHAIN_HASH}"
 )
 
 target_compile_options(vulkan_renderer PRIVATE
@@ -90,6 +153,7 @@ target_link_libraries(vulkan_renderer
         android
         vulkan
         adrenotools
+        dxbc
         dl
         atomic
 )
@@ -172,3 +236,25 @@ target_link_libraries(pasink
         log
         dl
 )
+
+# steamctrl — optional Steam Controller support (2015 + 2026 models, Bluetooth LE / USB). A small
+# JNI bridge over SDL3's gamepad API; SDL3 comes from the vendored official release AAR through
+# prefab (buildFeatures.prefab). Linking SDL3::SDL3 is also what packages libSDL3.so into the APK
+# (the AAR has no jni/ folder). Only SDL's HIDAPI Steam drivers are enabled at runtime, so SDL opens
+# no other controller — see steamctrl/steam_controller_bridge.cpp.
+find_package(SDL3 REQUIRED CONFIG)
+
+add_library(steamctrl SHARED
+        steamctrl/steam_controller_bridge.cpp
+)
+
+target_link_libraries(steamctrl
+        SDL3::SDL3
+        log
+)
+
+# Embedded Wayland compositor (experimental parallel runtime) — see waylandcomp/CMakeLists.txt.
+add_subdirectory(waylandcomp)
+
+# proot: the Linux runtime container (gamescope sessions); see proot/CMakeLists.txt.
+add_subdirectory(proot)

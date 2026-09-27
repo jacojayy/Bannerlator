@@ -7,11 +7,13 @@ import android.content.pm.ApplicationInfo;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
 import android.net.Network;
+import android.net.RouteInfo;
 import android.os.Process;
 import android.util.Log;
 
 import androidx.preference.PreferenceManager;
 
+import com.winlator.star.BuildConfig;
 import com.winlator.star.box64.Box64Preset;
 import com.winlator.star.box64.Box64PresetManager;
 import com.winlator.star.container.Container;
@@ -24,6 +26,7 @@ import com.winlator.star.core.FileUtils;
 import com.winlator.star.core.GPUInformation;
 import com.winlator.star.core.KeyValueSet;
 import com.winlator.star.core.ProcessHelper;
+import com.winlator.star.store.SteamLogRedactor;
 import com.winlator.star.core.TarCompressorUtils;
 import com.winlator.star.core.WineInfo;
 import com.winlator.star.core.WinebusRumblePatcher;
@@ -72,6 +75,11 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
 
     public Container getContainer() { return this.container; }
     public void setContainer(Container container) { this.container = container; }
+
+    // When true, the guest uses the Wayland display path (winewayland.drv → embedded compositor)
+    // instead of the X11 server. Set by XServerDisplayActivity in wayland_mode.
+    private boolean waylandMode = false;
+    public void setWaylandMode(boolean v) { this.waylandMode = v; }
 
     private void extractBox64Files() {
         ImageFs imageFs = environment.getImageFs();
@@ -172,7 +180,7 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
      * unixlib {@code .so} (profile target {@code ${libdir}/wine/aarch64-unix/...}). The bundled asset
      * FEX has no profile and is DLL-only, so the slot is simply left cleared for a clean DLL run.
      *
-     * NOTE: one game runs at a time (WinHub), so a single shared slot is safe. Concurrent
+     * NOTE: one game runs at a time (Bannerlator), so a single shared slot is safe. Concurrent
      * multi-instance with different FEX versions would need per-container .so isolation (future work).
      */
     private void reconcileFexUnixlib(String fexcoreVersion) {
@@ -343,6 +351,19 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
 
     public void setFEXCorePreset (String fexcorePreset) { this.fexcorePreset = fexcorePreset; }
 
+    /**
+     * Values to apply INSTEAD of looking the preset id up in the shared preset list — set when the
+     * container or the game carries its own copy of that preset
+     * ({@link com.winlator.star.core.PresetOverrides}). Null (the normal case) keeps the previous
+     * behaviour exactly: resolve the id through the preset manager.
+     */
+    private EnvVars box64PresetVars = null;
+    private EnvVars fexcorePresetVars = null;
+
+    public void setBox64PresetVars(EnvVars envVars) { this.box64PresetVars = envVars; }
+
+    public void setFEXCorePresetVars(EnvVars envVars) { this.fexcorePresetVars = envVars; }
+
     private int execGuestProgram() {
         Context context = environment.getContext();
         ImageFs imageFs = environment.getImageFs();
@@ -363,7 +384,8 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
         EnvVars envVars = new EnvVars();
 
         addBox64EnvVars(envVars, enableBox64Logs);
-        envVars.putAll(FEXCorePresetManager.getEnvVars(context, fexcorePreset));
+        envVars.putAll(fexcorePresetVars != null
+                ? fexcorePresetVars : FEXCorePresetManager.getEnvVars(context, fexcorePreset));
 
         String renderer = GPUInformation.getRenderer(null, null);
 
@@ -389,7 +411,26 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
         envVars.put("WRAPPER_CACHE_PATH", rootDir.getPath() + "/usr/var/cache");
         envVars.put("WINE_NO_DUPLICATE_EXPLORER", "1");
         envVars.put("PREFIX", rootDir.getPath() + "/usr");
-        envVars.put("DISPLAY", ":0");
+        if (waylandMode) {
+            // Wayland display path: point Wine at the embedded compositor's socket. winewayland's
+            // unixlib runs host-side (no chroot — the guest uses full /data paths), so XDG_RUNTIME_DIR
+            // must be the FULL host path where XServerDisplayActivity created the socket
+            // (imagefs/tmp/wayland-0), not a bare "/tmp". Skip DISPLAY (winex11.drv is hidden anyway).
+            envVars.put("WAYLAND_DISPLAY", "wayland-0");
+            // Must match XServerDisplayActivity.startWaylandCompositor: filesDir/.wayland-rt (NOT
+            // imagefs/tmp, which setupXEnvironment clears out from under the compositor's socket).
+            envVars.put("XDG_RUNTIME_DIR", new File(context.getFilesDir(), ".wayland-rt").getPath());
+            // winewayland.so's DT_NEEDED libwayland-client/-egl/xkbcommon/xkbregistry are bundled in
+            // the Proton wcp's lib/ with the exact sonames winewayland was linked against (unversioned,
+            // e.g. "libxkbcommon.so"). imagefs/usr/lib ships versioned sonames ("libxkbcommon.so.0"),
+            // which bionic rejects with a verneed mismatch. So prepend the wcp lib/ to LD_LIBRARY_PATH:
+            // the 4 wayland libs resolve there (matching sonames); their transitive deps (libffi,
+            // libandroid-support, libc…) still resolve from imagefs/usr/lib further down the path.
+            envVars.put("LD_LIBRARY_PATH", imageFs.getWinePath() + "/lib" + ":"
+                    + rootDir.getPath() + "/usr/lib" + ":" + "/system/lib64");
+        } else {
+            envVars.put("DISPLAY", ":0");
+        }
         envVars.put("WINE_DISABLE_FULLSCREEN_HACK", "1");
         envVars.put("GST_PLUGIN_FEATURE_RANK", "ximagesink:3000");
         envVars.put("ALSA_CONFIG_PATH", rootDir.getPath() + "/usr/share/alsa/alsa.conf" + ":" + rootDir.getPath() + "/usr/etc/alsa/conf.d/android_aserver.conf");
@@ -439,6 +480,22 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
         }
         envVars.put("ANDROID_RESOLV_DNS", primaryDNS);
         envVars.put("WINE_NEW_NDIS", "1");
+        // Default-route gateway for the layer's WINE_NEW_NDIS route table (eanet layers): the guest's
+        // GetBestRoute()/SIO_ROUTING_INTERFACE_QUERY need a 0.0.0.0/0 entry; the layer falls back to
+        // the subnet .1 when this is absent, so older layers are unaffected.
+        if (activeNetwork != null) {
+            LinkProperties lp = connectivityManager.getLinkProperties(activeNetwork);
+            if (lp != null) {
+                for (RouteInfo r : lp.getRoutes()) {
+                    InetAddress gw = r.getGateway();
+                    if (gw instanceof Inet4Address && !gw.isAnyLocalAddress()
+                            && r.getDestination() != null && r.getDestination().getPrefixLength() == 0) {
+                        envVars.put("WINE_ANDROID_GATEWAY", gw.getHostAddress());
+                        break;
+                    }
+                }
+            }
+        }
 
         String ld_preload = "";
 
@@ -497,6 +554,11 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
         }
 
         Log.d("GuestLauncher", "Final LD_PRELOAD: " + ld_preload);
+        // winewayland.so (unixlib) dlopens libwayland-client/-egl/xkbcommon/xkbregistry. These resolve
+        // from imagefs/usr/lib via LD_LIBRARY_PATH exactly like winex11.so's libX11/libXext deps do
+        // (proven: winex11.so has the same Termux RUNPATH yet loads fine). So NO wayland-specific
+        // LD_PRELOAD — force-preloading them into the main `wine` executable aborts startup
+        // ("CANNOT LINK EXECUTABLE"). installWaylandLibs stages the libs into imagefs/usr/lib.
         envVars.put("LD_PRELOAD", ld_preload);
 
         if (this.envVars.has("MANGOHUD")) {
@@ -507,10 +569,20 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
             this.envVars.remove("MANGOHUD_CONFIG");
         }
 
+        // WINEVMEMMAXSIZE (MB) caps the guest Wine VA reservation — the fix for heavy AAA titles
+        // (e.g. Deus Ex: MD on EOS) that reserve hundreds of GB of address space up-front and OOM the
+        // X server (observed ~489 GB: err:virtual:allocate_virtual_memory ... size 71f6ea0000). It is
+        // OPT-IN / default-off: set it per shortcut/container envVars only when a game needs it (it
+        // then propagates to the guest verbatim via the external-env merge below, covering both the
+        // arm64ec/WOWBox64+FEX and box64 paths). Recognized in the env-var picker (KnownEnvVars).
+        // Only effective on a Wine/Proton build patched to READ WINEVMEMMAXSIZE (coffincolors ntdll
+        // patch, not in stock Wine); inert otherwise.
+
         // Merge any additional environment variables from external sources
         if (this.envVars != null) {
             envVars.putAll(this.envVars);
         }
+
 
         String emulator = container.getEmulator();
         if (shortcut != null)
@@ -542,6 +614,21 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
             FileUtils.chmod(box64File, 0755);
         }
 
+        // Diagnostic: dump every env var the Wine process actually receives.
+        // Log individually to stay under Android's ~4KB per-message truncation limit.
+        if (BuildConfig.DEBUG) {
+            String[] finalEnv = envVars.toStringArray();
+            Log.d("GuestProgramLauncherComponent", "=== FINAL ENV VARS (" + finalEnv.length + " entries) ===");
+            for (String entry : finalEnv) {
+                Log.d("GuestProgramLauncherComponent", "  " + SteamLogRedactor.redact(entry));
+            }
+        }
+
+        // Bring a stale prefix up to date BEFORE the session, X11 and Wayland alike, with Wine Mono's
+        // download prompt switched off for that step only (see updatePrefixBeforeSession).
+        String wineLauncher = wineInfo.isArm64EC() ? winePath + "/wine" : imageFs.getBinDir() + "/box64 wine";
+        updatePrefixBeforeSession(envVars, wineLauncher, rootDir, imageFs);
+
         return ProcessHelper.exec(command, envVars.toStringArray(), rootDir, (status) -> {
             synchronized (lock) {
                 pid = -1;
@@ -550,6 +637,111 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
             if (terminationCallback != null)
                 terminationCallback.call(status);
         });
+    }
+
+    /**
+     * Run Wine's prefix update (the wine.inf install ntdll triggers through {@code wineboot --init}
+     * in the FIRST process of a session) in a throwaway session of its own - headless on Wayland, on
+     * the already-running X server on X11 - before the real launch,
+     * whenever the prefix is stale: a new container (no layer's prefixPack ships a stamp except the
+     * x86_64 Proton one, which says "disable") and the first launch after its layer changed. Every
+     * display backend and every layer; {@code wineLauncher} is {@code <layer>/bin/wine} for arm64ec
+     * and {@code box64 wine} otherwise, the same way the session itself is started.
+     *
+     * Mono: wine.inf's RegisterDlls section registers mscoree.dll, and mscoree's DllRegisterServer
+     * runs install_wine_mono(): no C:\windows\mono and no share/wine/mono (no layer ships Wine Mono)
+     * means {@code control.exe appwiz.cpl install_mono}, whose last resort is the "Wine Mono Installer"
+     * dialog offering a download from winehq.org. That was the prompt on every new container and every
+     * layer switch, on every layer. {@code mscoree=d} for this process tree only makes setupapi skip
+     * the registration (its COM classes are already in every prefixPack), so no prompt and no network;
+     * the game session keeps the container's own overrides untouched, so a .NET game still loads
+     * mscoree and the Wine Mono the Components installer put in the prefix. (mshtml needs nothing
+     * here: no layer's DllRegisterServer asks for Gecko; that only happens when a program uses it.)
+     *
+     * Why a separate step at all: the env above must not reach the game, and ntdll hands the FIRST
+     * process's environment to the {@code wineboot --init} it spawns, so the update cannot run inside
+     * the session with its own env. Wayland also needs it off the desktop's path: on the first launch
+     * after a layer install/repoint the prefix's {@code .update-timestamp}
+     * no longer matches the layer's {@code wine.inf} mtime, so ntdll blocks explorer (the session's
+     * first process) before its main() for the ~7 s install. wineboot's wait dialog then needs a
+     * desktop window while none exists, win32u auto-spawns {@code explorer.exe /desktop} on the
+     * "Default" desktop, that explorer is closed at once by the server's zero desktop-close timeout
+     * (Proton default), and the display cache our explorer builds afterwards carries monitors with
+     * no source - win32u's 1024x768 fallback rect - so the virtual desktop came up at 1024x768 (then
+     * 1024x1488) instead of the container size; the second launch, prefix now current, was right.
+     * Doing the update here, with no display driver at all, keeps it off the desktop's critical
+     * path, so the first launch takes the same path as the second.
+     *
+     * Same test as wineboot's update_timestamp(): the file holds wine.inf's mtime in seconds
+     * ("disable" opts out); {@code wineboot -h} exits at argument parsing, the update itself is done
+     * by the {@code --init} instance ntdll spawns for the first process. Afterwards the wineserver
+     * shuts down by itself (services only, 3 s master-socket timeout) and flushes the registry; we
+     * wait for that so the real launch starts from a clean prefix, and only force-terminate as a last
+     * resort. X11 used to keep the in-session update; it now takes this step too, for the Mono reason,
+     * with DISPLAY kept (unlike Wayland) so nothing else about its update changes.
+     */
+    private void updatePrefixBeforeSession(EnvVars guestEnv, String wineLauncher, File rootDir, ImageFs imageFs) {
+        final String tag = "GuestProgramLauncherComponent";
+        try {
+            File wineInf = new File(imageFs.getWinePath(), "share/wine/wine.inf");
+            File stamp = new File(rootDir, ImageFs.WINEPREFIX + "/.update-timestamp");
+            if (!wineInf.isFile()) return;
+            long infMtime = wineInf.lastModified() / 1000L;
+            String current = stamp.isFile() ? FileUtils.readString(stamp) : "";
+            if (current == null) current = "";
+            current = current.trim();
+            if (current.startsWith("disable")) return;
+            long stamped = -1;
+            int i = 0;
+            while (i < current.length() && Character.isDigit(current.charAt(i))) i++;
+            if (i > 0) {
+                try { stamped = Long.parseLong(current.substring(0, i)); } catch (NumberFormatException ignored) {}
+            }
+            if (stamped == infMtime) return;
+
+            EnvVars env = new EnvVars();
+            env.putAll(guestEnv);
+            if (waylandMode) {
+                // No display for this session: wineboot's wait dialog and the explorer win32u spawns for
+                // it run on the null driver instead of connecting to the compositor. libwayland falls back
+                // to "wayland-0" under XDG_RUNTIME_DIR when WAYLAND_DISPLAY is unset, so drop both.
+                env.remove("WAYLAND_DISPLAY");
+                env.remove("XDG_RUNTIME_DIR");
+                env.remove("DISPLAY");
+            }
+            // X11 keeps DISPLAY: XServerComponent starts before this component, so the X server is
+            // already up and the update runs with the same env it had inside the session.
+            // No Wine Mono download prompt (see above). Appended last: in WINEDLLOVERRIDES a later entry
+            // for the same dll replaces an earlier one, so this wins over a user's own mscoree entry.
+            String overrides = withMscoreeDisabled(env.get("WINEDLLOVERRIDES"));
+            env.put("WINEDLLOVERRIDES", overrides);
+            Log.i(tag, "prefix update: .update-timestamp \"" + current + "\" != wine.inf mtime " + infMtime
+                    + " (" + wineInf.getPath() + "); running Wine's prefix update before the "
+                    + (waylandMode ? "Wayland" : "X11") + " session, WINEDLLOVERRIDES=" + overrides);
+            long t0 = System.currentTimeMillis();
+            int status = ProcessHelper.execAndWait(wineLauncher + " wineboot -h", env.toStringArray(), rootDir, 180_000);
+            // Let the wineserver wind down on its own (it flushes the registry on exit).
+            long deadline = System.currentTimeMillis() + 30_000;
+            while (!ProcessHelper.listRunningWineProcesses().isEmpty() && System.currentTimeMillis() < deadline) {
+                try { Thread.sleep(200); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+            }
+            if (!ProcessHelper.listRunningWineProcesses().isEmpty()) {
+                Log.w(tag, "prefix update: wine processes still alive after the prefix update; terminating them");
+                ProcessHelper.terminateAllWineProcessesAndWait(3000, true);
+            }
+            String after = stamp.isFile() ? FileUtils.readString(stamp) : "";
+            Log.i(tag, "prefix update: finished in " + (System.currentTimeMillis() - t0) + " ms (wineboot exit "
+                    + status + "), .update-timestamp now \"" + (after == null ? "" : after.trim()) + "\"");
+        } catch (Throwable t) {
+            Log.w(tag, "prefix update: the step before the session failed; launching anyway", t);
+        }
+    }
+
+    /** {@code overrides} (a WINEDLLOVERRIDES value, possibly empty) with {@code mscoree=d} appended. */
+    static String withMscoreeDisabled(String overrides) {
+        String o = overrides == null ? "" : overrides.trim();
+        while (o.endsWith(";")) o = o.substring(0, o.length() - 1).trim();
+        return o.isEmpty() ? "mscoree=d" : o + ";mscoree=d";
     }
 
     private void addBox64EnvVars(EnvVars envVars, boolean enableLogs) {
@@ -561,7 +753,8 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
             envVars.put("BOX64_DYNAREC_MISSING", "1");
         }
 
-        envVars.putAll(Box64PresetManager.getEnvVars("box64", environment.getContext(), box64Preset));
+        envVars.putAll(box64PresetVars != null ? box64PresetVars
+                : Box64PresetManager.getEnvVars("box64", environment.getContext(), box64Preset));
         envVars.put("BOX64_X11GLX", "1");
         envVars.put("BOX64_NORCFILES", "1");
     }

@@ -49,8 +49,13 @@ object ComponentExecInstaller {
     private val SUPPORTED_ACTIONS = LOCAL_ACTIONS + EXEC_ACTIONS
 
     // Keys inside an install_exe `environment` object that describe the file, not env vars.
+    // `local_file`  — an already-staged installer on the Android side (GOG redists): copy it into the
+    //                 container instead of downloading (see launchInstaller).
+    // `component_marker` — an idempotency marker (e.g. "GOG:MSVC2017_x64") recorded per-step so a
+    //                 multi-installer plan records each piece, not just the umbrella component name.
     private val INSTALL_FILE_KEYS = setOf(
-        "file_name", "url", "mirror", "rename", "file_checksum", "file_size", "arguments", "for"
+        "file_name", "url", "mirror", "rename", "file_checksum", "file_size", "arguments", "for",
+        "local_file", "component_marker"
     )
 
     sealed class Result {
@@ -172,6 +177,12 @@ object ComponentExecInstaller {
                         // Persist the cursor PAST this step (optimistic) before we leave for the session,
                         // so resume continues after it once the app restarts.
                         savePlan(context, container.id, name, steps, i + 1)
+                        // Optimistically record this step's own idempotency marker (e.g. a GOG redist's
+                        // "GOG:<depId>"), matching the fire-and-forget model: the session that runs the
+                        // installer restarts the app, so we can't confirm afterwards from here. Lets a
+                        // multi-redist plan mark each redist installed, not just the umbrella component.
+                        val marker = installFields(step).first.optString("component_marker")
+                        if (marker.isNotEmpty()) recordInstalled(context, container.id, marker)
                         launchInstaller(context, container, name, step, onProgress)
                         return Result.Launched
                     }
@@ -183,7 +194,7 @@ object ComponentExecInstaller {
                 i++
             }
             // Reached the end with no further installer — done. Drop the staged installer exes.
-            File(root, ".wine/drive_c/windows/temp/winhub_components").deleteRecursively()
+            File(root, ".wine/drive_c/windows/temp/bannerlator_components").deleteRecursively()
             clearPlan(context)
             // Record the install at the SOURCE so it sticks even though completion happens after the
             // container session restarts the app (the resume path lands here too). Same store/key the
@@ -225,18 +236,33 @@ object ComponentExecInstaller {
         context: Context, container: Container, name: String, step: ComponentStep, onProgress: (Float) -> Unit,
     ) {
         val (fields, env) = installFields(step)
-        val url = fields.optString("mirror").ifEmpty { fields.optString("url") }
-        if (!url.startsWith("http")) throw IllegalStateException("$name: installer has no download URL")
-        val rawName = fields.optString("rename").ifEmpty {
-            fields.optString("file_name").ifEmpty { url.substringBefore('?').substringAfterLast('/') }
-        }
-        val safe = rawName.replace(Regex("""[\\/:*?"<>|]"""), "_").ifEmpty { "installer.exe" }
 
-        // Stage the installer inside the container's drive_c so it's reachable from Wine.
-        val destDir = File(container.rootDir, ".wine/drive_c/windows/temp/winhub_components").apply { mkdirs() }
-        val installer = File(destDir, safe)
-        if (!Downloader.downloadFile(url, installer) { f -> onProgress(f) })
-            throw IllegalStateException("$name: download failed ($safe)")
+        // A GOG redist (or any caller) can hand us an installer already assembled on the Android side
+        // via `local_file`; then we skip the network download entirely and just copy it into the
+        // container's drive_c. Otherwise fall back to the mirror/url download (system components).
+        val localFile = fields.optString("local_file")
+        val destDir = File(container.rootDir, ".wine/drive_c/windows/temp/bannerlator_components").apply { mkdirs() }
+        val installer: File
+        if (localFile.isNotEmpty()) {
+            val src = File(localFile)
+            if (!src.isFile) throw IllegalStateException("$name: pre-staged installer missing ($localFile)")
+            val rawName = fields.optString("rename").ifEmpty { fields.optString("file_name").ifEmpty { src.name } }
+            val safe = rawName.replace(Regex("""[\\/:*?"<>|]"""), "_").ifEmpty { "installer.exe" }
+            installer = File(destDir, safe)
+            src.copyTo(installer, overwrite = true)
+            onProgress(1f)
+        } else {
+            val url = fields.optString("mirror").ifEmpty { fields.optString("url") }
+            if (!url.startsWith("http")) throw IllegalStateException("$name: installer has no download URL")
+            val rawName = fields.optString("rename").ifEmpty {
+                fields.optString("file_name").ifEmpty { url.substringBefore('?').substringAfterLast('/') }
+            }
+            val safe = rawName.replace(Regex("""[\\/:*?"<>|]"""), "_").ifEmpty { "installer.exe" }
+            installer = File(destDir, safe)
+            if (!Downloader.downloadFile(url, installer) { f -> onProgress(f) })
+                throw IllegalStateException("$name: download failed ($safe)")
+        }
+        val safe = installer.name
 
         // Wine runs an .exe directly and associates .msi with msiexec, so handing either to
         // `wine <path>` works. The container session already opens a Wine desktop

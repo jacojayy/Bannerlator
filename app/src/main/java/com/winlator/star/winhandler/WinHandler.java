@@ -14,7 +14,9 @@ import com.winlator.star.inputcontrols.ControlsProfile;
 import com.winlator.star.inputcontrols.ExternalController;
 import com.winlator.star.inputcontrols.FakeInputWriter;
 import com.winlator.star.inputcontrols.GamepadState;
+import com.winlator.star.inputcontrols.SteamControllerBackend;
 import com.winlator.star.widget.InputControlsView;
+import com.winlator.star.xserver.Pointer;
 import com.winlator.star.xserver.XServer;
 
 import android.content.Context;
@@ -113,6 +115,15 @@ public class WinHandler {
     public static final int SLOT_IGNORE = -2;
     public static final String OSC_DESCRIPTOR = "__osc__"; // stand-in descriptor for the on-screen pad
     private final Map<String, Integer> manualSlotOverrides = new HashMap<>();
+
+    // ---- Steam Controller (SDL) pads ----
+    // Pads read through SteamControllerBackend have no Android InputDevice. They go through the same
+    // slot machinery as a physical pad, keyed on a synthetic deviceId (SteamControllerBackend.
+    // DEVICE_ID_BASE - SDL instance id) and an "sdl:" descriptor, the way OSC uses OSC_DEVICE_ID /
+    // OSC_DESCRIPTOR. Only populated while the Steam Controller setting is on. ConcurrentHashMap: the
+    // vibration thread reads it in resolveSlotOwnerDeviceId / dispatchControllerVibration.
+    private final Map<Integer, ExternalController> sdlPads = new ConcurrentHashMap<>();
+    private volatile SteamControllerBackend sdlBackend;
 
     // ---- Shared / combined player slots (opt-in, manual-only) ----
     // A slot is SHARED when >=2 DISTINCT contributors drive it: two physical descriptors pinned to the
@@ -554,7 +565,37 @@ public class WinHandler {
         }
     }
 
+    private volatile boolean waylandMouseRouting;
+
+    /** Wayland mode: relative-mode mouse input (Relative Mouse, captured mouse, stick-as-mouse) goes
+     *  to the embedded compositor as pointer deltas/buttons instead of the guest-side mouse_event, so
+     *  a program's pointer lock receives it as zwp_relative_pointer_v1 relative motion. */
+    public void setWaylandMouseRouting(boolean on) {
+        waylandMouseRouting = on;
+    }
+
+    private static void waylandMouseEvent(int flags, int dx, int dy, int wheelDelta) {
+        if ((flags & MouseEventFlags.MOVE) != 0)
+            com.winlator.star.wayland.WaylandCompositor.sendPointerDelta(dx, dy);
+        if ((flags & MouseEventFlags.LEFTDOWN) != 0) com.winlator.star.wayland.WaylandCompositor.nativeSendSceneInput(3, 0x110, 1);
+        if ((flags & MouseEventFlags.LEFTUP) != 0) com.winlator.star.wayland.WaylandCompositor.nativeSendSceneInput(3, 0x110, 0);
+        if ((flags & MouseEventFlags.RIGHTDOWN) != 0) com.winlator.star.wayland.WaylandCompositor.nativeSendSceneInput(3, 0x111, 1);
+        if ((flags & MouseEventFlags.RIGHTUP) != 0) com.winlator.star.wayland.WaylandCompositor.nativeSendSceneInput(3, 0x111, 0);
+        if ((flags & MouseEventFlags.MIDDLEDOWN) != 0) com.winlator.star.wayland.WaylandCompositor.nativeSendSceneInput(3, 0x112, 1);
+        if ((flags & MouseEventFlags.MIDDLEUP) != 0) com.winlator.star.wayland.WaylandCompositor.nativeSendSceneInput(3, 0x112, 0);
+        if ((flags & MouseEventFlags.WHEEL) != 0 && wheelDelta != 0) {
+            // Windows: positive = away from the user (up). Compositor wheel steps: negative = up.
+            int steps = -Math.round(wheelDelta / 120f);
+            if (steps == 0) steps = wheelDelta > 0 ? -1 : 1;
+            com.winlator.star.wayland.WaylandCompositor.nativeSendSceneInput(4, steps, 0);
+        }
+    }
+
     public void mouseEvent(int flags, int dx, int dy, int wheelDelta) {
+        if (waylandMouseRouting) {
+            waylandMouseEvent(flags, dx, dy, wheelDelta);
+            return;
+        }
         if (!initReceived)
             return;
         addAction(() -> {
@@ -732,7 +773,9 @@ public class WinHandler {
                 return OSC_DEVICE_ID;
             if (firstPhysical == null)
                 firstPhysical = devId;
-            if (withVibrator == null) {
+            if (withVibrator == null && sdlPads.containsKey(devId)) {
+                withVibrator = devId; // Steam Controller rumbles through SDL
+            } else if (withVibrator == null) {
                 android.view.InputDevice d = android.view.InputDevice.getDevice(devId);
                 if (d != null) {
                     Vibrator v = d.getVibrator();
@@ -742,6 +785,45 @@ public class WinHandler {
             }
         }
         return withVibrator != null ? withVibrator : firstPhysical;
+    }
+
+    /**
+     * "Identify this pad" buzz for the in-game Players controller-test panel. Fires a short, firm
+     * rumble on the slot's owner device, going STRAIGHT to {@link #dispatchControllerVibration} so it
+     * bypasses the per-container vibration mode/master gate — this is an explicit user action in the
+     * test panel, not game-driven rumble, so it must work even when in-game vibration is set to Off.
+     * Main-thread only.
+     */
+    public void testRumble(int slot) {
+        if (slot < 0 || slot >= MAX_CONTROLLERS)
+            return;
+        // strong/weak are raw 0..65535 (same scale the guest sends); dispatchControllerVibration runs
+        // them through rawToAmplitude/applyIntensity exactly like an in-game rumble.
+        dispatchControllerVibration(48000, 32000, 420, slot, false);
+    }
+
+    /**
+     * True when the slot's resolved owner device actually exposes a vibrator (physical pad motor, or
+     * the phone vibrator when OSC owns the slot). Lets the test panel disable the Identify button for
+     * pads with no rumble. Main-thread only.
+     */
+    public boolean slotHasVibrator(int slot) {
+        if (slot < 0 || slot >= MAX_CONTROLLERS)
+            return false;
+        Integer deviceId = resolveSlotOwnerDeviceId(slot);
+        if (deviceId == null)
+            return false;
+        if (deviceId == OSC_DEVICE_ID) {
+            Vibrator v = (Vibrator) activity.getSystemService(Context.VIBRATOR_SERVICE);
+            return v != null && v.hasVibrator();
+        }
+        if (sdlPads.containsKey(deviceId))
+            return true;
+        android.view.InputDevice d = android.view.InputDevice.getDevice(deviceId);
+        if (d == null)
+            return false;
+        Vibrator v = d.getVibrator();
+        return v != null && v.hasVibrator();
     }
 
     /**
@@ -756,6 +838,17 @@ public class WinHandler {
         // actually has a vibrator (falling back to OSC / first physical) — for a plain
         // single-device pad this returns exactly the device it always did.
         Integer deviceId = resolveSlotOwnerDeviceId(slot);
+
+        // Steam Controller (SDL): both motors map straight onto SDL's low/high rumble. The container
+        // intensity scales the raw 0..65535 values the same way applyIntensity scales amplitudes.
+        SteamControllerBackend backend = sdlBackend;
+        if (deviceId != null && backend != null && sdlPads.containsKey(deviceId)) {
+            int pct = Math.max(0, Math.min(100, vibrationIntensity));
+            int low = stopping ? 0 : (strong * pct) / 100;
+            int high = stopping ? 0 : (weak * pct) / 100;
+            backend.rumble(deviceId, low, high, stopping ? 0 : duration);
+            return;
+        }
 
         android.view.InputDevice device = null;
         Vibrator fallbackVibrator = null;
@@ -891,6 +984,12 @@ public class WinHandler {
         int intensity = Math.max(strong, weak);
         int amplitude = Math.min(255, Math.max(1, (int) ((intensity / 65535.0f) * 255)));
         int scaled = applyIntensity(amplitude);
+        // Per-container intensity 0 (e.g. vibration set to 0 in the in-game side menu) drives scaled
+        // to 0; VibrationEffect.createOneShot rejects amplitude 0 with IllegalArgumentException and
+        // crashes the vibration-listener thread. Treat 0 as silence — matching the dual-motor path's
+        // `amp > 0` guards and applyIntensity's documented "0 stays 0". Also skips the pre-O legacy
+        // vibrate() so intensity 0 is truly silent, not a full-strength buzz.
+        if (scaled <= 0) return;
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             vibrator.vibrate(VibrationEffect.createOneShot(duration, scaled));
         } else {
@@ -1121,9 +1220,34 @@ public class WinHandler {
         state.dpad[0] = state.dpad[1] = state.dpad[2] = state.dpad[3] = false;
     }
 
+    // Re-push every live physical controller's current state through the slot pipeline, re-evaluating
+    // the physical-profile remap gate. Used when the physical lane changes (InputControlsView
+    // .setPhysicalProfile) so a switch to passthrough (raw resumes) or a bound profile (remap/silence)
+    // applies at once instead of waiting for the next input event. Mirrors releaseAllControllerInputs.
+    public void refreshControllerStates() {
+        for (ExternalController controller : controllers.values()) {
+            if (controller != null) sendGamepadState(controller);
+        }
+    }
+
     public void sendGamepadState(ExternalController controller) {
         if (controller == null)
             return;
+
+        // Steam Controller (SDL): no profile lookup. The raw pad object sends its own state; the
+        // bindings view InputControlsView runs for it (same synthetic deviceId, see onSteamPadState)
+        // sends its remapped output.
+        int deviceId = controller.getDeviceId();
+        if (deviceId <= SteamControllerBackend.DEVICE_ID_BASE) {
+            ExternalController sdlPad = sdlPads.get(deviceId);
+            if (sdlPad == null && !deviceToSlot.containsKey(deviceId))
+                return; // gone and already released — never claim a slot for it
+            gyroTargetController = controller;
+            int slot = assignSlot(deviceId);
+            writeSlotState(slot, deviceId,
+                    getOutputGamepadState(controller == sdlPad ? controller.state : controller.remappedState));
+            return;
+        }
 
         // Remember the live controller so the gyro can re-push through it between input events.
         gyroTargetController = controller;
@@ -1132,7 +1256,7 @@ public class WinHandler {
         // If it does, we should NOT send the raw state here, because InputControlsView
         // will send the remapped state via the no-arg sendGamepadState().
         InputControlsView inputControlsView = activity.getInputControlsView();
-        ControlsProfile profile = inputControlsView != null ? inputControlsView.getProfile() : null;
+        ControlsProfile profile = inputControlsView != null ? inputControlsView.getPhysicalProfile() : null;
         if (profile != null) {
             ExternalController profileController = profile.getController(controller.getDeviceId());
             if (profileController != null && profileController.getControllerBindingCount() > 0) {
@@ -1262,10 +1386,12 @@ public class WinHandler {
             return false;
         if (deviceToSlot.containsKey(deviceId))
             return false;
-        android.view.InputDevice device = android.view.InputDevice.getDevice(deviceId);
-        if (!ExternalController.isGameController(device))
-            return false;
-        String descriptor = device != null ? device.getDescriptor() : null;
+        if (!sdlPads.containsKey(deviceId)) {
+            android.view.InputDevice device = android.view.InputDevice.getDevice(deviceId);
+            if (!ExternalController.isGameController(device) || isShadowedBySdl(device))
+                return false;
+        }
+        String descriptor = descriptorOf(deviceId);
         if (descriptor == null)
             return false;
         // Respect an explicit pin/ignore on the incoming pad — these modes only steer un-pinned pads.
@@ -1912,10 +2038,7 @@ public class WinHandler {
         }
 
         // Physical: resolve the descriptor so sibling sub-devices group under one slot.
-        String descriptor = null;
-        android.view.InputDevice device = android.view.InputDevice.getDevice(deviceId);
-        if (device != null)
-            descriptor = device.getDescriptor();
+        String descriptor = descriptorOf(deviceId);
 
         if (descriptor != null) {
             // Manual override wins over auto-assignment. Ignore = never take a slot (guards the
@@ -2138,7 +2261,16 @@ public class WinHandler {
             return 0;
         }
         int assignedCount = 0;
+        // Steam Controllers read through SDL have no InputDevice for the scan to find; append them so
+        // their pins/ignores go through the same two passes (only non-empty mid-session, e.g. Reset).
         int[] ids = getConnectedGamepadDeviceIds();
+        if (!sdlPads.isEmpty()) {
+            java.util.List<Integer> sdlIds = new java.util.ArrayList<>(sdlPads.keySet());
+            int base = ids.length;
+            ids = Arrays.copyOf(ids, base + sdlIds.size());
+            for (int i = 0; i < sdlIds.size(); i++)
+                ids[base + i] = sdlIds.get(i);
+        }
         // Pass 1 — honor manual pins FIRST, so a user-pinned controller claims its exact player slot
         // before FCFS can hand that slot to anyone else. Without the two-pass split, a non-pinned pad
         // that sorts earlier could take a slot another pad is pinned to (then the pin would spill to a
@@ -2167,10 +2299,12 @@ public class WinHandler {
     private boolean assignPinnedDeviceIfPossible(int deviceId) {
         if (deviceToSlot.containsKey(deviceId))
             return false;
-        android.view.InputDevice device = android.view.InputDevice.getDevice(deviceId);
-        if (!ExternalController.isGameController(device))
-            return false;
-        String descriptor = device != null ? device.getDescriptor() : null;
+        if (!sdlPads.containsKey(deviceId)) {
+            android.view.InputDevice device = android.view.InputDevice.getDevice(deviceId);
+            if (!ExternalController.isGameController(device) || isShadowedBySdl(device))
+                return false;
+        }
+        String descriptor = descriptorOf(deviceId);
         if (descriptor == null)
             return false;
         Integer override = manualSlotOverrides.get(descriptor);
@@ -2295,10 +2429,24 @@ public class WinHandler {
             // device that grabbed a slot before an override/filter change and should be freeable).
             if (!isController && !holdsSlot)
                 continue;
+            // A Valve device Android exposes while SDL owns the Steam Controller is the same pad —
+            // it's listed once, as the SDL row below.
+            if (isShadowedBySdl(device) && !holdsSlot)
+                continue;
             Integer slot = descriptorToSlot.get(descriptor);
             Integer override = manualSlotOverrides.get(descriptor);
             byDescriptor.put(descriptor, new PlayerSlotInfo(device.getName(), descriptor,
                     slot != null ? slot : -1, isController, false,
+                    override != null ? override : -1));
+        }
+        for (ExternalController pad : sdlPads.values()) {
+            String descriptor = pad.getId();
+            if (descriptor == null || byDescriptor.containsKey(descriptor))
+                continue;
+            Integer slot = descriptorToSlot.get(descriptor);
+            Integer override = manualSlotOverrides.get(descriptor);
+            byDescriptor.put(descriptor, new PlayerSlotInfo(pad.getName(), descriptor,
+                    slot != null ? slot : -1, true, false,
                     override != null ? override : -1));
         }
         out.addAll(byDescriptor.values());
@@ -2369,6 +2517,10 @@ public class WinHandler {
             android.view.InputDevice d = android.view.InputDevice.getDevice(id);
             if (d != null && descriptor.equals(d.getDescriptor()))
                 liveIds.add(id);
+        }
+        for (Map.Entry<Integer, ExternalController> e : sdlPads.entrySet()) {
+            if (descriptor.equals(e.getValue().getId()))
+                liveIds.add(e.getKey());
         }
         java.util.List<Integer> toRelease = new java.util.ArrayList<>(liveIds);
         for (Map.Entry<Integer, String> e : deviceToDescriptor.entrySet()) {
@@ -2517,21 +2669,27 @@ public class WinHandler {
             // Still allow a reconnecting / sibling sub-device that will REUSE an existing
             // physical controller's slot rather than consume a new one; without this a
             // transient remove/add while all four slots are full would be dropped.
-            android.view.InputDevice probe = android.view.InputDevice.getDevice(deviceId);
-            String descriptor = probe != null ? probe.getDescriptor() : null;
+            String descriptor = descriptorOf(deviceId);
             if (descriptor == null || !descriptorToSlot.containsKey(descriptor)) {
                 Log.d("WinHandler", "Ignoring device " + deviceId + " from " + source + ": slot limit reached.");
                 return false;
             }
         }
 
-        android.view.InputDevice device = android.view.InputDevice.getDevice(deviceId);
-        if (!ExternalController.isGameController(device))
-            return false;
+        if (!sdlPads.containsKey(deviceId)) {
+            android.view.InputDevice device = android.view.InputDevice.getDevice(deviceId);
+            if (!ExternalController.isGameController(device))
+                return false;
+            if (isShadowedBySdl(device)) {
+                Log.d("WinHandler", "Skipping device " + deviceId + " from " + source
+                        + ": Valve pad already read through SDL.");
+                return false;
+            }
+        }
 
         // Manual "Ignore" override: user marked this physical controller as not-a-player in the
         // in-game Players sub-tab — never auto-assign it a slot.
-        String descriptor = device != null ? device.getDescriptor() : null;
+        String descriptor = descriptorOf(deviceId);
         if (descriptor != null) {
             Integer override = manualSlotOverrides.get(descriptor);
             if (override != null && override == SLOT_IGNORE) {
@@ -2629,6 +2787,8 @@ public class WinHandler {
         deviceToDescriptor.clear();
         usedSlots.clear();
         controllers.clear();
+        sdlPads.clear();
+        sdlBackend = null;
         manualSlotOverrides.clear();
         fallbackSlot = -1;
         oscYieldSlot = -1;
@@ -2644,7 +2804,104 @@ public class WinHandler {
         }
     }
 
+    // ---- Steam Controller (SDL) pads — see the sdlPads field ----
+
+    public void setSteamControllerBackend(SteamControllerBackend backend) {
+        sdlBackend = backend;
+    }
+
+    /** True while at least one Steam Controller is being read through SDL. */
+    public boolean hasSdlPads() {
+        return !sdlPads.isEmpty();
+    }
+
+    /** A Steam Controller came up through SDL: seat it like a hot-plugged pad (On-screen priority
+     *  mode, pins/ignores, status toast). Main-thread only. */
+    public void onSdlPadConnected(ExternalController pad) {
+        int deviceId = pad.getDeviceId();
+        cancelPendingDeviceRelease(deviceId);
+        sdlPads.put(deviceId, pad);
+        releaseShadowedValveSlots();
+        if (!handleOnScreenModeForNewPad(deviceId))
+            assignConnectedDeviceIfPossible(deviceId, "sdl");
+        notifyAssignmentsChanged("connected", pad.getId());
+    }
+
+    /** The SDL pad went away: neutralize it now and free its slot after the normal disconnect
+     *  debounce. A quick Bluetooth reconnect comes back with a new deviceId but the same descriptor,
+     *  so it re-seats on the slot still held under that descriptor. Main-thread only. */
+    public void onSdlPadDisconnected(ExternalController pad) {
+        int deviceId = pad.getDeviceId();
+        if (sdlPads.remove(deviceId) == null)
+            return;
+        pad.state.reset();
+        pad.remappedState.reset();
+        if (deviceToSlot.containsKey(deviceId))
+            sendGamepadState(pad);
+        scheduleDeviceRelease(deviceId);
+    }
+
+    /** Steam Controller right trackpad as a mouse. Same seam as the gyro mouse: relative-mouse games
+     *  get real relative motion through winhandler.exe, otherwise the X pointer moves. Main thread. */
+    public void steamPadMouseMove(int dx, int dy) {
+        XServer xServer = activity != null ? activity.getXServer() : null;
+        if (xServer != null && !xServer.isRelativeMouseMovement()) {
+            xServer.injectPointerMoveDelta(dx, dy);
+            return;
+        }
+        queueGyroMouseEvent(dx, dy);
+    }
+
+    /** A mouse trackpad's click: the left mouse button, or the right one for the secondary pad (the
+     *  left pad when both pads move the mouse). */
+    public void steamPadMouseButton(boolean secondary, boolean down) {
+        XServer xServer = activity != null ? activity.getXServer() : null;
+        if (xServer == null)
+            return;
+        Pointer.Button button = secondary ? Pointer.Button.BUTTON_RIGHT : Pointer.Button.BUTTON_LEFT;
+        if (xServer.isRelativeMouseMovement())
+            mouseEvent(MouseEventFlags.getFlagFor(button, down), 0, 0, 0);
+        else if (down)
+            xServer.injectPointerButtonPress(button);
+        else
+            xServer.injectPointerButtonRelease(button);
+    }
+
+    /** Descriptor for any deviceId: the SDL pad's "sdl:" key, else the Android device descriptor. */
+    private String descriptorOf(int deviceId) {
+        ExternalController sdlPad = sdlPads.get(deviceId);
+        if (sdlPad != null)
+            return sdlPad.getId();
+        android.view.InputDevice device = android.view.InputDevice.getDevice(deviceId);
+        return device != null ? device.getDescriptor() : null;
+    }
+
+    /** While SDL owns a Steam Controller, any Valve device Android also exposes (its lizard-mode
+     *  keyboard/mouse, or a HID gamepad collection) is the same physical pad and must not take a
+     *  second player slot. */
+    private boolean isShadowedBySdl(android.view.InputDevice device) {
+        return device != null && !sdlPads.isEmpty()
+                && device.getVendorId() == SteamControllerBackend.VALVE_VENDOR_ID;
+    }
+
+    /** Frees slots a Valve Android device took before SDL claimed the controller. */
+    private void releaseShadowedValveSlots() {
+        for (Integer id : new java.util.ArrayList<>(deviceToSlot.keySet())) {
+            if (id == null || id < 0 || sdlPads.containsKey(id))
+                continue;
+            if (isShadowedBySdl(android.view.InputDevice.getDevice(id))) {
+                Log.d("WinHandler", "Releasing Android Valve device " + id + ": SDL owns the Steam Controller.");
+                releaseSlot(id);
+            }
+        }
+    }
+
     private ExternalController getController(int deviceId) {
+        ExternalController sdlPad = sdlPads.get(deviceId);
+        if (sdlPad != null)
+            return sdlPad;
+        if (!sdlPads.isEmpty() && isShadowedBySdl(android.view.InputDevice.getDevice(deviceId)))
+            return null;
         if (controllers.containsKey(deviceId)) {
             return controllers.get(deviceId);
         }
@@ -2708,8 +2965,13 @@ public class WinHandler {
             controller.remappedState.reset();
             sendGamepadState(controller);
         }
+        for (ExternalController controller : sdlPads.values()) {
+            controller.state.reset();
+            controller.remappedState.reset();
+            sendGamepadState(controller);
+        }
         InputControlsView inputControlsView = activity.getInputControlsView();
-        ControlsProfile profile = inputControlsView != null ? inputControlsView.getProfile() : null;
+        ControlsProfile profile = inputControlsView != null ? inputControlsView.getPhysicalProfile() : null;
         if (profile == null) return;
         for (ExternalController controller : profile.getControllers()) {
             controller.state.reset();

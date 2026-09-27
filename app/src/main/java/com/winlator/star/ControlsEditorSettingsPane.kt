@@ -204,6 +204,7 @@ fun ControlsEditorSettingsPane(
     var gridMultitouchEnabled by remember { mutableStateOf(element.isGridMultitouchEnabled()) }
     var holdKeyIndex by remember { mutableStateOf(holdKeyOptions.indexOf(element.getHoldKey().toString()).coerceAtLeast(0)) }
     var toggleSwitch by remember { mutableStateOf(element.isToggleSwitch()) }
+    var swipeable by remember { mutableStateOf(element.isSwipeable()) }
     var customText by remember { mutableStateOf(element.getText()) }
     var selectedIconId by remember { mutableStateOf(element.getIconId().toInt() and 0xFF) }
     var customIconTintEnabled by remember { mutableStateOf(element.isCustomIconTintEnabled()) }
@@ -313,6 +314,7 @@ fun ControlsEditorSettingsPane(
         gridMultitouchEnabled = element.isGridMultitouchEnabled()
         holdKeyIndex = holdKeyOptions.indexOf(element.getHoldKey().toString()).coerceAtLeast(0)
         toggleSwitch = element.isToggleSwitch()
+        swipeable = element.isSwipeable()
         customText = element.getText()
         selectedIconId = element.getIconId().toInt() and 0xFF
         customIconTintEnabled = element.isCustomIconTintEnabled()
@@ -849,6 +851,18 @@ fun ControlsEditorSettingsPane(
             onCheckedChange = { checked ->
                 toggleSwitch = checked
                 element.setToggleSwitch(checked)
+                saveAndInvalidate()
+            },
+        )
+
+        SettingSwitch(
+            label = stringResource(R.string.input_controls_editor_swipeable),
+            checked = swipeable,
+            visible = selectedType == ControlElement.Type.BUTTON
+                || selectedType == ControlElement.Type.D_PAD,
+            onCheckedChange = { checked ->
+                swipeable = checked
+                element.setSwipeable(checked)
                 saveAndInvalidate()
             },
         )

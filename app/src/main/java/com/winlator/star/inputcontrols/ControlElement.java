@@ -95,6 +95,7 @@ public class ControlElement {
     private short y;
     private boolean selected = false;
     private boolean toggleSwitch = false;
+    private boolean swipeable = true;
     private int currentPointerId = -1;
     private final Rect boundingBox = new Rect();
     private boolean[] states = new boolean[4];
@@ -572,6 +573,23 @@ public class ControlElement {
 
     public void setToggleSwitch(boolean toggleSwitch) {
         this.toggleSwitch = toggleSwitch;
+    }
+
+    public boolean isSwipeable() {
+        return swipeable;
+    }
+
+    public void setSwipeable(boolean swipeable) {
+        this.swipeable = swipeable;
+    }
+
+    /** True when a moving finger may press this element by sliding onto it (and it releases on slide-off). */
+    public boolean isSwipeTarget() {
+        return (type == Type.BUTTON || type == Type.D_PAD) && swipeable;
+    }
+
+    public boolean isCapturing(int pointerId) {
+        return currentPointerId == pointerId;
     }
 
     public Binding getBindingAt(int index) {
@@ -2335,6 +2353,7 @@ public class ControlElement {
             elementJSONObject.put("x", (float)x / inputControlsView.getMaxWidth());
             elementJSONObject.put("y", (float)y / inputControlsView.getMaxHeight());
             elementJSONObject.put("toggleSwitch", toggleSwitch);
+            elementJSONObject.put("swipeable", swipeable);
             elementJSONObject.put("text", text);
             elementJSONObject.put("iconId", iconId);
             writeCustomIconOptions(elementJSONObject);
@@ -2736,6 +2755,15 @@ public class ControlElement {
     public boolean handleTouchMove(int pointerId, float x, float y) {
         if (type == Type.BUTTON_GRID && gridMultitouchEnabled) {
             return handleGridMultitouchMove(pointerId, x, y);
+        }
+        if (pointerId == currentPointerId && type == Type.BUTTON) {
+            // Legacy buttons ignore moves (pressed on DOWN, held until UP). A swipeable button
+            // instead releases itself the moment the owning finger slides off its bounds, so the
+            // finger can chain onto the next swipe target (handled in InputControlsView). Gated by
+            // BOTH the per-element flag AND the live Buttons category toggle; either off -> legacy.
+            if (!swipeable || !inputControlsView.isSwipeButtonsEnabled()) return false;
+            if (!containsPoint(x, y)) handleTouchUp(pointerId);
+            return true;
         }
         if (pointerId == currentPointerId && (type == Type.D_PAD || type == Type.STICK || type == Type.TRACKPAD || type == Type.DYNAMIC_STICK || type == Type.MOUSE_AREA || type == Type.BUTTON_GRID)) {
             float deltaX, deltaY;

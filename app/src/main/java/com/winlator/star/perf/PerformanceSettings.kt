@@ -27,6 +27,10 @@ object PerformanceSettings {
     private const val KEY_SUSTAINED = "global_sustainedPerfMode"
     private const val KEY_PRIORITY = "global_perfPriorityBoost"
     private const val KEY_BIG_CORES = "global_preferBigCores"
+    // In-game Performance dialog translucency (see PerformanceDashboardDialog). Device-wide, not
+    // per-game: it's a display preference, not a perf setting. Clamped to a readable floor.
+    private const val KEY_DIALOG_OPACITY = "perf_dialog_opacity"
+    const val OPACITY_MIN = 0.3f
 
     // The per-game override / extraData key names (NOT the "global_"-prefixed pref keys). Used by the
     // override-when-different + reset-to-global logic to iterate every perf toggle uniformly.
@@ -62,6 +66,15 @@ object PerformanceSettings {
     private val _preferBigCores = MutableStateFlow(false)
     val preferBigCores: StateFlow<Boolean> = _preferBigCores.asStateFlow()
 
+    private val _dialogOpacity = MutableStateFlow(1f)
+    val dialogOpacity: StateFlow<Float> = _dialogOpacity.asStateFlow()
+    fun setDialogOpacity(v: Float) {
+        val c = v.coerceIn(OPACITY_MIN, 1f)
+        _dialogOpacity.value = c
+        appContext?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            ?.edit()?.putFloat(KEY_DIALOG_OPACITY, c)?.apply()
+    }
+
     // ── Root-tier global defaults (one flow per PerfRootApplier.ROOT_KEYS entry), created eagerly in
     // init() so Compose has stable instances. Same two-level model: these are the global default, a
     // per-game shortcut extra can override, effective = override ?? global. Persisted as "global_<key>".
@@ -80,6 +93,7 @@ object PerformanceSettings {
         _sustainedPerfMode.value = prefs.getBoolean(KEY_SUSTAINED, false)
         _perfPriorityBoost.value = prefs.getBoolean(KEY_PRIORITY, false)
         _preferBigCores.value = prefs.getBoolean(KEY_BIG_CORES, false)
+        _dialogOpacity.value = prefs.getFloat(KEY_DIALOG_OPACITY, 1f).coerceIn(OPACITY_MIN, 1f)
         for (key in PerfRootApplier.ROOT_KEYS) {
             rootDefaults[key] = MutableStateFlow(prefs.getBoolean("global_$key", false))
         }

@@ -5,9 +5,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * PHASE 3 step 1 — the reverse of [ConfigTranslator]: turn a WinHub shortcut's effective
+ * PHASE 3 step 1 — the reverse of [ConfigTranslator]: turn a Bannerlator shortcut's effective
  * {@code [Extra Data]} settings back into a shareable community-config JSON in the GameHub
- * {@code pc_*} format that BOTH BannerHub and WinHub can read.
+ * {@code pc_*} format that BOTH BannerHub and Bannerlator can read.
  *
  * This object is the PURE CORE — deterministic and Android-free so the round-trip
  * (export then {@link ConfigTranslator#translate}) can be exercised on the JVM. All non-deterministic
@@ -63,13 +63,19 @@ object ConfigExporter {
         // #168 custom startup service set (only consumed when startupSelection = Custom); frame-gen
         // interpolation model; dual-motor vibration; sticky per-game upscaler override.
         "startupServices", "frameGenModel", "vibrationMode", "vibrationIntensity", "scalingMode",
+        // Drawer graphics quick-settings (#382): the sharpness/CAS/HDR sliders + SGSR/deband toggles
+        // that are remembered per game alongside scalingMode. Vulkan path: upscaleSharpness, casEnabled,
+        // casSharpness, hdrEnabled. GL path: sgsrEnabled, sgsrSharpness, glUpscaleSharpness. Deband
+        // (debandEnabled/debandStrength) is shared by both renderers. Each round-trips as a scalar.
+        "upscaleSharpness", "casEnabled", "casSharpness", "hdrEnabled",
+        "sgsrEnabled", "sgsrSharpness", "glUpscaleSharpness", "debandEnabled", "debandStrength",
     )
 
     /**
      * The non-deterministic provenance the adapter supplies. Kept out of the pure core so [export]
      * stays reproducible for the same inputs.
      *
-     *  - [appSource] — OUR namespace, always {@code "winhub"} (never {@code "bannerhub"}).
+     *  - [appSource] — OUR namespace, always {@code "bannerlator"} (never {@code "bannerhub"}).
      *  - [device] / [soc] — the hardware the config was captured on ({@code Build.MANUFACTURER MODEL}
      *    and the GPU-renderer probe), matching BannerHub's {@code detectSoc} meaning.
      *  - [version] — the app version string, written as {@code meta.bh_version} (informational).
@@ -136,7 +142,10 @@ object ConfigExporter {
             val v = it.toIntOrNull() ?: WinHandler.DEFAULT_INPUT_TYPE.toInt()
             settings.put("pc_ls_update_enable_xinput", (v and WinHandler.FLAG_INPUT_TYPE_XINPUT.toInt()) != 0)
         }
-        effective["envVars"].nonBlank()?.let { settings.put("pc_ls_environment_variable", it) }
+        // Scrub credential/identity vars (WN_STEAM_TOKEN/USERNAME/STEAMID, JWTs, emails, SteamID64s, …)
+        // out of the env list BEFORE it leaves the device — the primary of the three scrub boundaries.
+        // A config whose env was entirely credentials scrubs to blank and emits no key (nonBlank gate).
+        EnvVarScrub.scrub(effective["envVars"]).nonBlank()?.let { settings.put("pc_ls_environment_variable", it) }
         effective["execArgs"].nonBlank()?.let { settings.put("pc_ls_boot_option", it) }
 
         // Additive namespaced overlay — the ~28 shortcut extras the pc_* format can't carry, stored raw

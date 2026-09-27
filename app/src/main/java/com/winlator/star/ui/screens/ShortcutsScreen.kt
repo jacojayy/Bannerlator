@@ -2,9 +2,12 @@
 
 package com.winlator.star.ui.screens
 
+import com.winlator.star.core.PresetScope
+import com.winlator.star.core.PresetOverrides
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.content.SharedPreferences
 import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
@@ -75,6 +78,7 @@ import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.SwapVert
+import androidx.compose.material.icons.filled.ViewCarousel
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CloudDownload
@@ -85,8 +89,14 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.SportsEsports
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Help
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Info
@@ -96,7 +106,9 @@ import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.InsertDriveFile
@@ -117,13 +129,16 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import com.winlator.star.communityconfigs.AccountManager
+import com.winlator.star.store.SteamFriendsAction
 import com.winlator.star.communityconfigs.CanonicalDevice
 import com.winlator.star.communityconfigs.CanonicalGame
 import com.winlator.star.communityconfigs.CommunityConfigApply
 import com.winlator.star.communityconfigs.CommunityConfigRef
 import com.winlator.star.communityconfigs.DeviceIdentity
+import com.winlator.star.communityconfigs.EnvVarScrub
 import com.winlator.star.communityconfigs.ShortcutExporter
 import com.winlator.star.communityconfigs.UploadedConfigsStore.UploadedConfig
 import com.winlator.star.communityconfigs.GameMatcher
@@ -142,6 +157,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -154,7 +170,9 @@ import androidx.compose.runtime.SideEffect
 import com.winlator.star.ui.AccountAvatar
 import com.winlator.star.ui.AccountUiBus
 import com.winlator.star.ui.ComponentReturnBus
+import com.winlator.star.ui.EmulatorLabels
 import com.winlator.star.ui.LocalTopBarActions
+import com.winlator.star.ui.LocalTopBarTransparent
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -173,6 +191,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -204,6 +223,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import com.winlator.star.container.Container
 import com.winlator.star.container.GameDetails
 import com.winlator.star.container.Shortcut
+import com.winlator.star.linux.LinuxRuntimeInstaller
+import com.winlator.star.linux.LinuxRuntimeUpdate
+import com.winlator.star.linux.LinuxShortcuts
 import com.winlator.star.reshade.ReshadeManager
 import com.winlator.star.contentdialog.GraphicsDriverConfigDialog
 import com.winlator.star.contents.AdrenotoolsManager
@@ -215,6 +237,7 @@ import com.winlator.star.ui.findActivity
 import com.winlator.star.ui.screens.adrenodownload.AdrenoDriverDownloadSheet
 import com.winlator.star.ui.screens.adrenodownload.RemoteDriverEntry
 import com.winlator.star.ui.screens.adrenodownload.RemoteDriverRepository
+import com.winlator.star.core.CopyGameToDriveC
 import com.winlator.star.core.DefaultVersion
 import com.winlator.star.core.FileUtils
 import com.winlator.star.core.GameFolderScanner
@@ -223,10 +246,12 @@ import com.winlator.star.core.GameSaveBackup
 import com.winlator.star.core.KeyValueSet
 import com.winlator.star.ui.components.ContainerGlossarySheet
 import com.winlator.star.ui.components.DraggableAddButton
+import com.winlator.star.ui.components.EmuAccountConflictDialog
 import com.winlator.star.ui.theme.DangerRed
 import com.winlator.star.core.LogInventory
 import com.winlator.star.core.LogLocation
 import com.winlator.star.core.StringUtils
+import com.winlator.star.contentdialog.DXVKConfigDialog
 import com.winlator.star.core.WineInfo
 import com.winlator.star.core.WinePath
 import com.winlator.star.core.WineUtils
@@ -236,6 +261,17 @@ import com.winlator.star.fexcore.FEXCorePresetManager
 import com.winlator.star.inputcontrols.ControlsProfile
 import com.winlator.star.inputcontrols.InputControlsManager
 import com.winlator.star.midi.MidiManager
+import com.winlator.star.store.GoldbergComponent
+import com.winlator.star.store.GoldbergMode
+import com.winlator.star.store.GoldbergPatcher
+import com.winlator.star.store.SteamDatabase
+import com.winlator.star.store.SteamGameUpdater
+import com.winlator.star.store.SteamLiteComponent
+import com.winlator.star.store.EaSupport
+import com.winlator.star.store.steamscript.InstallScriptExecutor
+import com.winlator.star.store.SteamLoginActivity
+import com.winlator.star.store.SteamPrefs
+import com.winlator.star.store.SteamSessionManager
 import com.winlator.star.store.StarLaunchBridge
 import com.winlator.star.store.SteamSaveManagerActivity
 import com.winlator.star.store.SteamStoreSearch
@@ -253,10 +289,17 @@ import com.winlator.star.ui.components.AudioSettingsDialog
 import com.winlator.star.ui.components.audioConfigFromEnv
 import com.winlator.star.ui.components.audioConfigToEnv
 import com.winlator.star.ui.components.PlayerSlotsEditor
+import com.winlator.star.ui.components.CollapsibleRail
+import com.winlator.star.ui.components.RailItem
+import com.winlator.star.ui.components.RailLink
+import com.winlator.star.ui.components.RailSection
+import com.winlator.star.ui.components.RailTopTabs
+import com.winlator.star.ui.components.rememberRailState
 import com.winlator.star.winhandler.WinHandler
 import android.net.Uri
 import android.os.Build
 import androidx.documentfile.provider.DocumentFile
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -289,12 +332,229 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
     // label of the game the restore was launched from (shown in the container picker title).
     var restoreZipUri by remember { mutableStateOf<Uri?>(null) }
     var restoreForName by remember { mutableStateOf("") }
+    // Emulator account ids a restore held back because the container already runs a different one.
+    var emuConflicts by remember { mutableStateOf<List<GameSaveBackup.EmuIdConflict>>(emptyList()) }
     // The shortcut whose "Back up saves" layout-choice dialog is open (Winlator vs GameHub).
     var backupFormatShortcut by remember { mutableStateOf<Shortcut?>(null) }
     var settingsShortcut by remember { mutableStateOf<Shortcut?>(null) }
+    // "Copy to Drive C…" target — the game whose folder is being copied onto the container's C:
+    // drive (and then repointed). Both entry points (the ⋮ menu item and the editor's Storage row)
+    // set this; the shared CopyToDriveCCoordinator below owns the whole confirm→copy→repoint flow.
+    var copyToDriveCTarget by remember { mutableStateOf<Shortcut?>(null) }
+    // "Change executable…" target — the game being repointed at a different .exe/.lnk (launcher →
+    // real exe, dx11 ↔ dx9, a config tool). Both entry points set it; ChangeExecutableCoordinator
+    // owns the pick → args-choice → rewrite flow via the shared CopyGameToDriveC.setShortcutExe.
+    var changeExeTarget by remember { mutableStateOf<Shortcut?>(null) }
     var gameDetailsShortcut by remember { mutableStateOf<Shortcut?>(null) }
     var propertiesShortcut by remember { mutableStateOf<Shortcut?>(null) }
     var logsShortcut by remember { mutableStateOf<Shortcut?>(null) }
+    // XMB view: a nested menu is open (hides the + button) / its "Manage wrappers" row asked for the dialog.
+    var xmbNested by remember { mutableStateOf(false) }
+    var showWrapperManagerXmb by remember { mutableStateOf(false) }
+    // Steam launch-method popup (feature M3): the Steam-origin shortcut whose SteamLite-vs-Goldberg
+    // chooser is open (null = closed). A Steam game routes through this before launching UNLESS it
+    // already has a remembered choice (launchMode set + launchModeRemembered=="1").
+    var launchChoiceFor by remember { mutableStateOf<Shortcut?>(null) }
+    // EA support (see EaSupport): an EA title either needs its one-time EA Desktop setup, is unsupported
+    // (Javelin anti-cheat), or launches straight through SteamLite with the EA chain armed.
+    var eaSetupFor by remember { mutableStateOf<Shortcut?>(null) }
+    var eaUnsupportedFor by remember { mutableStateOf<Shortcut?>(null) }
+    var eaSetupBusy by remember { mutableStateOf(false) }
+    val eaScope = rememberCoroutineScope()
+    // SteamLite launch pre-flight (session → network → cloud saves → update check, BEFORE the container opens):
+    // the RealSteam game whose "Getting Steam ready" dialog is up (null = none). Every RealSteam
+    // launch — the popup pick and a remembered pick — routes through it; Goldberg/Raw never do.
+    var preflightFor by remember { mutableStateOf<Shortcut?>(null) }
+    // Download-on-launch progress overlay: the game we're about to launch once its picked component
+    // (SteamLite for RealSteam, or Goldberg) finishes downloading, plus a label + 0..1 fraction.
+    // null target = nothing downloading.
+    var componentDownloadFor by remember { mutableStateOf<Shortcut?>(null) }
+    var componentDownloadLabel by remember { mutableStateOf("") }
+    var componentDownloadProgress by remember { mutableFloatStateOf(0f) }
+    // RealSteam manual maintenance (the launch popup's Verify / Update buttons — SteamLite roadmap #3):
+    // the game whose maintenance run is in flight (null = none), its progress (<0 = indeterminate
+    // "checking", 0..1 while working), a label, a dialog title, and the cancel handle. This is NO LONGER
+    // on the launch path — update/verify are explicit now, so a run never launches the game.
+    var steamUpdateFor by remember { mutableStateOf<Shortcut?>(null) }
+    var steamUpdateProgress by remember { mutableFloatStateOf(-1f) }
+    var steamUpdateLabel by remember { mutableStateOf("") }
+    var steamUpdateTitle by remember { mutableStateOf("") }
+    var steamUpdateHandle by remember { mutableStateOf<SteamGameUpdater.UpdateHandle?>(null) }
+    // "Check for updates" is check-THEN-offer (never auto-applies): a cheap [checkForUpdate] probe runs
+    // first, and when it finds a delta (or can't tell from cached data) this holds the game + its status so
+    // the confirm dialog below can offer to apply it. null = no offer pending.
+    var steamUpdateOffer by remember { mutableStateOf<Pair<Shortcut, SteamGameUpdater.UpdateStatus>?>(null) }
+    // Manual RealSteam maintenance: run a delta [update] or a full "verify integrity" [verify] pass for the
+    // game, reusing the shared progress modal. Standalone — it never launches the game; the outcome
+    // surfaces as a toast. Cancellable via steamUpdateHandle (the modal's Cancel button).
+    fun runSteamMaintenance(s: Shortcut, verify: Boolean) {
+        val appId = steamAppIdOf(s)
+        steamUpdateTitle = if (verify) "Verifying game files" else "Updating game"
+        steamUpdateLabel = if (verify) "Verifying ${s.name}…" else "Checking ${s.name} for updates…"
+        steamUpdateProgress = -1f
+        steamUpdateFor = s
+        val progress = SteamGameUpdater.ProgressCallback { frac, label ->
+            steamUpdateProgress = frac; steamUpdateLabel = label
+        }
+        val done = SteamGameUpdater.DoneCallback { result, msg ->
+            steamUpdateFor = null
+            steamUpdateHandle = null
+            // Every terminal result except a user cancel is worth a one-line toast (offline / failed /
+            // "Files verified" / "Updated" / "Already up to date"). A launch never follows.
+            if (result != SteamGameUpdater.Result.CANCELLED && msg.isNotBlank()) {
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            }
+        }
+        steamUpdateHandle =
+            if (verify) SteamGameUpdater.verifyFiles(context, appId, progress, done)
+            else SteamGameUpdater.updateNow(context, appId, progress, done)
+    }
+    // "Check for updates": a cheap, network-free [checkForUpdate] probe (shown in the shared progress modal
+    // as the animated "Checking…" indeterminate phase), then BRANCH — we never auto-apply. Up-to-date /
+    // not-installed just inform via a toast; an available (or can't-tell-offline) result opens the confirm
+    // dialog, whose [Update now] / [Check online] hands off to runSteamMaintenance (the authoritative
+    // updateNow pass). The onResult lands on the main thread (see checkForUpdate's doc).
+    fun checkForUpdatesThenOffer(s: Shortcut) {
+        val appId = steamAppIdOf(s)
+        steamUpdateTitle = "Checking for updates"
+        steamUpdateLabel = "Checking ${s.name}…"
+        steamUpdateProgress = -1f   // opens in the animated indeterminate state, never a static 0%.
+        steamUpdateFor = s
+        steamUpdateHandle = SteamGameUpdater.checkForUpdate(context, appId) { status ->
+            steamUpdateFor = null
+            steamUpdateHandle = null
+            when (status.state) {
+                SteamGameUpdater.State.UP_TO_DATE -> {
+                    val b = if (status.installedBuild > 0L) " (build ${status.installedBuild})" else ""
+                    Toast.makeText(context, "${s.name} is up to date$b", Toast.LENGTH_LONG).show()
+                }
+                SteamGameUpdater.State.NOT_INSTALLED ->
+                    Toast.makeText(context, "${s.name} isn't installed", Toast.LENGTH_LONG).show()
+                SteamGameUpdater.State.UPDATE_AVAILABLE, SteamGameUpdater.State.UNKNOWN ->
+                    steamUpdateOffer = s to status
+            }
+        }
+    }
+    // Goldberg (offline emulator) launch: persist the sub-mode, download the component on demand,
+    // patch the install (resolved off-main from the Room steam_games row) and launch. Shared by the
+    // popup's Goldberg pick and the pre-flight's "Launch with Goldberg" fallback.
+    fun launchWithGoldberg(s: Shortcut, gm: GoldbergMode) {
+        val appId = steamAppIdOf(s)
+        SteamPrefs.init(context)
+        SteamPrefs.setGoldbergMode(appId, gm)
+        // Resolve the on-disk install dir (Room steam_games row) off the main thread, then
+        // patch the tier and launch. Mirrors SteamGameDetailActivity.onGoldbergModeSelected.
+        val applyThenLaunch = {
+            Thread({
+                val installDir = runCatching {
+                    SteamDatabase.getInstance(context).getGame(appId)?.installDir
+                }.getOrNull().orEmpty()
+                activity.runOnUiThread {
+                    if (installDir.isEmpty()) {
+                        // Nothing to patch (unresolved install dir) — launch as-is.
+                        launchShortcutNow(activity, s)
+                    } else {
+                        GoldbergPatcher.applyModeAsync(context, appId, installDir, s.name, gm) { _, _ ->
+                            launchShortcutNow(activity, s)
+                        }
+                    }
+                }
+            }, "goldberg-apply-launch").start()
+        }
+        if (!GoldbergComponent.isInstalled(context)) {
+            componentDownloadFor = s
+            componentDownloadLabel = "Steam Emulator (Goldberg)"
+            componentDownloadProgress = 0f
+            GoldbergComponent.downloadAsync(
+                context,
+                { f -> componentDownloadProgress = f },
+                { ok, msg ->
+                    componentDownloadFor = null
+                    if (ok) applyThenLaunch()
+                    else Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                },
+            )
+        } else applyThenLaunch()
+    }
+    // SteamLite (RealSteam) launch: ensure the SteamLite package is present (download on demand if
+    // not), then open the pre-flight dialog — the session/cloud/update checks run THERE, in the
+    // library, so a dead sign-in or a stale build is reported before the container ever opens.
+    fun launchWithSteamLite(s: Shortcut) {
+        if (!SteamLiteComponent.isInstalled(context)) {
+            componentDownloadFor = s
+            componentDownloadLabel = "SteamLite (Real Steam / VAC)"
+            componentDownloadProgress = 0f
+            SteamLiteComponent.downloadAsync(
+                context,
+                { f -> componentDownloadProgress = f },
+                { ok, msg ->
+                    componentDownloadFor = null
+                    if (ok) preflightFor = s
+                    else Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                },
+            )
+        } else {
+            preflightFor = s
+        }
+    }
+    // The single launch choke point for the game grid/list. Every game opens the source-adaptive
+    // launch-method popup first (Steam → SteamLite/Goldberg/Raw; Epic/GOG/Custom → Raw-only), UNLESS the
+    // user already picked a method AND ticked "Remember" for it — a remembered pick launches DIRECTLY via
+    // launchShortcutNow (the launchMode extra is honored by the launch pipeline; "Raw" is a plain launch).
+    // A remembered RealSteam pick still goes through the SteamLite pre-flight (it is the launch's
+    // session check, not part of the method choice).
+    fun requestLaunch(shortcut: Shortcut) {
+        // EA-published Steam titles have exactly one working path: the genuine client (SteamLite) via
+        // EA Desktop's launcher chain. Skip the method popup, make sure the prefix is set up (wine-mono +
+        // EA Desktop, one-time), and refuse titles that ship EA Javelin anti-cheat (kernel driver).
+        if (isSteamOriginShortcut(shortcut)) {
+            val ea = EaSupport.detectForShortcut(shortcut)
+            if (ea != null) {
+                if (ea.javelinAntiCheat) { eaUnsupportedFor = shortcut; return }
+                // Persist: the launch pipeline re-reads the .desktop file, so an unsaved extra is a
+                // plain Raw launch (device test #8 — the game started without the Steam client).
+                shortcut.putExtra("launchMode", "RealSteam")
+                shortcut.putExtra("launchModeRemembered", "1")
+                shortcut.saveData()
+                val installDir = EaSupport.installDirOf(shortcut)
+                if (installDir == null) { launchWithSteamLite(shortcut); return }
+                eaScope.launch {
+                    val ready = withContext(Dispatchers.IO) {
+                        try { EaSupport.prefixReady(context, shortcut.container, installDir) } catch (t: Throwable) { true }
+                    }
+                    if (ready) launchWithSteamLite(shortcut) else eaSetupFor = shortcut
+                }
+                return
+            }
+        }
+        // The Linux runtime's own entry is not a Windows game: SteamLite, Goldberg and "Raw .exe"
+        // all mean nothing for it, and the sheet was an extra tap on every single launch.
+        if (LinuxShortcuts.isLinuxEntry(shortcut)) { launchShortcutNow(activity, shortcut); return }
+        val remembered = shortcut.getExtra("launchMode", "").isNotEmpty() &&
+            shortcut.getExtra("launchModeRemembered", "") == "1"
+        when {
+            remembered && shortcut.getExtra("launchMode", "") == "RealSteam" && isSteamOriginShortcut(shortcut) ->
+                launchWithSteamLite(shortcut)
+            remembered -> launchShortcutNow(activity, shortcut)
+            else -> launchChoiceFor = shortcut
+        }
+    }
+    // A SteamLite launch that failed inside the container (the launch overlay's "Retry" / "Launch
+    // with Goldberg" buttons) records a pending relaunch before the session's normal exit restarts
+    // the app; pick it up here, once the library is loaded, and re-enter the matching launch flow.
+    LaunchedEffect(shortcuts) {
+        if (shortcuts.isEmpty()) return@LaunchedEffect
+        val pending = SteamSessionManager.takePendingRelaunch(context) ?: return@LaunchedEffect
+        val s = shortcuts.firstOrNull { it.file.path == pending.shortcutPath } ?: return@LaunchedEffect
+        when (pending.mode) {
+            SteamSessionManager.RelaunchMode.STEAMLITE -> launchWithSteamLite(s)
+            SteamSessionManager.RelaunchMode.GOLDBERG -> {
+                SteamPrefs.init(context)
+                val gm = SteamPrefs.getGoldbergMode(steamAppIdOf(s)).let { if (it == GoldbergMode.OFF) GoldbergMode.REGULAR else it }
+                launchWithGoldberg(s, gm)
+            }
+        }
+    }
     var showSortMenu by remember { mutableStateOf(false) }
     var showImportContainerPicker by remember { mutableStateOf(false) }
     var pendingImportContainerIndex by remember { mutableStateOf(-1) }
@@ -446,7 +706,7 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                         type = "application/json"
                         putExtra(Intent.EXTRA_STREAM, uri)
                         putExtra(Intent.EXTRA_SUBJECT, res.game)
-                        putExtra(Intent.EXTRA_TEXT, "WinHub config for ${res.game}")
+                        putExtra(Intent.EXTRA_TEXT, "Bannerlator config for ${res.game}")
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
                     context.startActivity(Intent.createChooser(send, "Share config"))
@@ -461,8 +721,8 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
         scope.launch(Dispatchers.IO) {
             val ok = try {
                 val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                // Exported configs live under Download/winhub/game-configs/ (created if absent).
-                val exportDir = File(downloads, "winhub/game-configs")
+                // Exported configs live under Download/bannerlator/game-configs/ (created if absent).
+                val exportDir = File(downloads, "bannerlator/game-configs")
                 if (!exportDir.exists()) exportDir.mkdirs()
                 val out = File(exportDir, res.fileName)
                 out.writeText(res.json)
@@ -585,7 +845,7 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
     // ── Save Backup / Restore (custom-import games only) ──────────────────────────────────────────
     // In-app file picker for a backup .zip; on pick we hold the uri and show a target-container picker.
     // (GameSaveBackup.restore auto-detects the layout — GameHub steamuser <-> our xuser — so a GameHub
-    // or WinHub save both restore through this one path; no format prompt needed.)
+    // or Bannerlator save both restore through this one path; no format prompt needed.)
     val restoreSaveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) InAppFilePicker.pickedUri(result.data)?.let { restoreZipUri = it }
     }
@@ -703,6 +963,13 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
     }
 
     val topBarActions = LocalTopBarActions.current
+    // The XMB view draws its own backdrop, so it asks for a see-through top bar (MainActivity only
+    // honours that on the Games route). Dropped when leaving XMB or this screen.
+    val topBarTransparent = LocalTopBarTransparent.current
+    LaunchedEffect(viewMode, shortcuts.isEmpty()) {
+        topBarTransparent.value = viewMode == ShortcutViewMode.XMB && shortcuts.isNotEmpty()
+    }
+    DisposableEffect(Unit) { onDispose { topBarTransparent.value = false } }
     // LaunchedEffect — not SideEffect — so this runs in the same dispatcher queue as
     // MainActivity's route-change clear (which is a LaunchedEffect). Parent enqueues
     // first and runs first (clears); we enqueue second and run after (sets). A
@@ -710,6 +977,8 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
     // parent's clear when it fires post-commit.
     LaunchedEffect(viewMode, selectionMode, selectedPaths) {
         topBarActions.value = {
+            // Steam friends + chat — only renders when signed in to Steam (login-gated internally).
+            SteamFriendsAction()
             IconButton(onClick = { showCommunityBrowser = true }) {
                 Icon(
                     imageVector = Icons.Filled.Public,
@@ -746,19 +1015,21 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                     tint = androidx.compose.ui.graphics.Color.White,
                 )
             }
-            // One button cycling list → grid → compact grid. The icon shows what you get NEXT,
+            // One button cycling list → grid → compact grid → XMB. The icon shows what you get NEXT,
             // matching how the two-state version behaved.
             IconButton(onClick = { vm.cycleViewMode() }) {
                 Icon(
                     imageVector = when (viewMode) {
                         ShortcutViewMode.LIST -> Icons.Filled.GridView
                         ShortcutViewMode.GRID -> Icons.Filled.Apps
-                        ShortcutViewMode.GRID_COMPACT -> Icons.Filled.ViewList
+                        ShortcutViewMode.GRID_COMPACT -> Icons.Filled.ViewCarousel
+                        ShortcutViewMode.XMB -> Icons.Filled.ViewList
                     },
                     contentDescription = when (viewMode) {
                         ShortcutViewMode.LIST -> "Grid view"
                         ShortcutViewMode.GRID -> "Compact grid view"
-                        ShortcutViewMode.GRID_COMPACT -> "List view"
+                        ShortcutViewMode.GRID_COMPACT -> "XMB view"
+                        ShortcutViewMode.XMB -> "List view"
                     },
                     tint = androidx.compose.ui.graphics.Color.White,
                 )
@@ -802,6 +1073,38 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // XMB options column = a card's ⋮ menu, reordered for a D-pad (common first, Remove last). Items with
+    // a `menu` open as nested XMB columns (XmbGameSettings.kt / XmbSettingsPhase2*.kt / XmbGameTools*.kt)
+    // instead of pop-ups; the three that hand off to Android or a full screen keep their handlers.
+    val xmbHost = XmbGameHost(
+        remove = { vm.remove(it, context) },
+        containers = { vm.containers() },
+        openWrapperManager = { showWrapperManagerXmb = true },
+    )
+    val xmbActionsFor: (Shortcut) -> List<XmbAction> = { shortcut ->
+        buildList {
+            add(XmbAction("Settings", Icons.Filled.Settings, "Display, graphics, controller…", menu = { xmbSettingsMenu(it, shortcut, xmbHost) }))
+            add(XmbAction("Game Details", Icons.Filled.Edit, "Name, genres, year, description", menu = { xmbGameDetailsMenu(it, shortcut) }))
+            if (isSteamOriginShortcut(shortcut)) {
+                add(XmbAction("Cloud Saves", Icons.Filled.CloudSync, "Steam Cloud sync — opens its own screen") { launchSaveManager(context, steamAppIdOf(shortcut)) })
+            }
+            if (isCustomShortcut(shortcut)) {
+                add(XmbAction("Back up saves", Icons.Filled.Archive, menu = { xmbBackupSavesMenu(it, shortcut) }))
+                add(XmbAction("Restore saves", Icons.Filled.Unarchive, menu = { xmbRestoreSavesMenu(it, shortcut) }))
+            }
+            add(XmbAction("Community configs", Icons.Filled.Public, "Shared settings for this game", menu = { xmbCommunityConfigsMenu(it, shortcut) }))
+            add(XmbAction("Scrape cover", Icons.Filled.Search, menu = { xmbScrapeCoverMenu(it, shortcut) }))
+            add(XmbAction("View logs", Icons.Filled.Description, menu = { xmbLogsMenu(it, shortcut) }))
+            add(XmbAction("Clone to container", Icons.Filled.ContentCopy, menu = { xmbCloneMenu(it, shortcut, xmbHost) }))
+            add(XmbAction("Copy to Drive C…", Icons.Filled.DriveFileMove, menu = { xmbCopyToDriveCMenu(it, shortcut) }))
+            add(XmbAction("Change executable…", Icons.Filled.SwapHoriz, menu = { xmbChangeExeMenu(it, shortcut) }))
+            add(XmbAction("Add to home screen", Icons.Filled.AddToHomeScreen, "Android's pin prompt") { addToHomeScreen(context, shortcut) })
+            add(XmbAction("Export", Icons.Filled.Upload) { exportShortcut(context, shortcut) })
+            add(XmbAction("Properties", Icons.Filled.Info, "Times played, playtime", menu = { xmbPropertiesMenu(it, shortcut) }))
+            add(XmbAction("Remove", Icons.Filled.Delete, "Asks to confirm first", danger = true, menu = { xmbRemoveMenu(it, shortcut, xmbHost) }))
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             if (shortcuts.isEmpty()) {
@@ -812,11 +1115,45 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                 )
             } else {
                 AnimatedContent(targetState = viewMode, label = "layout") { mode ->
-                    if (mode != ShortcutViewMode.LIST) {
+                    if (mode == ShortcutViewMode.XMB) {
+                        ShortcutsXmbView(
+                            shortcuts = shortcuts,
+                            selectionMode = selectionMode,
+                            selectedPaths = selectedPaths,
+                            onToggleSelect = { selectedPaths = selectedPaths.toggle(it.file.path) },
+                            onExitSelection = { selectionMode = false; selectedPaths = emptySet() },
+                            onPlay = { requestLaunch(it) },
+                            actionsFor = xmbActionsFor,
+                            storeBadges = { shortcut ->
+                                ShortcutBadgeOverlay(
+                                    showSteam = remember(shortcut) { isSteamOriginShortcut(shortcut) },
+                                    showEa = remember(shortcut) { EaSupport.isTagged(shortcut) },
+                                    showEpic = remember(shortcut) { shortcut.getExtra("storeSource") == "epic" },
+                                    showEos = rememberEosBadge(shortcut),
+                                    showGog = remember(shortcut) { isGogShortcut(shortcut) },
+                                    showAmazon = remember(shortcut) { isAmazonShortcut(shortcut) },
+                                    showCustom = remember(shortcut) { isCustomOriginShortcut(shortcut) },
+                                    showLinux = remember(shortcut) { LinuxShortcuts.isLinuxEntry(shortcut) },
+                                )
+                            },
+                            sdBadge = { shortcut ->
+                                if (remember(shortcut) { WinePath.isOnRemovableStorage(shortcut.container, shortcut.path) }) {
+                                    SdCardBadge(Modifier.padding(start = 6.dp))
+                                }
+                            },
+                            onReloadGames = { vm.refresh() },
+                            onNestedChange = { xmbNested = it },
+                        )
+                    } else if (mode != ShortcutViewMode.LIST) {
+                        // Compact keeps a CONSTANT tile size across orientation: derive the column
+                        // count from the shortest screen edge so portrait resolves to exactly 4 and
+                        // landscape flows to more columns of the SAME width (was Fixed(4) → tiles
+                        // ballooned to giants in landscape). The original grid stays adaptive.
+                        val cfg = LocalConfiguration.current
+                        val compactCols = (cfg.screenWidthDp.toFloat() /
+                            (minOf(cfg.screenWidthDp, cfg.screenHeightDp) / 4f)).roundToInt().coerceAtLeast(4)
                         LazyVerticalGrid(
-                            // Compact fixes four columns; the original stays adaptive so it keeps
-                            // whatever column count each screen size was already giving.
-                            columns = if (mode == ShortcutViewMode.GRID_COMPACT) GridCells.Fixed(4)
+                            columns = if (mode == ShortcutViewMode.GRID_COMPACT) GridCells.Fixed(compactCols)
                                       else GridCells.Adaptive(minSize = 120.dp),
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(8.dp),
@@ -830,11 +1167,13 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                                     selected = shortcut.file.path in selectedPaths,
                                     onRun = {
                                         if (selectionMode) selectedPaths = selectedPaths.toggle(shortcut.file.path)
-                                        else runShortcut(activity, shortcut)
+                                        else requestLaunch(shortcut)
                                     },
                                     onSettings = { settingsShortcut = shortcut },
                                     onRemove = { confirmRemove = shortcut },
                                     onClone = { cloneTarget = shortcut },
+                                    onCopyToDriveC = { copyToDriveCTarget = shortcut },
+                                    onChangeExe = { changeExeTarget = shortcut },
                                     onAddToHome = { addToHomeScreen(context, shortcut) },
                                     onExport = { exportShortcut(context, shortcut) },
                                     onProperties = { propertiesShortcut = shortcut },
@@ -856,11 +1195,13 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                             items(shortcuts, key = { it.file.path }) { shortcut ->
                                 val itemRun = {
                                     if (selectionMode) selectedPaths = selectedPaths.toggle(shortcut.file.path)
-                                    else runShortcut(activity, shortcut)
+                                    else requestLaunch(shortcut)
                                 }
                                 val itemSettings = { settingsShortcut = shortcut }
                                 val itemRemove = { confirmRemove = shortcut }
                                 val itemClone = { cloneTarget = shortcut }
+                                val itemCopyToDriveC = { copyToDriveCTarget = shortcut }
+                                val itemChangeExe = { changeExeTarget = shortcut }
                                 val itemAddToHome = { addToHomeScreen(context, shortcut) }
                                 val itemExport = { exportShortcut(context, shortcut) }
                                 val itemProperties = { propertiesShortcut = shortcut }
@@ -872,6 +1213,8 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                                     onSettings = itemSettings,
                                     onRemove = itemRemove,
                                     onClone = itemClone,
+                                    onCopyToDriveC = itemCopyToDriveC,
+                                    onChangeExe = itemChangeExe,
                                     onAddToHome = itemAddToHome,
                                     onExport = itemExport,
                                     onProperties = itemProperties,
@@ -891,8 +1234,9 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                     }
                 }
             }
-            // Long-press and slide along the bottom to move it off a card's buttons.
-            DraggableAddButton(
+            // Long-press and slide along the bottom to move it off a card's buttons. Hidden while an XMB
+            // menu is open (it would sit on top of the menu's rows).
+            if (!(viewMode == ShortcutViewMode.XMB && xmbNested)) DraggableAddButton(
                 prefKey = "games",
                 onClick = { showImportContainerPicker = true },
                 outerPadding = 16.dp,
@@ -1047,9 +1391,17 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                         icon = Icons.Default.InsertDriveFile,
                     ) {
                         showImportMethodPicker = false
+                        // A container is already chosen here — hand the in-app picker its C: drive so
+                        // the user can pick a game living on C: (games picked under drive_c import as
+                        // C:\… via WinePath, running FROM the container's C:). Null-safe: only when the
+                        // C: drive actually exists on disk. The system picker (SAF) has no C: notion.
+                        val driveC = pendingImportContainerIndex.takeIf { it >= 0 }
+                            ?.let { vm.containers().getOrNull(it) }
+                            ?.let { File(it.rootDir, ".wine/drive_c") }
+                            ?.takeIf { it.isDirectory }
                         if (importUseSystemPicker) importFileLauncher.launch("*/*")
                         else importFileInAppLauncher.launch(
-                            InAppFilePicker.buildIntent(context, InAppFilePicker.SHORTCUT, "Select .exe / .desktop / .lnk")
+                            InAppFilePicker.buildIntent(context, InAppFilePicker.SHORTCUT, "Select .exe / .desktop / .lnk", driveCPath = driveC?.absolutePath)
                         )
                     }
                     MenuOptionCard(
@@ -1058,8 +1410,14 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                         icon = Icons.Default.Folder,
                     ) {
                         showImportMethodPicker = false
+                        // Same C: hand-off as the single-exe path: let the folder picker browse the
+                        // chosen container's C: drive (scanned games under drive_c import as C:\…).
+                        val driveC = pendingImportContainerIndex.takeIf { it >= 0 }
+                            ?.let { vm.containers().getOrNull(it) }
+                            ?.let { File(it.rootDir, ".wine/drive_c") }
+                            ?.takeIf { it.isDirectory }
                         importFolderLauncher.launch(
-                            InAppFilePicker.buildDirIntent(context, "Select your games folder")
+                            InAppFilePicker.buildDirIntent(context, "Select your games folder", driveCPath = driveC?.absolutePath)
                         )
                     }
                 }
@@ -1486,6 +1844,20 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
         )
     }
 
+    // "Copy to Drive C…" — the shared confirm→copy→repoint flow, fed by the ⋮ menu item and the
+    // editor's Storage row. Owns its own dialogs/progress; clears the target and refreshes on finish.
+    CopyToDriveCCoordinator(
+        target = copyToDriveCTarget,
+        onFinished = { copyToDriveCTarget = null; vm.refresh() },
+    )
+
+    // "Change executable…" — pick a different .exe/.lnk in the game's folder and repoint the shortcut
+    // at it (shared Exec-rewrite with copy-to-C). Fed by the ⋮ item and the editor's Executable row.
+    ChangeExecutableCoordinator(
+        target = changeExeTarget,
+        onFinished = { changeExeTarget = null; vm.refresh() },
+    )
+
     // Save Restore: a backup .zip has been picked — choose the TARGET container to restore it into,
     // then hand off to GameSaveBackup.restore (which unzips into that container and remaps the user).
     restoreZipUri?.let { uri ->
@@ -1503,9 +1875,21 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                         else "Restore failed: ${r.error ?: "unknown error"}",
                         Toast.LENGTH_LONG,
                     ).show()
+                    emuConflicts = r.emuConflicts
                 }
             },
         )
+    }
+
+    EmuAccountConflictDialog(conflicts = emuConflicts) { applied, _ ->
+        emuConflicts = emptyList()
+        if (applied > 0) {
+            Toast.makeText(
+                context,
+                "Emulator account switched to the backup's — relaunch the game",
+                Toast.LENGTH_LONG,
+            ).show()
+        }
     }
 
     // Save Backup: choose the archive layout before backing up (mirrors the Containers backup menu's
@@ -1730,7 +2114,7 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                     }
                 }
                 // Phase 3 (online sharing) — UPLOAD this shortcut's effective config to OUR community repo
-                // (ns=winhub). Disabled + spinner while in flight; if the user already shared one for
+                // (ns=bannerlator). Disabled + spinner while in flight; if the user already shared one for
                 // this game, [replaceUploadPrompt] surfaces a replace-confirm before the upload proceeds.
                 OutlinedButton(
                     onClick = {
@@ -1916,10 +2300,10 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                             // works (no vote counts in that mode). Whole card taps → the chooser; the
                             // in-context shortcut `s` is carried so details can preview the diff.
                             // Also look under THIS shortcut's own folder (sanitized the SAME way the
-                            // exporter keys uploads) so the user's OWN WinHub upload shows up even
+                            // exporter keys uploads) so the user's OWN Bannerlator upload shows up even
                             // though it isn't in the canonical index yet.
                             val myFolder = s.name.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
-                            val cfg = rememberGameConfigs(vm, game, extraWinHubFolders = listOf(myFolder))
+                            val cfg = rememberGameConfigs(vm, game, extraBannerlatorFolders = listOf(myFolder))
                             when {
                                 cfg.loading -> Text("Loading configs…", color = OnSurfaceVariant)
                                 cfg.entries.isNotEmpty() -> {
@@ -1936,7 +2320,7 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                                             CommunityConfigEntryCard(entry = e, isMatch = isMatch) {
                                                 configAction = CommunityPick.File(
                                                     game,
-                                                    CommunityConfigRef(game, folder, e.filename, e.sha.ifBlank { null }, ns = if (e.appSource == "winhub") "winhub" else ""),
+                                                    CommunityConfigRef(game, folder, e.filename, e.sha.ifBlank { null }, ns = if (e.appSource == "bannerlator") "bannerlator" else ""),
                                                     e,
                                                 ) to s
                                             }
@@ -2559,11 +2943,17 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
     settingsShortcut?.let { s ->
         ShortcutSettingsDialogScreen(
             shortcut = s,
-            onDismiss = { settingsShortcut = null; vm.refresh() }
+            onDismiss = { settingsShortcut = null; vm.refresh() },
+            // "Move to Drive C" (Storage row, General tab): close the editor and hand this game to
+            // the shared coordinator. Same destination as the ⋮ "Copy to Drive C…" item.
+            onMoveToDriveC = { settingsShortcut = null; copyToDriveCTarget = s },
+            // "Change executable…" (Executable row): close the editor and hand off to the coordinator.
+            onChangeExe = { settingsShortcut = null; changeExeTarget = s },
         )
     }
 
     // Game Details editor (Edit Game): name + Steam link/search + genres/description/year/metacritic.
+    if (showWrapperManagerXmb) WrapperManagerDialog(onDismiss = { showWrapperManagerXmb = false })
     gameDetailsShortcut?.let { s ->
         GameDetailsSheet(
             shortcut = s,
@@ -2571,13 +2961,263 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
             onSaved = { vm.refresh() },
         )
     }
+
+    // ── Steam launch-method popup (M3): SteamLite (real Steam / VAC) vs Goldberg (offline) ──────────
+    eaUnsupportedFor?.let { s ->
+        AlertDialog(
+            onDismissRequest = { eaUnsupportedFor = null },
+            title = { Text("Not supported: EA anti-cheat") },
+            text = {
+                Text(
+                    "\"${s.name}\" ships EA Javelin anti-cheat, which needs a Windows kernel driver. " +
+                        "It cannot run under Wine on any Android emulator, so Bannerlator won't start the EA setup for it."
+                )
+            },
+            confirmButton = { TextButton(onClick = { eaUnsupportedFor = null }) { Text("OK") } },
+        )
+    }
+    eaSetupFor?.let { s ->
+        AlertDialog(
+            onDismissRequest = { if (!eaSetupBusy) eaSetupFor = null },
+            title = { Text("Set up EA Desktop") },
+            text = {
+                Text(
+                    "\"${s.name}\" is an EA title: it launches through EA Desktop, which isn't installed in this " +
+                        "container yet. Bannerlator will open one setup session (wine-mono first if the container " +
+                        "lacks it) and run EA's installer — follow its prompts when it shows them. The session closes " +
+                        "by itself when the installer finishes and the app comes back. Then launch the game again and " +
+                        "sign in to EA when it asks. This happens once per container."
+                )
+            },
+            confirmButton = {
+                TextButton(enabled = !eaSetupBusy, onClick = {
+                    eaSetupBusy = true
+                    eaScope.launch {
+                        // Resolve with the SAME derivation that decided to show this dialog
+                        // (EaSupport.installDirOf): a legacy shortcut written before steamAppId was stamped
+                        // (pre-2026-08 downloads), or a drive-letter path the strict resolver can't map, used
+                        // to dead-end here with a misleading "install folder" toast (reported on NFS Heat, 3.0.7).
+                        val installDir = withContext(Dispatchers.IO) {
+                            runCatching { EaSupport.installDirOf(s) }.getOrNull()
+                        }
+                        val exe = withContext(Dispatchers.IO) {
+                            val resolved = runCatching { WinePath.resolveAndroidPath(s.container, s.path)?.absolutePath }.getOrNull()
+                            // runForShortcut locates the depot from the exe's steam_games/ segment, so prefer a
+                            // path inside the resolved depot when the direct mapping lacks that segment.
+                            resolved?.takeIf { InstallScriptExecutor.locateInstallDir(File(it)) != null }
+                                ?: installDir?.let { File(it, s.path.replace('\\', '/').substringAfterLast('/')).absolutePath }
+                                ?: resolved
+                        }
+                        val appId = withContext(Dispatchers.IO) {
+                            runCatching { EaSupport.resolveSteamAppId(s, installDir) }.getOrDefault(0)
+                        }
+                        if (exe != null && appId > 0) {
+                            withContext(Dispatchers.IO) {
+                                try { InstallScriptExecutor.runForShortcut(context, s.container, appId, exe, true) }
+                                catch (t: Throwable) { android.util.Log.w("ShortcutsScreen", "EA setup failed", t) }
+                            }
+                        } else {
+                            android.util.Log.w("ShortcutsScreen", "EA setup: cannot start for '${s.name}' — exe=$exe appId=$appId path='${s.path}' container=${s.container.id}")
+                            Toast.makeText(
+                                context,
+                                if (exe == null) "Couldn't locate the game's install folder (${s.path})"
+                                else "Couldn't work out this game's Steam app id — re-add it from the Steam library",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                        eaSetupBusy = false
+                        eaSetupFor = null
+                    }
+                }) { Text(if (eaSetupBusy) "Starting…" else "Set up") }
+            },
+            dismissButton = { TextButton(enabled = !eaSetupBusy, onClick = { eaSetupFor = null }) { Text("Cancel") } },
+        )
+    }
+    launchChoiceFor?.let { s ->
+        val appId = steamAppIdOf(s)
+        LaunchMethodSheet(
+            shortcut = s,
+            onDismiss = { launchChoiceFor = null },
+            // Verify runs a full re-validate pass directly. "Check for updates" is check-THEN-offer: probe
+            // first, then a confirm dialog lets the user choose to apply — it never auto-updates. Both
+            // dismiss the sheet first (so no dialog is layered behind the ModalBottomSheet's window).
+            onUpdateFiles = { launchChoiceFor = null; checkForUpdatesThenOffer(s) },
+            onVerifyFiles = { launchChoiceFor = null; runSteamMaintenance(s, verify = true) },
+            onLaunch = { mode, goldbergMode, remember, controllerPassthrough, vacLaunch ->
+                // Persist the choice on the shortcut's [Extra Data] so a remembered pick skips the popup
+                // next time (contract literals: launchMode ∈ RealSteam/Goldberg/Raw, launchModeRemembered="1").
+                s.putExtra("launchMode", mode)
+                s.putExtra("launchModeRemembered", if (remember) "1" else "0")
+                // Per-game "Controller passthrough" (read only on RealSteam launches; inert otherwise).
+                s.putExtra("controllerPassthrough", if (controllerPassthrough) "1" else "0")
+                // Per-game "Requires secure (VAC) launch" override: "" = follow app-info detection, "1"/"0".
+                s.putExtra("steamVacLaunch", vacLaunch)
+                s.saveData()
+                launchChoiceFor = null
+                when (mode) {
+                    "Goldberg" -> launchWithGoldberg(s, goldbergMode ?: GoldbergMode.REGULAR)
+                    "Raw" -> {
+                        // Raw: run the game's .exe directly with no Steam layer (Epic/GOG/Custom, or a
+                        // Steam game the user chose to run raw). The launchMode="Raw" extra is inert to the
+                        // launch pipeline (only "RealSteam" stages the agent), so this is a plain launch.
+                        launchShortcutNow(activity, s)
+                    }
+                    else -> {
+                        // RealSteam (SteamLite): SteamLite package on demand, then the pre-flight dialog
+                        // (session → network → cloud saves → update check) and only then the container. Update/
+                        // verify remain the popup's manual buttons; the pre-flight only OFFERS an update.
+                        launchWithSteamLite(s)
+                    }
+                }
+            },
+        )
+    }
+
+    // ── SteamLite pre-flight ("Getting Steam ready") — runs BEFORE XServerDisplayActivity ──────────
+    preflightFor?.let { s ->
+        val appId = steamAppIdOf(s)
+        val installDir = remember(s) {
+            runCatching { SteamDatabase.getInstance(context).getGame(appId)?.installDir }.getOrNull().orEmpty()
+        }
+        val savePrefs = remember { context.getSharedPreferences("save_manager_prefs", Context.MODE_PRIVATE) }
+        SteamPreflightDialog(
+            shortcut = s,
+            request = SteamSessionManager.PreflightRequest(
+                appId = appId,
+                installDir = installDir,
+                gameName = s.name,
+                pullCloudSaves = savePrefs.getBoolean("auto_download_steam_on_launch", true),
+            ),
+            onLaunch = { preflightFor = null; launchShortcutNow(activity, s, preflightDone = true) },
+            onDismiss = { preflightFor = null },
+            onSignIn = {
+                preflightFor = null
+                context.startActivity(Intent(context, SteamLoginActivity::class.java))
+            },
+            onGoldberg = {
+                preflightFor = null
+                SteamPrefs.init(context)
+                launchWithGoldberg(s, SteamPrefs.getGoldbergMode(appId).let { if (it == GoldbergMode.OFF) GoldbergMode.REGULAR else it })
+            },
+            onUpdate = { preflightFor = null; runSteamMaintenance(s, verify = false) },
+        )
+    }
+
+    // Blocking progress dialog while the picked component downloads before launch (SteamLite / Goldberg).
+    componentDownloadFor?.let {
+        OutlinedAlertDialog(
+            onDismissRequest = { /* keep up until the download finishes */ },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            title = { Text("Downloading $componentDownloadLabel", color = MaterialTheme.colorScheme.onSurface) },
+            text = {
+                Column {
+                    LinearProgressIndicator(
+                        progress = { componentDownloadProgress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surface,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "${(componentDownloadProgress.coerceIn(0f, 1f) * 100).toInt()}% — the game launches when this finishes.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {},
+        )
+    }
+
+    // RealSteam manual maintenance: progress while a user-triggered Update or Verify pass runs.
+    // Cancellable — cancelling aborts the pass and stays in the library (a run never launches the game).
+    steamUpdateFor?.let {
+        OutlinedAlertDialog(
+            onDismissRequest = { /* modal until it finishes or is cancelled */ },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            title = { Text(steamUpdateTitle, color = MaterialTheme.colorScheme.onSurface) },
+            text = {
+                Column {
+                    if (steamUpdateProgress < 0f) {
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surface,
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            progress = { steamUpdateProgress.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surface,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        // Prefix a live "N%" once real download progress starts; the indeterminate
+                        // "checking/setup" phase (fraction < 0) shows just the phase label.
+                        if (steamUpdateProgress >= 0f)
+                            "${(steamUpdateProgress.coerceIn(0f, 1f) * 100).toInt()}% — $steamUpdateLabel"
+                        else steamUpdateLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { steamUpdateHandle?.cancel() }) {
+                    Text("Cancel", color = MaterialTheme.colorScheme.primary)
+                }
+            },
+        )
+    }
+
+    // "Check for updates" outcome: a delta is (or might be) due — offer to apply it. Never auto-updates;
+    // [Update now] / [Check online] runs the authoritative updateNow pass, [Later] / [Cancel] does nothing.
+    steamUpdateOffer?.let { (s, status) ->
+        val available = status.state == SteamGameUpdater.State.UPDATE_AVAILABLE
+        OutlinedAlertDialog(
+            onDismissRequest = { steamUpdateOffer = null },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            title = {
+                Text(
+                    if (available) "Update available" else "Check online?",
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            },
+            text = {
+                Text(
+                    if (available) {
+                        if (status.installedBuild > 0L && status.liveBuild > 0L)
+                            "${s.name}: build ${status.installedBuild} → ${status.liveBuild}. Update now?"
+                        else "A newer build of ${s.name} is available. Update now?"
+                    } else {
+                        "Couldn't check ${s.name} from cached data. Do an online check now " +
+                            "(and update if it's behind)?"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { steamUpdateOffer = null; runSteamMaintenance(s, verify = false) }) {
+                    Text(if (available) "Update now" else "Check online", color = MaterialTheme.colorScheme.primary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { steamUpdateOffer = null }) {
+                    Text(if (available) "Later" else "Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+        )
+    }
 }
 
-// Small "BANNERLATOR" source pill for configs shared through our own repo (app_source=winhub), so
+// Small "BANNERLATOR" source pill for configs shared through our own repo (app_source=bannerlator), so
 // users can tell them apart from BannerHub-sourced configs. Subtle orange fill, same pill shape as
 // [CommunityStoreBadge].
 @Composable
-private fun WinHubSourceBadge() {
+private fun BannerlatorSourceBadge() {
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(4.dp))
@@ -3818,20 +4458,20 @@ private data class GameConfigsState(
 )
 
 // Fetch (once per [game]) the uploaded configs for a game from the worker and expose them as Compose
-// state. Shared by the per-shortcut sheet and the catalog browser's device panel. [extraWinHubFolders]
-// (the per-shortcut sheet passes the shortcut's own sanitized folder name) is queried in the winhub
+// state. Shared by the per-shortcut sheet and the catalog browser's device panel. [extraBannerlatorFolders]
+// (the per-shortcut sheet passes the shortcut's own sanitized folder name) is queried in the bannerlator
 // namespace ONLY, so a user's own upload is surfaced even before it lands in the canonical index.
 @Composable
 private fun rememberGameConfigs(
     vm: ShortcutsViewModel,
     game: CanonicalGame,
-    extraWinHubFolders: List<String> = emptyList(),
+    extraBannerlatorFolders: List<String> = emptyList(),
 ): GameConfigsState {
     var loading by remember(game) { mutableStateOf(true) }
     var entries by remember(game) { mutableStateOf<List<Pair<String, WorkerConfigEntry>>>(emptyList()) }
     LaunchedEffect(game) {
         loading = true
-        vm.fetchGameConfigs(game, extraWinHubFolders) { list ->
+        vm.fetchGameConfigs(game, extraBannerlatorFolders) { list ->
             entries = list
             loading = false
         }
@@ -3859,7 +4499,7 @@ internal fun CommunityConfigEntryCard(entry: WorkerConfigEntry, isMatch: Boolean
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (entry.appSource == "winhub") WinHubSourceBadge()
+            if (entry.appSource == "bannerlator") BannerlatorSourceBadge()
             Text("★ ${entry.votes}", style = MaterialTheme.typography.labelMedium, color = OnSurface)
             Text("↓ ${entry.downloads}", style = MaterialTheme.typography.labelMedium, color = OnSurfaceVariant)
         }
@@ -3947,7 +4587,7 @@ private fun CommunityDevicePanel(
         if (cfg.entries.isNotEmpty()) shownEntries.map { (folder, e) ->
             CommunityPick.File(
                 game,
-                CommunityConfigRef(game, folder, e.filename, e.sha.ifBlank { null }, ns = if (e.appSource == "winhub") "winhub" else ""),
+                CommunityConfigRef(game, folder, e.filename, e.sha.ifBlank { null }, ns = if (e.appSource == "bannerlator") "bannerlator" else ""),
                 e,
             )
         } else shownDevs.map { CommunityPick.Device(game, it) }
@@ -4005,7 +4645,7 @@ private fun CommunityDevicePanel(
                                     onPick(
                                         CommunityPick.File(
                                             game,
-                                            CommunityConfigRef(game, folder, e.filename, e.sha.ifBlank { null }, ns = if (e.appSource == "winhub") "winhub" else ""),
+                                            CommunityConfigRef(game, folder, e.filename, e.sha.ifBlank { null }, ns = if (e.appSource == "bannerlator") "bannerlator" else ""),
                                             e,
                                         )
                                     )
@@ -4085,11 +4725,11 @@ private fun CommunityDevicePanel(
 }
 
 // Human display name for a config's meta.app_source — the actual project that produced it. BannerHub
-// and BannerHub Lite are distinct apps writing "bannerhub" / "bannerhub_lite"; ours would be "winhub".
-private fun communitySourceLabel(appSource: String?): String = when (appSource?.lowercase()?.trim()) {
+// and BannerHub Lite are distinct apps writing "bannerhub" / "bannerhub_lite"; ours would be "bannerlator".
+internal fun communitySourceLabel(appSource: String?): String = when (appSource?.lowercase()?.trim()) {
     "bannerhub" -> "BannerHub"
     "bannerhub_lite" -> "BannerHub Lite"
-    "winhub" -> "WinHub"
+    "bannerlator" -> "Bannerlator"
     null, "" -> "BannerHub"
     else -> appSource.split('_', ' ').filter { it.isNotBlank() }
         .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
@@ -4098,11 +4738,13 @@ private fun communitySourceLabel(appSource: String?): String = when (appSource?.
 // Turn a translated config into "what it sets" lines in OUR component terms (the same fields the apply
 // engine consumes). Only present fields are listed; Proton/wineVersion is advisory (container-only) so
 // it is surfaced separately, not here.
-private fun configSummaryLines(config: ShortcutConfig): List<Pair<String, String>> {
+internal fun configSummaryLines(config: ShortcutConfig): List<Pair<String, String>> {
     val out = ArrayList<Pair<String, String>>()
     config.dxwrapperConfig["version"]?.takeIf { it.isNotBlank() }?.let { out.add("DXVK" to it) }
     config.dxwrapperConfig["vkd3dVersion"]?.takeIf { it.isNotBlank() }?.let { out.add("VKD3D" to it) }
     config.dxwrapperConfig["async"]?.let { out.add("DXVK async" to if (it == "1") "on" else "off") }
+    config.dxwrapperConfig["anisotropy"]?.takeIf { it.isNotBlank() && it != "0" }?.let { out.add("Anisotropic filtering" to "${it}x") }
+    config.dxwrapperConfig["lodBias"]?.takeIf { it.isNotBlank() && it != "0" }?.let { out.add("Texture sharpness" to it) }
     config.graphicsDriverConfig["version"]?.takeIf { it.isNotBlank() }?.let { out.add("Turnip driver" to it) }
     config.scalars["dxwrapper"]?.takeIf { it.isNotBlank() }?.let { out.add("DX wrapper" to it) }
     config.scalars["emulator"]?.let { emu ->
@@ -4114,7 +4756,9 @@ private fun configSummaryLines(config: ShortcutConfig): List<Pair<String, String
     config.scalars["screenSize"]?.takeIf { it.isNotBlank() }?.let { out.add("Resolution" to it) }
     config.scalars["renderer"]?.takeIf { it.isNotBlank() }?.let { out.add("Renderer" to it) }
     config.scalars["execArgs"]?.takeIf { it.isNotBlank() }?.let { out.add("Launch args" to it) }
-    config.scalars["envVars"]?.takeIf { it.isNotBlank() }?.let { out.add("Env vars" to it) }
+    // Scrub credentials/identity out before displaying — a config uploaded before the export-side scrub
+    // existed can still carry a WN_STEAM_TOKEN/USERNAME/STEAMID, and the details view must not show it.
+    config.scalars["envVars"]?.let { EnvVarScrub.scrub(it) }?.takeIf { it.isNotBlank() }?.let { out.add("Env vars" to it) }
     return out
 }
 
@@ -4261,7 +4905,7 @@ private fun CommunityConfigDetailDialog(
                 CommunityStoreBadge(isSteam = game.isSteam)
                 if (meta != null) {
                     // Name the actual source project (meta.app_source distinguishes BannerHub vs
-                    // BannerHub Lite vs a future WinHub upload), with the version appended if present.
+                    // BannerHub Lite vs a future Bannerlator upload), with the version appended if present.
                     val label = "From ${communitySourceLabel(meta.appSource)}" + (meta.bhVersion?.let { " $it" } ?: "")
                     Surface(
                         color = SurfaceVariantColor,
@@ -4443,12 +5087,14 @@ private fun CommunityConfigDetailDialog(
 // Steam Save Manager entry point (Games-tab ⋮ menu). A shortcut is "Steam-origin" when it was
 // tagged at creation (storeSource=steam) or, for pre-tagging shortcuts, when its exec path lives
 // under the steam_games install root. The linked appId reuses the existing `steamAppId` extra.
-private fun isSteamOriginShortcut(shortcut: Shortcut): Boolean {
+// `internal` (not `private`) so the couch UI (BigPictureScreen) shares the exact same Steam-origin gate
+// and appId reader as the phone UI — the launch-method popup fires on the same set of games on both.
+internal fun isSteamOriginShortcut(shortcut: Shortcut): Boolean {
     if (shortcut.getExtra("storeSource") == "steam") return true
     return shortcut.path.contains("steam_games", ignoreCase = true)
 }
 
-private fun steamAppIdOf(shortcut: Shortcut): Int =
+internal fun steamAppIdOf(shortcut: Shortcut): Int =
     shortcut.getExtra("steamAppId", "").toIntOrNull() ?: 0
 
 // A shortcut is "custom" (exe/folder import) when it is NOT a genuine Steam-library game. Steam games
@@ -4474,6 +5120,8 @@ private fun ShortcutItemLayoutL(
     onSettings: () -> Unit,
     onRemove: () -> Unit,
     onClone: () -> Unit,
+    onCopyToDriveC: () -> Unit,
+    onChangeExe: () -> Unit,
     onAddToHome: () -> Unit,
     onExport: () -> Unit,
     onProperties: () -> Unit,
@@ -4485,11 +5133,11 @@ private fun ShortcutItemLayoutL(
     onBackupSaves: (() -> Unit)? = null,
     onRestoreSaves: (() -> Unit)? = null,
 ) {
-    val res = LocalContext.current.resources
+    val context = LocalContext.current
 
     // Resolved component metadata (shortcut override → container default). Shared with the launch
     // overlay via buildLaunchSpec() so the card and the launch screen can never drift.
-    val spec = buildLaunchSpec(shortcut, res)
+    val spec = buildLaunchSpec(shortcut, context)
     val rendererLabel = spec.rendererLabel
     val dxvkVersion = spec.dxvkVersion
     val vkd3dVersion = spec.vkd3dVersion
@@ -4556,13 +5204,29 @@ private fun ShortcutItemLayoutL(
         }
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = shortcut.name,
-                style = MaterialTheme.typography.bodyLarge,
-                color = OnSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // Store badges beside the name (thumbnail too small to overlay): EPIC (storeSource==epic)
+            // then EOS, then GOG (storeSource==gog or gog_games exec path).
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = shortcut.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = OnSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                ShortcutBadgeOverlay(
+                    showSteam = remember(shortcut) { isSteamOriginShortcut(shortcut) },
+                    showEa = remember(shortcut) { EaSupport.isTagged(shortcut) },
+                    showEpic = remember(shortcut) { shortcut.getExtra("storeSource") == "epic" },
+                    showEos = rememberEosBadge(shortcut),
+                    showGog = remember(shortcut) { isGogShortcut(shortcut) },
+                    showAmazon = remember(shortcut) { isAmazonShortcut(shortcut) },
+                    showCustom = remember(shortcut) { isCustomOriginShortcut(shortcut) },
+                                    showLinux = remember(shortcut) { LinuxShortcuts.isLinuxEntry(shortcut) },
+                    modifier = Modifier.padding(start = 6.dp),
+                )
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (subtitle.isNotEmpty()) {
                     Text(
@@ -4594,6 +5258,8 @@ private fun ShortcutItemLayoutL(
             onSettings = onSettings,
             onRemove = onRemove,
             onClone = onClone,
+            onCopyToDriveC = onCopyToDriveC,
+            onChangeExe = onChangeExe,
             onAddToHome = onAddToHome,
             onExport = onExport,
             onProperties = onProperties,
@@ -4615,6 +5281,8 @@ private fun ShortcutOverflowButton(
     onSettings: () -> Unit,
     onRemove: () -> Unit,
     onClone: () -> Unit,
+    onCopyToDriveC: () -> Unit,
+    onChangeExe: () -> Unit,
     onAddToHome: () -> Unit,
     onExport: () -> Unit,
     onProperties: () -> Unit,
@@ -4652,6 +5320,18 @@ private fun ShortcutOverflowButton(
                 text = { Text("Clone to container") },
                 leadingIcon = { Icon(Icons.Filled.ContentCopy, null) },
                 onClick = { menuExpanded = false; onClone() },
+            )
+            MenuItemDivider()
+            DropdownMenuItem(
+                text = { Text("Copy to Drive C…") },
+                leadingIcon = { Icon(Icons.Filled.DriveFileMove, null, tint = MaterialTheme.colorScheme.primary) },
+                onClick = { menuExpanded = false; onCopyToDriveC() },
+            )
+            MenuItemDivider()
+            DropdownMenuItem(
+                text = { Text("Change executable…") },
+                leadingIcon = { Icon(Icons.Filled.SwapHoriz, null, tint = MaterialTheme.colorScheme.primary) },
+                onClick = { menuExpanded = false; onChangeExe() },
             )
             MenuItemDivider()
             DropdownMenuItem(
@@ -4735,6 +5415,8 @@ private fun ShortcutGridItem(
     onSettings: () -> Unit,
     onRemove: () -> Unit,
     onClone: () -> Unit,
+    onCopyToDriveC: () -> Unit,
+    onChangeExe: () -> Unit,
     onAddToHome: () -> Unit,
     onExport: () -> Unit,
     onProperties: () -> Unit,
@@ -4793,6 +5475,22 @@ private fun ShortcutGridItem(
             )
         }
 
+        // Store badges overlaid top-left on the cover: EPIC (storeSource==epic) then EOS, then GOG
+        // (storeSource==gog or gog_games exec path).
+        ShortcutBadgeOverlay(
+            showSteam = remember(shortcut) { isSteamOriginShortcut(shortcut) },
+            showEa = remember(shortcut) { EaSupport.isTagged(shortcut) },
+            showEpic = remember(shortcut) { shortcut.getExtra("storeSource") == "epic" },
+            showEos = rememberEosBadge(shortcut),
+            showGog = remember(shortcut) { isGogShortcut(shortcut) },
+            showAmazon = remember(shortcut) { isAmazonShortcut(shortcut) },
+            showCustom = remember(shortcut) { isCustomOriginShortcut(shortcut) },
+            showLinux = remember(shortcut) { LinuxShortcuts.isLinuxEntry(shortcut) },
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(6.dp),
+        )
+
         // Gradient scrim + name/container at the bottom
         Box(
             modifier = Modifier
@@ -4822,6 +5520,55 @@ private fun ShortcutGridItem(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                }
+                // The Linux entry is the runtime's own tile, so it carries the runtime's state:
+                // while an install runs, the same "Downloading 45% · about 2 min left" the Contents
+                // tab shows, from the same source; otherwise a chip when a newer build is waiting.
+                if (remember(shortcut) { LinuxShortcuts.isLinuxEntry(shortcut) }) {
+                    val rt by LinuxRuntimeUpdate.state.collectAsState()
+                    val linuxCtx = LocalContext.current
+                    val linuxScope = rememberCoroutineScope()
+                    // Ask the catalog once so the chip appears even when Contents was never opened.
+                    LaunchedEffect(Unit) {
+                        LinuxRuntimeUpdate.refreshInstalled(linuxCtx)
+                        if (rt.available == null) {
+                            val rel = withContext(Dispatchers.IO) { LinuxRuntimeInstaller.fetchRelease() }
+                            LinuxRuntimeUpdate.setAvailable(rel)
+                        }
+                    }
+                    if (rt.busy) {
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = LinuxRuntimeUpdate.line(rt),
+                            fontSize = 10.sp,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        LinearProgressIndicator(
+                            progress = { if (rt.percent in 0..100) rt.percent / 100f else 0f },
+                            modifier = Modifier.fillMaxWidth().height(3.dp).padding(top = 2.dp),
+                        )
+                    } else if (rt.updateAvailable) {
+                        Spacer(Modifier.height(3.dp))
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(MaterialTheme.colorScheme.primary)
+                                .clickable {
+                                    linuxScope.launch { LinuxRuntimeUpdate.runInstall(linuxCtx) }
+                                }
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "Update to ${rt.available}",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                maxLines = 1,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -4863,6 +5610,10 @@ private fun ShortcutGridItem(
             DropdownMenuItem(text = { Text("Remove") }, leadingIcon = { Icon(Icons.Filled.Delete, null) }, onClick = { menuExpanded = false; onRemove() })
             MenuItemDivider()
             DropdownMenuItem(text = { Text("Clone to container") }, leadingIcon = { Icon(Icons.Filled.ContentCopy, null) }, onClick = { menuExpanded = false; onClone() })
+            MenuItemDivider()
+            DropdownMenuItem(text = { Text("Copy to Drive C…") }, leadingIcon = { Icon(Icons.Filled.DriveFileMove, null, tint = MaterialTheme.colorScheme.primary) }, onClick = { menuExpanded = false; onCopyToDriveC() })
+            MenuItemDivider()
+            DropdownMenuItem(text = { Text("Change executable…") }, leadingIcon = { Icon(Icons.Filled.SwapHoriz, null, tint = MaterialTheme.colorScheme.primary) }, onClick = { menuExpanded = false; onChangeExe() })
             MenuItemDivider()
             DropdownMenuItem(text = { Text("Add to home screen") }, leadingIcon = { Icon(Icons.Filled.AddToHomeScreen, null) }, onClick = { menuExpanded = false; onAddToHome() })
             MenuItemDivider()
@@ -5217,6 +5968,8 @@ private class SettingsDpad {
     var menuOnSelect: (String) -> Unit = {}
     val actions = HashMap<String, ControlActions>()
     val rootFocus = FocusRequester()
+    // Previous/next section with wrap-around, published by [DpTabs]; L1/R1 call it from anywhere.
+    var tabStep: ((Int) -> Unit)? = null
 
     fun isFocused(id: String) = focusedId == id
     fun openMenu(id: String, options: List<String>, selected: String, onSelect: (String) -> Unit) {
@@ -5259,6 +6012,10 @@ private fun Modifier.settingsDpad(dp: SettingsDpad, ids: () -> List<String>, onD
                 Key.DirectionRight -> { dp.focusedId?.takeIf { it in order }?.let { dp.actions[it]?.onRight?.invoke() }; true }
                 Key.ButtonA, Key.Enter, Key.DirectionCenter -> { dp.focusedId?.takeIf { it in order }?.let { dp.actions[it]?.activate?.invoke() }; true }
                 Key.ButtonB, Key.Back -> { onDismiss(); true }
+                // Shoulder buttons switch sections from anywhere (the landscape rail is otherwise
+                // only reachable at the very end of the D-pad order).
+                Key.ButtonL1 -> { dp.tabStep?.invoke(-1); true }
+                Key.ButtonR1 -> { dp.tabStep?.invoke(1); true }
                 else -> false
             }
         }
@@ -5355,7 +6112,7 @@ private val ROOT_PERF_LABELS = mapOf(
 )
 
 /** Per-game override value to persist, or null (clear the extra) when it equals the global default. */
-private fun perfExtraOrNull(value: Boolean, global: Boolean): String? =
+internal fun perfExtraOrNull(value: Boolean, global: Boolean): String? =
     if (value == global) null else if (value) "1" else "0"
 
 /** A per-game perf toggle row with an override/inherit indicator and a per-toggle Reset. */
@@ -5419,19 +6176,63 @@ private fun DpTabs(dp: SettingsDpad, id: String, selected: Int, count: Int, onSe
             onLeft = { if (selected > 0) onSelect(selected - 1) },
             onRight = { if (selected < count - 1) onSelect(selected + 1) },
         )
+        dp.tabStep = { step -> if (count > 0) onSelect(((selected + step) % count + count) % count) }
     }
     DpadHighlight(focused = dp.isFocused(id), modifier = Modifier.dpadBringIntoView(dp, id)) { content() }
 }
 
+/**
+ * The "?" a Linux entry's rows get. It draws nothing unless [show], so the ordinary Windows form keeps
+ * exactly the help buttons it already has — and, like every other "?" in this editor, it is not a
+ * D-pad target, so it can never be focused whether the row beside it is drawn or not.
+ */
 @Composable
-internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> Unit) {
+private fun LinuxHelp(show: Boolean, textResId: Int, onOpen: (Int) -> Unit) {
+    if (!show) return
+    IconButton(onClick = { onOpen(textResId) }) {
+        Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+    }
+}
+
+@Composable
+internal fun ShortcutSettingsDialogScreen(
+    shortcut: Shortcut,
+    onDismiss: () -> Unit,
+    // Non-null when the host can run the "Copy to Drive C" flow (the Games list). The Storage row's
+    // "Move to Drive C" button calls this; it stays hidden for a game already on C:.
+    onMoveToDriveC: (() -> Unit)? = null,
+    // Non-null when the host can run the "Change executable" flow (the Games list). The Executable
+    // row's "Change…" button calls this.
+    onChangeExe: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
     val res = context.resources
     // Controller / D-pad state for this editor (see the SettingsDpad model above).
     val dp = remember { SettingsDpad() }
 
+    // Epic Online Services (EOS) auth — only relevant for Epic-origin shortcuts. Default ON.
+    val isEpicShortcut = remember { shortcut.getExtra("storeSource") == "epic" }
+    // An entry the Linux runtime owns (the Steam client and the games it starts). Nothing below the
+    // gamescope session's proot reads the Wine half of this editor - no prefix, no wineserver, no
+    // dxwrapper, no guest launcher exist there (XServerDisplayActivity.setupLinuxSession) - so those
+    // rows are conditioned off rather than shown as settings that quietly do nothing. Stored values
+    // are never touched: an entry converted either way keeps whatever it had.
+    val isLinuxEntry = remember { com.winlator.star.linux.LinuxShortcuts.isLinuxEntry(shortcut) }
+    var epicEosEnabled by remember { mutableStateOf(shortcut.getExtra("epicEos", "1") != "0") }
+    // Manual override: force the -epicovt ownership-token path even when the auto
+    // DenuvoDetector misses an obfuscated Denuvo exe. Default OFF.
+    var epicOvtForce by remember { mutableStateOf(shortcut.getExtra("epicOvtForce", "0") == "1") }
+    // Launch offline — skip EOS online auth for this game (keeps its Epic identity args). Default OFF.
+    var epicOffline by remember { mutableStateOf(shortcut.getExtra("epicOffline", "0") == "1") }
+    // Epic Friends Overlay (Phase 3) — provision Epic's real EOS overlay into the prefix so the game's
+    // own EOS SDK renders friends/notifications on Shift+F3. Default OFF (opt-in per game).
+    var epicOverlayEnabled by remember { mutableStateOf(shortcut.getExtra("epicOverlay", "0") == "1") }
+
     // Async-loaded state
     var isArm64EC by remember { mutableStateOf(false) }
+    // isArm64EC is resolved asynchronously (WineInfo load below). Until it lands we must not
+    // relabel the Emulator field, or an arm64ec container would flash "Box64" on first frame.
+    var archLoaded by remember { mutableStateOf(false) }
     var box64Versions by remember { mutableStateOf(listOf<String>()) }
     var box64Presets by remember { mutableStateOf(listOf<Box64Preset>()) }
     var fexCoreVersions by remember { mutableStateOf(listOf<String>()) }
@@ -5454,6 +6255,12 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
     var customHeight by remember {
         mutableStateOf(if (rawScreenSize.contains("x")) rawScreenSize.substringAfter("x") else "600")
     }
+
+    // Screen alignment (#413) — per-game override of the container's letterbox pinning. Sentinel model:
+    // "" = inherit container (Container Default), "0"/"1"/"2" = Center/Top/Bottom (Container.ALIGN_*).
+    // Launch reads shortcut.getExtra("screenAlignment") and falls back to the container when empty/absent,
+    // so a true inherit is a CLEARED extra — not a snapshot of the container's current value.
+    var screenAlignment by remember { mutableStateOf(shortcut.getExtra("screenAlignment", "")) }
 
     // Graphics driver — bundled entries + user-imported wrappers (issue #132 Step 2), built via the
     // SHARED WrapperManager.driverEntries helper so this list matches ContainerDetailViewModel's
@@ -5501,6 +6308,118 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
         mutableStateOf(shortcut.getExtra("sfCompatMode",
             if (shortcut.container.getRendererSfCompatMode()) "1" else "0") == "1")
     }
+
+    // Display backend per-game override: "" = use the container's Display backend, else force
+    // "x11"/"wayland". Absent extra falls back to the container default at launch. When the
+    // effective backend is Wayland the embedded compositor replaces the Renderer group, so the
+    // renderer overrides below are greyed (mirrors the container settings screen).
+    //
+    // Wayland needs the container's Proton layer to ship winewayland.so + its bundled Wayland Turnip
+    // (WineWaylandSupport). On any other layer "Force Wayland" is disabled, a stored "Force Wayland"
+    // displays (and saves) as X11, and "Use container default" resolves to the container's EFFECTIVE
+    // backend — X11 when the container says wayland but its layer can't drive it. Keyed on the wine
+    // version so the cached probe only re-runs when the layer changes.
+    var displayBackendOverride by remember { mutableStateOf(shortcut.getExtra("displayBackend", "")) }
+    val containerWaylandCapable = remember(shortcut.container.wineVersion) {
+        com.winlator.star.core.WineWaylandSupport.isWaylandCapable(context, shortcut.container.wineVersion)
+    }
+    val containerWaylandDefault = shortcut.container.isWaylandBackend && containerWaylandCapable
+    val effectiveWaylandShortcut = when (displayBackendOverride) {
+        Container.DISPLAY_BACKEND_WAYLAND -> containerWaylandCapable
+        Container.DISPLAY_BACKEND_X11 -> false
+        else -> containerWaylandDefault
+    }
+    // Wayland GAME driver override (per-game, same extra name as the container's): "" = the
+    // container's choice. Only shown when the effective backend is Wayland; see core.WaylandGameDriver.
+    var waylandGameDriverOverride by remember { mutableStateOf(shortcut.getExtra("waylandGameDriver", "")) }
+    // Which Vulkan driver a LINUX session draws with ("" = the one inside the runtime). Separate
+    // from the row above it in the editor, which picks the Android driver that displays the session.
+    var linuxVulkanDriverOverride by remember {
+        mutableStateOf(shortcut.getExtra(com.winlator.star.core.LinuxVulkanDriver.EXTRA, ""))
+    }
+    // The Linux session's performance switches, one extra each.
+    // LinuxTuning owns what an unset one means, so the editor and the launch path can never disagree about a default.
+    var linuxGlThread by remember {
+        mutableStateOf(com.winlator.star.linux.LinuxTuning.isOn(
+            shortcut, com.winlator.star.linux.LinuxTuning.EXTRA_GLTHREAD))
+    }
+    var linuxLazyDescriptors by remember {
+        mutableStateOf(com.winlator.star.linux.LinuxTuning.isOn(
+            shortcut, com.winlator.star.linux.LinuxTuning.EXTRA_LAZY_DESCRIPTORS))
+    }
+    var linuxNoGlError by remember {
+        mutableStateOf(com.winlator.star.linux.LinuxTuning.isOn(
+            shortcut, com.winlator.star.linux.LinuxTuning.EXTRA_NO_GL_ERROR))
+    }
+    var linuxDeckMode by remember {
+        mutableStateOf(com.winlator.star.linux.LinuxTuning.isOn(
+            shortcut, com.winlator.star.linux.LinuxTuning.EXTRA_STEAMDECK))
+    }
+    // Scaling mode and scaling filter: gamescope's own controls, the same ones the Quick Access Menu offers.
+    // LinuxTuning validates each against what this gamescope accepts, so a stale saved value reads as unset.
+    var linuxScaler by remember { mutableStateOf(com.winlator.star.linux.LinuxTuning.scaler(shortcut)) }
+    // "" follows Deck mode; LinuxTuning.steamChannel says what that resolves to.
+    var linuxSteamChannel by remember {
+        mutableStateOf(shortcut.getExtra(com.winlator.star.linux.LinuxTuning.EXTRA_STEAM_CHANNEL, "").let { v -> if (v in com.winlator.star.linux.LinuxTuning.STEAM_CHANNELS) v else "" })
+    }
+    var linuxFilter by remember { mutableStateOf(com.winlator.star.linux.LinuxTuning.filter(shortcut)) }
+    // The app's own games in the client's library, their shared saves, and any Games folders (LinuxAppGames).
+    var linuxAppGames by remember {
+        mutableStateOf(com.winlator.star.linux.LinuxTuning.isOn(
+            shortcut, com.winlator.star.linux.LinuxTuning.EXTRA_APP_GAMES))
+    }
+    var linuxShareSaves by remember {
+        mutableStateOf(com.winlator.star.linux.LinuxTuning.isOn(
+            shortcut, com.winlator.star.linux.LinuxTuning.EXTRA_SHARE_SAVES))
+    }
+    var linuxGamesFolders by remember { mutableStateOf(com.winlator.star.linux.LinuxAppGames.folders(shortcut)) }
+    val gamesFolderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        val path = uri?.let { runCatching { FileUtils.getFilePathFromUri(context, it) }.getOrNull() }
+        when {
+            uri == null -> {}
+            path.isNullOrEmpty() || !File(path).isDirectory ->
+                Toast.makeText(context, "That folder cannot be used: pick one on internal storage or an SD card", Toast.LENGTH_LONG).show()
+            path.contains(com.winlator.star.linux.LinuxAppGames.FOLDER_SEPARATOR) ->
+                Toast.makeText(context, "Folder names with | cannot be used", Toast.LENGTH_LONG).show()
+            path !in linuxGamesFolders -> linuxGamesFolders = linuxGamesFolders + path
+        }
+    }
+    // Deck mode is only turned on through a warning that says what it breaks.
+    var confirmDeckMode by remember { mutableStateOf(false) }
+    // HDR output override (per-game, same extra name as the container's): "" = the container's,
+    // "1" on, "0" off. Only shown when the effective backend is Wayland; see display.WaylandHdr.
+    var waylandHdrOverride by remember { mutableStateOf(com.winlator.star.display.WaylandHdr.shortcutChoice(shortcut)) }
+    // Unreal Engine HDR override (per-game, same extra name as the container's): "" = the container's,
+    // else off / dx12 / dx11. Both backends; see core.UnrealHdr.
+    var unrealHdrOverride by remember { mutableStateOf(com.winlator.star.core.UnrealHdr.shortcutChoice(shortcut)) }
+
+    // ── TV tab (display.ExternalDisplay) — per game only, deliberately with NO container default: which
+    // screen a game belongs on is a property of the game. Launching the session ON the TV is what opens
+    // the compositor's HDR gate there (the gate reads the activity's own display), so HDR is not a
+    // setting in this tab at all — it is reported from whatever the display says.
+    var tvLaunch by remember { mutableStateOf(com.winlator.star.display.ExternalDisplay.launchOnTv(shortcut)) }
+    // What was STORED when the dialog opened — only this decides whether the tab is shown for a game
+    // whose TV is currently unplugged (see tvTabVisible below).
+    val tvLaunchStored = remember { com.winlator.star.display.ExternalDisplay.launchOnTv(shortcut) }
+    var tvModeId by remember { mutableStateOf(com.winlator.star.display.ExternalDisplay.modeId(shortcut)) }
+    var tvMatchRes by remember { mutableStateOf(com.winlator.star.display.ExternalDisplay.matchResolution(shortcut)) }
+    // The tab has to appear and disappear with the cable WITHOUT reopening the dialog, and every value
+    // on it (name, mode list, HDR) is read live — so a DisplayListener bumps a tick that re-reads the
+    // display on the next composition. Unregistered with the dialog.
+    var tvDisplayTick by remember { mutableIntStateOf(0) }
+    DisposableEffect(Unit) {
+        val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
+        val listener = object : android.hardware.display.DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) { tvDisplayTick++ }
+            override fun onDisplayRemoved(displayId: Int) { tvDisplayTick++ }
+            override fun onDisplayChanged(displayId: Int) { tvDisplayTick++ }
+        }
+        runCatching {
+            dm?.registerDisplayListener(listener, android.os.Handler(android.os.Looper.getMainLooper()))
+        }
+        onDispose { runCatching { dm?.unregisterDisplayListener(listener) } }
+    }
+    val tvDisplay = remember(tvDisplayTick) { com.winlator.star.display.ExternalDisplay.find(context) }
 
     // Gyro (motion aim) per-game overrides — seeded from the shortcut extra, falling back to the
     // container's value. Only the game-facing half lives here (deadzone/smoothing stay container-wide,
@@ -5555,6 +6474,18 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
     var vkPresentMode by remember {
         mutableStateOf(shortcut.getExtra("presentMode", shortcut.container.getRendererPresentMode()))
     }
+    // Native backend (Auto / SurfaceFlinger / Vulkan direct-scanout) — per-game override, defaults to
+    // the container's value. Stored via the "nativeBackend" extra the launch resolver reads; only
+    // relevant when Native Rendering is on.
+    var vkNativeBackend by remember {
+        mutableStateOf(shortcut.getExtra("nativeBackend", shortcut.container.getRendererNativeBackend()))
+    }
+    // Compositor (present-layer) Vulkan driver — per-game override, defaults to the container's value.
+    // This is the driver the present layer runs on (System or an installed Turnip), NOT the guest
+    // graphics driver above. Launch already resolves shortcut.getExtra("rendererDriverId", ...).
+    var vkRendererDriverId by remember {
+        mutableStateOf(shortcut.getExtra("rendererDriverId", shortcut.container.getRendererDriverId()))
+    }
 
     // Render scale (supersampling) — per-game override, defaults to the container's "renderScale"
     // extra. Stored via the shortcut "renderScale" extra. "1.0" = Off.
@@ -5574,9 +6505,12 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
     }
 
     // Frame Generation engine (off / bionic / lsfg) — per-game override.
-    val fgEngines = remember { listOf("off", "bionic", "lsfg") }
+    // lsfg-vk retired from the list (see ContainerDetailScreen); a legacy "lsfg" override
+    // shows and saves as LSFG Native.
+    val fgEngines = remember { listOf("off", "bionic", "lsfg-native") }
     var frameGenEngine by remember {
-        mutableStateOf(shortcut.getExtra("frameGenEngine", shortcut.container.frameGenEngine))
+        mutableStateOf(shortcut.getExtra("frameGenEngine", shortcut.container.frameGenEngine)
+            .let { if (it == "lsfg") "lsfg-native" else it })
     }
     val lsfgDllAvailable = remember { File(context.filesDir, "lsfg-vk/Lossless.dll").isFile }
 
@@ -5613,13 +6547,18 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
     // The 9 power-user perf toggles live in a collapsed "Performance" section to keep this dialog short.
     var perfExpanded by rememberSaveable { mutableStateOf(false) }
 
-    // Audio driver. DirectAudio only loads on the four supported arm64ec Proton builds; a shortcut
+    // Audio driver. DirectAudio only loads on the arm64ec Proton builds in
+    // DirectAudioSupport.SUPPORTED_BUILD_TOKENS (7 as of driver v1.3.2); a shortcut
     // can't override the Wine version (container-only), so support is fixed by the container's layer.
     // Grey the option out off those layers and coerce a stale saved pick back to the default so the
     // dropdown never shows an unselectable value as selected.
     val audioDriverEntries = remember { res.getStringArray(R.array.audio_driver_entries).toList() }
+    // A Linux entry's DirectAudio is the relay driver inside the Linux runtime, wired to Valve's
+    // own ARM64 Proton by the session - no layer of ours is involved, so the container's Wine
+    // version says nothing about it. Its settings container has none, and gating on it greyed
+    // the option out (device-seen) for a driver that is device-proven on that path.
     val directAudioSupported = remember {
-        com.winlator.star.core.DirectAudioSupport.isSupported(shortcut.container.wineVersion)
+        isLinuxEntry || com.winlator.star.core.DirectAudioSupport.isSupported(shortcut.container.wineVersion)
     }
     val directAudioEntry = remember {
         audioDriverEntries.firstOrNull { StringUtils.parseIdentifier(it) == "directaudio" }
@@ -5634,7 +6573,7 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
     // Emulator
     val emulatorEntries = remember { res.getStringArray(R.array.emulator_entries).toList() }
     var selectedEmulator by remember {
-        val id = shortcut.getExtra("emulator", shortcut.container.emulator)
+        val id = shortcut.getExtra("emulator", shortcut.container.emulator) ?: ""
         mutableStateOf(emulatorEntries.firstOrNull { StringUtils.parseIdentifier(it) == id }
             ?: emulatorEntries.firstOrNull() ?: id)
     }
@@ -5699,12 +6638,16 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
     }
 
     // Box64 / FEXCore / controls
+    // Both fall back to the container's value, and a container can have none: the Linux
+    // runtime's settings container carries no Box64 or FEX at all (a Linux session runs neither),
+    // and on a fresh install nothing seeds them. A null here reached .isEmpty() below and crashed
+    // the editor the moment it opened for the Steam (Linux) entry.
     var selectedBox64Version by remember {
-        mutableStateOf(shortcut.getExtra("box64Version", shortcut.container.getBox64Version()))
+        mutableStateOf(shortcut.getExtra("box64Version", shortcut.container.getBox64Version()) ?: "")
     }
     var selectedBox64PresetIndex by remember { mutableIntStateOf(0) }
     var selectedFexCoreVersion by remember {
-        mutableStateOf(shortcut.getExtra("fexcoreVersion", shortcut.container.getFEXCoreVersion()))
+        mutableStateOf(shortcut.getExtra("fexcoreVersion", shortcut.container.getFEXCoreVersion()) ?: "")
     }
     var selectedFexCorePresetIndex by remember { mutableIntStateOf(0) }
     var selectedControlsProfileIndex by remember { mutableIntStateOf(0) }
@@ -5788,12 +6731,19 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
 
     // AndroidView refs
     val cpuListViewRef = remember { mutableStateOf<CPUListView?>(null) }
+    // A Linux entry splits the affinity in two (see the Advanced tab): the Steam client plus the
+    // compositor drawing its UI, and the games the client launches. Wine keeps the single list above.
+    val linuxClientCpuListViewRef = remember { mutableStateOf<CPUListView?>(null) }
+    val linuxGameCpuListViewRef = remember { mutableStateOf<CPUListView?>(null) }
 
     // Icon
     var iconBitmap by remember { mutableStateOf<Bitmap?>(shortcut.icon) }
 
     // Sub-dialog show states
     var showGfxConfig by remember { mutableStateOf(false) }
+    // The Wayland game driver's gear (WaylandDriverSettingsDialog: GPU name spoof, memory cap, present
+    // mode, UBWC hint), editing the same graphicsDriverConfig as the X11 dialog above.
+    var showWaylandDriverCfg by remember { mutableStateOf(false) }
     var showDxvkConfig by remember { mutableStateOf(false) }
     var showWineD3DConfig by remember { mutableStateOf(false) }
     // Per-field "?" help (helpRes) + the newcomer glossary ("What is all this?"), mirrored from the
@@ -5809,7 +6759,33 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
 
     // Tab
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabTitles = listOf("Win Components", "Env Vars", "Advanced")
+    // Tab positions: General(0), Win Components(1), Env Vars(2), Advanced(3), Controller(4), TV(5). The
+    // old top "general" scrolling block became the General tab; its controller half became Controller.
+    // TV is appended only while an external display is plugged in OR this game is already set to launch
+    // on one — so a setting left behind by a since-unplugged TV is never hidden where it can't be turned
+    // off. It comes and goes live with the cable (tvDisplayTick above).
+    // tvLaunchStored, not the live switch: turning the switch off with no TV plugged in must not yank
+    // the tab out from under the finger that just moved it. It goes when the dialog is next opened.
+    val tvTabVisible = tvDisplay != null || tvLaunchStored || tvLaunch
+    // selectedTab is the CONTENT index in the when() below, and tabIndices is which of those the tab
+    // strip offers, in order. The two were the same list until a Linux entry had to drop a whole tab:
+    // Win Components is Wine DLL-override plumbing and a gamescope session has no prefix to override.
+    // Keeping selectedTab a content index means the when() branches never have to be renumbered.
+    val tabIndices = remember(tvTabVisible, isLinuxEntry) {
+        listOf(0) + (if (isLinuxEntry) emptyList() else listOf(1)) + listOf(2, 3, 4) +
+            (if (tvTabVisible) listOf(5) else emptyList())
+    }
+    val tabTitles = remember(tabIndices) {
+        tabIndices.map {
+            when (it) {
+                0 -> "General"; 1 -> "Win Components"; 2 -> "Env Vars"
+                3 -> "Advanced"; 4 -> "Controller"; else -> "TV"
+            }
+        }
+    }
+    // Unplugging a TV on a game that never wanted one takes the tab away under the user's finger; land
+    // them back on General rather than on an index that no longer has content.
+    LaunchedEffect(tabIndices) { if (selectedTab !in tabIndices) selectedTab = tabIndices.first() }
 
     // Icon picker
     fun applyIconFromUri(uri: Uri) {
@@ -5870,6 +6846,7 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
 
             withContext(Dispatchers.Main) {
                 isArm64EC = arm64ec
+                archLoaded = true
                 box64Versions = b64Arr
                 fexCoreVersions = fexList
                 box64Presets = b64Presets
@@ -5916,6 +6893,10 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
         val wincomps = winComponents.joinToString(",") { "${it.key}=${it.selectedIndex}" }
         val envVars = envVarsStr
         val cpuList = cpuListViewRef.value?.getCheckedCPUListAsString() ?: shortcut.getExtra("cpuList", shortcut.container.getCPUList(true))
+        val linuxClientCpuList = linuxClientCpuListViewRef.value?.getCheckedCPUListAsString()
+            ?: shortcut.getExtra("linuxClientCpuList", shortcut.container.getCPUList(true))
+        val linuxGameCpuList = linuxGameCpuListViewRef.value?.getCheckedCPUListAsString()
+            ?: shortcut.getExtra("linuxGameCpuList", shortcut.container.getCPUList(true))
 
         val b64PresetId = box64Presets.getOrElse(selectedBox64PresetIndex) { null }?.id ?: Box64Preset.COMPATIBILITY
         val fexPresetId = fexCorePresets.getOrElse(selectedFexCorePresetIndex) { null }?.id ?: FEXCorePreset.COMPATIBILITY
@@ -5928,9 +6909,36 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
 
         with(shortcut) {
             putExtra("execArgs", execArgs.ifEmpty { null })
+            if (isEpicShortcut) putExtra("epicEos", if (epicEosEnabled) "1" else "0")
+            if (isEpicShortcut) putExtra("epicOvtForce", if (epicOvtForce) "1" else "0")
+            if (isEpicShortcut) putExtra("epicOffline", if (epicOffline) "1" else "0")
+            if (isEpicShortcut) putExtra("epicOverlay", if (epicOverlayEnabled) "1" else "0")
             putExtra("screenSize", screenSize)
+            // #413: "" (Container Default) -> null -> putExtra removes the key, so launch re-inherits the
+            // container each time (true inherit, not a snapshot). "0"/"1"/"2" store the Center/Top/Bottom override.
+            putExtra("screenAlignment", screenAlignment.ifEmpty { null })
             putExtra("graphicsDriver", StringUtils.parseIdentifier(selectedGfxDriver))
             putExtra("graphicsDriverConfig", graphicsDriverConfig)
+            // Display backend override: "" clears the extra (use container default) via putExtra(null).
+            // A "Force Wayland" the container's layer can't honour displayed as X11, so X11 is saved.
+            // Not for a Linux entry: its backend isn't shown as a choice and the launch path pins
+            // Wayland regardless, so saving must hand back exactly what the entry already carried.
+            putExtra("displayBackend",
+                if (!isLinuxEntry && displayBackendOverride == Container.DISPLAY_BACKEND_WAYLAND && !containerWaylandCapable) Container.DISPLAY_BACKEND_X11
+                else displayBackendOverride.ifEmpty { null })
+            // Wayland game driver override: "" clears the extra (container default).
+            putExtra("waylandGameDriver", waylandGameDriverOverride.ifEmpty { null })
+            putExtra(com.winlator.star.core.LinuxVulkanDriver.EXTRA, linuxVulkanDriverOverride.ifEmpty { null })
+            // HDR output override: "" clears the extra (container default).
+            putExtra(com.winlator.star.display.WaylandHdr.EXTRA, waylandHdrOverride.ifEmpty { null })
+            // Unreal Engine HDR override: "" clears the extra (container default).
+            putExtra(com.winlator.star.core.UnrealHdr.EXTRA, unrealHdrOverride.ifEmpty { null })
+            // TV tab (display.ExternalDisplay) — per game, no container fallback, so these are always
+            // written as a plain "1"/"0" (there is no inherit sentinel to preserve). tvModeId 0 = leave
+            // the TV on whatever output mode it is already running.
+            putExtra(com.winlator.star.display.ExternalDisplay.EXTRA_LAUNCH, if (tvLaunch) "1" else "0")
+            putExtra(com.winlator.star.display.ExternalDisplay.EXTRA_MODE_ID, tvModeId.toString())
+            putExtra(com.winlator.star.display.ExternalDisplay.EXTRA_MATCH_RES, if (tvMatchRes) "1" else "0")
             putExtra("renderer", StringUtils.parseIdentifier(selectedRenderer))
             putExtra("sfCompatMode", if (sfCompatMode) "1" else "0")
             // Gyro per-game overrides (read by the launch resolver in XServerDisplayActivity).
@@ -5946,6 +6954,8 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
             putExtra("native", if (vkNative) "true" else "false")
             putExtra("swapRB", if (vkSwapRB) "true" else "false")
             putExtra("presentMode", vkPresentMode)
+            putExtra("nativeBackend", vkNativeBackend)
+            putExtra("rendererDriverId", vkRendererDriverId)
             putExtra("renderScale", if (renderScale == "1.0") null else renderScale)
             // "In-game refresh rate" per-game override: both extras written together, "" = inherit the
             // container (store null so the extra is cleared, not left empty → keeps the shortcut default).
@@ -6003,6 +7013,23 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
             putExtra("wincomponents", wincomps)
             putExtra("envVars", envVars.ifEmpty { null })
             putExtra("cpuList", cpuList)
+            // Only a Linux entry draws the two pickers, so only a Linux entry writes their keys — a
+            // Wine shortcut keeps exactly the extras it had.
+            if (isLinuxEntry) {
+                putExtra("linuxClientCpuList", linuxClientCpuList)
+                putExtra("linuxGameCpuList", linuxGameCpuList)
+                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_GLTHREAD, if (linuxGlThread) "1" else "0")
+                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_LAZY_DESCRIPTORS, if (linuxLazyDescriptors) "1" else "0")
+                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_NO_GL_ERROR, if (linuxNoGlError) "1" else "0")
+                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_STEAMDECK, if (linuxDeckMode) "1" else "0")
+                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_STEAM_CHANNEL, linuxSteamChannel.ifEmpty { null })
+                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_SCALER, linuxScaler.ifEmpty { null })
+                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_FILTER, linuxFilter.ifEmpty { null })
+                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_APP_GAMES, if (linuxAppGames) "1" else "0")
+                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_SHARE_SAVES, if (linuxShareSaves) "1" else "0")
+                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_GAMES_FOLDERS,
+                    linuxGamesFolders.joinToString(com.winlator.star.linux.LinuxAppGames.FOLDER_SEPARATOR).ifEmpty { null })
+            }
             saveData()
         }
     }
@@ -6018,90 +7045,330 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
 
     // The ORDERED, currently-visible focusable ids (mirrors the render conditionals below). Rebuilt each
     // recomposition so conditional rows (custom W/H, SF/Vulkan blocks, refresh, MIDI, gyro block) drop in
-    // and out of the D-pad order automatically. Tab content is touch-navigable (see report) — the tab ROW
-    // itself is here so Left/Right switches tabs and the whole top form + OK/Cancel are controller-driven.
+    // and out of the D-pad order automatically. Now that each tab is its own screen, only the SELECTED
+    // tab's controls are in the order — the tab selector ("tabs", Left/Right switches tabs) plus the
+    // title-close and OK/Cancel are always present. Tab content on Win/Env/Advanced is touch-navigable.
     val dpadIds = buildList {
-        add("titleX"); add("name"); add("execArgs"); add("screenSize")
-        if (selectedScreenSize == "Custom") { add("customW"); add("customH") }
-        add("selectIcon"); add("gfxDriver"); add("gfxWrapper"); add("gfxConfig")
-        add("dxWrapper"); add("dxConfig"); add("renderer")
-        if (selectedRenderer == "SurfaceFlinger") add("sfCompat")
-        if (selectedRenderer == "Vulkan") { add("vkColors"); add("vkPresent") }
-        add("renderScale")
-        if (panelRates.isNotEmpty()) add("refresh")
-        add("frameGen"); add("fpsLimiter"); add("audio"); add("emulator")
-        if (midiList.isNotEmpty()) add("midi")
-        add("lcAll"); add("fullscreen"); add("autoClose")
-        add("enableXInput"); add("enableDInput"); add("exclusiveXInput"); add("disableXInput"); add("simTouch"); add("numControllers")
-        add("gyroEnabled")
-        if (gyroEnabled) {
-            add("gyroMode"); add("gyroTarget"); add("gyroActivator")
-            if (gyroActivator != Container.GYRO_ACTIVATOR_ALWAYS) add("gyroActivationMode")
-            add("gyroSensitivity"); add("gyroInvertX"); add("gyroInvertY")
+        add("titleX")
+        when (selectedTab) {
+            0 -> { // General
+                add("name")
+                if (!isLinuxEntry) add("execArgs")
+                add("screenSize")
+                if (selectedScreenSize == "Custom") { add("customW"); add("customH") }
+                add("screenAlignment")
+                add("selectIcon")
+                // The Wine/X11 graphics stack is not registered for a Linux entry, so the D-pad
+                // cursor can never land on a row that isn't drawn (see the render conditionals).
+                if (!isLinuxEntry) add("displayBackend")
+                add("gfxDriver")   // the compositor driver: live on the gamescope path too
+                if (effectiveWaylandShortcut && !isLinuxEntry) { add("waylandGameDriver"); add("waylandDriverCfg") }
+                if (isLinuxEntry) add("linuxVulkanDriver")
+                if (isLinuxEntry) {
+                    add(com.winlator.star.linux.LinuxTuning.EXTRA_GLTHREAD)
+                    add(com.winlator.star.linux.LinuxTuning.EXTRA_LAZY_DESCRIPTORS)
+                    add(com.winlator.star.linux.LinuxTuning.EXTRA_NO_GL_ERROR)
+                    add(com.winlator.star.linux.LinuxTuning.EXTRA_STEAMDECK)
+                    add(com.winlator.star.linux.LinuxTuning.EXTRA_STEAM_CHANNEL)
+                    add(com.winlator.star.linux.LinuxTuning.EXTRA_SCALER)
+                    add(com.winlator.star.linux.LinuxTuning.EXTRA_FILTER)
+                    add(com.winlator.star.linux.LinuxTuning.EXTRA_APP_GAMES)
+                    if (linuxAppGames) add(com.winlator.star.linux.LinuxTuning.EXTRA_SHARE_SAVES)
+                    linuxGamesFolders.forEach { add("linuxGamesFolderRemove:$it") }
+                    add("linuxGamesFolderAdd")
+                }
+                if (effectiveWaylandShortcut || isLinuxEntry) add(com.winlator.star.display.WaylandHdr.EXTRA)
+                if (!effectiveWaylandShortcut && !isLinuxEntry) { add("gfxWrapper"); add("gfxConfig") } // hidden on Wayland (X11 shims/tuning)
+                if (!isLinuxEntry) {
+                    add(com.winlator.star.core.UnrealHdr.EXTRA)
+                    add("dxWrapper"); add("dxConfig"); add("renderer")
+                    if (!effectiveWaylandShortcut && selectedRenderer == "SurfaceFlinger") add("sfCompat")
+                    if (!effectiveWaylandShortcut && selectedRenderer == "Vulkan") { add("vkNative"); add("vkColors"); add("vkPresent"); if (vkNative) add("vkBackend"); add("vkDriver") }
+                    add("renderScale")
+                    if (panelRates.isNotEmpty()) add("refresh")
+                }
+                add("frameGen"); add("fpsLimiter"); add("audio")
+                if (!isLinuxEntry) {
+                    add("emulator")
+                    if (midiList.isNotEmpty()) add("midi")
+                    add("lcAll")
+                }
+                add("fullscreen")
+                if (!isLinuxEntry) add("autoClose")
+            }
+            4 -> { // Controller
+                if (!isLinuxEntry) { add("enableXInput"); add("enableDInput"); add("exclusiveXInput"); add("disableXInput") }
+                add("simTouch")
+                if (!isLinuxEntry) add("numControllers")
+                add("gyroEnabled")
+                if (gyroEnabled) {
+                    add("gyroMode"); add("gyroTarget"); add("gyroActivator")
+                    if (gyroActivator != Container.GYRO_ACTIVATOR_ALWAYS) add("gyroActivationMode")
+                    add("gyroSensitivity"); add("gyroInvertX"); add("gyroInvertY")
+                }
+            }
+            5 -> { // TV — only reachable while the tab exists (see tvTabVisible)
+                add("tvLaunch")
+                // A display advertising a single mode renders as a read-only row, so it takes no focus.
+                if (com.winlator.star.display.ExternalDisplay.selectableModes(tvDisplay).size > 1) add("tvModeId")
+                add("tvMatchRes")
+            }
         }
         add("tabs"); add("cancel"); add("ok")
     }
+    // After a section switch (L1/R1 or touch) the D-pad cursor may point at a control the new section
+    // doesn't have: move it to that section's first control (index 1, just past the title close).
+    // Untouched for touch users, whose cursor stays null.
+    LaunchedEffect(selectedTab) {
+        val f = dp.focusedId
+        if (f != null && f !in dpadIds) dp.focusedId = dpadIds.getOrNull(1)
+    }
     // Seed the root focus so the editor receives D-pad from the first frame (it's its own Dialog window).
     LaunchedEffect(Unit) { runCatching { dp.rootFocus.requestFocus() } }
+
+    val isPortrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
 
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
-            modifier = Modifier.fillMaxWidth(0.95f).fillMaxHeight(0.92f)
+            // A DEFINITE height (not fillMaxHeight fraction): inside a Dialog the window height is
+            // effectively unbounded, so fillMaxHeight(fraction) silently no-ops and the Surface
+            // wrapped its content — which left a dead band under the footer and kept the weighted
+            // content from expanding. A concrete dp height propagates bounded constraints, so the
+            // inner Column fills it and the footer pins flush to the bottom, mirroring the top bar.
+            modifier = Modifier.fillMaxWidth(0.95f)
+                .height((LocalConfiguration.current.screenHeightDp * 0.92f).dp)
                 .settingsDpad(dp, { dpadIds }, onDismiss),
             shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp
         ) {
-            Column {
-                // Title bar
+            // Fill the fixed-height Surface so the weighted content region actually expands and the
+            // footer pins to the real bottom edge. Without this the Column wrapped its content and
+            // floated near the top, leaving a large dead band under the OK/Cancel bar.
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Title bar — compact: minimal vertical padding + a shrunk close button so the
+                // header (and its footer twin below) don't eat vertical space, most noticeable in
+                // landscape where height is scarce.
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(shortcut.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                     DpButton(dp, "titleX", onActivate = onDismiss) {
-                        IconButton(onClick = onDismiss) {
+                        IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
                             Icon(Icons.Default.Close, contentDescription = "Close")
                         }
                     }
                 }
                 Divider(color = DividerColor)
 
-                // Scrollable content
-                Column(
-                    modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                // Scrollable tab content — ONE region shared by both orientations (portrait pins the
+                // tab strip above it; landscape puts the rail beside it). Scrolls internally so the
+                // Cancel/OK footer stays pinned. Branch labels are tab indices: General(0),
+                // Win Components(1), Env Vars(2), Advanced(3), Controller(4). General and Controller are
+                // authored next to each other because both came from the old single top form; the
+                // Controller TAB sits last (index 4).
+                val contentScroll = rememberScrollState()
+                val mainContent: @Composable () -> Unit = {
+                    Column(
+                        modifier = Modifier.fillMaxSize().verticalScroll(contentScroll).padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        when (selectedTab) {
+                            0 -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     // Name
-                    DpField(
-                        dp, "name",
-                        value = name,
-                        onValueChange = { name = it },
-                        label = stringResource(R.string.name),
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        DpField(
+                            dp, "name",
+                            value = name,
+                            onValueChange = { name = it },
+                            label = stringResource(R.string.name),
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        LinuxHelp(isLinuxEntry, R.string.help_linux_name) { helpRes = it }
+                    }
 
-                    // Exec Args
-                    DpField(
-                        dp, "execArgs",
-                        value = execArgs,
-                        onValueChange = { execArgs = it },
-                        label = stringResource(R.string.exec_arguments),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    // Exec Args — appended to the Wine start command. A Linux entry's Exec line is
+                    // never run as written (linuxSessionArgs decides from the extras), so there is
+                    // nothing for arguments to be appended to.
+                    if (!isLinuxEntry) {
+                        DpField(
+                            dp, "execArgs",
+                            value = execArgs,
+                            onValueChange = { execArgs = it },
+                            label = stringResource(R.string.exec_arguments),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    // Storage — where this game's files currently live, and (unless it's already on
+                    // C:) a one-tap "Move to Drive C" that copies the folder onto native app storage.
+                    // Games that stream assets over FUSE-backed shared storage stall; from C: they run.
+                    // Both this and Executable below describe a Windows install under a drive letter;
+                    // a Linux entry has neither, and the client owns where its games live.
+                    if (!isLinuxEntry) {
+                    val storageLabel = remember(shortcut) { CopyGameToDriveC.storageLabel(shortcut) }
+                    val alreadyOnC = remember(shortcut) { CopyGameToDriveC.parse(shortcut).onDriveC }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Storage", fontSize = 14.sp)
+                            Text(
+                                storageLabel,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (onMoveToDriveC != null && !alreadyOnC) {
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedButton(onClick = onMoveToDriveC) {
+                                Icon(
+                                    Icons.Filled.DriveFileMove,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text("Move to Drive C")
+                            }
+                        }
+                    }
+                    }
+
+                    // Executable — the .exe this shortcut launches, with a one-tap repoint to a
+                    // different exe in the same game (launcher → real exe, dx11 ↔ dx9, a config tool).
+                    if (onChangeExe != null && !isLinuxEntry) {
+                        val currentExeName = remember(shortcut) {
+                            CopyGameToDriveC.parse(shortcut).exeWin.substringAfterLast('\\').substringAfterLast('/')
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Executable", fontSize = 14.sp)
+                                Text(
+                                    currentExeName.ifEmpty { "Unknown" },
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedButton(onClick = onChangeExe) {
+                                Icon(
+                                    Icons.Filled.SwapHoriz,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text("Change…")
+                            }
+                        }
+                    }
+
+                    // Epic Online Services (EOS) auth toggle — only for Epic-origin shortcuts.
+                    // When ON, the launcher injects real-Epic auth args (-EpicPortal + a fresh
+                    // exchange code) so EOS-requiring titles authenticate against the user's
+                    // logged-in Epic account. Harmless for non-EOS Epic games.
+                    if (isEpicShortcut) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Epic Online Services (EOS) auth", fontSize = 14.sp)
+                                Text(
+                                    "Sign EOS games in with your Epic account",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Switch(checked = epicEosEnabled, onCheckedChange = { epicEosEnabled = it })
+                        }
+                        // Force the ownership-token (-epicovt) path for Denuvo EOS games
+                        // the auto-detector misses (obfuscated exes). Default OFF.
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Force Denuvo ownership token", fontSize = 14.sp)
+                                Text(
+                                    "Force the ownership token for Denuvo games we don't auto-detect",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            // Sub-option of EOS auth: only meaningful when EOS auth is on.
+                            Switch(checked = epicOvtForce, onCheckedChange = { epicOvtForce = it },
+                                   enabled = epicEosEnabled)
+                        }
+                        // Launch offline: skip the online EOS auth exchange (drops the -AUTH_* args)
+                        // but keep the game's Epic identity/portal args. Default OFF.
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Launch offline", fontSize = 14.sp)
+                                Text(
+                                    "Skip Epic sign-in for this game (no online features)",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            // Sub-option of EOS auth: offline has nothing to skip when EOS auth is off.
+                            Switch(checked = epicOffline, onCheckedChange = { epicOffline = it },
+                                   enabled = epicEosEnabled)
+                        }
+                        // Epic Friends Overlay (Phase 3): provision Epic's real EOS overlay into the
+                        // prefix; the game's own EOS SDK renders it on Shift+F3. Default OFF.
+                        // Dark-launched: hidden behind FeatureFlags.EPIC_OVERLAY_ENABLED so no shortcut
+                        // can be set to epicOverlay=1 through the UI until the DXVK wrapper lands.
+                        if (com.winlator.star.FeatureFlags.EPIC_OVERLAY_ENABLED) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Epic Friends Overlay", fontSize = 14.sp)
+                                    Text(
+                                        "Experimental — in-game Epic overlay on Shift+F3 (a draggable pill " +
+                                                "can summon it too). Needs the container to allow full services.",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                Switch(checked = epicOverlayEnabled, onCheckedChange = { epicOverlayEnabled = it })
+                            }
+                        }
+                    }
 
                     // Screen size
-                    DpDrop(
-                        dp, "screenSize",
-                        label = stringResource(R.string.screen_size),
-                        options = screenSizeEntries,
-                        selected = selectedScreenSize,
-                        onSelect = { selectedScreenSize = it }
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        DpDrop(
+                            dp, "screenSize",
+                            label = stringResource(R.string.screen_size),
+                            options = screenSizeEntries,
+                            selected = selectedScreenSize,
+                            onSelect = { selectedScreenSize = it },
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { helpRes = if (isLinuxEntry) R.string.help_linux_screen_size else R.string.help_screen_size }) {
+                            Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                        }
+                    }
                     if (selectedScreenSize == "Custom") {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             DpField(
@@ -6122,6 +7389,33 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                                 singleLine = true,
                                 onLeftId = "customW"
                             )
+                        }
+                    }
+
+                    // Screen alignment (#413) — per-game override. Sentinel value "" = inherit the
+                    // container (Container Default); "0"/"1"/"2" = Center/Top/Bottom. Reuses the same
+                    // strings the container editor + in-game drawer show, plus the shared "Use container
+                    // default" inherit label used by the refresh dropdown above.
+                    run {
+                        val saValues = listOf("", "0", "1", "2")
+                        val saLabels = listOf(
+                            stringResource(R.string.use_container_default),
+                            stringResource(R.string.screen_alignment_center),
+                            stringResource(R.string.screen_alignment_top),
+                            stringResource(R.string.screen_alignment_bottom)
+                        )
+                        val saIdx = saValues.indexOf(screenAlignment).coerceAtLeast(0)
+                        // Applies on X11 and Wayland alike (the compositor fits the desktop the same way).
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            DpDrop(
+                                dp, "screenAlignment",
+                                label = stringResource(R.string.screen_alignment),
+                                options = saLabels,
+                                selected = saLabels[saIdx],
+                                onSelect = { screenAlignment = saValues[saLabels.indexOf(it)] },
+                                modifier = Modifier.weight(1f)
+                            )
+                            LinuxHelp(isLinuxEntry, R.string.help_linux_screen_alignment) { helpRes = it }
                         }
                     }
 
@@ -6151,6 +7445,7 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                                 })
                             }
                         }
+                        LinuxHelp(isLinuxEntry, R.string.help_linux_icon) { helpRes = it }
                     }
 
                     // "What is all this?" — the same newcomer glossary the container editor shows,
@@ -6159,24 +7454,131 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                         Text("❔  What is all this?")
                     }
 
-                    // Graphics Driver + wrapper manager (cloud)
-                    var showWrapperManager by remember { mutableStateOf(false) }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    // Display backend override (per-game): default to the container, or force
+                    // X11 / Wayland. Wayland greys the Renderer group below (compositor replaces it)
+                    // and the driver-config button (the game runs on the Proton's bundled Turnip).
+                    // gamescope is a Wayland client and the launch path pins the backend to Wayland
+                    // for a Linux entry whatever this says, so there is no choice left to offer.
+                    if (!isLinuxEntry) {
+                        val dbLabels = listOf("Use container default", "Force X11", "Force Wayland")
+                        val dbValues = listOf("", Container.DISPLAY_BACKEND_X11, Container.DISPLAY_BACKEND_WAYLAND)
+                        // A stored "Force Wayland" the container's layer can't honour shows as the
+                        // effective backend (Force X11); see containerWaylandCapable above.
+                        val waylandStoredUnusable =
+                            displayBackendOverride == Container.DISPLAY_BACKEND_WAYLAND && !containerWaylandCapable
+                        val dbIdx = if (waylandStoredUnusable) 1
+                                    else dbValues.indexOf(displayBackendOverride).coerceAtLeast(0)
                         DpDrop(
-                            dp, "gfxDriver",
-                            label = stringResource(R.string.graphics_driver),
-                            options = graphicsDriverEntries,
-                            selected = selectedGfxDriver,
-                            onSelect = { selectedGfxDriver = it },
-                            modifier = Modifier.weight(1f),
-                            onRightId = "gfxWrapper"
+                            dp, "displayBackend",
+                            label = "Display backend",
+                            options = dbLabels,
+                            selected = dbLabels[dbIdx],
+                            disabledOptions = if (containerWaylandCapable) emptySet() else setOf(dbLabels[2]),
+                            onSelect = {
+                                val picked = dbValues[dbLabels.indexOf(it)]
+                                displayBackendOverride =
+                                    if (picked == Container.DISPLAY_BACKEND_WAYLAND && !containerWaylandCapable) Container.DISPLAY_BACKEND_X11
+                                    else picked
+                            }
                         )
-                        IconButton(onClick = { helpRes = R.string.help_graphics_driver }) {
+                        if (effectiveWaylandShortcut) {
+                            Text(
+                                "Wayland (experimental): renders through the embedded compositor " +
+                                    "(winewayland). Needs " + com.winlator.star.core.WineWaylandSupport.LAYER_HINT +
+                                    ". The game renders on the Turnip bundled with that " +
+                                    "Proton — the graphics-driver picker only affects the compositor. " +
+                                    "DX wrapper (DXVK/VKD3D) settings apply as on X11. Renderer " +
+                                    "options below don't apply.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else if (!containerWaylandCapable) {
+                            Text(
+                                "Wayland needs " + com.winlator.star.core.WineWaylandSupport.LAYER_HINT +
+                                    ". The selected layer does not include winewayland and its Wayland Turnip.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (waylandStoredUnusable || shortcut.container.isWaylandBackend) {
+                                Text(
+                                    if (waylandStoredUnusable)
+                                        "This game was set to Force Wayland, but the container's Proton layer is not Wayland-capable: it runs on X11 and will be saved as Force X11."
+                                    else
+                                        "The container is set to Wayland, but its Proton layer is not Wayland-capable: the game runs on X11.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+
+                    // Graphics Driver + wrapper manager (cloud). Under Wayland the wrapper flavour is
+                    // irrelevant: the compositor loads the installed Turnip named by the "version" key of
+                    // graphicsDriverConfig (XServerDisplayActivity's Wayland resolve → adrenotools), and the
+                    // game renders on the Proton's bundled Wayland Turnip. So the flavour dropdown is swapped
+                    // for a "Compositor driver" picker over the installed Turnip ids that writes ONLY the
+                    // version key back (see withGraphicsDriverVersion); the config button stays live.
+                    var showWrapperManager by remember { mutableStateOf(false) }
+                    val gfxContext = LocalContext.current
+                    var compositorChoices by remember { mutableStateOf<List<String>>(emptyList()) }
+                    var compositorChoicesLoaded by remember { mutableStateOf(false) }
+                    // Wayland GAME driver choices + the variant Auto resolves to (native probe, off-main
+                    // under graphicsProbeMutex with the compositor choices; cached after the first run).
+                    var waylandGameDriverValues by remember { mutableStateOf<List<String>>(emptyList()) }
+                    // Imported Linux ICDs, for a Linux entry's draw-driver row (same probe pass).
+                    var linuxVulkanDriverValues by remember { mutableStateOf<List<String>>(emptyList()) }
+                    var waylandAutoPick by remember { mutableStateOf(com.winlator.star.core.WaylandGameDriver.autoVariantIfKnown()) }
+                    LaunchedEffect(effectiveWaylandShortcut, isLinuxEntry) {
+                        if (!effectiveWaylandShortcut && !isLinuxEntry) return@LaunchedEffect
+                        compositorChoices = compositorDriverChoices(gfxContext) // same source as the config dialog
+                        compositorChoicesLoaded = true
+                        waylandGameDriverValues = com.winlator.star.core.WaylandGameDriver.optionValues(gfxContext)
+                        waylandAutoPick = waylandAutoVariant(gfxContext)
+                        linuxVulkanDriverValues = com.winlator.star.core.LinuxVulkanDriver.optionValues(gfxContext)
+                    }
+                    val compositorVersion = GraphicsDriverConfigDialog.getVersion(graphicsDriverConfig) ?: ""
+                    // Two different drivers are involved in a Linux session and only one of them is
+                    // chosen here. This row picks the ANDROID driver the app's own compositor loads to
+                    // import the session's finished frames and put them on screen - it is live on this
+                    // path, and "System" here is a black screen. What the client and its games render
+                    // WITH is the Linux-built driver inside the runtime, which no row here touches.
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (effectiveWaylandShortcut || isLinuxEntry) {
+                            DpDrop(
+                                dp, "gfxDriver",
+                                // Named for what it does on each path. On a Linux entry the distinction
+                                // matters: this is the Android driver that DISPLAYS the session, while a
+                                // separate Linux driver inside the runtime is what draws it.
+                                label = if (isLinuxEntry) "Display driver (Android side)" else "Compositor driver",
+                                options = compositorChoices,
+                                selected = compositorDriverLabel(compositorVersion, compositorChoices, compositorChoicesLoaded),
+                                onSelect = { graphicsDriverConfig = withGraphicsDriverVersion(graphicsDriverConfig, it) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        } else {
+                            DpDrop(
+                                dp, "gfxDriver",
+                                label = stringResource(R.string.graphics_driver),
+                                options = graphicsDriverEntries,
+                                selected = selectedGfxDriver,
+                                onSelect = { selectedGfxDriver = it },
+                                modifier = Modifier.weight(1f),
+                                onRightId = "gfxWrapper"
+                            )
+                        }
+                        IconButton(onClick = {
+                            helpRes = if (isLinuxEntry) R.string.help_linux_display_driver
+                                      else R.string.help_graphics_driver
+                        }) {
                             Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
                         }
-                        DpButton(dp, "gfxWrapper", onActivate = { showWrapperManager = true }, onLeftId = "gfxDriver") {
-                            IconButton(onClick = { showWrapperManager = true }) {
-                                Icon(Icons.Default.CloudDownload, contentDescription = stringResource(R.string.wrapper_manager_open))
+                        // Wrappers are X11 game-driver shims: nothing on the Wayland path uses them,
+                        // so the manager button is left out there (the "?" stays).
+                        if (!effectiveWaylandShortcut && !isLinuxEntry) {
+                            DpButton(dp, "gfxWrapper", onActivate = { showWrapperManager = true }, onLeftId = "gfxDriver") {
+                                IconButton(onClick = { showWrapperManager = true }) {
+                                    Icon(Icons.Default.CloudDownload, contentDescription = stringResource(R.string.wrapper_manager_open))
+                                }
                             }
                         }
                     }
@@ -6184,10 +7586,341 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                         showWrapperManager = false
                         wrapperRefreshKey++ // pick up a just-imported/deleted wrapper
                     })
-                    DpButton(dp, "gfxConfig", onActivate = { showGfxConfig = true }, modifier = Modifier.fillMaxWidth()) {
-                        OutlinedButton(onClick = { showGfxConfig = true }, modifier = Modifier.fillMaxWidth()) {
-                            Text("${stringResource(R.string.graphics_driver)}: ${GraphicsDriverConfigDialog.getVersion(graphicsDriverConfig)}")
+                    // Driver configuration is X11 tuning; on Wayland its only live field (the Turnip
+                    // version) is covered by the Compositor driver dropdown, so the button is hidden.
+                    // The Wayland branch is also where HDR output lives, and that one DOES reach a
+                    // Linux session (the compositor gates HDR for every Wayland session, gamescope
+                    // included), so a Linux entry takes it with the driver rows conditioned off.
+                    if (!effectiveWaylandShortcut && !isLinuxEntry) {
+                        DpButton(dp, "gfxConfig", onActivate = { showGfxConfig = true }, modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(onClick = { showGfxConfig = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text("${stringResource(R.string.graphics_driver)}: ${GraphicsDriverConfigDialog.getVersion(graphicsDriverConfig)}")
+                            }
                         }
+                    } else {
+                        // A Linux session has two drivers and the row above picked the wrong half of
+                        // the pair on its own: that one DISPLAYS, this one DRAWS - the client's UI
+                        // through the runtime's Zink and every game the client launches through
+                        // Proton. Imported "-Linux" zips only; "" leaves the runtime's own driver in
+                        // place. A stored id whose import is gone stays listed and labelled, and the
+                        // launch path falls back to the runtime's driver for it.
+                        if (isLinuxEntry) {
+                            // The row above is live on this path and "System"/a missing driver is a
+                            // black screen here too, so the same warning applies - it used to be
+                            // inside the Wayland-only branch below.
+                            if (compositorDriverUnusable(compositorVersion, compositorChoices, compositorChoicesLoaded)) {
+                                Text(
+                                    "The display driver above cannot show this session. \"System\" or a driver that is no "
+                                        + "longer installed leaves the compositor on the system Vulkan, which shows a black screen.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(Modifier.height(8.dp))
+                            }
+                            val linuxValues = if (linuxVulkanDriverOverride.isEmpty() || linuxVulkanDriverOverride in linuxVulkanDriverValues)
+                                linuxVulkanDriverValues.ifEmpty { listOf("") }
+                            else linuxVulkanDriverValues + linuxVulkanDriverOverride
+                            val linuxLabels = linuxValues.map { com.winlator.star.core.LinuxVulkanDriver.optionLabel(gfxContext, it) }
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                DpDrop(
+                                    dp, "linuxVulkanDriver",
+                                    label = "Draw driver (Linux runtime)",
+                                    options = linuxLabels,
+                                    selected = linuxLabels[linuxValues.indexOf(linuxVulkanDriverOverride).coerceAtLeast(0)],
+                                    onSelect = { linuxVulkanDriverOverride = linuxValues[linuxLabels.indexOf(it)] },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                IconButton(onClick = { helpRes = R.string.help_linux_draw_driver }) {
+                                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                            Text(
+                                com.winlator.star.core.LinuxVulkanDriver.HELP_TEXT
+                                        + if (linuxVulkanDriverValues.size > 1) ""
+                                          else " Nothing imported yet: Contents \u2192 Installed \u2192 Linux runtime drivers.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(8.dp))
+
+                            // Performance switches for the chain that draws the client's interface.
+                            // They make that chain cheaper rather than asking for more hardware.
+                            // None of them is device-proven.
+                            // Change ONE, launch, and read the HUD; the session's device.txt says what was set when the number was taken.
+                            Text("Performance (experimental)", style = MaterialTheme.typography.titleSmall)
+                            Spacer(Modifier.height(4.dp))
+                            PerfEditRow(dp, com.winlator.star.linux.LinuxTuning.EXTRA_GLTHREAD,
+                                "Threaded GL (mesa_glthread)", linuxGlThread,
+                                com.winlator.star.linux.LinuxTuning.defaultOn(
+                                    com.winlator.star.linux.LinuxTuning.EXTRA_GLTHREAD)) { linuxGlThread = it }
+                            PerfEditRow(dp, com.winlator.star.linux.LinuxTuning.EXTRA_LAZY_DESCRIPTORS,
+                                "Lazy descriptors (ZINK_DESCRIPTORS)", linuxLazyDescriptors,
+                                com.winlator.star.linux.LinuxTuning.defaultOn(
+                                    com.winlator.star.linux.LinuxTuning.EXTRA_LAZY_DESCRIPTORS)) { linuxLazyDescriptors = it }
+                            PerfEditRow(dp, com.winlator.star.linux.LinuxTuning.EXTRA_NO_GL_ERROR,
+                                "Skip GL error checks (MESA_NO_ERROR)", linuxNoGlError,
+                                com.winlator.star.linux.LinuxTuning.defaultOn(
+                                    com.winlator.star.linux.LinuxTuning.EXTRA_NO_GL_ERROR)) { linuxNoGlError = it }
+                            PerfEditRow(dp, com.winlator.star.linux.LinuxTuning.EXTRA_STEAMDECK,
+                                "Steam Deck mode (-steamdeck)", linuxDeckMode,
+                                com.winlator.star.linux.LinuxTuning.defaultOn(
+                                    com.winlator.star.linux.LinuxTuning.EXTRA_STEAMDECK)) { on ->
+                                if (on) confirmDeckMode = true else linuxDeckMode = false
+                            }
+                            if (linuxDeckMode) {
+                                Text(
+                                    "Deck mode is on: games do not receive the controller. If a Steam Client update shows under System that will not install, do not press Apply on it.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                            if (confirmDeckMode) {
+                                OutlinedAlertDialog(
+                                    onDismissRequest = { confirmDeckMode = false },
+                                    title = { Text("Turn on Steam Deck mode?") },
+                                    text = {
+                                        Text(
+                                            "Deck mode makes the Steam client behave as it does on a Steam Deck and adds the Quick Access Menu.\n\n"
+                                                + "Known problems, found on device:\n"
+                                                + "\u2022 Games stop receiving the controller. Steam's own menus still work, but in a game the pad does nothing.\n"
+                                                + "\u2022 The client may show a Steam Client update under System that will not install. Deck mode now uses the Steam Deck beta channel to avoid it, but if it appears, do not press Apply.\n"
+                                                + "\u2022 The Quick Access Menu's performance overlay cannot be turned on.\n\n"
+                                                + "The scaling controls below do the useful part without it, and the in-game drawer's FPS limit caps the frame rate. Turn Deck mode off again if a game stops responding to the controller."
+                                        )
+                                    },
+                                    confirmButton = {
+                                        TextButton(onClick = { linuxDeckMode = true; confirmDeckMode = false }) { Text("Turn on anyway") }
+                                    },
+                                    dismissButton = {
+                                        TextButton(onClick = { confirmDeckMode = false }) { Text("Keep it off") }
+                                    },
+                                )
+                            }
+                            val channelLabels = com.winlator.star.linux.LinuxTuning.STEAM_CHANNELS.map {
+                                when (it) {
+                                    "" -> if (linuxDeckMode) "Automatic (Steam Deck beta, for Deck mode)" else "Automatic (public beta)"
+                                    "publicbeta" -> "Public beta"
+                                    else -> "Steam Deck beta"
+                                }
+                            }
+                            DpDrop(
+                                dp, com.winlator.star.linux.LinuxTuning.EXTRA_STEAM_CHANNEL,
+                                label = "Steam client update channel",
+                                options = channelLabels,
+                                selected = channelLabels[com.winlator.star.linux.LinuxTuning.STEAM_CHANNELS.indexOf(linuxSteamChannel).coerceAtLeast(0)],
+                                onSelect = { linuxSteamChannel = com.winlator.star.linux.LinuxTuning.STEAM_CHANNELS[channelLabels.indexOf(it).coerceAtLeast(0)] }
+                            )
+                            val scalerLabels = com.winlator.star.linux.LinuxTuning.SCALERS.map { if (it.isEmpty()) "Default" else it.replaceFirstChar(Char::uppercase) }
+                            DpDrop(
+                                dp, com.winlator.star.linux.LinuxTuning.EXTRA_SCALER,
+                                label = "Scaling mode",
+                                options = scalerLabels,
+                                selected = scalerLabels[com.winlator.star.linux.LinuxTuning.SCALERS.indexOf(linuxScaler).coerceAtLeast(0)],
+                                onSelect = { linuxScaler = com.winlator.star.linux.LinuxTuning.SCALERS[scalerLabels.indexOf(it).coerceAtLeast(0)] }
+                            )
+                            val filterLabels = com.winlator.star.linux.LinuxTuning.FILTERS.map {
+                                when (it) {
+                                    "" -> "Default"
+                                    "fsr", "nis", "sgsr" -> it.uppercase()
+                                    else -> it.replaceFirstChar(Char::uppercase)
+                                }
+                            }
+                            DpDrop(
+                                dp, com.winlator.star.linux.LinuxTuning.EXTRA_FILTER,
+                                label = "Scaling filter",
+                                options = filterLabels,
+                                selected = filterLabels[com.winlator.star.linux.LinuxTuning.FILTERS.indexOf(linuxFilter).coerceAtLeast(0)],
+                                onSelect = { linuxFilter = com.winlator.star.linux.LinuxTuning.FILTERS[filterLabels.indexOf(it).coerceAtLeast(0)] }
+                            )
+                            Text(
+                                "Scaling mode and filter only matter when a game renders below the session's resolution. "
+                                    + "FSR, NIS and SGSR upscale and sharpen; SGSR is Qualcomm's, made for Adreno.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(8.dp))
+
+                            // The app's own games in the client's library (LinuxAppGames and the runtime's bannerlator-steam-shortcuts).
+                            Text("Your games in Steam", style = MaterialTheme.typography.titleSmall)
+                            Spacer(Modifier.height(4.dp))
+                            PerfEditRow(dp, com.winlator.star.linux.LinuxTuning.EXTRA_APP_GAMES,
+                                "Show my Games-tab games in Steam", linuxAppGames,
+                                com.winlator.star.linux.LinuxTuning.defaultOn(
+                                    com.winlator.star.linux.LinuxTuning.EXTRA_APP_GAMES)) { linuxAppGames = it }
+                            if (linuxAppGames) {
+                                PerfEditRow(dp, com.winlator.star.linux.LinuxTuning.EXTRA_SHARE_SAVES,
+                                    "Share saves with the app", linuxShareSaves,
+                                    com.winlator.star.linux.LinuxTuning.defaultOn(
+                                        com.winlator.star.linux.LinuxTuning.EXTRA_SHARE_SAVES)) { linuxShareSaves = it }
+                            }
+                            Text(
+                                "Games you added in the Games tab show in Steam's library under Non-Steam and run with Steam's Proton. "
+                                    + "Steam's own games are already there, and Epic and Amazon games need the app's own launch, so those are left out. "
+                                    + "Shared saves: the game's Documents, AppData and Saved Games folders are the same ones its container uses, so progress carries over both ways. "
+                                    + "Do not run the same game in the app and in Steam at the same time.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text("Games folders", fontSize = 13.sp)
+                            for (folder in linuxGamesFolders) {
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                    Text(folder, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                                    DpButton(dp, "linuxGamesFolderRemove:$folder",
+                                        onActivate = { linuxGamesFolders = linuxGamesFolders - folder }) {
+                                        TextButton(onClick = { linuxGamesFolders = linuxGamesFolders - folder }) { Text("Remove") }
+                                    }
+                                }
+                            }
+                            DpButton(dp, "linuxGamesFolderAdd", onActivate = { gamesFolderPicker.launch(null) }) {
+                                TextButton(onClick = { gamesFolderPicker.launch(null) }) { Text("Add a games folder\u2026") }
+                            }
+                            Text(
+                                "Each folder inside a games folder is one game; the app picks the program to start in it. They show in Steam the same way.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "Threaded GL, lazy descriptors and skipped GL error checks make the chain that draws the client's interface cheaper. "
+                                    + "None is proven on this device yet, so change one at a time.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        if (!isLinuxEntry) {
+                        // "System"/empty falls back to the system libvulkan, which can't import the
+                        // game's dmabufs (black screen) — mirrors XServerDisplayActivity's resolve; so
+                        // does an id that is no longer installed. Warn only.
+                        if (compositorDriverUnusable(compositorVersion, compositorChoices, compositorChoicesLoaded)) {
+                            Text(
+                                """Wayland needs a Turnip driver here. "System" or a missing driver cannot import the game's frames and shows a black screen.""",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        Text(
+                            "Used by the Wayland compositor to put frames on screen; the game renders on the Wayland game driver below.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        // Wayland game driver (per-game): "Use container default (<its label>)" first,
+                        // then Auto / bundled variants / imported Linux ICDs. A stored imported:<id>
+                        // whose import is gone stays listed (labelled missing); launch uses Auto for it.
+                        run {
+                            val containerChoice = shortcut.container.waylandGameDriver
+                            val values = listOf("") + (
+                                if (waylandGameDriverOverride.isEmpty() || waylandGameDriverOverride in waylandGameDriverValues) waylandGameDriverValues
+                                else waylandGameDriverValues + waylandGameDriverOverride)
+                            val labels = values.map {
+                                if (it.isEmpty()) "Use container default (" + com.winlator.star.core.WaylandGameDriver.optionLabel(gfxContext, containerChoice, waylandAutoPick) + ")"
+                                else com.winlator.star.core.WaylandGameDriver.optionLabel(gfxContext, it, waylandAutoPick)
+                            }
+                            // The gear: this game's Wayland driver settings (GPU name spoof, memory cap,
+                            // present mode, UBWC hint) in its graphicsDriverConfig, like X11's per-game
+                            // driver configuration.
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                DpDrop(
+                                    dp, "waylandGameDriver",
+                                    label = "Wayland game driver",
+                                    options = labels,
+                                    selected = labels[values.indexOf(waylandGameDriverOverride).coerceAtLeast(0)],
+                                    onSelect = { waylandGameDriverOverride = values[labels.indexOf(it)] },
+                                    modifier = Modifier.weight(1f),
+                                    onRightId = "waylandDriverCfg"
+                                )
+                                DpButton(dp, "waylandDriverCfg", onActivate = { showWaylandDriverCfg = true }, onLeftId = "waylandGameDriver") {
+                                    IconButton(onClick = { showWaylandDriverCfg = true }) {
+                                        Icon(Icons.Default.Settings, contentDescription = "Wayland driver settings")
+                                    }
+                                }
+                            }
+                            Text(
+                                com.winlator.star.core.WaylandGameDriver.HELP_TEXT,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            val spoof = com.winlator.star.core.GpuSpoof.gpuNameOf(graphicsDriverConfig)
+                            if (com.winlator.star.core.GpuSpoof.isSpoofing(spoof)) Text(
+                                "GPU name spoof: $spoof (the gear)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        }
+                        // HDR output (per-game): "Use container default (<On/Off>)" / On / Off, see
+                        // display.WaylandHdr. On a screen that doesn't report HDR10 the dropdown is greyed
+                        // with the reason but still shows what is stored.
+                        run {
+                            val hdrUnavailable = remember { com.winlator.star.display.WaylandHdr.unavailableReason(gfxContext) }
+                            val containerHdr = shortcut.container.isWaylandHdr()
+                            val values = listOf("", "1", "0")
+                            val labels = listOf("Use container default (" + (if (containerHdr) "On" else "Off") + ")", "On", "Off")
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                DpDrop(
+                                    dp, com.winlator.star.display.WaylandHdr.EXTRA,
+                                    label = com.winlator.star.display.WaylandHdr.TITLE,
+                                    options = labels,
+                                    selected = labels[values.indexOf(waylandHdrOverride).coerceAtLeast(0)],
+                                    onSelect = { waylandHdrOverride = values[labels.indexOf(it)] },
+                                    enabled = hdrUnavailable == null,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                LinuxHelp(isLinuxEntry, R.string.help_linux_hdr_output) { helpRes = it }
+                            }
+                            if (hdrUnavailable != null) {
+                                Text(
+                                    hdrUnavailable,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Text(
+                                com.winlator.star.display.WaylandHdr.HELP_TEXT,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    // Everything from here to the Frame Generation row is Wine-side rendering: the
+                    // Unreal HDR fix swaps DLLs in the prefix, the DX wrapper and its config are the
+                    // prefix's D3D translation, and Renderer / render scale / in-game refresh belong to
+                    // the X server and its Wine registry keys. A gamescope session has no prefix and no
+                    // X server, and the Linux runtime brings its own D3D stack.
+                    if (!isLinuxEntry) {
+
+                    // Unreal Engine HDR (per-game, both backends; under HDR output on Wayland):
+                    // "Use container default (<its mode>)" / Off / DirectX 12 fix / DirectX 11. See
+                    // core.UnrealHdr; the DirectX 11 notes follow this game's GPU name spoof.
+                    run {
+                        val containerMode = com.winlator.star.core.UnrealHdr.containerMode(shortcut.container)
+                        val values = listOf("") + com.winlator.star.core.UnrealHdr.MODES
+                        val labels = values.map {
+                            if (it.isEmpty()) "Use container default (" + com.winlator.star.core.UnrealHdr.label(containerMode) + ")"
+                            else com.winlator.star.core.UnrealHdr.label(it)
+                        }
+                        DpDrop(
+                            dp, com.winlator.star.core.UnrealHdr.EXTRA,
+                            label = com.winlator.star.core.UnrealHdr.TITLE,
+                            options = labels,
+                            selected = labels[values.indexOf(unrealHdrOverride).coerceAtLeast(0)],
+                            onSelect = { unrealHdrOverride = values[labels.indexOf(it)] },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        val effectiveMode = unrealHdrOverride.ifEmpty { containerMode }
+                        if (effectiveMode == com.winlator.star.core.UnrealHdr.DX11) UnrealHdrDx11Notes(
+                            gpuName = com.winlator.star.core.GpuSpoof.gpuNameOf(graphicsDriverConfig),
+                            wayland = effectiveWaylandShortcut
+                        )
+                        Text(
+                            com.winlator.star.core.UnrealHdr.help(effectiveWaylandShortcut),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
 
                     // DX Wrapper
@@ -6197,7 +7930,21 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                             label = stringResource(R.string.dxwrapper),
                             options = dxWrapperEntries,
                             selected = selectedDxWrapper,
-                            onSelect = { selectedDxWrapper = it },
+                            onSelect = { newWrapper ->
+                                val wasVegas = StringUtils.parseIdentifier(selectedDxWrapper).contains("vegas")
+                                val isVegas = StringUtils.parseIdentifier(newWrapper).contains("vegas")
+                                selectedDxWrapper = newWrapper
+                                // Strip dxvkConfigFile when leaving VEGAS — prevents stale
+                                // VEGAS config path from leaking into plain DXVK+VKD3D.
+                                if (wasVegas && !isVegas) {
+                                    val cfg = DXVKConfigDialog.parseConfig(dxWrapperConfig)
+                                    val path = cfg.get("dxvkConfigFile")
+                                    if (path.isNotEmpty()) {
+                                        val stripped = dxWrapperConfig.split(",").filter { !it.startsWith("dxvkConfigFile=") }.joinToString(",")
+                                        dxWrapperConfig = stripped
+                                    }
+                                }
+                            },
                             modifier = Modifier.weight(1f)
                         )
                         IconButton(onClick = { helpRes = R.string.dxwrapper_help_content }) {
@@ -6222,16 +7969,20 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                     // Renderer (host) — per-game override of the container's OpenGL/Vulkan choice.
                     var showSfWarning by remember { mutableStateOf(false) }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        // Display only while greyed on Wayland: the compositor is always Vulkan; the
+                        // stored X11 choice is kept and returns with the X11 backend.
+                        val rendererShown = if (effectiveWaylandShortcut) "Vulkan (Wayland compositor)" else selectedRenderer
                         DpDrop(
                             dp, "renderer",
                             label = stringResource(R.string.renderer),
-                            options = listOf("OpenGL", "Vulkan", "SurfaceFlinger"),
-                            selected = selectedRenderer,
+                            options = if (effectiveWaylandShortcut) listOf(rendererShown) else listOf("OpenGL", "Vulkan", "SurfaceFlinger"),
+                            selected = rendererShown,
                             onSelect = {
                                 // SurfaceFlinger is experimental and can reboot some devices — require opt-in.
                                 if (it == "SurfaceFlinger" && selectedRenderer != "SurfaceFlinger") showSfWarning = true
                                 else selectedRenderer = it
                             },
+                            enabled = !effectiveWaylandShortcut,
                             modifier = Modifier.weight(1f)
                         )
                         IconButton(onClick = { helpRes = R.string.help_renderer }) {
@@ -6247,7 +7998,7 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
 
                     // SurfaceFlinger colour correction (ASR-only, GN #1620) — only relevant when this
                     // game runs on the SurfaceFlinger renderer, so surface it under that choice.
-                    if (selectedRenderer == "SurfaceFlinger") {
+                    if (!effectiveWaylandShortcut && selectedRenderer == "SurfaceFlinger") {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(stringResource(R.string.renderer_sf_compat))
@@ -6265,7 +8016,14 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                     }
 
                     // Vulkan renderer per-game overrides — only relevant when this game runs on Vulkan.
-                    if (selectedRenderer == "Vulkan") {
+                    if (!effectiveWaylandShortcut && selectedRenderer == "Vulkan") {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(stringResource(R.string.renderer_native), Modifier.weight(1f))
+                            IconButton(onClick = { helpRes = R.string.help_renderer_native }) {
+                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                            }
+                            DpSwitch(dp, "vkNative", checked = vkNative, onCheckedChange = { vkNative = it })
+                        }
                         // Colors = the game buffer's channel order. BGRA (default) presents as-is; RGBA
                         // swaps R/B (routes through the compositor — native can't swap). Per-game so one
                         // game can differ from the container / its siblings.
@@ -6305,6 +8063,51 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                                 Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
                             }
                         }
+                        // Native backend — which native path Native Rendering uses. Only meaningful when
+                        // Native Rendering is on (matches the container Vulkan cog), so gate on vkNative.
+                        if (vkNative) {
+                            val vkBackendValues = listOf("auto", "asr", "flip")
+                            val vkBackendLabels = listOf(
+                                stringResource(R.string.renderer_native_backend_auto),
+                                stringResource(R.string.renderer_native_backend_asr),
+                                stringResource(R.string.renderer_native_backend_flip)
+                            )
+                            val vkBackendIdx = vkBackendValues.indexOf(vkNativeBackend).coerceAtLeast(0)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                DpDrop(
+                                    dp, "vkBackend",
+                                    label = stringResource(R.string.renderer_native_backend),
+                                    options = vkBackendLabels,
+                                    selected = vkBackendLabels[vkBackendIdx],
+                                    onSelect = { vkNativeBackend = vkBackendValues[vkBackendLabels.indexOf(it)] },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                IconButton(onClick = { helpRes = R.string.help_renderer_native_backend }) {
+                                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                        // Compositor (present-layer) Vulkan driver: System or an installed Turnip. Applies
+                        // regardless of native mode, so not gated on vkNative. Matches the container cog.
+                        val vkDriverOptions = remember {
+                            val installed = try {
+                                com.winlator.star.contents.AdrenotoolsManager(context).enumarateInstalledDrivers()
+                            } catch (e: Exception) { arrayListOf<String>() }
+                            (listOf("system") + installed).distinct()
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            DpDrop(
+                                dp, "vkDriver",
+                                label = stringResource(R.string.renderer_driver_id),
+                                options = vkDriverOptions,
+                                selected = if (vkDriverOptions.contains(vkRendererDriverId)) vkRendererDriverId else "system",
+                                onSelect = { vkRendererDriverId = it },
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = { helpRes = R.string.help_renderer_driver }) {
+                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                            }
+                        }
                         // FG temporarily forces Mailbox; caption the field so FIFO-while-FG-selected isn't confusing.
                         if (frameGenEngine != "off") {
                             Text(
@@ -6316,17 +8119,28 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                     }
 
                     // Render scale (supersampling) — per-game override of the container default.
+                    // Greyed on Wayland (downscale lives in the X11 Vulkan renderer only); displays
+                    // "Not used on Wayland" while the stored value is left untouched.
                     run {
                         val renderScaleValues = listOf("1.0", "1.25", "1.5", "2.0")
                         val renderScaleLabels = listOf("Off", "1.25x", "1.5x", "2x")
                         val rsIdx = renderScaleValues.indexOf(renderScale).coerceAtLeast(0)
+                        val rsShown = if (effectiveWaylandShortcut) "Not used on Wayland" else renderScaleLabels[rsIdx]
                         DpDrop(
                             dp, "renderScale",
                             label = "Render scale (supersampling)",
-                            options = renderScaleLabels,
-                            selected = renderScaleLabels[rsIdx],
-                            onSelect = { renderScale = renderScaleValues[renderScaleLabels.indexOf(it)] }
+                            options = if (effectiveWaylandShortcut) listOf(rsShown) else renderScaleLabels,
+                            selected = rsShown,
+                            onSelect = { renderScale = renderScaleValues[renderScaleLabels.indexOf(it)] },
+                            enabled = !effectiveWaylandShortcut
                         )
+                        if (effectiveWaylandShortcut) {
+                            Text(
+                                "Not used on Wayland: the compositor has no supersampling downscale. The stored value returns on X11.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
 
                     // In-game refresh rate — single per-game override of the container default. Options:
@@ -6367,29 +8181,36 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                         }
                     }
 
+                    } // end of the Wine-side rendering rows (see isLinuxEntry above)
+
                     // Frame Generation engine — per-game override (lsfg grayed without Lossless.dll).
                     run {
                         val fgLabels = listOf(
                             stringResource(R.string.frame_generation_off),
                             stringResource(R.string.frame_generation_bionic),
-                            stringResource(R.string.frame_generation_lsfg)
+                            stringResource(R.string.frame_generation_lsfg_native)
                         )
                         val fgIdx = fgEngines.indexOf(frameGenEngine).coerceAtLeast(0)
                         // FG's mailbox/present-mode delivery only exists on the Vulkan host renderer, so
                         // gate the whole dropdown on Vulkan (grey it out otherwise) — combined with the
                         // existing lsfg-DLL option gate. See ContainerDetailScreen for the rationale.
-                        val fgVulkan = selectedRenderer == "Vulkan"
+                        // On Wayland the renderer gate does not apply: FG runs inside the compositor
+                        // (always Vulkan) and the drawer arms the engine picked here. See ContainerDetailScreen.
+                        // A Linux session always presents through the Vulkan compositor, whatever
+                        // its entry's renderer field says (gamescope is a Wayland client of it).
+                        val fgVulkan = effectiveWaylandShortcut || isLinuxEntry || selectedRenderer == "Vulkan"
+                        val fgShown = fgLabels[fgIdx]
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             DpDrop(
                                 dp, "frameGen",
                                 label = stringResource(R.string.frame_generation),
                                 options = fgLabels,
-                                selected = fgLabels[fgIdx],
+                                selected = fgShown,
                                 onSelect = { frameGenEngine = fgEngines[fgLabels.indexOf(it)] },
                                 enabled = fgVulkan,
                                 disabledOptions = buildSet {
                                     // bionic-fg re-enabled (2.9.4+) — see ContainerDetailScreen note.
-                                    if (!lsfgDllAvailable) add(fgLabels[2])   // lsfg-vk — needs an imported Lossless.dll
+                                    if (!lsfgDllAvailable) add(fgLabels[2])   // LSFG Native — needs an imported Lossless.dll
                                 },
                                 modifier = (if (!fgVulkan) Modifier.alpha(0.5f) else Modifier).weight(1f)
                             )
@@ -6418,7 +8239,7 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                         DpSwitch(dp, "fpsLimiter", checked = fpsLimiterEnabled, onCheckedChange = { fpsLimiterEnabled = it })
                         Spacer(Modifier.width(8.dp))
                         Text(stringResource(R.string.fps_limiter), modifier = Modifier.weight(1f))
-                        IconButton(onClick = { helpRes = R.string.help_fps_limiter }) {
+                        IconButton(onClick = { helpRes = if (isLinuxEntry) R.string.help_linux_fps_limiter else R.string.help_fps_limiter }) {
                             Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
                         }
                     }
@@ -6435,49 +8256,51 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                         (if (preferBigCores != com.winlator.star.perf.PerformanceSettings.preferBigCores.value) 1 else 0) +
                         com.winlator.star.perf.PerfRootApplier.ROOT_KEYS.count { (rootOverrides[it] ?: false) != com.winlator.star.perf.PerformanceSettings.rootDefaultValue(it) }
 
-                    // Collapsible header.
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth().clickable { perfExpanded = !perfExpanded }.padding(vertical = 8.dp)
-                    ) {
-                        Text("Performance", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f))
-                        Text(
-                            if (perfOverrideCount > 0) "$perfOverrideCount overridden" else "Global defaults",
-                            fontSize = 11.sp,
-                            color = if (perfOverrideCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(end = 6.dp)
+                    // Performance — one row opens the full dashboard menu (same as in-game), bound to
+                    // this shortcut's saved-per-game toggles. Replaces the old inline toggle list; the
+                    // save block below still persists whatever the dialog set (override-when-different).
+                    var showPerfDialog by remember { mutableStateOf(false) }
+                    // Styled to match the other outlined menu fields (notched "Performance" label +
+                    // border + trailing chevron). The read-only field shows the override status; a
+                    // transparent overlay Box catches taps so the whole field opens the dashboard
+                    // dialog instead of focusing the text field.
+                    Box(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                        OutlinedTextField(
+                            value = if (perfOverrideCount > 0) "$perfOverrideCount overridden" else "Global defaults",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Performance") },
+                            trailingIcon = { Icon(Icons.Default.KeyboardArrowRight, contentDescription = "Open") },
+                            // Accent-colored outline so this opener stands out from the grey menu fields.
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.primary,
+                                focusedLabelColor = MaterialTheme.colorScheme.primary,
+                                unfocusedLabelColor = MaterialTheme.colorScheme.primary,
+                                focusedTrailingIconColor = MaterialTheme.colorScheme.primary,
+                                unfocusedTrailingIconColor = MaterialTheme.colorScheme.primary,
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
                         )
-                        Icon(
-                            if (perfExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                            contentDescription = if (perfExpanded) "Collapse" else "Expand"
-                        )
+                        Box(Modifier.matchParentSize().clickable { showPerfDialog = true })
                     }
 
-                    if (perfExpanded) {
-                        PerfEditRow(dp, "sustainedPerf", "Sustained Performance Mode", sustainedPerfMode,
-                            com.winlator.star.perf.PerformanceSettings.sustainedPerfMode.value) { sustainedPerfMode = it }
-                        PerfEditRow(dp, "perfPriority", "Thread Priority Boost", perfPriorityBoost,
-                            com.winlator.star.perf.PerformanceSettings.perfPriorityBoost.value) { perfPriorityBoost = it }
-                        PerfEditRow(dp, "preferBigCores", "Prefer Big Cores", preferBigCores,
-                            com.winlator.star.perf.PerformanceSettings.preferBigCores.value) { preferBigCores = it }
-                        // Root six (per-game overrides; only take effect with root, honored at launch).
-                        for (rk in com.winlator.star.perf.PerfRootApplier.ROOT_KEYS) {
-                            PerfEditRow(dp, rk, ROOT_PERF_LABELS[rk] ?: rk, rootOverrides[rk] ?: false,
-                                com.winlator.star.perf.PerformanceSettings.rootDefaultValue(rk)) { rootOverrides[rk] = it }
-                        }
-                        // Reset ALL 9 perf keys to the global defaults (visible when this game overrides any).
-                        if (anyPerfOverride) {
-                            Text("↺ Reset all performance toggles to global",
-                                fontSize = 12.sp, color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.fillMaxWidth().clickable {
-                                    sustainedPerfMode = com.winlator.star.perf.PerformanceSettings.sustainedPerfMode.value
-                                    perfPriorityBoost = com.winlator.star.perf.PerformanceSettings.perfPriorityBoost.value
-                                    preferBigCores = com.winlator.star.perf.PerformanceSettings.preferBigCores.value
-                                    for (rk in com.winlator.star.perf.PerfRootApplier.ROOT_KEYS)
-                                        rootOverrides[rk] = com.winlator.star.perf.PerformanceSettings.rootDefaultValue(rk)
-                                }.padding(vertical = 6.dp))
-                        }
+                    if (showPerfDialog) {
+                        com.winlator.star.ui.PerformanceDashboardDialogPerGame(
+                            sustained = sustainedPerfMode, onSustained = { sustainedPerfMode = it },
+                            priority = perfPriorityBoost, onPriority = { perfPriorityBoost = it },
+                            bigCores = preferBigCores, onBigCores = { preferBigCores = it },
+                            rootValue = { rootOverrides[it] ?: false },
+                            onRoot = { k, v -> rootOverrides[k] = v },
+                            onResetAll = {
+                                sustainedPerfMode = com.winlator.star.perf.PerformanceSettings.sustainedPerfMode.value
+                                perfPriorityBoost = com.winlator.star.perf.PerformanceSettings.perfPriorityBoost.value
+                                preferBigCores = com.winlator.star.perf.PerformanceSettings.preferBigCores.value
+                                for (rk in com.winlator.star.perf.PerfRootApplier.ROOT_KEYS)
+                                    rootOverrides[rk] = com.winlator.star.perf.PerformanceSettings.rootDefaultValue(rk)
+                            },
+                            onDismiss = { showPerfDialog = false },
+                        )
                     }
 
                     // Audio driver
@@ -6501,7 +8324,7 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                                 Icon(Icons.Default.Settings, contentDescription = "Audio settings", modifier = Modifier.size(18.dp))
                             }
                         }
-                        IconButton(onClick = { helpRes = R.string.help_audio_driver }) {
+                        IconButton(onClick = { helpRes = if (isLinuxEntry) R.string.help_linux_audio_driver else R.string.help_audio_driver }) {
                             Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
                         }
                     }
@@ -6531,13 +8354,77 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                         )
                     }
 
-                    // Emulator
+                    // Microphone (DirectAudio only). Opt-in per game, default OFF — a knowingly-granted
+                    // permission. ON seeds BANNER_AUDIO_DIRECT_MIC=1 into this shortcut's env; the
+                    // DirectAudio driver opens the AAudio INPUT stream itself when the flag is present
+                    // (the app never records). Greyed off DirectAudio, since only that driver consumes the
+                    // flag today. Keyed on the live envVarsStr so it can't capture a stale value and drift.
+                    run {
+                        val micCtx = LocalContext.current
+                        val micDriverActive = StringUtils.parseIdentifier(selectedAudioDriver) == "directaudio" && directAudioSupported
+                        val micOn = com.winlator.star.core.DirectAudioSupport.isMicEnabledInEnv(envVarsStr)
+                        val micPermLauncher = rememberLauncherForActivityResult(
+                            ActivityResultContracts.RequestPermission()
+                        ) { granted ->
+                            if (granted) {
+                                envVarsStr = com.winlator.star.core.DirectAudioSupport.withMicEnabled(envVarsStr, true)
+                            } else {
+                                envVarsStr = com.winlator.star.core.DirectAudioSupport.withMicEnabled(envVarsStr, false)
+                                Toast.makeText(micCtx, "Microphone permission denied — mic stays off.", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Switch(
+                                enabled = micDriverActive,
+                                checked = micOn && micDriverActive,
+                                onCheckedChange = { want ->
+                                    if (want) {
+                                        if (androidx.core.content.ContextCompat.checkSelfPermission(micCtx, android.Manifest.permission.RECORD_AUDIO)
+                                                == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                            envVarsStr = com.winlator.star.core.DirectAudioSupport.withMicEnabled(envVarsStr, true)
+                                        } else {
+                                            micPermLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                                        }
+                                    } else {
+                                        envVarsStr = com.winlator.star.core.DirectAudioSupport.withMicEnabled(envVarsStr, false)
+                                    }
+                                }
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Microphone",
+                                    color = if (micDriverActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    if (micDriverActive) "Let games use the mic (DirectAudio captures input)"
+                                    else "Available on the DirectAudio driver",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.5.sp
+                                )
+                            }
+                            LinuxHelp(isLinuxEntry, R.string.help_linux_microphone) { helpRes = it }
+                        }
+                    }
+
+                    // Emulator — display-only relabel (see EmulatorLabels). On arm64ec the non-FEX
+                    // backend is wowbox64, and on an x86_64 container this picker is inert (the
+                    // launcher always runs bin/box64) so the disabled field must read Box64 instead
+                    // of the stored "FEXCore" default. What save() persists is unchanged.
+                    // It names which x86 backend the Wine launcher runs under, and the Linux runtime
+                    // brings its own FEX; the preset it honours is on the Advanced tab.
+                    if (!isLinuxEntry) {
+                    val emulatorShown =
+                        if (archLoaded && !isArm64EC) EmulatorLabels.box64EntryOf(emulatorEntries)
+                        else EmulatorLabels.display(selectedEmulator, isArm64EC)
                     DpDrop(
                         dp, "emulator",
                         label = "Emulator",
-                        options = emulatorEntries,
-                        selected = selectedEmulator,
-                        onSelect = { selectedEmulator = it },
+                        options = EmulatorLabels.options(emulatorEntries, isArm64EC),
+                        selected = emulatorShown,
+                        onSelect = {
+                            selectedEmulator = EmulatorLabels.fromDisplay(it, emulatorEntries, isArm64EC)
+                        },
                         enabled = isArm64EC
                     )
 
@@ -6553,7 +8440,8 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                         )
                     }
 
-                    // LC_ALL
+                    // LC_ALL — goes into the Wine environment (setupXEnvironment), which the gamescope
+                    // path returns before ever building; the session's locale comes from the runtime.
                     DpField(
                         dp, "lcAll",
                         value = lcAll,
@@ -6562,6 +8450,7 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
+                    } // end of the Wine launcher rows (Emulator / MIDI / LC_ALL)
 
                     // Fullscreen aspect-ratio mode (#71) — per-game override. Index 0 = use the
                     // container default; indices 1..5 map to Container.FULLSCREEN_OFF/FIT/STRETCH/FILL/INTEGER.
@@ -6575,25 +8464,41 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                     )
                     val fsOverrideIdx = if (fullscreenModeOverride < 0) 0 else (fullscreenModeOverride + 1)
                         .coerceIn(1, fsOverrideLabels.size - 1)
-                    DpDrop(
-                        dp, "fullscreen",
-                        label = stringResource(R.string.fullscreen_mode),
-                        options = fsOverrideLabels,
-                        selected = fsOverrideLabels[fsOverrideIdx],
-                        onSelect = { sel ->
-                            val idx = fsOverrideLabels.indexOf(sel)
-                            fullscreenModeOverride = if (idx <= 0) -1 else idx - 1
-                        }
-                    )
-
-                    // Close the session when this game exits (per-game override; container default is ON)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        DpCheck(dp, "autoClose", checked = autoCloseOnExit, onCheckedChange = { autoCloseOnExit = it })
-                        Text("Close when game exits")
+                    // Applies on X11 and Wayland alike (the compositor fits the desktop the same way).
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        DpDrop(
+                            dp, "fullscreen",
+                            label = stringResource(R.string.fullscreen_mode),
+                            options = fsOverrideLabels,
+                            selected = fsOverrideLabels[fsOverrideIdx],
+                            onSelect = { sel ->
+                                val idx = fsOverrideLabels.indexOf(sel)
+                                fullscreenModeOverride = if (idx <= 0) -1 else idx - 1
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                        LinuxHelp(isLinuxEntry, R.string.help_linux_fullscreen_mode) { helpRes = it }
                     }
 
+                    // Close the session when this game exits (per-game override; container default is ON).
+                    // The watcher that arms it lives past the gamescope early return and watches for a
+                    // Windows exe leaving the prefix, so it never fires for a Linux entry.
+                    if (!isLinuxEntry) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            DpCheck(dp, "autoClose", checked = autoCloseOnExit, onCheckedChange = { autoCloseOnExit = it })
+                            Text("Close when game exits")
+                        }
+                    }
+                            }
+                            4 -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     // Input section
                     SectionBox(title = "Input") {
+                        // XInput/DInput, exclusive input and the controller count are how WinHandler
+                        // presents pads to a Wine game and what it writes into the prefix's joystick
+                        // registry keys. A Linux session's pads arrive as fake-evdev devices instead,
+                        // so those rows are conditioned off and the ones that still act on the host
+                        // side (touchscreen mode, on-screen-control auto-hide, player slots, gyro) stay.
+                        if (!isLinuxEntry) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             DpSwitch(
                                 dp, "enableXInput",
@@ -6640,31 +8545,39 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                             DpCheck(dp, "disableXInput", checked = disabledXInput, onCheckedChange = { disabledXInput = it })
                             Text("Disable XInput")
                         }
+                        }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             DpCheck(dp, "simTouch", checked = simTouchScreen, onCheckedChange = { simTouchScreen = it })
                             Text("Touchscreen Mode")
+                            LinuxHelp(isLinuxEntry, R.string.help_linux_touchscreen_mode) { helpRes = it }
                         }
-                        DpDrop(
-                            dp, "numControllers",
-                            label = "Num Controllers",
-                            options = numControllersEntries,
-                            selected = selectedNumControllers,
-                            onSelect = { selectedNumControllers = it }
-                        )
+                        if (!isLinuxEntry) {
+                            DpDrop(
+                                dp, "numControllers",
+                                label = "Num Controllers",
+                                options = numControllersEntries,
+                                selected = selectedNumControllers,
+                                onSelect = { selectedNumControllers = it }
+                            )
+                        }
 
                         // #333 per-game auto-hide override (tri-state): inherit container / On / Off.
                         Spacer(Modifier.height(12.dp))
                         run {
                             val autoHideLabels = listOf("Use container default", "On", "Off")
                             val autoHideIdx = when (autoHideControlsOnPad) { "1" -> 1; "0" -> 2; else -> 0 }
-                            LabeledDropdown(
-                                label = "Hide on-screen controls when a controller connects",
-                                options = autoHideLabels,
-                                selectedOption = autoHideLabels[autoHideIdx],
-                                onSelect = {
-                                    autoHideControlsOnPad = when (autoHideLabels.indexOf(it)) { 1 -> "1"; 2 -> "0"; else -> "" }
-                                },
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                LabeledDropdown(
+                                    label = "Hide on-screen controls when a controller connects",
+                                    options = autoHideLabels,
+                                    selectedOption = autoHideLabels[autoHideIdx],
+                                    onSelect = {
+                                        autoHideControlsOnPad = when (autoHideLabels.indexOf(it)) { 1 -> "1"; 2 -> "0"; else -> "" }
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                LinuxHelp(isLinuxEntry, R.string.help_linux_autohide_controls) { helpRes = it }
+                            }
                         }
 
                         // Player Slots (per-game override). Empty override = inherit the container's
@@ -6674,7 +8587,7 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                         Spacer(Modifier.height(12.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Player Slots", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
-                            IconButton(onClick = { helpRes = R.string.help_player_slots }) {
+                            IconButton(onClick = { helpRes = if (isLinuxEntry) R.string.help_linux_player_slots else R.string.help_player_slots }) {
                                 Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
                             }
                             if (controllerSlotOverridesJson.isNotEmpty()) {
@@ -6701,6 +8614,7 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                             DpSwitch(dp, "gyroEnabled", checked = gyroEnabled, onCheckedChange = { gyroEnabled = it })
                             Spacer(Modifier.width(8.dp))
                             Text(stringResource(R.string.gyro_enabled), modifier = Modifier.weight(1f))
+                            LinuxHelp(isLinuxEntry, R.string.help_linux_gyro_enabled) { helpRes = it }
                         }
                         if (gyroEnabled) {
                             // Same pairing rule as the container editor: Tilt to Aim and the Mouse
@@ -6830,24 +8744,8 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                         }
                     }
 
-                    // Tabs — the tab ROW is one focusable node; Left/Right (while it's focused) switches
-                    // tabs. Tab CONTENT below is touch-navigable (deferred — see report).
-                    DpTabs(dp, "tabs", selected = selectedTab, count = tabTitles.size, onSelect = { selectedTab = it }) {
-                        TabRow(selectedTabIndex = selectedTab) {
-                            tabTitles.forEachIndexed { index, title ->
-                                Tab(
-                                    selected = selectedTab == index,
-                                    onClick = { selectedTab = index },
-                                    text = { Text(title) }
-                                )
                             }
-                        }
-                    }
-                    Spacer(Modifier.height(4.dp))
-
-                    // Tab content
-                    when (selectedTab) {
-                        0 -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            1 -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             RecommendedComponentsSection(
                                 container = shortcut.container,
                                 exeFile = gameExe,
@@ -6856,9 +8754,15 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
                             )
                             ScWinComponentsTab(winComponents)
                         }
-                        1 -> ScEnvVarsTab(envVarsStr, { envVarsStr = it }, gameDir)
-         2 -> ScAdvancedTab(
+                            2 -> ScEnvVarsTab(envVarsStr, { envVarsStr = it }, gameDir, isLinuxEntry)
+                            3 -> ScAdvancedTab(
+            shortcut = shortcut,
+            onPresetListChanged = {
+                box64Presets = Box64PresetManager.getPresets("box64", context)
+                fexCorePresets = FEXCorePresetManager.getPresets(context)
+            },
             isArm64EC = isArm64EC,
+            isLinuxEntry = isLinuxEntry,
             box64Versions = box64Versions,
             selectedBox64Version = selectedBox64Version,
             onBox64VersionChange = { selectedBox64Version = it },
@@ -6885,6 +8789,12 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
             cpuListViewRef = cpuListViewRef,
             initialCpuList = shortcut.getExtra("cpuList", shortcut.container.getCPUList(true)),
             onCpuListSnapshot = { shortcut.putExtra("cpuList", it) },
+            linuxClientCpuListViewRef = linuxClientCpuListViewRef,
+            initialLinuxClientCpuList = shortcut.getExtra("linuxClientCpuList", shortcut.container.getCPUList(true)),
+            onLinuxClientCpuListSnapshot = { shortcut.putExtra("linuxClientCpuList", it) },
+            linuxGameCpuListViewRef = linuxGameCpuListViewRef,
+            initialLinuxGameCpuList = shortcut.getExtra("linuxGameCpuList", shortcut.container.getCPUList(true)),
+            onLinuxGameCpuListSnapshot = { shortcut.putExtra("linuxGameCpuList", it) },
             sharpnessEffectEntries = sharpnessEffectEntries,
             selectedSharpnessEffect = selectedSharpnessEffect,
             onSharpnessEffectChange = { selectedSharpnessEffect = it },
@@ -6902,20 +8812,91 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
             onShowBox64DownloadSheet = { showBox64DownloadSheet = true },
             onShowFexCoreDownloadSheet = { showFexCoreDownloadSheet = true }
         )
+                            5 -> ScTvTab(
+                                dp = dp,
+                                display = tvDisplay,
+                                // This game's own render resolution, for the "instead of…" subtitle —
+                                // taken from the LIVE General-tab state, not the saved extra, so the
+                                // two tabs can't disagree while the dialog is open.
+                                gameScreenSize = if (selectedScreenSize == "Custom") "${customWidth}x${customHeight}"
+                                                 else StringUtils.parseIdentifier(selectedScreenSize),
+                                tvLaunch = tvLaunch,
+                                onTvLaunchChange = { tvLaunch = it },
+                                tvModeId = tvModeId,
+                                onTvModeIdChange = { tvModeId = it },
+                                tvMatchRes = tvMatchRes,
+                                onTvMatchResChange = { tvMatchRes = it },
+                            )
+                        }
+                    }
+                }
+
+                // ── Responsive tab layout ────────────────────────────────────────────────────────
+                // Portrait: the tab strip is pinned across the TOP (mirrors the container editor's
+                // top tab bar via the shared RailTopTabs). Landscape: the shared collapsible left rail
+                // beside the content. Left/Right on the focused "tabs" node still switches tabs for
+                // D-pad/controller users in both orientations, and L1/R1 switch from anywhere.
+                val railState = rememberRailState("shortcut")
+                val railItems = tabTitles.mapIndexed { position, tab ->
+                    val contentIndex = tabIndices[position]
+                    RailItem(tab, shortcutTabIcon(tab), contentIndex == selectedTab) { selectedTab = contentIndex }
+                }
+                // Same "What is all this?" glossary link the container editor surfaces on its rail.
+                val railLinks = listOf(RailLink("What is all this?", Icons.Filled.Help) { glossaryQuery = "" })
+                if (isPortrait) {
+                    Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        // Left/Right and L1/R1 step through the strip, so DpTabs works in POSITIONS.
+                        DpTabs(dp, "tabs", selected = tabIndices.indexOf(selectedTab).coerceAtLeast(0),
+                               count = tabTitles.size, onSelect = { selectedTab = tabIndices[it] }) {
+                            RailTopTabs(items = railItems, links = railLinks)
+                        }
+                        // Weighted so the internally-scrolling content takes exactly the space left
+                        // between the pinned tab strip and the pinned footer (never overflows it).
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth()) { mainContent() }
+                    }
+                } else {
+                    Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        DpTabs(dp, "tabs", selected = tabIndices.indexOf(selectedTab).coerceAtLeast(0),
+                               count = tabTitles.size, onSelect = { selectedTab = tabIndices[it] }) {
+                            CollapsibleRail(
+                                state = railState,
+                                title = shortcut.name,
+                                links = railLinks,
+                                sections = listOf(RailSection(header = null, items = railItems)),
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f).fillMaxHeight()) { mainContent() }
                     }
                 }
 
                 Divider(color = DividerColor)
+                // Compact footer — reduced padding + shrunk button height so the OK/Cancel bar
+                // matches the slimmed title bar above and frees vertical room for content.
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(8.dp),
-                    horizontalArrangement = Arrangement.End
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     DpButton(dp, "cancel", onActivate = onDismiss, onRightId = "ok") {
-                        TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+                        TextButton(
+                            onClick = onDismiss,
+                            // Definite height overrides TextButton's internal 40dp defaultMinSize
+                            // floor (which heightIn(min=…) can't lower), so the footer bar is genuinely
+                            // short — roughly matching the slim title bar at the top.
+                            modifier = Modifier.height(30.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                        ) { Text(stringResource(android.R.string.cancel)) }
                     }
                     Spacer(Modifier.width(8.dp))
                     DpButton(dp, "ok", onActivate = { save(); onDismiss() }, onLeftId = "cancel") {
-                        TextButton(onClick = { save(); onDismiss() }) { Text(stringResource(android.R.string.ok)) }
+                        TextButton(
+                            onClick = { save(); onDismiss() },
+                            // Definite height overrides TextButton's internal 40dp defaultMinSize
+                            // floor (which heightIn(min=…) can't lower), so the footer bar is genuinely
+                            // short — roughly matching the slim title bar at the top.
+                            modifier = Modifier.height(30.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                        ) { Text(stringResource(android.R.string.ok)) }
                     }
                 }
             }
@@ -6929,7 +8910,15 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
             graphicsDriver = StringUtils.parseIdentifier(selectedGfxDriver),
             initialConfig = graphicsDriverConfig,
             onConfirm = { graphicsDriverConfig = it; showGfxConfig = false },
-            onDismiss = { showGfxConfig = false }
+            onDismiss = { showGfxConfig = false },
+            waylandCompositorNote = effectiveWaylandShortcut
+        )
+    }
+    if (showWaylandDriverCfg) {
+        WaylandDriverSettingsDialog(
+            initialConfig = graphicsDriverConfig,
+            onConfirm = { graphicsDriverConfig = it; showWaylandDriverCfg = false },
+            onDismiss = { showWaylandDriverCfg = false }
         )
     }
     val isVegasCfg = StringUtils.parseIdentifier(selectedDxWrapper).contains("vegas")
@@ -6963,8 +8952,14 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
     glossaryQuery?.let { ContainerGlossarySheet(initialQuery = it, onDismiss = { glossaryQuery = null }) }
 
     if (showBox64DownloadSheet) {
+        // Arch-match the download sheet to the selector above it: arm64ec containers use WOWBox64,
+        // everything else Box64 (mirrors ContainerDetailScreen). Was hardcoded to Box64, so the
+        // "download more" button on an arm64ec shortcut opened the wrong content type.
         ContentDownloadSheet(
-            contentType = com.winlator.star.contents.ContentProfile.ContentType.CONTENT_TYPE_BOX64,
+            contentType = if (isArm64EC)
+                com.winlator.star.contents.ContentProfile.ContentType.CONTENT_TYPE_WOWBOX64
+            else
+                com.winlator.star.contents.ContentProfile.ContentType.CONTENT_TYPE_BOX64,
             onDismiss = { showBox64DownloadSheet = false },
             onContentChanged = {}
         )
@@ -7004,6 +8999,227 @@ internal fun ShortcutSettingsDialogScreen(shortcut: Shortcut, onDismiss: () -> U
         )
     }
     } // settings Dialog
+}
+
+/** The Material icon for each shortcut-settings tab (mirrors the container editor's tabIcon glyphs;
+ *  Controller gets a gamepad). Used by both the portrait top bar and the landscape rail. */
+private fun shortcutTabIcon(title: String): ImageVector = when (title) {
+    "General" -> Icons.Filled.Settings
+    "Win Components" -> Icons.Filled.Widgets
+    "Env Vars" -> Icons.Filled.Extension
+    "Advanced" -> Icons.Filled.Tune
+    "Controller" -> Icons.Filled.SportsEsports
+    "TV" -> Icons.Filled.Tv
+    else -> Icons.Filled.Settings
+}
+
+/**
+ * The "TV" tab — start this game's session ON a connected external display. See
+ * com.winlator.star.display.ExternalDisplay.
+ *
+ * Everything about the display (its name, its output modes, its HDR) is READ LIVE here and never
+ * stored: the caller re-reads it on every DisplayManager event, so unplugging the cable updates this
+ * tab (and takes it away) without the dialog being reopened.
+ *
+ * HDR is shown rather than asked. The compositor's HDR gate is decided from the display the session
+ * lands on (XServerDisplayActivity.hdrTargetDisplay), so a game started on an HDR10 TV simply gets HDR
+ * and one started on a panel without it does not — there is nothing here for the user to switch, only
+ * a reason to read when the answer is no.
+ *
+ * [display] null = the tab is only here because this game still has the setting stored.
+ * [gameScreenSize] this game's own render resolution ("1280x720"), for the "Match the TV's" subtitle.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ScTvTab(
+    dp: SettingsDpad,
+    display: android.view.Display?,
+    gameScreenSize: String,
+    tvLaunch: Boolean,
+    onTvLaunchChange: (Boolean) -> Unit,
+    tvModeId: Int,
+    onTvModeIdChange: (Int) -> Unit,
+    tvMatchRes: Boolean,
+    onTvMatchResChange: (Boolean) -> Unit,
+) {
+    val modes = com.winlator.star.display.ExternalDisplay.selectableModes(display)
+    val hdrReason = if (display == null) null else com.winlator.star.display.ExternalDisplay.hdrUnavailableReason(display)
+    val hdrOk = display != null && hdrReason == null
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // ── The display, as Android describes it right now ──────────────────────────────────────
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Filled.Tv, contentDescription = null,
+                        modifier = Modifier.size(28.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            if (display != null) com.winlator.star.display.ExternalDisplay.title(display)
+                            else "No external display",
+                            fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            if (display != null) com.winlator.star.display.ExternalDisplay.summary(display)
+                            else "Nothing is plugged in. This game is still set to launch on a TV, so the tab stays here.",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (display != null) {
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.foundation.layout.FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        com.winlator.star.display.ExternalDisplay.hdrChips(display).forEach { chip ->
+                            val on = com.winlator.star.display.ExternalDisplay.isHdrFormatChip(chip) && hdrOk
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (on) MaterialTheme.colorScheme.primaryContainer
+                                        else MaterialTheme.colorScheme.secondaryContainer
+                                    )
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Text(
+                                    chip,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (on) MaterialTheme.colorScheme.onPrimaryContainer
+                                            else MaterialTheme.colorScheme.onSecondaryContainer,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── The one switch that matters ─────────────────────────────────────────────────────────
+        TvSettingRow(
+            title = "Launch this game on the TV",
+            subtitle = com.winlator.star.display.ExternalDisplay.HELP_LAUNCH,
+        ) {
+            DpSwitch(dp, "tvLaunch", checked = tvLaunch, onCheckedChange = onTvLaunchChange)
+        }
+
+        // ── Output mode: what the TV is asked to run at ─────────────────────────────────────────
+        // A display that advertises exactly one mode has nothing to choose, so it reads back as a
+        // plain row (and stays out of the D-pad order — see dpadIds).
+        if (modes.size > 1) {
+            val values = listOf(0) + modes.map { it.modeId }
+            val labels = listOf("Default (leave the TV as it is)") +
+                modes.map { com.winlator.star.display.ExternalDisplay.modeLabel(it) }
+            DpDrop(
+                dp, "tvModeId",
+                label = "Output mode",
+                options = labels,
+                selected = labels[values.indexOf(tvModeId).coerceAtLeast(0)],
+                onSelect = { onTvModeIdChange(values[labels.indexOf(it)]) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "What the TV is told to run at.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            TvSettingRow(
+                title = "Output mode",
+                subtitle = if (display != null) "This screen advertises one output mode."
+                           else "Plug a screen in to choose an output mode.",
+            ) {
+                Text(
+                    com.winlator.star.display.ExternalDisplay.modeLabel(modes.firstOrNull()).ifEmpty { "—" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        // ── Render resolution ───────────────────────────────────────────────────────────────────
+        TvSettingRow(
+            title = "Match the TV's resolution",
+            subtitle = run {
+                val tvRes = com.winlator.star.display.ExternalDisplay.resolutionOf(
+                    com.winlator.star.display.ExternalDisplay.effectiveMode(display, tvModeId))
+                if (tvRes.isEmpty()) com.winlator.star.display.ExternalDisplay.HELP_MATCH_RES
+                else "Render at ${tvRes.replace("x", "×")} instead of this game's " +
+                     "${gameScreenSize.replace("x", "×")}. More pixels costs frame rate."
+            },
+        ) {
+            DpSwitch(dp, "tvMatchRes", checked = tvMatchRes, onCheckedChange = onTvMatchResChange)
+        }
+
+        // ── HDR: reported, never asked ──────────────────────────────────────────────────────────
+        TvSettingRow(
+            title = "Use HDR on the TV",
+            subtitle = hdrReason
+                ?: "Automatic. This screen accepts HDR10, so HDR output switches on for this game.",
+            dimSubtitle = !hdrOk,
+        ) {
+            // Deliberately a bare Switch, not a DpSwitch: it is a readout, so it must not be
+            // reachable with the D-pad or invite a tap.
+            Switch(checked = hdrOk, onCheckedChange = {}, enabled = false)
+        }
+
+        // ── The two things to know before the first try ─────────────────────────────────────────
+        TvNote(com.winlator.star.display.ExternalDisplay.NOTE_UNPLUG)
+        TvNote(com.winlator.star.display.ExternalDisplay.NOTE_TOUCH)
+    }
+}
+
+/** One TV-tab row: title + explanation on the left, its control on the right (the approved design). */
+@Composable
+private fun TvSettingRow(
+    title: String,
+    subtitle: String,
+    dimSubtitle: Boolean = false,
+    control: @Composable () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontSize = 14.sp)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (dimSubtitle) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        control()
+    }
+}
+
+/** A quiet boxed note under the TV rows (the mockup's "info" blocks). */
+@Composable
+private fun TvNote(text: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+        )
+    }
 }
 
 @Composable
@@ -7057,18 +9273,43 @@ private fun ScEnvVarsTab(
     envVars: String,
     onEnvVarsChange: (String) -> Unit,
     gameDir: File?,
+    /** A Linux (gamescope) entry: this tab carries its own "?" for the variables and the DLL toggle. */
+    isLinuxEntry: Boolean = false,
 ) {
-    EnvVarsEditor(
-        value = envVars,
-        onValueChange = onEnvVarsChange,
-        modifier = Modifier.fillMaxWidth(),
-        gameDir = gameDir
-    )
+    // Own helpRes, like every other tab composable here (the dialog's is out of scope).
+    var helpRes by remember { mutableStateOf<Int?>(null) }
+    helpRes?.let { HelpDialog(it) { helpRes = null } }
+    Column {
+        if (isLinuxEntry) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Environment variables", modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                LinuxHelp(true, R.string.help_linux_env_vars) { helpRes = it }
+            }
+        }
+        EnvVarsEditor(
+            value = envVars,
+            onValueChange = onEnvVarsChange,
+            modifier = Modifier.fillMaxWidth(),
+            gameDir = gameDir,
+            // The toggle lives inside the shared editor, so its Linux wording is handed in as text.
+            preferDllsHelp = if (isLinuxEntry) stringResource(R.string.help_linux_prefer_game_dlls) else null
+        )
+    }
 }
 
 @Composable
 private fun ScAdvancedTab(
+    /** The shortcut being edited — preset edits made here belong to THIS game and are stored on it. */
+    shortcut: Shortcut,
+    /** A preset was added / duplicated / removed / imported, so both lists need re-reading. */
+    onPresetListChanged: () -> Unit,
     isArm64EC: Boolean,
+    /**
+     * An entry the Linux runtime owns. Its session reads the FEXCore preset and the controls profile
+     * and pins CPU affinity through the compositor, but has no prefix for the x86 Wine backend,
+     * Wine's startup services or the vkBasalt/ReShade layers to act on.
+     */
+    isLinuxEntry: Boolean = false,
     box64Versions: List<String>,
     selectedBox64Version: String,
     onBox64VersionChange: (String) -> Unit,
@@ -7092,6 +9333,13 @@ private fun ScAdvancedTab(
     cpuListViewRef: MutableState<CPUListView?>,
     initialCpuList: String,
     onCpuListSnapshot: (String) -> Unit,
+    // Linux-only: the Steam client + compositor list, and the list a client-launched game gets.
+    linuxClientCpuListViewRef: MutableState<CPUListView?> = mutableStateOf<CPUListView?>(null),
+    initialLinuxClientCpuList: String = "",
+    onLinuxClientCpuListSnapshot: (String) -> Unit = {},
+    linuxGameCpuListViewRef: MutableState<CPUListView?> = mutableStateOf<CPUListView?>(null),
+    initialLinuxGameCpuList: String = "",
+    onLinuxGameCpuListSnapshot: (String) -> Unit = {},
     sharpnessEffectEntries: List<String>,
     selectedSharpnessEffect: String,
     onSharpnessEffectChange: (String) -> Unit,
@@ -7106,12 +9354,20 @@ private fun ScAdvancedTab(
     onShowBox64DownloadSheet: () -> Unit = {},
     onShowFexCoreDownloadSheet: () -> Unit = {},
 ) {
+    val context = LocalContext.current
+    // Bumped when a preset's values or the preset list change, so the "customised" badges
+    // re-evaluate — that state lives on the Shortcut, which Compose cannot observe by itself.
+    var presetRevision by remember { mutableIntStateOf(0) }
     // Flush legacy CPUListView selection back to the parent (Shortcut extras)
     // before the tab leaves composition, so a tab switch doesn't drop edits.
     DisposableEffect(Unit) {
         onDispose {
             cpuListViewRef.value?.let { onCpuListSnapshot(it.checkedCPUListAsString) }
             cpuListViewRef.value = null
+            linuxClientCpuListViewRef.value?.let { onLinuxClientCpuListSnapshot(it.checkedCPUListAsString) }
+            linuxClientCpuListViewRef.value = null
+            linuxGameCpuListViewRef.value?.let { onLinuxGameCpuListSnapshot(it.checkedCPUListAsString) }
+            linuxGameCpuListViewRef.value = null
         }
     }
     // On arm64ec containers the x86 backend is WOWBox64, not Box64 — label it correctly (matching
@@ -7123,6 +9379,9 @@ private fun ScAdvancedTab(
     var helpRes by remember { mutableStateOf<Int?>(null) }
     helpRes?.let { HelpDialog(it) { helpRes = null } }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Box64/WOWBox64 runs x86 Windows code inside the prefix. The Linux runtime's x86 games go
+        // through its own FEX, so this whole section (and its per-game preset) reaches nothing there.
+        if (!isLinuxEntry) {
         SectionBox(title = emulatorLabel) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 LabeledDropdown(
@@ -7139,21 +9398,52 @@ private fun ScAdvancedTab(
                     contentPadding = PaddingValues(0.dp),
                     shape = RoundedCornerShape(8.dp)
                 ) {
-                    Icon(Icons.Default.Settings, contentDescription = "Download Box64", tint = MaterialTheme.colorScheme.primary)
+                    Icon(Icons.Default.Settings, contentDescription = "Download $emulatorLabel", tint = MaterialTheme.colorScheme.primary)
                 }
             }
             Spacer(Modifier.height(8.dp))
             val presetNames = box64Presets.map { it.name }
-            LabeledDropdown(
-                label = "$emulatorLabel Preset",
-                options = presetNames,
-                selectedOption = presetNames.getOrElse(selectedBox64PresetIndex) { "" },
-                onSelect = { opt -> onBox64PresetIndexChange(presetNames.indexOf(opt).coerceAtLeast(0)) }
+            val b64Id = box64Presets.getOrNull(selectedBox64PresetIndex)?.id ?: ""
+            val b64Customised = remember(presetRevision, b64Id) {
+                b64Id.isNotEmpty() && PresetOverrides.isCustomised(
+                    context, false, b64Id, PresetScope.SHORTCUT, shortcut.container, shortcut
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                LabeledDropdown(
+                    label = "$emulatorLabel Preset",
+                    options = presetNames,
+                    selectedOption = presetNames.getOrElse(selectedBox64PresetIndex) { "" },
+                    onSelect = { opt -> onBox64PresetIndexChange(presetNames.indexOf(opt).coerceAtLeast(0)) },
+                    modifier = Modifier.weight(1f)
+                )
+                if (b64Customised) PresetCustomBadge()
+            }
+            // Scoped to this game: the shared preset, its container and every other game stay as
+            // they are. Values ride this dialog's OK, like every other field here.
+            PresetEditorRow(
+                kind = PresetKind.BOX64,
+                selectedPresetId = b64Id,
+                scope = PresetScope.SHORTCUT,
+                container = shortcut.container,
+                shortcut = shortcut,
+                onSelect = { id ->
+                    box64Presets.indexOfFirst { it.id == id }
+                        .takeIf { it >= 0 }?.let(onBox64PresetIndexChange)
+                },
+                onListChanged = { onPresetListChanged(); presetRevision++ },
+                onValuesChanged = { presetRevision++ },
             )
         }
+        }
 
-        if (isArm64EC) {
+        // A Linux session hands the FEXCore preset to the games the Steam client launches whatever the
+        // container's Windows architecture is, so the section is offered there even off arm64ec.
+        if (isArm64EC || isLinuxEntry) {
             SectionBox(title = "FEXCore") {
+                // The version picks which FEX build is staged into the container for the Wine
+                // launcher; the Linux runtime carries its own, so only the preset is offered there.
+                if (!isLinuxEntry) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     LabeledDropdown(
                         label = stringResource(R.string.fexcore_version),
@@ -7176,7 +9466,14 @@ private fun ScAdvancedTab(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
+                }
                 val fexNames = fexCorePresets.map { it.name }
+                val fexId = fexCorePresets.getOrNull(selectedFexPresetIndex)?.id ?: ""
+                val fexCustomised = remember(presetRevision, fexId) {
+                    fexId.isNotEmpty() && PresetOverrides.isCustomised(
+                        context, true, fexId, PresetScope.SHORTCUT, shortcut.container, shortcut
+                    )
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     LabeledDropdown(
                         label = stringResource(R.string.fexcore_preset),
@@ -7185,22 +9482,42 @@ private fun ScAdvancedTab(
                         onSelect = { opt -> onFexPresetIndexChange(fexNames.indexOf(opt).coerceAtLeast(0)) },
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(onClick = { helpRes = R.string.help_fexcore_preset }) {
+                    IconButton(onClick = { helpRes = if (isLinuxEntry) R.string.help_linux_fexcore_preset else R.string.help_fexcore_preset }) {
                         Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
                     }
+                    if (fexCustomised) PresetCustomBadge()
                 }
+                PresetEditorRow(
+                    kind = PresetKind.FEXCORE,
+                    selectedPresetId = fexId,
+                    scope = PresetScope.SHORTCUT,
+                    container = shortcut.container,
+                    shortcut = shortcut,
+                    onSelect = { id ->
+                        fexCorePresets.indexOfFirst { it.id == id }
+                            .takeIf { it >= 0 }?.let(onFexPresetIndexChange)
+                    },
+                    onListChanged = { onPresetListChanged(); presetRevision++ },
+                    onValuesChanged = { presetRevision++ },
+                )
             }
         }
 
         val profileNames = mutableListOf(stringResource(R.string.none))
         profileNames.addAll(controlsProfiles.map { it.getName() })
-        LabeledDropdown(
-            label = "Controls Profile",
-            options = profileNames,
-            selectedOption = profileNames.getOrElse(selectedControlsProfileIndex) { profileNames.first() },
-            onSelect = { opt -> onControlsProfileChange(profileNames.indexOf(opt).coerceAtLeast(0)) }
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            LabeledDropdown(
+                label = "Controls Profile",
+                options = profileNames,
+                selectedOption = profileNames.getOrElse(selectedControlsProfileIndex) { profileNames.first() },
+                onSelect = { opt -> onControlsProfileChange(profileNames.indexOf(opt).coerceAtLeast(0)) },
+                modifier = Modifier.weight(1f)
+            )
+            LinuxHelp(isLinuxEntry, R.string.help_linux_controls_profile) { helpRes = it }
+        }
 
+        // Which Wine services the prefix starts with. A gamescope session starts no wineserver at all.
+        if (!isLinuxEntry) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             LabeledDropdown(
                 label = stringResource(R.string.startup_selection),
@@ -7222,7 +9539,42 @@ private fun ScAdvancedTab(
                 onToggle = onStartupServiceToggle
             )
         }
+        }
 
+        // A Linux session runs two things that want different cores: the Steam client (the compositor
+        // draws its Big Picture UI, which is what feels sluggish) and whatever game the client launches.
+        // The Wine path has the one process tree, so it keeps the single section below.
+        if (isLinuxEntry) {
+            // Each section's title is drawn by SectionBox, so the "?" goes in that box's own top corner.
+            SectionBox(title = "Steam client cores") {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    LinuxHelp(true, R.string.help_linux_client_cores) { helpRes = it }
+                }
+                AndroidView(
+                    factory = { ctx ->
+                        CPUListView(ctx).also { cpv ->
+                            cpv.setCheckedCPUList(initialLinuxClientCpuList)
+                            linuxClientCpuListViewRef.value = cpv
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().wrapContentHeight()
+                )
+            }
+            SectionBox(title = "Game cores") {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    LinuxHelp(true, R.string.help_linux_game_cores) { helpRes = it }
+                }
+                AndroidView(
+                    factory = { ctx ->
+                        CPUListView(ctx).also { cpv ->
+                            cpv.setCheckedCPUList(initialLinuxGameCpuList)
+                            linuxGameCpuListViewRef.value = cpv
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().wrapContentHeight()
+                )
+            }
+        } else {
         SectionBox(title = stringResource(R.string.processor_affinity)) {
             AndroidView(
                 factory = { ctx ->
@@ -7234,7 +9586,11 @@ private fun ScAdvancedTab(
                 modifier = Modifier.fillMaxWidth().wrapContentHeight()
             )
         }
+        }
 
+        // vkBasalt (sharpness) and the ReShade loadout are Vulkan layers switched on through the Wine
+        // environment, which the gamescope path never builds; the client's games load neither.
+        if (!isLinuxEntry) {
         SectionBox(title = "Sharpness (VKBasalt)") {
             LabeledDropdown(
                 label = "Effect",
@@ -7268,6 +9624,7 @@ private fun ScAdvancedTab(
                 supported = reshadeSupported,
                 onCatalogChanged = onReshadeCatalogChanged,
             )
+        }
         }
     }
 }
@@ -7334,7 +9691,7 @@ private fun downloadBitmapOrNull(url: String): Bitmap? = try {
  * sets its cover art — Steam CDN 600x900 portrait, falling back to the landscape header. Writes
  * both customCoverArt and the grid-tile icon PNG (keyed on the current base). Returns the bitmap or null.
  */
-private fun applySteamCover(container: Container, base: String, appId: Int): Bitmap? {
+internal fun applySteamCover(container: Container, base: String, appId: Int): Bitmap? {
     val shortcutFile = File(container.getDesktopDir(), "$base.desktop")
     if (!shortcutFile.isFile) return null
     val bmp = downloadBitmapOrNull(SteamStoreSearch.coverUrl(appId))
@@ -7374,17 +9731,78 @@ private fun renameShortcut(shortcut: Shortcut, newName: String) {
 private fun Set<String>.toggle(path: String): Set<String> =
     if (path in this) this - path else this + path
 
-private fun runShortcut(activity: Activity, shortcut: Shortcut) {
+// The real launch — builds the XServerDisplayActivity intent (or the XR path) for a shortcut. Steam-
+// origin games funnel through the launch-method popup (see requestLaunch) BEFORE reaching here; every
+// other game comes straight in.
+// [preflightDone] = the SteamLite pre-flight already pulled cloud saves; the activity skips its own pull.
+private fun launchShortcutNow(activity: Activity, shortcut: Shortcut, preflightDone: Boolean = false) {
     if (!XrActivity.isEnabled(activity)) {
+        // Effective display backend: per-game override, else the container default. Wayland reuses
+        // XServerDisplayActivity's launch machinery via a guarded wayland_mode flag.
+        val backend = shortcut.getExtra("displayBackend", shortcut.container.displayBackend)
+        val wayland = backend == com.winlator.star.container.Container.DISPLAY_BACKEND_WAYLAND
         val intent = Intent(activity, XServerDisplayActivity::class.java).apply {
             putExtra("container_id", shortcut.container.id)
             putExtra("shortcut_path", shortcut.file.path)
             putExtra("shortcut_name", shortcut.name)
             putExtra("disableXinput", shortcut.getExtra("disableXinput", "0"))
+            if (preflightDone) putExtra(SteamSessionManager.EXTRA_PREFLIGHT_DONE, true)
+            if (wayland) putExtra("wayland_mode", true)
         }
-        activity.startActivity(intent)
+        if (!launchOnExternalDisplay(activity, shortcut, intent)) activity.startActivity(intent)
     } else {
         XrActivity.openIntent(activity, shortcut.container.id, shortcut.file.path)
+    }
+}
+
+/**
+ * "Launch this game on the TV" (the shortcut's TV tab — see display.ExternalDisplay): start the session
+ * ON the external display instead of the handheld. Returns true when it did, false when the caller
+ * should launch normally.
+ *
+ * This is what makes HDR work on a TV: the compositor's HDR gate is decided from the display the
+ * activity's window is on, so a session started here asks the TV about HDR10 rather than the handheld
+ * panel. setLaunchDisplayId is allowed for any app on a public display (a plugged-in HDMI/DP screen),
+ * so there is no root and no permission behind it — but the system may still decline, and a display can
+ * vanish between the check and the call. Anything going wrong falls back to an ordinary launch with a
+ * toast rather than leaving the user with no game.
+ */
+internal fun launchOnExternalDisplay(activity: Activity, shortcut: Shortcut, intent: Intent): Boolean {
+    if (!com.winlator.star.display.ExternalDisplay.launchOnTv(shortcut)) return false
+    val display = com.winlator.star.display.ExternalDisplay.find(activity) ?: return false
+    val options = com.winlator.star.display.ExternalDisplay.launchOptions(display.displayId) ?: return false
+    // The caller's intent is handed back to it untouched if this fails, so remember what it built:
+    // NEW_TASK is ours to add for the TV launch, and ours to take away again.
+    val callerHadNewTask = (intent.flags and Intent.FLAG_ACTIVITY_NEW_TASK) != 0
+    return try {
+        // A task on another display needs its own task; the session also has to be told WHICH display it
+        // was aimed at, so it can tell "the TV was unplugged" from any other configuration change.
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        intent.putExtra(com.winlator.star.display.ExternalDisplay.EXTRA_DISPLAY_ID, display.displayId)
+        // The handheld's companion screen goes up BEFORE the session, never after: Android focuses the
+        // display whose activity was started LAST, and the physical controller follows that focus - so
+        // starting it the other way round would take the pad off the TV at launch, the very problem the
+        // screen is there to explain. It carries a copy of the finished intent, which is what its "Send
+        // input back to the TV" button replays. The session takes the screen down again itself if the
+        // system declines the TV (a refusal nothing here can see) or when the game ends.
+        com.winlator.star.display.TvCompanionActivity.show(activity, shortcut.name, display, Intent(intent))
+        activity.startActivity(intent, options)
+        true
+    } catch (_: Exception) {
+        // Refused (an untrusted/private display, a vendor policy): drop the TV bits and let the caller
+        // start it the ordinary way, but say why the game is not on the TV. BOTH bits — the extra and
+        // NEW_TASK — or the ordinary startActivity below runs a singleTask activity with a flag no
+        // normal launch sets, which is its own source of odd task/back-stack behaviour.
+        // The companion went up first, so take it down: this game is about to open on the handheld.
+        com.winlator.star.display.TvCompanionActivity.dismiss("the TV launch was refused")
+        intent.removeExtra(com.winlator.star.display.ExternalDisplay.EXTRA_DISPLAY_ID)
+        if (!callerHadNewTask) intent.removeFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        Toast.makeText(
+            activity,
+            "Couldn't start this game on ${com.winlator.star.display.ExternalDisplay.title(display)} — opening on the handheld instead.",
+            Toast.LENGTH_LONG,
+        ).show()
+        false
     }
 }
 
@@ -7471,6 +9889,664 @@ private fun exportShortcut(context: Context, shortcut: Shortcut) {
  * Worth surfacing because it explains behaviour the user would otherwise have to guess at: a game
  * on a card is slower to load, and it disappears entirely if the card is removed.
  */
+@Composable
+private fun EosBadge(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFF1A73E8))
+            .padding(horizontal = 5.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "EOS",
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+/**
+ * Marks a shortcut whose store source is the Epic Games Store (storeSource=epic). Deliberately a
+ * neutral dark-grey pill so it reads as distinct from the blue EOS badge when both appear together.
+ */
+@Composable
+private fun EpicBadge(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFF2A2A2A))
+            .padding(horizontal = 5.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "EPIC",
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+/**
+ * Marks a shortcut whose store source is GOG (storeSource=gog, or — for untagged legacy GOG installs
+ * — an exec path under `gog_games`). GOG-brand purple pill, sized like the EPIC/EOS pills.
+ */
+@Composable
+private fun GogBadge(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFF7A2FBB))
+            .padding(horizontal = 5.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "GOG",
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+/**
+ * Marks a shortcut whose store source is Steam (storeSource=steam, or — for untagged legacy Steam
+ * installs — an exec path under `steam_games`; see [isSteamOriginShortcut]). Steam-brand dark navy
+ * pill, sized identically to the EPIC/EOS/GOG pills.
+ */
+@Composable
+private fun SteamBadge(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFF1B2838))
+            .padding(horizontal = 5.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "STEAM",
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+/**
+ * Marks a user-added game — imported via the "+" button or File Manager → Add as shortcut — as
+ * distinct from a store-library game. Teal pill, sized like the STEAM/EPIC/EOS/GOG pills. See
+ * [isCustomOriginShortcut] for the detection rule.
+ */
+@Composable
+private fun AmazonBadge(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFFE47911))
+            .padding(horizontal = 5.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "AMAZON",
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+/** The Linux runtime's own pill: these entries are not user-added games and are not from a store. */
+@Composable
+private fun LinuxBadge(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFF5C4B8A)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "LINUX",
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+        )
+    }
+}
+
+/** Amazon-brand orange pill, sized identically to the EPIC/EOS/GOG/STEAM/CUSTOM pills. */
+@Composable
+private fun CustomBadge(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFF2A8C82))
+            .padding(horizontal = 5.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "CUSTOM",
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+/**
+ * True when a shortcut is a GOG game. GOG shortcuts are UNTAGGED (StarLaunchBridge stamps no
+ * `storeSource` for the legacy GOG overload), so the load-bearing signal is the exec path living
+ * under `gog_games` (installs at `imagefs/gog_games/…` → `Z:\gog_games\…`); the `storeSource==gog`
+ * branch is defensive / forward-compat. Mirrors CustomSaveVault.isCustom's GOG exclusion.
+ */
+private fun isGogShortcut(shortcut: Shortcut): Boolean =
+    shortcut.getExtra("storeSource") == "gog" ||
+        (shortcut.path?.contains("gog_games", ignoreCase = true) == true)
+
+/**
+ * True for a user-added game (the "+" button or File Manager → Add as shortcut). New manual imports
+ * are tagged `storeSource=custom` (ExeShortcutImporter.writeExeShortcut); older untagged imports are
+ * inferred as custom when they match NO recognized store — no store tag, and not on the legacy
+ * `steam_games`/`gog_games` exec paths. Any shortcut carrying a non-custom store tag (steam/epic/gog/…)
+ * is excluded, so store-library games never show the CUSTOM badge.
+ */
+private fun isCustomOriginShortcut(shortcut: Shortcut): Boolean {
+    // The Linux runtime's own entries carry no store tag, so they would otherwise read as
+    // user-added games. They are neither: they get their own badge.
+    if (LinuxShortcuts.isLinuxEntry(shortcut)) return false
+    val src = shortcut.getExtra("storeSource", "")
+    if (src.isNotEmpty() && src != "custom") return false
+    if (isSteamOriginShortcut(shortcut)) return false
+    if (isGogShortcut(shortcut)) return false
+    if (isAmazonShortcut(shortcut)) return false
+    return true
+}
+
+/**
+ * True when a shortcut is an Amazon Games title. New Amazon shortcuts are tagged
+ * `storeSource=amazon` (StarLaunchBridge store overload); pre-tagging ones are recognised by the exec
+ * path living under the Amazon install root (`imagefs/Amazon/<title>/…` → `Z:\Amazon\…`).
+ */
+internal fun isAmazonShortcut(shortcut: Shortcut): Boolean {
+    if (shortcut.getExtra("storeSource") == "amazon") return true
+    val p = shortcut.path ?: return false
+    return AMAZON_ROOT_RE.containsMatchIn(p)
+}
+
+private val AMAZON_ROOT_RE = Regex("""(^|[\\/])Amazon[\\/]""")
+
+/**
+ * EPIC + EOS + GOG pills clustered for the top-left corner of a shortcut's cover art. Caller aligns
+ * and insets this (Alignment.TopStart, ~6dp); each pill keeps its own opaque background for contrast.
+ */
+// The stages of the "Copy to Drive C" flow, in order: confirm the source root, resolve a
+// destination collision, run the background copy, then offer to delete the original.
+private enum class CopyToCPhase { CONFIRM, OVERWRITE, COPYING, DELETE_ORIGINAL }
+
+/**
+ * Shared coordinator for "Copy to Drive C…". Fed a [target] shortcut by either entry point (the ⋮
+ * menu item or the editor's Storage-row button); [onFinished] clears that target and refreshes the
+ * list. Owns the whole flow and all its dialogs:
+ *   1. Locate the exe on disk. Already on C: (or unmappable) → toast + finish, no dialogs.
+ *   2. Confirm-source: propose the plausible game root, show its size, let the user Change folder…
+ *      Validates the chosen folder is an ancestor of the exe so the repoint is correct.
+ *   3. Free-space check against the data partition (drive_c lives under filesDir).
+ *   4. Background copy (cancelable progress) into drive_c/Games/<name>, with an overwrite prompt.
+ *   5. Repoint the shortcut to C:\Games\<name>\… — ONLY after a fully successful copy.
+ *   6. Offer to delete the original folder (Move) vs keep it (Copy).
+ * On cancel or any failure the partial destination is deleted and the shortcut is left untouched.
+ */
+@Composable
+private fun CopyToDriveCCoordinator(
+    target: Shortcut?,
+    onFinished: () -> Unit,
+) {
+    if (target == null) return
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    // Parsed once per opened game. exeAndroid == null => the drive letter isn't mapped, so the
+    // files can't be located; onDriveC => it's already where we'd copy it to.
+    val info = remember(target) { CopyGameToDriveC.parse(target) }
+    val actionable = info.exeAndroid != null && !info.onDriveC
+
+    // Step 1 short-circuits — fire a toast and bail before any dialog shows.
+    LaunchedEffect(target) {
+        if (info.onDriveC) {
+            Toast.makeText(context, "\"${target.name}\" already runs from Drive C.", Toast.LENGTH_SHORT).show()
+            onFinished()
+        } else if (info.exeAndroid == null) {
+            Toast.makeText(context, "Couldn't locate this game's files on disk.", Toast.LENGTH_LONG).show()
+            onFinished()
+        }
+    }
+    if (!actionable) return
+    val exeAndroid = info.exeAndroid!!
+
+    var phase by remember(target) { mutableStateOf(CopyToCPhase.CONFIRM) }
+    // Chosen/confirmed source root — defaults to the plausible game root, user can Change folder….
+    var sourceRoot by remember(target) { mutableStateOf(CopyGameToDriveC.defaultSourceRoot(exeAndroid)) }
+    var sourceSize by remember(target) { mutableStateOf<Long?>(null) } // null = still computing
+    var validationError by remember(target) { mutableStateOf<String?>(null) }
+    // Copy progress + cooperative cancel handle (read by copyTree on the IO thread).
+    val cancelFlag = remember(target) { java.util.concurrent.atomic.AtomicBoolean(false) }
+    var progress by remember(target) { mutableStateOf<CopyGameToDriveC.Progress?>(null) }
+
+    fun fmt(bytes: Long) = android.text.format.Formatter.formatShortFileSize(context, bytes)
+
+    // Size the source folder (background) and re-validate ancestry whenever the root changes.
+    LaunchedEffect(sourceRoot) {
+        validationError = if (!CopyGameToDriveC.isAncestor(sourceRoot, exeAndroid)) {
+            "That folder doesn't contain this game's .exe. Pick the folder the game runs from."
+        } else null
+        sourceSize = null
+        val size = withContext(Dispatchers.IO) { CopyGameToDriveC.folderSize(sourceRoot) }
+        sourceSize = size
+    }
+
+    // Folder picker (real absolute path via buildDirIntent) so the user can navigate to the true root.
+    val folderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            InAppFilePicker.pickedPath(result.data)?.let { sourceRoot = File(it) }
+        }
+    }
+
+    // Kick the background copy of [sourceRoot] into [dest]; [cleanFirst] wipes an existing dest
+    // (overwrite). Drives phase COPYING → DELETE_ORIGINAL on success, or finishes on cancel/failure.
+    fun startCopy(dest: File, cleanFirst: Boolean) {
+        cancelFlag.set(false)
+        val total = sourceSize ?: 0L
+        val src = sourceRoot
+        progress = CopyGameToDriveC.Progress(0, total, "")
+        phase = CopyToCPhase.COPYING
+        scope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (cleanFirst) dest.deleteRecursively()
+                    CopyGameToDriveC.copyTree(src, dest, total, { cancelFlag.get() }) { p -> progress = p }
+                    CopyGameToDriveC.repoint(target, src, dest)
+                        ?: throw java.io.IOException("Couldn't repoint the shortcut to the copied files.")
+                }
+            }
+            outcome.fold(
+                onSuccess = { phase = CopyToCPhase.DELETE_ORIGINAL },
+                onFailure = { e ->
+                    if (e is CopyGameToDriveC.CancelledException) {
+                        Toast.makeText(context, "Copy cancelled — nothing was changed.", Toast.LENGTH_SHORT).show()
+                    } else {
+                        android.util.Log.e("CopyToDriveC", "copy/repoint failed for ${target.name}", e)
+                        Toast.makeText(
+                            context,
+                            "Copy failed: ${e.message ?: "unknown error"}. Nothing was changed.",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                    onFinished()
+                },
+            )
+        }
+    }
+
+    // Validate ancestry + free space, resolve a destination collision, then start.
+    fun confirmAndCopy() {
+        if (!CopyGameToDriveC.isAncestor(sourceRoot, exeAndroid)) {
+            validationError = "That folder doesn't contain this game's .exe. Pick the folder the game runs from."
+            return
+        }
+        val size = sourceSize ?: return // still sizing — Copy is disabled, but guard anyway
+        if (!CopyGameToDriveC.hasRoomFor(context, size)) {
+            validationError = "Not enough space on Drive C. Needs ${fmt(size)} plus headroom, but only " +
+                "${fmt(CopyGameToDriveC.freeBytes(context))} is free."
+            return
+        }
+        val dest = CopyGameToDriveC.destRootFor(target.container, sourceRoot.name)
+        if (dest.exists()) phase = CopyToCPhase.OVERWRITE else startCopy(dest, cleanFirst = false)
+    }
+
+    when (phase) {
+        CopyToCPhase.CONFIRM -> OutlinedAlertDialog(
+            onDismissRequest = onFinished,
+            title = { Text("Copy \"${target.name}\" to Drive C") },
+            text = {
+                Column(
+                    modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        "Copies the game onto this container's C: drive (native app storage) and points " +
+                            "the shortcut there. Fixes games that stall streaming from shared storage.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurfaceVariant,
+                    )
+                    Text("Folder to copy", style = MaterialTheme.typography.labelMedium, color = OnSurface)
+                    Text(
+                        sourceRoot.absolutePath,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurfaceVariant,
+                    )
+                    Text(
+                        text = when {
+                            validationError != null -> "Size —"
+                            sourceSize == null -> "Calculating size…"
+                            else -> "Size: ${fmt(sourceSize!!)}"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurfaceVariant,
+                    )
+                    Text(
+                        "Pick the folder that holds everything the game needs, not just the .exe.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurfaceVariant,
+                    )
+                    validationError?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = DangerRed)
+                    }
+                    OutlinedButton(onClick = {
+                        val driveC = File(target.container.rootDir, ".wine/drive_c").takeIf { it.isDirectory }
+                        folderPicker.launch(
+                            InAppFilePicker.buildDirIntent(
+                                context, "Select the game's folder", initialDir = sourceRoot.absolutePath,
+                                driveCPath = driveC?.absolutePath,
+                            )
+                        )
+                    }) {
+                        Icon(Icons.Filled.Folder, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Change folder…")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { confirmAndCopy() },
+                    enabled = validationError == null && sourceSize != null,
+                ) { Text("Copy") }
+            },
+            dismissButton = { TextButton(onClick = onFinished) { Text("Cancel") } },
+        )
+
+        CopyToCPhase.OVERWRITE -> OutlinedAlertDialog(
+            onDismissRequest = onFinished,
+            title = { Text("Already on Drive C") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        "A folder named \"${sourceRoot.name}\" already exists under C:\\${CopyGameToDriveC.GAMES_SUBDIR}. " +
+                            "Overwrite it, or keep both by copying to a new folder?",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurfaceVariant,
+                    )
+                    OutlinedButton(onClick = {
+                        val dest = CopyGameToDriveC.autoRenamedDest(
+                            CopyGameToDriveC.destRootFor(target.container, sourceRoot.name)
+                        )
+                        startCopy(dest, cleanFirst = false)
+                    }) { Text("Keep both (new folder)") }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    startCopy(CopyGameToDriveC.destRootFor(target.container, sourceRoot.name), cleanFirst = true)
+                }) { Text("Overwrite") }
+            },
+            dismissButton = { TextButton(onClick = onFinished) { Text("Cancel") } },
+        )
+
+        CopyToCPhase.COPYING -> {
+            val p = progress
+            val total = p?.totalBytes ?: 0L
+            val done = p?.copiedBytes ?: 0L
+            OutlinedAlertDialog(
+                onDismissRequest = {}, // no accidental dismiss mid-copy; use Cancel
+                title = { Text("Copying to Drive C…") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (total > 0L) {
+                            LinearProgressIndicator(
+                                progress = (done.toFloat() / total.toFloat()).coerceIn(0f, 1f),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text(
+                                "${fmt(done)} / ${fmt(total)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = OnSurfaceVariant,
+                            )
+                        } else {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
+                        p?.currentFile?.takeIf { it.isNotEmpty() }?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = OnSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { cancelFlag.set(true) }) { Text("Cancel") }
+                },
+            )
+        }
+
+        CopyToCPhase.DELETE_ORIGINAL -> OutlinedAlertDialog(
+            onDismissRequest = {
+                Toast.makeText(context, "\"${target.name}\" now runs from Drive C.", Toast.LENGTH_SHORT).show()
+                onFinished()
+            },
+            title = { Text("Copied to Drive C") },
+            text = {
+                Text(
+                    "\"${target.name}\" now runs from Drive C. Delete the original folder to free " +
+                        "${sourceSize?.let { fmt(it) } ?: "space"}, or keep it as a backup?",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurfaceVariant,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val src = sourceRoot
+                    scope.launch {
+                        withContext(Dispatchers.IO) { runCatching { src.deleteRecursively() } }
+                        Toast.makeText(context, "Moved to Drive C — original deleted.", Toast.LENGTH_SHORT).show()
+                        onFinished()
+                    }
+                }) { Text("Delete original", color = DangerRed) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    Toast.makeText(context, "Copied to Drive C — original kept.", Toast.LENGTH_SHORT).show()
+                    onFinished()
+                }) { Text("Keep original") }
+            },
+        )
+    }
+}
+
+/**
+ * "Change executable" coordinator. Given a [target] shortcut, opens the in-app file picker at the
+ * current exe's folder (filtered to .exe/.lnk/.desktop, with the container's Drive-C rail available),
+ * then repoints the shortcut at the picked file through the shared [CopyGameToDriveC.setShortcutExe]
+ * — asking first whether to keep or clear the existing launch arguments. [onFinished] clears the
+ * target and refreshes the list (Shortcut.path is final — same reload pattern as copy-to-C). The
+ * shortcut is touched ONLY on a valid, mappable pick; anything else warns and aborts unchanged.
+ */
+@Composable
+private fun ChangeExecutableCoordinator(
+    target: Shortcut?,
+    onFinished: () -> Unit,
+) {
+    if (target == null) return
+    val context = LocalContext.current
+
+    val info = remember(target) { CopyGameToDriveC.parse(target) }
+    // A picked exe awaiting the keep/clear-args choice (null until then).
+    var pendingExe by remember(target) { mutableStateOf<File?>(null) }
+
+    // Extensions accepted as a launch target (matches the InAppFilePicker.SHORTCUT filter).
+    fun isSupported(name: String) =
+        name.substringAfterLast('.', "").lowercase() in setOf("exe", "lnk", "desktop")
+
+    // Write the new exe via the shared helper, toast the outcome, and finish. argsSuffix "" clears
+    // the launch args; a leading-space suffix keeps them.
+    fun applyExe(exe: File, argsSuffix: String) {
+        val win = CopyGameToDriveC.setShortcutExe(target, exe, argsSuffix)
+        if (win == null) {
+            Toast.makeText(
+                context,
+                "That file isn't on a drive this container can reach. Keep the game on storage the " +
+                    "container maps (internal/SD, or its C: drive).",
+                Toast.LENGTH_LONG,
+            ).show()
+        } else {
+            Toast.makeText(context, "\"${target.name}\" now launches $win", Toast.LENGTH_LONG).show()
+        }
+        onFinished()
+    }
+
+    val picker = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode != Activity.RESULT_OK) {
+            onFinished(); return@rememberLauncherForActivityResult
+        }
+        val file = InAppFilePicker.pickedPath(result.data)?.let { File(it) }
+        if (file == null || !file.isFile || !isSupported(file.name)) {
+            Toast.makeText(context, "Pick a .exe, .lnk, or .desktop file.", Toast.LENGTH_LONG).show()
+            onFinished(); return@rememberLauncherForActivityResult
+        }
+        // Ask about launch args only when there are some to keep; otherwise apply straight away.
+        if (info.argsSuffix.isBlank()) applyExe(file, "") else pendingExe = file
+    }
+
+    // Launch the picker once when this target opens, seeded at the current exe's folder.
+    LaunchedEffect(target) {
+        val driveC = File(target.container.rootDir, ".wine/drive_c").takeIf { it.isDirectory }
+        picker.launch(
+            InAppFilePicker.buildIntent(
+                context,
+                InAppFilePicker.SHORTCUT,
+                "Select the game's .exe",
+                initialDir = info.exeAndroid?.parentFile?.absolutePath,
+                driveCPath = driveC?.absolutePath,
+            )
+        )
+    }
+
+    // Keep-or-clear the launch arguments (default keep). Mirrors the backup-format chooser idiom.
+    pendingExe?.let { exe ->
+        OutlinedAlertDialog(
+            onDismissRequest = onFinished,
+            title = { Text("Launch arguments") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        "This shortcut launches with arguments:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = OnSurfaceVariant,
+                    )
+                    Text(
+                        info.argsSuffix.trim(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Column(
+                        modifier = Modifier.fillMaxWidth()
+                            .clickable { applyExe(exe, info.argsSuffix) }
+                            .padding(vertical = 8.dp),
+                    ) {
+                        Text("Keep arguments", color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            "Launch the new .exe with the same arguments",
+                            color = OnSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Column(
+                        modifier = Modifier.fillMaxWidth()
+                            .clickable { applyExe(exe, "") }
+                            .padding(vertical = 8.dp),
+                    ) {
+                        Text("Clear arguments", color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            "Launch the new .exe with no arguments",
+                            color = OnSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = onFinished) { Text("Cancel") } },
+        )
+    }
+}
+
+/**
+ * Marks a Steam title that runs through EA Desktop (shortcut tag `eaSupport=1`, see [EaSupport]) —
+ * it launches via SteamLite and needs the one-time EA setup. EA-brand red pill, sized like the others.
+ */
+@Composable
+private fun EaBadge(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFFC8102E))
+            .padding(horizontal = 5.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "EA",
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+@Composable
+private fun ShortcutBadgeOverlay(
+    showSteam: Boolean = false,
+    showEpic: Boolean,
+    showEos: Boolean,
+    showGog: Boolean,
+    showAmazon: Boolean = false,
+    showCustom: Boolean = false,
+    showEa: Boolean = false,
+    showLinux: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    if (!showSteam && !showEpic && !showEos && !showGog && !showAmazon && !showCustom && !showEa
+        && !showLinux) return
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (showSteam) SteamBadge()
+        if (showEa) EaBadge()
+        if (showEpic) EpicBadge()
+        if (showEos) EosBadge()
+        if (showGog) GogBadge()
+        if (showAmazon) AmazonBadge()
+        if (showCustom) CustomBadge()
+        if (showLinux) LinuxBadge()
+    }
+}
+
+/**
+ * Reads the cached {@code eos} identification extra for a shortcut and, if it has never
+ * been computed, kicks a bounded background filesystem scan (off the render path) that
+ * caches the result on the shortcut. Returns the current badge state, which flips to
+ * true once a scan finds EOS markers. Source-agnostic: works for any store origin.
+ */
+@Composable
+private fun rememberEosBadge(shortcut: Shortcut): Boolean {
+    var eos by remember(shortcut.path) { mutableStateOf(shortcut.getExtra("eos") == "1") }
+    LaunchedEffect(shortcut.path) {
+        if (!shortcut.hasExtra("eos")) {
+            com.winlator.star.store.EpicEosDetector.scanShortcutIfNeeded(shortcut) {
+                eos = shortcut.getExtra("eos") == "1"
+            }
+        }
+    }
+    return eos
+}
+
 @Composable
 private fun SdCardBadge(modifier: Modifier = Modifier) {
     Row(

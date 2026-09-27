@@ -25,6 +25,9 @@ public class ExternalController {
     public static final byte IDX_BUTTON_R3 = 9;
     public static final byte IDX_BUTTON_L2 = 10;
     public static final byte IDX_BUTTON_R2 = 11;
+    /** The Steam / Guide / Home button. Last, because 0-9 are the snapshot layout the fake-evdev
+     *  ring publishes and 10-11 are the triggers-as-buttons that are sent as axes instead. */
+    public static final byte IDX_BUTTON_MODE = 12;
     private String name;
     private String id;
     private int deviceId = -1;
@@ -45,6 +48,12 @@ public class ExternalController {
 
     public void setId(String id) {
         this.id = id;
+    }
+
+    /** Pins the deviceId for a pad with no Android InputDevice (a Steam Controller read through SDL,
+     *  see SteamControllerBackend.DEVICE_ID_BASE), so getDeviceId() never scans for it. */
+    public void setDeviceId(int deviceId) {
+        this.deviceId = deviceId;
     }
 
     public int getDeviceId() {
@@ -320,6 +329,26 @@ public class ExternalController {
     }
 
 
+    /** Physical family a controller belongs to, used ONLY to pick which picture the in-game
+     *  controller-test panel draws. The emulated XInput target is always an Xbox 360 pad regardless
+     *  of this — classification never changes what the guest sees. */
+    public enum PadType { XBOX, PS, GENERIC }
+
+    /** Classify a device into {@link PadType} by vendor id (Sony 0x054C → PS, Microsoft 0x045E →
+     *  XBOX) with a name fallback (playstation/dualshock/dualsense → PS, xbox → XBOX). Everything
+     *  else is GENERIC. Null-safe. */
+    public static PadType classifyType(InputDevice device) {
+        if (device == null) return PadType.GENERIC;
+        int vendor = device.getVendorId();
+        String name = device.getName();
+        String lower = name != null ? name.toLowerCase(Locale.US) : "";
+        if (vendor == 0x054C || lower.contains("playstation") || lower.contains("dualshock") || lower.contains("dualsense"))
+            return PadType.PS;
+        if (vendor == 0x045E || lower.contains("xbox"))
+            return PadType.XBOX;
+        return PadType.GENERIC;
+    }
+
     public float getCenteredAxis(MotionEvent event, int axis, int historyPos) {
         if (axis == MotionEvent.AXIS_HAT_X || axis == MotionEvent.AXIS_HAT_Y) {
             float value = event.getAxisValue(axis);
@@ -376,6 +405,8 @@ public class ExternalController {
                 return IDX_BUTTON_L2;
             case KeyEvent.KEYCODE_BUTTON_R2:
                 return IDX_BUTTON_R2;
+            case KeyEvent.KEYCODE_BUTTON_MODE:
+                return IDX_BUTTON_MODE;
             default:
                 return -1;
         }

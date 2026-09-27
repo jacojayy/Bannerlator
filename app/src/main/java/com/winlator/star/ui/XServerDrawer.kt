@@ -39,6 +39,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FlipToFront
+import androidx.compose.material.icons.filled.Help
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Memory
@@ -116,6 +117,7 @@ import com.winlator.star.perf.RootManager
 import com.winlator.star.reshade.ReshadeLoadout
 import com.winlator.star.reshade.ReshadeManager
 import com.winlator.star.ui.components.ColorPicker
+import com.winlator.star.ui.screens.HelpDialog
 import com.winlator.star.ui.screens.MenuItemDivider
 import com.winlator.star.ui.screens.WatchdogSection
 import com.winlator.star.ui.screens.outlinedMenuCard
@@ -153,6 +155,14 @@ fun XServerDrawer() {
     val isPaused by state.isPaused.collectAsState()
     val tvConnected by state.tvConnected.collectAsState()
     val castSupported by state.castSupported.collectAsState()
+    // Friends tab: present only while a live friends source exists for this launch (agent relay during
+    // a SteamLite game, else the app's own session); unread dot = a message landed while the thread
+    // wasn't open. See XServerFriendsTab.kt.
+    val friendsSource by com.winlator.star.store.InGameFriendsSource.state.collectAsState()
+    val friendsUnread by com.winlator.star.store.SteamFriendsStore.unread.collectAsState()
+    // Re-check the friends source on every drawer open (its liveness isn't all flow-driven).
+    val menuOpen by XServerDialogState.menuOpen.collectAsState()
+    LaunchedEffect(menuOpen) { if (menuOpen) com.winlator.star.store.InGameFriendsSource.poke() }
     val pauseIcon = if (isPaused) R.drawable.icon_play else R.drawable.icon_pause
     val accent = MaterialTheme.colorScheme.primary
     val surface = MaterialTheme.colorScheme.surface
@@ -217,6 +227,15 @@ fun XServerDrawer() {
                         TabIconButton(R.drawable.icon_debug, selectedTab == TabType.ADVANCED) {
                             handleTabClick(TabType.ADVANCED, state)
                         }
+                        if (friendsSource.tabVisible) {
+                            Spacer(Modifier.height(6.dp))
+                            FriendsTabButton(
+                                isSelected = selectedTab == TabType.FRIENDS,
+                                unread = friendsUnread.values.any { it > 0 },
+                            ) {
+                                handleTabClick(TabType.FRIENDS, state)
+                            }
+                        }
                         // TV / Cast tab: shown while a TV is wired-connected OR wireless casting is
                         // available (so the "Cast to a TV" button is always reachable). Gated behind
                         // FeatureFlags.TV_OUTPUT_ENABLED so the whole tab disappears while the feature
@@ -267,11 +286,14 @@ fun XServerDrawer() {
                 .background(accent)
         )
 
+        // The Friends tab owns its own scrolling (a LazyColumn roster / thread with the send box
+        // pinned at the bottom) — nesting that inside the pane's verticalScroll is illegal in
+        // Compose, so that one tab gets the pane without it.
         Column(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .verticalScroll(rememberScrollState())
+                .then(if (selectedTab == TabType.FRIENDS) Modifier else Modifier.verticalScroll(rememberScrollState()))
                 .padding(14.dp),
         ) {
             when (selectedTab) {
@@ -283,6 +305,7 @@ fun XServerDrawer() {
                 TabType.TASK_MANAGER -> TmContent()
                 TabType.TV -> TvContent(state)
                 TabType.AUDIO -> AudioContent(state)
+                TabType.FRIENDS -> FriendsContent(state)
             }
         }
     }
@@ -494,8 +517,8 @@ private fun TvContent(state: XServerDrawerState) {
             color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp,
             modifier = Modifier.padding(top = 4.dp))
     } else {
-        Text("Scaling filter", color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp, bottom = 6.dp))
+        ScalingModeHeader("Scaling filter", MaterialTheme.colorScheme.onSurface,
+            Modifier.padding(top = 4.dp, bottom = 6.dp))
         val initGlUpscalerMode by XServerDialogState.glUpscalerMode.collectAsState()
         var glUpscalerMode by remember(initGlUpscalerMode) { mutableIntStateOf(initGlUpscalerMode) }
         UpscalerModeButtons(glUpscalerMode, true) {
@@ -892,6 +915,21 @@ private fun GraphicsContent(state: XServerDrawerState) {
     Spacer(Modifier.height(6.dp))
     FullscreenModeButtons(selected = fullscreenMode) { state.onSetFullscreenMode?.accept(it) }
 
+    // Screen alignment (#413): Center/Top/Bottom, live like the mode above. Now applies in EVERY
+    // fullscreen mode — TOP/BOTTOM confine the game (Fit/Fill/Stretch/Integer alike) to its half and
+    // leave the other half for the controls, so the control is always live (no more STRETCH/FILL greying).
+    val screenAlignment by state.screenAlignment.collectAsState()
+    Spacer(Modifier.height(8.dp))
+    Text(
+        stringResource(R.string.screen_alignment),
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(6.dp))
+    ScreenAlignmentButtons(selected = screenAlignment, enabled = true) {
+        state.onSetScreenAlignment?.accept(it)
+    }
+
     Spacer(Modifier.height(4.dp))
     HorizontalDivider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(vertical = 6.dp))
 
@@ -910,8 +948,16 @@ private fun GraphicsContent(state: XServerDrawerState) {
     // live without reopening the drawer. (Only the GL block is gated; the Vulkan block uses its own
     // reset-on-enable mutual exclusion and stays interactive.)
     val nativeRenderingEnabled by state.nativeRenderingEnabled.collectAsState()
-    val glEnabled = !nativeRenderingEnabled
+    // Wayland: the whole effect/scaling chain below belongs to the X11 renderer's pass. It is live on
+    // Wayland only once the compositor reports its own chain (waylandEffectsAvailable); until then
+    // every control is greyed with the short reason, same callbacks and labels either way.
+    val isWaylandSession by state.isWaylandMode.collectAsState()
+    val waylandEffectsOk by state.waylandEffectsAvailable.collectAsState()
+    val waylandFxBlocked = isWaylandSession && !waylandEffectsOk
+    val glEnabled = !nativeRenderingEnabled && !waylandFxBlocked
     val glHeaderColor = if (glEnabled) accent else accent.copy(alpha = 0.4f)
+    val vkEnabled = !waylandFxBlocked
+    val vkHeaderColor = if (vkEnabled) accent else accent.copy(alpha = 0.4f)
 
     if (effectsSupported) {
         // ---- OpenGL: Scaling mode (real SGSR / FSR1 spatial upscalers; parity with the
@@ -921,18 +967,114 @@ private fun GraphicsContent(state: XServerDrawerState) {
         val initGlUpscalerMode by XServerDialogState.glUpscalerMode.collectAsState()
         var glUpscalerMode by remember(initGlUpscalerMode) { mutableIntStateOf(initGlUpscalerMode) }
 
-        Text("Scaling mode", color = glHeaderColor, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-        Spacer(Modifier.height(8.dp))
+        // ---- OpenGL: SGSR / HDR + Screen Effects (GL EffectComposer features) ----
+        val initSgsrEnabled   by XServerDialogState.sgsrEnabled.collectAsState()
+        val initSgsrSharpness by XServerDialogState.sgsrSharpness.collectAsState()
+        val initHdrEnabled    by XServerDialogState.hdrEnabled.collectAsState()
+        var sgsrEnabled   by remember(initSgsrEnabled)   { mutableStateOf(initSgsrEnabled) }
+        var sgsrSharpness by remember(initSgsrSharpness) { mutableIntStateOf(initSgsrSharpness) }
+        var hdrEnabled    by remember(initHdrEnabled)    { mutableStateOf(initHdrEnabled) }
+
+        // Screen-effect (colour grade + shader toggle) state. Declared up here, ahead of the
+        // first control, because the Looks row below drives the sharpening / debanding /
+        // scaling controls that are EMITTED above the Screen Effects header.
+        val seBrightness by XServerDialogState.seBrightness.collectAsState()
+        val seContrast by XServerDialogState.seContrast.collectAsState()
+        val seGamma by XServerDialogState.seGamma.collectAsState()
+        val seSaturation by XServerDialogState.seSaturation.collectAsState()
+        val seFxaa by XServerDialogState.seFxaa.collectAsState()
+        val seCrt by XServerDialogState.seCrt.collectAsState()
+        val seToon by XServerDialogState.seToon.collectAsState()
+        val seNtsc by XServerDialogState.seNtsc.collectAsState()
+        val seDeband by XServerDialogState.debandEnabled.collectAsState()
+        var localBrightness by remember(seBrightness) { mutableFloatStateOf(seBrightness) }
+        var localContrast by remember(seContrast) { mutableFloatStateOf(seContrast) }
+        var localGamma by remember(seGamma) { mutableFloatStateOf(seGamma) }
+        var localSaturation by remember(seSaturation) { mutableFloatStateOf(seSaturation) }
+        var localFxaa by remember(seFxaa) { mutableStateOf(seFxaa) }
+        var localCrt by remember(seCrt) { mutableStateOf(seCrt) }
+        var localToon by remember(seToon) { mutableStateOf(seToon) }
+        var localNtsc by remember(seNtsc) { mutableStateOf(seNtsc) }
+
+        fun applySe() {
+            XServerDialogState.onScreenEffectsApply?.invoke(localBrightness, localContrast, localGamma, localSaturation, localFxaa, localCrt, localToon, localNtsc, 0)
+        }
+
+        // ---- Looks: one-tap presets over the controls in this whole section ----------------
+        // The chip row is only a shortcut: it writes the SAME local state and fires the SAME
+        // appliers the sliders and toggles below use, so nothing here is a second code path.
+        // `selectedLook` is seeded by matching the live values, so a session launched with
+        // effects already on honestly shows "Custom" rather than claiming "Off".
+        var selectedLook by remember {
+            mutableStateOf(
+                ScreenEffectLooks.indexOfMatch(
+                    seBrightness, seContrast, seGamma, seSaturation,
+                    if (initSgsrEnabled) initSgsrSharpness else 0,
+                    seFxaa, seCrt, seToon, seNtsc, seDeband, initGlUpscalerMode
+                )
+            )
+        }
+
+        fun applyGlLook(index: Int) {
+            val look = ScreenEffectLooks.LOOKS[index]
+            selectedLook = index
+            // 1. Colour grade + the four shader toggles -> onScreenEffectsApply.
+            localBrightness = look.brightness
+            localContrast   = look.contrast
+            localGamma      = look.gamma
+            localSaturation = look.saturation.toFloat()
+            localFxaa = look.fxaa; localCrt = look.crt; localToon = look.toon; localNtsc = look.ntsc
+            XServerDialogState.setSeBrightness(localBrightness)
+            XServerDialogState.setSeContrast(localContrast)
+            XServerDialogState.setSeGamma(localGamma)
+            XServerDialogState.setSeSaturation(localSaturation)
+            XServerDialogState.setSeFxaa(localFxaa)
+            XServerDialogState.setSeCrt(localCrt)
+            XServerDialogState.setSeToon(localToon)
+            XServerDialogState.setSeNtsc(localNtsc)
+            applySe()
+            // 2. Sharpening -> pushSgsrUpdate. cas == 0 means the pass is OFF; a non-zero level
+            //    also moves the slider. Leaving the level alone at 0 keeps the user's last value
+            //    under the (now hidden) slider instead of zeroing it.
+            sgsrEnabled = look.cas > 0
+            if (look.cas > 0) sgsrSharpness = look.cas
+            XServerDialogState.setSgsrEnabled(sgsrEnabled)
+            XServerDialogState.setSgsrSharpness(sgsrSharpness)
+            pushSgsrUpdate(sgsrEnabled, sgsrSharpness, hdrEnabled)
+            // 3. Terminal debanding -> onDebandApply (DebandControls re-seeds off the flow).
+            XServerDialogState.setDebandEnabled(look.deband)
+            XServerDialogState.onDebandApply?.invoke(look.deband, XServerDialogState.debandStrength.value)
+            // 4. Scaling mode ONLY when the Look actually names one; otherwise the user's
+            //    scaling choice is left exactly as it was.
+            look.scalingMode?.let { mode ->
+                glUpscalerMode = mode
+                XServerDialogState.setGlUpscalerMode(mode)
+                XServerDialogState.onGlUpscalerApply?.invoke(mode)
+            }
+        }
+
+        // A manual move of a control the active Look OWNS drops back to "Custom". Controls no
+        // Look touches (HDR, the upscaler's own sharpness) deliberately do not.
+        fun lookTouched() { selectedLook = null }
+        fun lookTouchedScaling() {
+            if (ScreenEffectLooks.LOOKS.getOrNull(selectedLook ?: -1)?.scalingMode != null) selectedLook = null
+        }
+
+        ScalingModeHeader("Scaling mode", glHeaderColor)
+        if (waylandFxBlocked) WaylandNotYetNote()
+        Spacer(Modifier.height(2.dp))
         UpscalerModeButtons(glUpscalerMode, glEnabled) {
             glUpscalerMode = it
+            XServerDialogState.setGlUpscalerMode(it)
+            lookTouchedScaling()
             XServerDialogState.onGlUpscalerApply?.invoke(it)
         }
         // "Sharpness" drives SGSR EdgeSharpness / FSR RCAS / CAS / NIS, for the sharpening modes.
-        if (glUpscalerMode == 3 || glUpscalerMode == 4 || glUpscalerMode == 5 || glUpscalerMode == 6 || glUpscalerMode == 7) {
+        if (glUpscalerMode in 3..8) {
             val initGlUpscaleSharpness by XServerDialogState.glUpscaleSharpness.collectAsState()
             var glUpscaleSharpness by remember(initGlUpscaleSharpness) { mutableIntStateOf(initGlUpscaleSharpness) }
             Spacer(Modifier.height(4.dp))
-            // Continuous for SGSR/FSR (3/4/5); snapped to 5 stops {0,25,50,75,100} for
+            // Continuous for SGSR/FSR/NIS/SGSR HQ (3/4/5/7/8); snapped to 5 stops {0,25,50,75,100} for
             // Sharpen mode (6), where stop 0 = OFF (no CAS pass).
             IntSlider("Sharpness", glUpscaleSharpness, 0..100,
                 onValueChange = { glUpscaleSharpness = it },
@@ -945,60 +1087,63 @@ private fun GraphicsContent(state: XServerDrawerState) {
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(vertical = 6.dp))
 
-        // ---- OpenGL: SGSR / HDR + Screen Effects (GL EffectComposer features) ----
-        val initSgsrEnabled   by XServerDialogState.sgsrEnabled.collectAsState()
-        val initSgsrSharpness by XServerDialogState.sgsrSharpness.collectAsState()
-        val initHdrEnabled    by XServerDialogState.hdrEnabled.collectAsState()
-        var sgsrEnabled   by remember(initSgsrEnabled)   { mutableStateOf(initSgsrEnabled) }
-        var sgsrSharpness by remember(initSgsrSharpness) { mutableIntStateOf(initSgsrSharpness) }
-        var hdrEnabled    by remember(initHdrEnabled)    { mutableStateOf(initHdrEnabled) }
-
-        ToggleRow("Sharpen (CAS)", sgsrEnabled, glEnabled) { sgsrEnabled = it; pushSgsrUpdate(sgsrEnabled, sgsrSharpness, hdrEnabled) }
+        ToggleRow("Sharpen (CAS)", sgsrEnabled, glEnabled) {
+            sgsrEnabled = it
+            XServerDialogState.setSgsrEnabled(it)
+            lookTouched()
+            pushSgsrUpdate(sgsrEnabled, sgsrSharpness, hdrEnabled)
+        }
         if (sgsrEnabled) {
             Spacer(Modifier.height(4.dp))
             // Standalone CAS sharpen: always snapped to 5 stops {0,25,50,75,100}, stop 0 = OFF.
+            // (A Look may park it between stops — the effect is continuous; the snap only bites
+            // when the user drags it.)
             IntSlider("Sharpness", sgsrSharpness, 0..100,
-                onValueChange = { sgsrSharpness = it },
-                onValueChangeFinished = { pushSgsrUpdate(sgsrEnabled, sgsrSharpness, hdrEnabled) },
+                onValueChange = { sgsrSharpness = it; lookTouched() },
+                onValueChangeFinished = {
+                    XServerDialogState.setSgsrSharpness(sgsrSharpness)
+                    pushSgsrUpdate(sgsrEnabled, sgsrSharpness, hdrEnabled)
+                },
                 steps = 3, enabled = glEnabled)
         }
         ToggleRow("HDR", hdrEnabled, glEnabled) { hdrEnabled = it; pushSgsrUpdate(sgsrEnabled, sgsrSharpness, hdrEnabled) }
 
         // Terminal debanding (TPDF dither) — kills 8-bit gradient banding. Drawer-only / session-live.
-        DebandControls(glEnabled)
+        DebandControls(glEnabled) { lookTouched() }
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(vertical = 6.dp))
 
         Text("Screen Effects", color = glHeaderColor, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
         Spacer(Modifier.height(4.dp))
 
-        val seBrightness by XServerDialogState.seBrightness.collectAsState()
-        val seContrast by XServerDialogState.seContrast.collectAsState()
-        val seGamma by XServerDialogState.seGamma.collectAsState()
-        val seFxaa by XServerDialogState.seFxaa.collectAsState()
-        val seCrt by XServerDialogState.seCrt.collectAsState()
-        val seToon by XServerDialogState.seToon.collectAsState()
-        val seNtsc by XServerDialogState.seNtsc.collectAsState()
-        var localBrightness by remember(seBrightness) { mutableFloatStateOf(seBrightness) }
-        var localContrast by remember(seContrast) { mutableFloatStateOf(seContrast) }
-        var localGamma by remember(seGamma) { mutableFloatStateOf(seGamma) }
-        var localFxaa by remember(seFxaa) { mutableStateOf(seFxaa) }
-        var localCrt by remember(seCrt) { mutableStateOf(seCrt) }
-        var localToon by remember(seToon) { mutableStateOf(seToon) }
-        var localNtsc by remember(seNtsc) { mutableStateOf(seNtsc) }
+        LooksRow(
+            selected = selectedLook,
+            enabled = glEnabled,
+            onPick = { applyGlLook(it) }
+        )
 
-        fun applySe() {
-            XServerDialogState.onScreenEffectsApply?.invoke(localBrightness, localContrast, localGamma, localFxaa, localCrt, localToon, localNtsc, 0)
-        }
+        LabeledSlider("Brightness", localBrightness, -100f..100f,
+            { localBrightness = it; lookTouched(); applySe() },
+            onValueChangeFinished = { XServerDialogState.setSeBrightness(localBrightness) },
+            enabled = glEnabled)
+        LabeledSlider("Contrast", localContrast, -100f..100f,
+            { localContrast = it; lookTouched(); applySe() },
+            onValueChangeFinished = { XServerDialogState.setSeContrast(localContrast) },
+            enabled = glEnabled)
+        LabeledSlider("Gamma", localGamma, 0.5f..3.0f,
+            { localGamma = it; lookTouched(); applySe() },
+            onValueChangeFinished = { XServerDialogState.setSeGamma(localGamma) },
+            enabled = glEnabled, format = { "%.2f".format(it) })
+        // Saturation: 0..200 percent, 100 = neutral (grey at 0, 2x at 200).
+        LabeledSlider("Saturation", localSaturation, 0f..200f,
+            { localSaturation = it; lookTouched(); applySe() },
+            onValueChangeFinished = { XServerDialogState.setSeSaturation(localSaturation) },
+            enabled = glEnabled)
 
-        LabeledSlider("Brightness", localBrightness, -100f..100f, { localBrightness = it; applySe() }, enabled = glEnabled)
-        LabeledSlider("Contrast", localContrast, -100f..100f, { localContrast = it; applySe() }, enabled = glEnabled)
-        LabeledSlider("Gamma", localGamma, 0.5f..3.0f, { localGamma = it; applySe() }, enabled = glEnabled, format = { "%.2f".format(it) })
-
-        SeShaderToggle("FXAA", localFxaa, glEnabled) { localFxaa = it; applySe() }
-        SeShaderToggle("CRT", localCrt, glEnabled) { localCrt = it; applySe() }
-        SeShaderToggle("Toon", localToon, glEnabled) { localToon = it; applySe() }
-        SeShaderToggle("NTSC", localNtsc, glEnabled) { localNtsc = it; applySe() }
+        SeShaderToggle("FXAA", localFxaa, glEnabled) { localFxaa = it; XServerDialogState.setSeFxaa(it); lookTouched(); applySe() }
+        SeShaderToggle("CRT", localCrt, glEnabled) { localCrt = it; XServerDialogState.setSeCrt(it); lookTouched(); applySe() }
+        SeShaderToggle("Toon", localToon, glEnabled) { localToon = it; XServerDialogState.setSeToon(it); lookTouched(); applySe() }
+        SeShaderToggle("NTSC", localNtsc, glEnabled) { localNtsc = it; XServerDialogState.setSeNtsc(it); lookTouched(); applySe() }
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(vertical = 6.dp))
     }
@@ -1011,26 +1156,6 @@ private fun GraphicsContent(state: XServerDrawerState) {
         val initUpscalerMode by XServerDialogState.upscalerMode.collectAsState()
         var upscalerMode by remember(initUpscalerMode) { mutableIntStateOf(initUpscalerMode) }
 
-        Text("Scaling mode", color = accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-        Spacer(Modifier.height(8.dp))
-        UpscalerModeButtons(upscalerMode, true) {
-            upscalerMode = it
-            XServerDialogState.onUpscalerApply?.invoke(it)
-        }
-
-        // "Sharpness" controls the REAL upscaler sharpness (RCAS stops / SGSR EdgeSharpness /
-        // NIS sharpness) and only applies to the sharpening scaling modes (SGSR/FSR/FSR-Fit/Sharpen/NIS).
-        if (upscalerMode == 3 || upscalerMode == 4 || upscalerMode == 5 || upscalerMode == 6 || upscalerMode == 7) {
-            val initUpscaleSharpness by XServerDialogState.upscaleSharpness.collectAsState()
-            var upscaleSharpness by remember(initUpscaleSharpness) { mutableIntStateOf(initUpscaleSharpness) }
-            Spacer(Modifier.height(4.dp))
-            IntSlider("Sharpness", upscaleSharpness, 0..100, { upscaleSharpness = it }, {
-                XServerDialogState.onUpscaleSharpnessApply?.invoke(upscaleSharpness)
-            })
-        }
-
-        Spacer(Modifier.height(4.dp))
-
         // ---- Composable post effects (layer on top of any scaling mode) ----
         val initCasEnabled   by XServerDialogState.casEnabled.collectAsState()
         val initCasSharpness by XServerDialogState.casSharpness.collectAsState()
@@ -1039,42 +1164,24 @@ private fun GraphicsContent(state: XServerDrawerState) {
         var casSharpness by remember(initCasSharpness) { mutableIntStateOf(initCasSharpness) }
         var hdrVkEnabled by remember(initHdrVkEnabled) { mutableStateOf(initHdrVkEnabled) }
 
-        ToggleRow("CAS", casEnabled, true) {
-            casEnabled = it
-            XServerDialogState.onCasApply?.invoke(casEnabled, casSharpness)
-        }
-        if (casEnabled) {
-            Spacer(Modifier.height(4.dp))
-            IntSlider("CAS Sharpness", casSharpness, 0..100, { casSharpness = it }, {
-                XServerDialogState.onCasApply?.invoke(casEnabled, casSharpness)
-            })
-        }
-        ToggleRow("HDR", hdrVkEnabled, true) {
-            hdrVkEnabled = it
-            XServerDialogState.onHdrApply?.invoke(hdrVkEnabled)
-        }
-
-        // Terminal debanding (TPDF dither) — kills 8-bit gradient banding. Drawer-only / session-live.
-        DebandControls()
-
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(vertical = 6.dp))
-
         // ---- Screen Effects (GL EffectComposer parity, ported to the Vulkan post
         //      chain). Color grade is always-applied via the sliders (neutral = no-op);
         //      FXAA/Toon/CRT/NTSC are toggles. Drawer-only / session-live. ----
-        Text("Screen Effects", color = accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-        Spacer(Modifier.height(4.dp))
-
+        //      Declared up here, ahead of the first control, because the Looks row below
+        //      drives the CAS / debanding / scaling controls emitted above its header.
         val initVkBrightness by XServerDialogState.vkBrightness.collectAsState()
         val initVkContrast   by XServerDialogState.vkContrast.collectAsState()
         val initVkGamma      by XServerDialogState.vkGamma.collectAsState()
+        val initVkSaturation by XServerDialogState.vkSaturation.collectAsState()
         val initVkFxaa       by XServerDialogState.vkFxaa.collectAsState()
         val initVkToon       by XServerDialogState.vkToon.collectAsState()
         val initVkCrt        by XServerDialogState.vkCrt.collectAsState()
         val initVkNtsc       by XServerDialogState.vkNtsc.collectAsState()
+        val initVkDeband     by XServerDialogState.debandEnabled.collectAsState()
         var vkBrightness by remember(initVkBrightness) { mutableFloatStateOf(initVkBrightness) }
         var vkContrast   by remember(initVkContrast)   { mutableFloatStateOf(initVkContrast) }
         var vkGamma      by remember(initVkGamma)      { mutableFloatStateOf(initVkGamma) }
+        var vkSaturation by remember(initVkSaturation) { mutableFloatStateOf(initVkSaturation) }
         var vkFxaa       by remember(initVkFxaa)       { mutableStateOf(initVkFxaa) }
         var vkToon       by remember(initVkToon)       { mutableStateOf(initVkToon) }
         var vkCrt        by remember(initVkCrt)        { mutableStateOf(initVkCrt) }
@@ -1082,21 +1189,145 @@ private fun GraphicsContent(state: XServerDrawerState) {
 
         fun applyVkSe() {
             XServerDialogState.onVulkanScreenEffectsApply?.invoke(
-                vkBrightness, vkContrast, vkGamma, vkFxaa, vkToon, vkCrt, vkNtsc)
+                vkBrightness, vkContrast, vkGamma, vkSaturation, vkFxaa, vkToon, vkCrt, vkNtsc)
         }
 
-        LabeledSlider("Brightness", vkBrightness, -100f..100f, { vkBrightness = it; applyVkSe() }, enabled = true)
-        LabeledSlider("Contrast", vkContrast, -100f..100f, { vkContrast = it; applyVkSe() }, enabled = true)
-        LabeledSlider("Gamma", vkGamma, 0.5f..3.0f, { vkGamma = it; applyVkSe() }, enabled = true, format = { "%.2f".format(it) })
+        // ---- Looks: one-tap presets, same table as the OpenGL block ------------------------
+        // Writes the same local state and fires the same appliers the controls below use.
+        var selectedLook by remember {
+            mutableStateOf(
+                ScreenEffectLooks.indexOfMatch(
+                    initVkBrightness, initVkContrast, initVkGamma, initVkSaturation,
+                    if (initCasEnabled) initCasSharpness else 0,
+                    initVkFxaa, initVkCrt, initVkToon, initVkNtsc, initVkDeband, initUpscalerMode
+                )
+            )
+        }
+
+        fun applyVkLook(index: Int) {
+            val look = ScreenEffectLooks.LOOKS[index]
+            selectedLook = index
+            // 1. Colour grade + the four shader toggles -> onVulkanScreenEffectsApply.
+            vkBrightness = look.brightness
+            vkContrast   = look.contrast
+            vkGamma      = look.gamma
+            vkSaturation = look.saturation.toFloat()
+            vkFxaa = look.fxaa; vkCrt = look.crt; vkToon = look.toon; vkNtsc = look.ntsc
+            XServerDialogState.setVkBrightness(vkBrightness)
+            XServerDialogState.setVkContrast(vkContrast)
+            XServerDialogState.setVkGamma(vkGamma)
+            XServerDialogState.setVkSaturation(vkSaturation)
+            XServerDialogState.setVkFxaa(vkFxaa)
+            XServerDialogState.setVkCrt(vkCrt)
+            XServerDialogState.setVkToon(vkToon)
+            XServerDialogState.setVkNtsc(vkNtsc)
+            applyVkSe()
+            // 2. Sharpening -> onCasApply. cas == 0 means the CAS pass is OFF; a non-zero level
+            //    also moves the slider (0 leaves the user's last level under the hidden slider).
+            casEnabled = look.cas > 0
+            if (look.cas > 0) casSharpness = look.cas
+            XServerDialogState.setCasEnabled(casEnabled)
+            XServerDialogState.setCasSharpness(casSharpness)
+            XServerDialogState.onCasApply?.invoke(casEnabled, casSharpness)
+            // 3. Terminal debanding -> onDebandApply (DebandControls re-seeds off the flow).
+            XServerDialogState.setDebandEnabled(look.deband)
+            XServerDialogState.onDebandApply?.invoke(look.deband, XServerDialogState.debandStrength.value)
+            // 4. Scaling mode ONLY when the Look actually names one.
+            look.scalingMode?.let { mode ->
+                upscalerMode = mode
+                XServerDialogState.setUpscalerMode(mode)
+                XServerDialogState.onUpscalerApply?.invoke(mode)
+            }
+        }
+
+        // A manual move of a control the active Look OWNS drops back to "Custom". Controls no
+        // Look touches (HDR, the upscaler's own sharpness) deliberately do not.
+        fun lookTouched() { selectedLook = null }
+        fun lookTouchedScaling() {
+            if (ScreenEffectLooks.LOOKS.getOrNull(selectedLook ?: -1)?.scalingMode != null) selectedLook = null
+        }
+
+        ScalingModeHeader("Scaling mode", vkHeaderColor)
+        if (waylandFxBlocked) WaylandNotYetNote()
+        Spacer(Modifier.height(2.dp))
+        UpscalerModeButtons(upscalerMode, vkEnabled) {
+            upscalerMode = it
+            XServerDialogState.setUpscalerMode(it)
+            lookTouchedScaling()
+            XServerDialogState.onUpscalerApply?.invoke(it)
+        }
+
+        // "Sharpness" controls the REAL upscaler sharpness (RCAS stops / SGSR EdgeSharpness /
+        // NIS sharpness) and only applies to the sharpening scaling modes (SGSR/FSR/FSR-Fit/Sharpen/NIS/SGSR HQ).
+        if (upscalerMode in 3..8) {
+            val initUpscaleSharpness by XServerDialogState.upscaleSharpness.collectAsState()
+            var upscaleSharpness by remember(initUpscaleSharpness) { mutableIntStateOf(initUpscaleSharpness) }
+            Spacer(Modifier.height(4.dp))
+            IntSlider("Sharpness", upscaleSharpness, 0..100, { upscaleSharpness = it }, {
+                XServerDialogState.onUpscaleSharpnessApply?.invoke(upscaleSharpness)
+            }, enabled = vkEnabled)
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        ToggleRow("CAS", casEnabled, vkEnabled) {
+            casEnabled = it
+            XServerDialogState.setCasEnabled(it)
+            lookTouched()
+            XServerDialogState.onCasApply?.invoke(casEnabled, casSharpness)
+        }
+        if (casEnabled) {
+            Spacer(Modifier.height(4.dp))
+            IntSlider("CAS Sharpness", casSharpness, 0..100, { casSharpness = it; lookTouched() }, {
+                XServerDialogState.setCasSharpness(casSharpness)
+                XServerDialogState.onCasApply?.invoke(casEnabled, casSharpness)
+            }, enabled = vkEnabled)
+        }
+        ToggleRow("HDR", hdrVkEnabled, vkEnabled) {
+            hdrVkEnabled = it
+            XServerDialogState.onHdrApply?.invoke(hdrVkEnabled)
+        }
+
+        // Terminal debanding (TPDF dither) — kills 8-bit gradient banding. Drawer-only / session-live.
+        DebandControls(vkEnabled, onUserChange = { lookTouched() })
+
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(vertical = 6.dp))
+
+        Text("Screen Effects", color = vkHeaderColor, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+        Spacer(Modifier.height(4.dp))
+
+        LooksRow(
+            selected = selectedLook,
+            enabled = vkEnabled,
+            onPick = { applyVkLook(it) }
+        )
+
+        LabeledSlider("Brightness", vkBrightness, -100f..100f,
+            { vkBrightness = it; lookTouched(); applyVkSe() },
+            onValueChangeFinished = { XServerDialogState.setVkBrightness(vkBrightness) },
+            enabled = vkEnabled)
+        LabeledSlider("Contrast", vkContrast, -100f..100f,
+            { vkContrast = it; lookTouched(); applyVkSe() },
+            onValueChangeFinished = { XServerDialogState.setVkContrast(vkContrast) },
+            enabled = vkEnabled)
+        LabeledSlider("Gamma", vkGamma, 0.5f..3.0f,
+            { vkGamma = it; lookTouched(); applyVkSe() },
+            onValueChangeFinished = { XServerDialogState.setVkGamma(vkGamma) },
+            enabled = vkEnabled, format = { "%.2f".format(it) })
+        // Saturation: 0..200 percent, 100 = neutral (grey at 0, 2x at 200).
+        LabeledSlider("Saturation", vkSaturation, 0f..200f,
+            { vkSaturation = it; lookTouched(); applyVkSe() },
+            onValueChangeFinished = { XServerDialogState.setVkSaturation(vkSaturation) },
+            enabled = vkEnabled)
 
         // Four independent shader flags with identical wiring — one row of chips instead of four
         // switch rows. Same applyVkSe() round-trip as before.
         ToggleChipGrid(
             listOf(
-                ToggleChipItem("FXAA", vkFxaa) { vkFxaa = it; applyVkSe() },
-                ToggleChipItem("Toon", vkToon) { vkToon = it; applyVkSe() },
-                ToggleChipItem("CRT", vkCrt) { vkCrt = it; applyVkSe() },
-                ToggleChipItem("NTSC", vkNtsc) { vkNtsc = it; applyVkSe() },
+                ToggleChipItem("FXAA", vkFxaa, vkEnabled) { vkFxaa = it; XServerDialogState.setVkFxaa(it); lookTouched(); applyVkSe() },
+                ToggleChipItem("Toon", vkToon, vkEnabled) { vkToon = it; XServerDialogState.setVkToon(it); lookTouched(); applyVkSe() },
+                ToggleChipItem("CRT", vkCrt, vkEnabled) { vkCrt = it; XServerDialogState.setVkCrt(it); lookTouched(); applyVkSe() },
+                ToggleChipItem("NTSC", vkNtsc, vkEnabled) { vkNtsc = it; XServerDialogState.setVkNtsc(it); lookTouched(); applyVkSe() },
             ),
             perRow = 4
         )
@@ -1119,7 +1350,180 @@ private fun GraphicsContent(state: XServerDrawerState) {
     // nativeRenderingEnabled is collected once at the top of GraphicsContent (drives the GL grey-out).
     // Native Rendering is only offered on renderers that support direct scanout (Vulkan); it's hidden
     // on the OpenGL renderer, where the bespoke GL scanout path is disabled for now.
+    val nativeRenderingSupported by state.nativeRenderingSupported.collectAsState()
+    if (nativeRenderingSupported) {
+        // Wayland: X11 direct scanout never runs (the X renderer is idle behind the compositor), so
+        // the row is greyed and points at Zero-copy presentation, which is the Wayland equivalent.
+        ToggleRow("Native Rendering", nativeRenderingEnabled, enabled = !isWaylandSession) {
+            state.onNativeRenderingToggle?.run()
+        }
+        if (isWaylandSession) {
+            HelperText("X11 direct scanout is not used on Wayland; Zero-copy presentation below is the Wayland equivalent.")
+        }
+    }
+
+    if (isWaylandSession) WaylandHdrOutputRow(state)
+    if (isWaylandSession) WaylandZeroCopyRow(state, waylandEffectsOk)
+    if (isWaylandSession) WaylandGlSafeModeRow(state)
 }
+
+// ───── Wayland: HDR output (live, HDR sessions only) ─────
+// Shown only while the compositor has HDR open for this session (the game's or container's "HDR output"
+// setting was on at launch AND this screen reports HDR10) - never on X11, never on an SDR screen. A live
+// switch: on = the game's HDR frames go to the display as real HDR; off = the SAME frames are shown as a
+// tone-mapped SDR picture. Nothing is relaunched and the game is not told (DXVK_HDR and the offer to the
+// game were decided at launch, so its own HDR setting is untouched). Per session: the next launch starts
+// on again, and whether HDR is offered at all stays the editors' setting.
+@Composable
+private fun WaylandHdrOutputRow(state: XServerDrawerState) {
+    val available by state.waylandHdrAvailable.collectAsState()
+    if (!available) return
+    val output by state.waylandHdrOutput.collectAsState()
+    val onScreen by state.waylandHdrOnScreen.collectAsState()
+    val noHeadroom by state.waylandHdrNoHeadroom.collectAsState()
+    val toneMapped by state.waylandHdrToneMapped.collectAsState()
+    // The gate is decided once at launch and cannot be withdrawn from a running game, so the row stays;
+    // this is whether the screen the game is on NOW can actually show HDR10 (the TV can be unplugged
+    // mid-session). Without it the status line below goes on claiming HDR on a panel that has none.
+    val screenCapable by state.waylandHdrScreenCapable.collectAsState()
+    var checked by remember(output) { mutableStateOf(output) }
+
+    Spacer(Modifier.height(6.dp))
+    ToggleRow("HDR output", checked) {
+        checked = it
+        state.setWaylandHdrOutput(it)
+        state.onWaylandHdrOutputToggle?.accept(it)
+    }
+    HelperText("On: HDR games show real HDR on this screen. Off: the same picture tone-mapped to SDR. " +
+        "Applies immediately, for this session only; the game's own HDR setting is left alone.")
+    HelperText(
+        when {
+            checked && onScreen    -> "On: HDR frames on screen now."
+            checked && noHeadroom  -> "On, but the screen gives HDR no headroom right now: brightness at maximum, " +
+                                      "or the screen is being recorded (Android turns HDR headroom off while recording)."
+            checked && toneMapped  -> "On, but shown tone-mapped: frame generation on a screen with no HDR swapchain."
+            checked && !screenCapable -> "On, but this screen has no HDR10: Android tone-maps the picture for it. " +
+                                      "The game keeps the HDR it was offered until it closes."
+            checked                -> "On: no HDR frames right now (is HDR on in the game's settings?)."
+            onScreen || noHeadroom -> "Off, but these frames cannot be tone-mapped here: they stay HDR."
+            toneMapped             -> "Off: HDR frames shown tone-mapped to SDR."
+            else                   -> "Off: no HDR frames right now."
+        }
+    )
+}
+
+// ───── Wayland: OpenGL safe mode ─────
+// Native OpenGL games render through Mesa here (Zink on Turnip). Mesa runs OpenGL draw submission on
+// a helper thread of its own, and a fault on that thread takes the whole game down WITHOUT a crash
+// report: it is not a Wine thread, so Wine's crash handler faults again on it and the kernel kills
+// the process outright - the game simply vanishes. Safe mode removes the helper thread. The cost is
+// a little CPU-side throughput in OpenGL games; DXVK/VKD3D games never load that driver at all.
+//
+// GALLIUM_THREAD is read once, when the guest's GL driver starts, so this row is a saved preference
+// for the next launch and NOT a live switch - the helper text says exactly that rather than
+// pretending the flip did something to the running game.
+@Composable
+private fun WaylandGlSafeModeRow(state: XServerDrawerState) {
+    val safeMode by state.waylandGlSafeMode.collectAsState()
+    var checked by remember(safeMode) { mutableStateOf(safeMode) }
+
+    Spacer(Modifier.height(6.dp))
+    ToggleRow("OpenGL safe mode", checked) {
+        checked = it
+        state.setWaylandGlSafeMode(it)
+        state.onWaylandGlSafeModeToggle?.accept(it)
+    }
+    HelperText(
+        if (checked)
+            "On: stops native OpenGL games disappearing with no error. Costs a little OpenGL speed; " +
+            "DirectX games are unaffected. Saved for this game - takes effect the next time it starts."
+        else
+            "Off: OpenGL games keep Mesa's extra draw thread (slightly faster), but a fault on it can " +
+            "close the game with no error message. Saved for this game - takes effect the next time it starts."
+    )
+}
+
+// ───── Wayland: Zero-copy presentation ─────
+// A live switch. Flipping it applies to the RUNNING compositor at once (it broadcasts
+// banner_ahb_v1.mode, and every game rebuilds its swapchain on — or off — gralloc display buffers,
+// one frame's worth of latency, no black frame in between) and is also written to the effective env
+// (shortcut override else container) as the next launch's default.
+//
+// The status line follows the COMPOSITOR, not the toggle: a flip is only real once frames actually
+// start — or stop — reaching the display layer, which is what waylandZeroCopyLive reports. The
+// 10 s frame counter is far too slow to show that, so it is only used once the mode has settled.
+@Composable
+private fun WaylandZeroCopyRow(state: XServerDrawerState, effectsAvailable: Boolean) {
+    val requested by state.waylandZeroCopyRequested.collectAsState()
+    val frames by state.waylandZeroCopyFrames.collectAsState()
+    val live by state.waylandZeroCopyLive.collectAsState()
+    // Keyed on the seeded value so a reopen shows what is stored, not a stale capture.
+    var checked by remember(requested) { mutableStateOf(requested) }
+
+    Spacer(Modifier.height(6.dp))
+    ToggleRow("Zero-copy presentation", checked) {
+        checked = it
+        state.setWaylandZeroCopyRequested(it)
+        state.onWaylandZeroCopyToggle?.accept(it)
+    }
+    HelperText("Fullscreen games are shown on their own display layer with no compositor copy. Applies immediately, and is kept as this game's default.")
+
+    // Polled whichever way the switch is set: the line has to be able to say "switching off" too.
+    LaunchedEffect(Unit) {
+        while (true) {
+            state.onWaylandZeroCopyPoll?.run()
+            delay(1000)
+        }
+    }
+    // Screen effects no longer take the layer away: their result is drawn into the game's own
+    // display layer, so the frames are not copy-free any more but the game stays hardware-composed.
+    val effectsOn = effectsAvailable && waylandCompositorEffectsOn()
+    HelperText(
+        when {
+            checked && effectsOn  -> "On: screen effects are drawn into the game's display layer, so it keeps hardware composition."
+            checked && !live      -> "Switching on… the game is rebuilding its swapchain on display buffers."
+            checked && frames > 0 -> "On: $frames zero-copy frames in the last 10 s"
+            checked               -> "On: frames are going straight to the display layer."
+            live                  -> "Switching off… the game's last display-layer frames are still on screen."
+            else                  -> "Off: the compositor copies each frame into its own swapchain."
+        }
+    )
+}
+
+/** True when any Vulkan-block effect that runs in the compositor pass is currently on. */
+@Composable
+private fun waylandCompositorEffectsOn(): Boolean {
+    val upscaler by XServerDialogState.upscalerMode.collectAsState()
+    val cas by XServerDialogState.casEnabled.collectAsState()
+    val hdr by XServerDialogState.hdrVkEnabled.collectAsState()
+    val deband by XServerDialogState.debandEnabled.collectAsState()
+    val brightness by XServerDialogState.vkBrightness.collectAsState()
+    val contrast by XServerDialogState.vkContrast.collectAsState()
+    val gamma by XServerDialogState.vkGamma.collectAsState()
+    val saturation by XServerDialogState.vkSaturation.collectAsState()
+    val fxaa by XServerDialogState.vkFxaa.collectAsState()
+    val toon by XServerDialogState.vkToon.collectAsState()
+    val crt by XServerDialogState.vkCrt.collectAsState()
+    val ntsc by XServerDialogState.vkNtsc.collectAsState()
+    return upscaler >= 3 || cas || hdr || deband || fxaa || toon || crt || ntsc ||
+        brightness != 0f || contrast != 0f || gamma != 1f || saturation != 100f
+}
+
+/** Dim one-line explanation under a control (same style as the Controls tab's Wayland note). */
+@Composable
+private fun HelperText(text: String) {
+    Text(
+        text,
+        color = LocalAccentDim.current,
+        fontSize = 11.sp,
+        lineHeight = 13.sp,
+        modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 2.dp)
+    )
+}
+
+/** The one reason line for a control the Wayland compositor does not drive in this build. */
+@Composable
+private fun WaylandNotYetNote() = HelperText("Not on Wayland in this build yet")
 
 // ───── Runtime-backend diagnostic chip (Graphics tab header) ─────
 // Read-only status: arch · translator, plus the FEX unixlib mode. unixlib (native .so loaded) =
@@ -1168,17 +1572,36 @@ private fun FrameGenSection(state: XServerDrawerState) {
     val initFgMult by state.frameGenMultiplier.collectAsState()
     val initFgFlow by state.frameGenFlowScale.collectAsState()
     val initFgModel by state.frameGenModel.collectAsState()
+    val initFgPreset by state.frameGenPerfPreset.collectAsState()
     val engine by state.frameGenEngine.collectAsState()
     val layerActive by state.bionicFgActive.collectAsState()
     val initLsfgPerf by state.lsfgPerformanceMode.collectAsState()
+    val winFgNative by state.winFgNative.collectAsState()
+    // For the fit advice under the multiplier buttons.
+    val nativeFgLocks by state.nativeFgLocks.collectAsState()
+    val fpsCap by state.fpsLimit.collectAsState()
+    val displayTargetHz by state.displayTargetHz.collectAsState()
+    val supportedRates by state.supportedRefreshRates.collectAsState()
+    val liveRate by state.currentRefreshRate.collectAsState()
+    val matchRefresh by state.matchRefreshRate.collectAsState()
+    val vrrOk by state.vrrSupported.collectAsState()
+    // Set when LSFG Native / Win-FG Native can't run in this session (driver, DLL, renderer).
+    val fgUnavailable by state.fgUnavailableReason.collectAsState()
+    val fgUnavailableDetail by state.fgUnavailableDetail.collectAsState()
+    // Wayland: frame generation is live only once the compositor reports its own chain
+    // (waylandFrameGenAvailable); until then the multiplier row is greyed with the short reason.
+    val isWaylandSession by state.isWaylandMode.collectAsState()
+    val waylandFgOk by state.waylandFrameGenAvailable.collectAsState()
+    val waylandFgBlocked = isWaylandSession && !waylandFgOk
 
     // Title on the left, engine badge on the right (green dot = engine actually running this
     // session). Replaces the old standalone "Frame Generation (AI)" header so the engine isn't
     // labeled twice. Badge shows bionic-fg / lsfg-vk depending on the container's selection.
     val engineLabel = when (engine) {
-        "lsfg"   -> "lsfg-vk"
-        "bionic" -> "win-fg"
-        else     -> "Off"
+        "lsfg"        -> "lsfg-vk"
+        "lsfg-native" -> "LSFG Native"
+        "bionic"      -> if (winFgNative) "Win-FG Native" else "win-fg"
+        else          -> "Off"
     }
     // Green dot = engine actually multiplying frames right now. Frame gen starts at multiplier 0
     // (Off) every launch even when the container has an engine selected, so gate on initFgMult too
@@ -1212,31 +1635,81 @@ private fun FrameGenSection(state: XServerDrawerState) {
             )
         }
     }
+
+    // Native LSFG reports what it is actually achieving, because the requested
+    // multiplier is a ceiling to earn rather than a setting that is obeyed: the
+    // governor only keeps an extra generated frame when it measurably helps.
+    val readout by state.frameGenReadout.collectAsState()
+    if (readout.isNotEmpty()) {
+        Spacer(Modifier.height(4.dp))
+        Text(
+            readout,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+            fontSize = 10.sp
+        )
+    }
     Spacer(Modifier.height(8.dp))
 
     if (frameGenEnabled) {
         var fgMult by remember(initFgMult) { mutableIntStateOf(initFgMult) }
         var fgFlow by remember(initFgFlow) { mutableFloatStateOf(initFgFlow) }
         var fgModel by remember(initFgModel) { mutableIntStateOf(initFgModel) }
+        var fgPreset by remember(initFgPreset) { mutableIntStateOf(initFgPreset) }
         fun applyFg() {
             state.setFrameGenMultiplier(fgMult)
             state.setFrameGenFlowScale(fgFlow)
             state.setFrameGenModel(fgModel)
+            state.setFrameGenPerfPreset(fgPreset)
             state.onBionicFgConfigChange?.run()
         }
 
-        FgMultiplierButtons(fgMult, engine) { newMult ->
-            val wasOff = fgMult == 0
+        if (waylandFgBlocked) WaylandNotYetNote()
+        if (fgUnavailable.isNotEmpty()) {
+            Text(
+                "⚠ $fgUnavailable",
+                color = MaterialTheme.colorScheme.error,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
+            )
+            if (fgUnavailableDetail.isNotEmpty()) {
+                Text(
+                    "Driver check: $fgUnavailableDetail",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
+                )
+            }
+        }
+        FgMultiplierButtons(fgMult, engine, enabled = fgUnavailable.isEmpty() && !waylandFgBlocked) { newMult ->
             fgMult = newMult; applyFg()
-            // Turning FG on: pulse a bg/fg reset so win-fg starts clean, not artifacty.
-            if (wasOff && newMult >= 2) state.onFgResetPulse?.run()
+            // Both engines now do the FULL surface-teardown reset with a Resume prompt, driven from
+            // onBionicFgConfigChange in the activity (win-fg on an On/Off/multiplier/model/preset
+            // change, lsfg on a level change). The old soft pulseFgReset for win-fg is retired, so
+            // nothing extra fires here.
+        }
+
+        // Same fit advice as under Max FPS, shown where the multiplier is picked.
+        // nativeFgLocks = LSFG Native or Win-FG Native is generating right now.
+        // (The sub-controls below only exist for a multiplier the user can pick, so none of them
+        // render while the Wayland gate holds.)
+        if (nativeFgLocks && !waylandFgBlocked) {
+            FgFitAdvice(
+                cap = fpsCap, mult = fgMult,
+                screen = rememberFgScreen(displayTargetHz, supportedRates, liveRate),
+                supported = supportedRates, autoOn = matchRefresh && vrrOk,
+                canChangeMult = engine == "lsfg-native"
+            ) { fix ->
+                state.setFpsLimit(fix)
+                state.onFpsLimitChange?.run()
+            }
         }
 
         // Interpolation model, win-fg only. The layer rebuilds its framegen context when the
         // model changes (same path as a multiplier change), so this switches live. Hidden while
         // frame gen is Off, where it would have nothing to act on.
         AnimatedVisibility(
-            visible = engine == "bionic" && fgMult > 0,
+            visible = engine == "bionic" && fgMult > 0 && !waylandFgBlocked,
             enter = expandVertically() + fadeIn(),
             exit = shrinkVertically() + fadeOut()
         ) {
@@ -1250,15 +1723,21 @@ private fun FrameGenSection(state: XServerDrawerState) {
                 )
                 FgModelButtons(fgModel) { newModel ->
                     fgModel = newModel; applyFg()
-                    // Model switch while FG is on -> same bg/fg reset pulse.
-                    if (fgMult >= 2) state.onFgResetPulse?.run()
+                    // Model switch → full presentation reset, fired from onBionicFgConfigChange.
                 }
             }
         }
 
+        // The Quality / Balanced / Performance preset row used to live here.
+        // Removed at the user's decision (2026-09-09): Win-FG Native runs on
+        // Performance permanently. Each preset change rebuilt the whole flow
+        // pyramid live, and Performance is the setting the engine is device-
+        // proven at. applyWinFgNative pins the value, so nothing a container or
+        // shortcut carries from before can put it back.
+
         // Flow Scale only matters with frame gen actually on -> collapse it while Off.
         AnimatedVisibility(
-            visible = fgMult > 0,
+            visible = fgMult > 0 && !waylandFgBlocked,
             enter = expandVertically() + fadeIn(),
             exit = shrinkVertically() + fadeOut()
         ) {
@@ -1278,10 +1757,43 @@ private fun FrameGenSection(state: XServerDrawerState) {
             }
         }
 
+        // LSFG Native experimental capture resolution (FeatureFlags.LSFG_NATIVE_EXPERIMENTS_ENABLED). Live: the
+        // activity's lsfg-native branch of onBionicFgConfigChange reads it from the state,
+        // persists it and pushes it to the renderer with the multiplier/flow.
+        if (engine == "lsfg-native" && com.winlator.star.FeatureFlags.LSFG_NATIVE_EXPERIMENTS_ENABLED && !waylandFgBlocked) {
+            val capture by state.fgCaptureResolution.collectAsState()
+            val panelHeight by state.fgPanelHeight.collectAsState()
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Experimental",
+                color = accent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
+            )
+            Text(
+                "Capture resolution",
+                color = MaterialTheme.colorScheme.onSurface,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
+            )
+            FgCaptureChips(capture, panelHeight) { newValue ->
+                state.setFgCaptureResolution(newValue)
+                applyFg()
+            }
+            Text(
+                "Height the frame-gen chain runs at (width follows the screen). Lower = far " +
+                    "cheaper on the GPU, softer picture. Panel = full resolution.",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                fontSize = 11.sp,
+                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+            )
+        }
+
         // lsfg-vk only: performance_mode (bionic-fg has no such setting). Toggling rewrites conf.toml
         // via the same applyFg -> onBionicFgConfigChange path (mtime bump -> layer re-reads live) and
         // persists to the container there.
-        if (engine == "lsfg") {
+        if (engine == "lsfg" && !waylandFgBlocked) {
             var lsfgPerf by remember(initLsfgPerf) { mutableStateOf(initLsfgPerf) }
             Spacer(Modifier.height(8.dp))
             ToggleRow("Performance mode", lsfgPerf) {
@@ -1296,6 +1808,8 @@ private fun FrameGenSection(state: XServerDrawerState) {
                 modifier = Modifier.padding(start = 4.dp, top = 2.dp)
             )
         }
+    } else if (waylandFgBlocked) {
+        WaylandNotYetNote()
     } else {
         Text(
             "Enable Frame Generation in this container's settings to tune it here.",
@@ -1303,6 +1817,136 @@ private fun FrameGenSection(state: XServerDrawerState) {
             fontSize = 11.sp,
             modifier = Modifier.padding(start = 4.dp, top = 2.dp)
         )
+    }
+}
+
+// What the display is really doing, for the frame-gen advice. `asked` = the rate the activity asked
+// for (Auto's pick, a manual lock, or the top rate). If the display sits below that for longer than
+// a normal mode switch, the device is holding it there (battery saver, a vendor refresh tool, an
+// Android 11 panel that only switches seamlessly) and the advice uses the real rate instead.
+private data class FgScreen(val hz: Int, val asked: Int, val held: Boolean)
+
+@Composable
+private fun rememberFgScreen(target: Int, supported: List<Int>, current: Int): FgScreen {
+    val asked = if (target > 0) target else supported.maxOrNull() ?: current
+    var held by remember { mutableStateOf(false) }
+    LaunchedEffect(asked, current) {
+        held = false
+        if (asked > 0 && current in 1 until asked - 1) {
+            delay(2500)   // a mode switch in flight settles well inside this
+            held = true
+        }
+    }
+    return FgScreen(if (held) current else asked, asked, held)
+}
+
+@Composable
+private fun FgFixButton(label: String, color: Color, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, color, RoundedCornerShape(8.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        Text(label, color = color, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+// Frame-gen fit advice, shown under Max FPS and under the multiplier buttons while LSFG Native or
+// Win-FG Native is generating. Over the display's rate: the over-limit warning. Under it with Auto
+// (match FPS) on: the activity put the display on the closest rate ABOVE cap x multiplier
+// (pickNativeFgRefresh), which still leaves repeat gaps, so offer a cap that fits a display rate
+// exactly - the lower one first, since a game holds a lower cap more easily.
+@Composable
+private fun FgFitAdvice(
+    cap: Int, mult: Int, screen: FgScreen, supported: List<Int>, autoOn: Boolean,
+    canChangeMult: Boolean, onSetCap: (Int) -> Unit
+) {
+    if (cap <= 0 || mult < 2 || screen.hz <= 0) return
+    val made = cap * mult
+    if (made > screen.hz) {
+        FgOverLimitWarning(cap, mult, screen, canChangeMult, onSetCap)
+        return
+    }
+    if (!autoOn || screen.held || made == screen.hz) return
+    // Exact fits this multiplier can reach on this display: (cap, rate), ascending.
+    val fits = supported.filter { it % mult == 0 && it / mult >= 10 }.map { (it / mult) to it }
+    val lower = fits.lastOrNull { it.first <= cap }
+    val higher = fits.firstOrNull { it.first > cap }
+    val pick = lower ?: higher ?: return
+    val accent = MaterialTheme.colorScheme.primary
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            "Screen set to ${screen.hz} Hz, the closest speed above $cap × $mult = $made. " +
+                "A few refreshes repeat a picture. For a perfect fit:",
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            fontSize = 11.sp
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            FgFixButton("Set Max FPS to ${pick.first} → ${pick.second} Hz", accent) { onSetCap(pick.first) }
+            if (lower != null && higher != null) {
+                Text(
+                    "or ${higher.first} → ${higher.second} Hz if the game holds it",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    fontSize = 11.sp
+                )
+            }
+        }
+    }
+}
+
+// Shown while LSFG Native or Win-FG Native is generating and the game's real frames (the FPS cap)
+// times the multiplier is more than the display can show. Both present one frame per refresh under
+// FIFO, so the surplus queues: the compositor falls behind the game and real frames arrive late or
+// get dropped - stutter and input lag, not extra smoothness. canChangeMult = false for Win-FG
+// Native, which is fixed at 2x.
+@Composable
+private fun FgOverLimitWarning(
+    cap: Int, mult: Int, screen: FgScreen, canChangeMult: Boolean, onSetCap: (Int) -> Unit
+) {
+    val error = MaterialTheme.colorScheme.error
+    val fixCap = maxOf(10, screen.hz / mult)
+    val fitMult = if (canChangeMult) (mult - 1 downTo 2).firstOrNull { cap * it <= screen.hz } else null
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            "⚠ $cap × $mult = ${cap * mult}: more than your ${screen.hz} Hz screen can show. " +
+                "The extra frames pile up, so expect stutter and laggy controls.",
+            color = error,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        if (screen.held) {
+            Text(
+                "Your device is keeping the screen at ${screen.hz} Hz (Bannerlator asked for ${screen.asked} Hz). " +
+                    "Battery saver or your device's own refresh-rate setting may be holding it.",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                fontSize = 11.sp
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            FgFixButton("Set Max FPS to $fixCap", error) { onSetCap(fixCap) }
+            if (fitMult != null) {
+                Text(
+                    "or pick ${fitMult}×",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    fontSize = 11.sp
+                )
+            }
+        }
     }
 }
 
@@ -1347,10 +1991,68 @@ private fun FgModelButtons(selected: Int, onSelect: (Int) -> Unit) {
     }
 }
 
+
+/**
+ * Experimental capture-resolution picker: Panel, Game, then every distinct height from the
+ * container Screen Size list (R.array.screen_size_entries), as scrollable chips. Stored value is
+ * "panel" / "game" / the bare height ("720"), the same form the container editor writes.
+ * Heights the renderer would clamp anyway (below a quarter of the panel, or at/above it) are left
+ * out, so a highlighted chip is always the height really in effect.
+ */
 @Composable
-private fun FgMultiplierButtons(selected: Int, engine: String, onSelect: (Int) -> Unit) {
+private fun FgCaptureChips(selected: String, panelHeight: Int, onSelect: (String) -> Unit) {
     val accent = MaterialTheme.colorScheme.primary
     val accentDim = LocalAccentDim.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val heights = remember(panelHeight) {
+        val minH = maxOf(16, panelHeight / 4)
+        context.resources.getStringArray(R.array.screen_size_entries)
+            .filterNot { it.equals("custom", ignoreCase = true) }
+            .map { Container.fgCaptureHeightFor(it.substringBefore(" ")) }
+            .filter { it > 0 && (panelHeight <= 0 || (it >= minH && it < panelHeight)) }
+            .distinct()
+            .sorted()
+    }
+    val options = listOf(Container.FG_CAPTURE_PANEL to "Panel", Container.FG_CAPTURE_GAME to "Game") +
+        heights.map { it.toString() to "${it}p" }
+    val selectedHeight = Container.fgCaptureHeightFor(selected)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        options.forEach { (value, label) ->
+            val isSel = when (value) {
+                Container.FG_CAPTURE_PANEL, Container.FG_CAPTURE_GAME -> selected == value
+                else -> selected != Container.FG_CAPTURE_PANEL && selected != Container.FG_CAPTURE_GAME
+                    && selectedHeight == value.toInt()
+            }
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (isSel) accent else Color.Black)
+                    .border(1.dp, if (isSel) accent else accentDim, RoundedCornerShape(8.dp))
+                    .clickable { onSelect(value) }
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    label,
+                    color = if (isSel) Color.Black else accent,
+                    fontSize = 12.sp,
+                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FgMultiplierButtons(selected: Int, engine: String, enabled: Boolean = true, onSelect: (Int) -> Unit) {
+    val accent = MaterialTheme.colorScheme.primary
+    val accentDim = LocalAccentDim.current
+    val dimmed = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
     // win-fg is a simple Off / On toggle for now (On = 2×); selecting On reveals the
     // model + flow-scale controls (gated on multiplier > 0). lsfg-vk keeps 2×/3×/4×.
     val options = if (engine == "bionic")
@@ -1362,8 +2064,9 @@ private fun FgMultiplierButtons(selected: Int, engine: String, onSelect: (Int) -
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         options.forEach { (mult, label) ->
-            val isSel = selected == mult
+            val isSel = selected == mult && enabled
             // Unselected: black fill, dark-blue outline. Selected: solid blue fill, black text.
+            // Disabled (the engine can't run here): all dimmed, nothing clickable.
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
@@ -1372,15 +2075,15 @@ private fun FgMultiplierButtons(selected: Int, engine: String, onSelect: (Int) -
                     .background(if (isSel) accent else Color.Black)
                     .border(
                         width = 1.dp,
-                        color = if (isSel) accent else accentDim,
+                        color = if (isSel) accent else if (enabled) accentDim else dimmed,
                         shape = RoundedCornerShape(8.dp)
                     )
-                    .clickable { onSelect(mult) }
+                    .clickable(enabled = enabled) { onSelect(mult) }
                     .padding(vertical = 9.dp)
             ) {
                 Text(
                     label,
-                    color = if (isSel) Color.Black else accent,
+                    color = if (isSel) Color.Black else if (enabled) accent else dimmed,
                     fontSize = 13.sp,
                     fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
                 )
@@ -1823,21 +2526,29 @@ private fun GradientSlider(
     }
 }
 
-// Scaling-mode picker: 7 options (0=None 1=Linear 2=Nearest 3=SGSR 4=FSR 5=FSR Fit
-// 6=Sharpen) laid out as rows of four segmented chips (same box-chip idiom as
-// FgMultiplierButtons). Grayed out when the active host renderer is not Vulkan.
+// Scaling-mode picker: 9 options (0=None 1=Linear 2=Nearest 3=SGSR 8=SGSR HQ 4=FSR
+// 5=FSR Fit 6=Sharpen 7=NIS) laid out as rows of three segmented chips (same box-chip
+// idiom as FgMultiplierButtons). SGSR HQ sits next to SGSR; its int is 8 because the
+// mode ints are persisted per game and must never be renumbered.
 // Terminal debanding controls (toggle + optional dither-strength slider), shared by the
 // GL and Vulkan graphics blocks. Reads/writes the single _debandEnabled/_debandStrength
 // state and fires onDebandApply; only one renderer block is shown per session, so the
 // shared state never conflicts. strength 0..200 (CPU maps /100 to LSBs, default 100 = 1 LSB).
+// onUserChange fires only for a HUMAN toggle/drag here, never for a value pushed in from
+// outside — the Screen Effect Looks row uses it to fall back to "Custom". Both controls also
+// write their value back into XServerDialogState, so the shared state stays the single source
+// of truth and a Look applied elsewhere (which can only reach this composable through those
+// flows) re-seeds these locals.
 @Composable
-private fun DebandControls(enabled: Boolean = true) {
+private fun DebandControls(enabled: Boolean = true, onUserChange: () -> Unit = {}) {
     val initDebandEnabled  by XServerDialogState.debandEnabled.collectAsState()
     val initDebandStrength by XServerDialogState.debandStrength.collectAsState()
     var debandEnabled  by remember(initDebandEnabled)  { mutableStateOf(initDebandEnabled) }
     var debandStrength by remember(initDebandStrength) { mutableIntStateOf(initDebandStrength) }
     ToggleRow("Debanding", debandEnabled, enabled) {
         debandEnabled = it
+        XServerDialogState.setDebandEnabled(it)
+        onUserChange()
         XServerDialogState.onDebandApply?.invoke(debandEnabled, debandStrength)
     }
     if (debandEnabled) {
@@ -1845,10 +2556,49 @@ private fun DebandControls(enabled: Boolean = true) {
         IntSlider("Dither strength", debandStrength, 0..200,
             onValueChange = { debandStrength = it },
             onValueChangeFinished = {
+                XServerDialogState.setDebandStrength(debandStrength)
                 XServerDialogState.onDebandApply?.invoke(debandEnabled, debandStrength)
             },
             enabled = enabled)
     }
+}
+
+// ───── Screen Effect Looks row ─────
+// The one-tap preset chips that head the Screen Effects section on both renderer paths.
+// Deliberately built out of the drawer's existing ToggleChipGrid so it reads as part of the
+// section rather than a new widget language: accent-filled when selected, black + accentDim
+// border otherwise, equal widths, three per row so the longest label ("Adaptive Sharpen")
+// wraps to two lines instead of overflowing the drawer's fixed 380dp shell.
+// `selected` == null means the user has moved one of the controls a Look owns — a trailing
+// "Custom" chip is appended and lights up. Tapping it does nothing (Custom is a state you
+// arrive at, not one you pick); tapping any Look re-applies it and drops the chip.
+@Composable
+private fun LooksRow(selected: Int?, enabled: Boolean, onPick: (Int) -> Unit) {
+    val looks = ScreenEffectLooks.LOOKS
+    val chips = looks.mapIndexed { i, look ->
+        ToggleChipItem(look.name, selected == i, enabled) { onPick(i) }
+    } + if (selected == null) listOf(ToggleChipItem(ScreenEffectLooks.CUSTOM_LABEL, true, enabled) { }) else emptyList<ToggleChipItem>()
+
+    Text(
+        "Looks",
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontSize = 11.sp,
+        modifier = Modifier.padding(bottom = 4.dp)
+    )
+    ToggleChipGrid(chips, perRow = 3)
+    val note = if (selected != null) {
+        val look = looks[selected]
+        if (look.desc.isEmpty()) look.name else "${look.name} — ${look.desc}"
+    } else {
+        "Adjusted — everything below is yours. Tap a look to go back."
+    }
+    Text(
+        note,
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (enabled) 0.9f else 0.4f),
+        fontSize = 11.sp,
+        lineHeight = 14.sp,
+        modifier = Modifier.padding(top = 6.dp, bottom = 6.dp)
+    )
 }
 
 // Fullscreen aspect-ratio selector (#71 Stage 2): 5 mode chips laid out as rows (3 + 2), same
@@ -1902,16 +2652,78 @@ private fun FullscreenModeButtons(selected: Int, onSelect: (Int) -> Unit) {
     }
 }
 
+// Screen alignment (#413): vertical placement of the letterbox bar (Center/Top/Bottom), same
+// segmented-chip idiom as FullscreenModeButtons. [enabled]=false greys it out for STRETCH/FILL,
+// where there is no bar to move. 0/1/2 map to Container.ALIGN_CENTER/TOP/BOTTOM.
+@Composable
+private fun ScreenAlignmentButtons(selected: Int, enabled: Boolean = true, onSelect: (Int) -> Unit) {
+    val accent = MaterialTheme.colorScheme.primary
+    val accentDim = LocalAccentDim.current
+    val options = listOf(
+        0 to stringResource(R.string.screen_alignment_center_short),
+        1 to stringResource(R.string.screen_alignment_top_short),
+        2 to stringResource(R.string.screen_alignment_bottom_short)
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        options.forEach { (align, label) ->
+            val isSel = selected == align
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (isSel && enabled) accent else Color.Black)
+                    .border(
+                        width = 1.dp,
+                        color = if (isSel && enabled) accent else accentDim,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    .clickable(enabled = enabled) { onSelect(align) }
+                    .padding(vertical = 9.dp)
+            ) {
+                Text(
+                    label,
+                    color = when {
+                        !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                        isSel    -> Color.Black
+                        else     -> accent
+                    },
+                    fontSize = 12.sp,
+                    fontWeight = if (isSel && enabled) FontWeight.Bold else FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
+// Scaling-mode section header with a small "?" that explains every mode (help_scaling_mode).
+// The help stays available while the picker itself is greyed out.
+@Composable
+private fun ScalingModeHeader(title: String, color: Color, modifier: Modifier = Modifier) {
+    var showHelp by remember { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
+        Text(title, color = color, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+        IconButton(onClick = { showHelp = true }, modifier = Modifier.size(28.dp)) {
+            Icon(Icons.Default.Help, contentDescription = "What is this?", tint = color, modifier = Modifier.size(16.dp))
+        }
+    }
+    if (showHelp) HelpDialog(R.string.help_scaling_mode) { showHelp = false }
+}
+
 @Composable
 private fun UpscalerModeButtons(selected: Int, enabled: Boolean, onSelect: (Int) -> Unit) {
     val accent = MaterialTheme.colorScheme.primary
     val accentDim = LocalAccentDim.current
     val options = listOf(
         0 to "None", 1 to "Linear", 2 to "Nearest",
-        3 to "SGSR", 4 to "FSR", 5 to "FSR (Fit)", 6 to "Sharpen", 7 to "NIS"
+        3 to "SGSR", 8 to "SGSR HQ", 4 to "FSR",
+        5 to "FSR (Fit)", 6 to "Sharpen", 7 to "NIS"
     )
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        options.chunked(4).forEach { row ->
+        options.chunked(3).forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1950,7 +2762,7 @@ private fun UpscalerModeButtons(selected: Int, enabled: Boolean, onSelect: (Int)
 }
 
 // Per-container rumble target picker (Off/Controller/Device/Both) — same segmented-chip style as
-// UpscalerModeButtons above, just a fixed 4-wide row instead of chunked(4). "Device" = the phone's
+// UpscalerModeButtons above, just a fixed 4-wide row instead of chunked(3). "Device" = the phone's
 // own vibrator (Container.VIBRATION_MODE_DEVICE); "Both" drives the physical controller AND the
 // phone together (Container.VIBRATION_MODE_BOTH).
 @Composable
@@ -2242,8 +3054,9 @@ private fun HudContent(state: XServerDrawerState) {
 
     SectionHeader("HUD")
 
-    // ── FPS Limiter state (standalone host-side cap; output-cap = on-screen fps, independent of
-    //    frame gen). Declared here; its UI lives in the Performance accordion section below. ──
+    // ── FPS Limiter state (caps the game's own frames; with LSFG Native / Win-FG Native the screen
+    //    gets cap x multiplier, and it steps aside while lsfg-vk multiplies). Declared here; its UI
+    //    lives in the Performance accordion section below. ──
     val fpsLimiterEnabled by state.fpsLimiterEnabled.collectAsState()
     val initFpsLimit by state.fpsLimit.collectAsState()
     var limiterOn by remember(fpsLimiterEnabled) { mutableStateOf(fpsLimiterEnabled) }
@@ -2421,7 +3234,22 @@ private fun HudContent(state: XServerDrawerState) {
     CollapsibleSection("Frame rate & refresh", lead = "always on", initiallyExpanded = true) {
         Text("FPS Limiter", color = accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
         Spacer(Modifier.height(4.dp))
-        ToggleRow("Limit FPS", limiterOn) { limiterOn = it; applyLimiter() }
+        val nativeFgLocks by state.nativeFgLocks.collectAsState()
+        val fgEngine by state.frameGenEngine.collectAsState()
+        val fgEnabled by state.frameGenEnabled.collectAsState()
+        val fgMult by state.frameGenMultiplier.collectAsState()
+        val displayTargetHz by state.displayTargetHz.collectAsState()
+        // nativeFgLocks covers both compositor engines; name the one actually running.
+        val nativeFgName = if (fgEngine == "lsfg-native") "LSFG Native" else "Win-FG Native"
+        // Locked ON while native frame gen generates - see XServerDrawerState.nativeFgLocks.
+        ToggleRow("Limit FPS", limiterOn, enabled = !nativeFgLocks) { limiterOn = it; applyLimiter() }
+        if (nativeFgLocks) {
+            Text(
+                "Locked on while $nativeFgName is generating",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                fontSize = 10.sp
+            )
+        }
         if (limiterOn) {
             LabeledSlider(
                 "Max FPS", limitVal.toFloat(), 10f..200f,
@@ -2437,18 +3265,45 @@ private fun HudContent(state: XServerDrawerState) {
                 },
                 perRow = 4
             )
+            // What the cap means depends on where the extra frames are made. LSFG Native and
+            // Win-FG Native generate in our compositor ON TOP of the capped game, so the screen
+            // gets cap x multiplier. lsfg-vk paces itself while multiplying, so the cap steps
+            // aside (XServerDisplayActivity.lsfgGovernsFps).
+            val lsfgVkMultiplying = fgEngine == "lsfg" && fgEnabled && fgMult >= 2
             Text(
-                "Caps on-screen FPS. Works with any frame-gen engine or none.",
+                when {
+                    nativeFgLocks ->
+                        "Caps the game's real frames. $nativeFgName adds its own on top, so you'll see up to " +
+                            "$limitVal × $fgMult = ${limitVal * fgMult}."
+                    lsfgVkMultiplying ->
+                        "Not applied while lsfg-vk is multiplying: it paces frames itself."
+                    else ->
+                        "Caps the game's frame rate. With LSFG Native or Win-FG Native on, you'll see Max FPS × the multiplier."
+                },
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                 fontSize = 11.sp,
                 modifier = Modifier.padding(start = 4.dp, top = 2.dp)
             )
+            if (nativeFgLocks) {
+                // limitVal tracks the slider while dragging, so the advice updates live.
+                FgFitAdvice(
+                    cap = limitVal, mult = fgMult,
+                    screen = rememberFgScreen(displayTargetHz, supportedRefreshRates, currentRefreshRate),
+                    supported = supportedRefreshRates, autoOn = matchRefreshOn && vrrSupported,
+                    canChangeMult = fgEngine == "lsfg-native"
+                ) { fix -> limitVal = fix; applyLimiter() }
+            }
         }
 
         Spacer(Modifier.height(14.dp))
         Text("Refresh rate", color = accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
         Spacer(Modifier.height(4.dp))
-        // Auto (match FPS) == the existing VRR toggle; behavior unchanged.
+        // Auto (match FPS) == the existing VRR toggle. While native frame gen runs it is the
+        // session's Auto: switched on at start unless this game opted out, and toggling it off
+        // opts this game out (applyNativeFgLocks / onMatchRefreshChange in the activity).
+        val nativeFgLocksVrr by state.nativeFgLocks.collectAsState()
+        val fgAutoTurnedOn by state.fgAutoTurnedOn.collectAsState()
+        val fgAutoPerGame by state.fgAutoPerGame.collectAsState()
         ToggleRow("Auto (match FPS)", matchRefreshOn && vrrSupported, enabled = vrrSupported) {
             matchRefreshOn = it
             state.setMatchRefreshRate(it)
@@ -2466,6 +3321,17 @@ private fun HudContent(state: XServerDrawerState) {
             when {
                 !vrrSupported ->
                     "Unavailable — this display has a single refresh rate, so there's nothing to match."
+                matchRefreshOn && nativeFgLocksVrr && fgAutoTurnedOn ->
+                    "Auto was turned on for frame generation — the display follows Max FPS × multiplier. " +
+                        (if (fgAutoPerGame) "Turn it off if you prefer; this game will remember."
+                         else "Turn it off if you prefer (for this session).")
+                matchRefreshOn && nativeFgLocksVrr ->
+                    "Auto is on — with frame generation running, the display follows Max FPS × multiplier."
+                nativeFgLocksVrr ->
+                    (if (fgAutoPerGame) "Auto is off for this game while frame generation runs. "
+                     else "Auto is off while frame generation runs. ") +
+                        "Turn it on to fit the screen to Max FPS × multiplier." +
+                        (if (manualRefreshRate > 0) " Display locked to ${manualRefreshRate} Hz." else "")
                 matchRefreshOn ->
                     "Auto is on — the display follows your FPS."
                 manualRefreshRate > 0 ->
@@ -2490,7 +3356,7 @@ private fun HudContent(state: XServerDrawerState) {
                     "gamehub" -> "Rich overlay: skins, colored fields, live FPS graph. Style change applies on next launch."
                     "gamenative" -> "GameNative-style overlay: compact pill or stacked list with live graphs. Style change applies on next launch."
                     "fusion" -> "Fusion overlay: one color-coded look in 5 sizes with percentile lows, VRAM + a Mega everything-view. Tap the HUD to cycle size."
-                    else -> "Classic WinHub overlay."
+                    else -> "Classic Bannerlator overlay."
                 },
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), fontSize = 11.sp,
                 modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 4.dp)
@@ -2779,6 +3645,7 @@ private fun ControlsContent(state: XServerDrawerState) {
 
     val moveCursorToTouch by state.moveCursorToTouchpoint.collectAsState()
     val isRelativeMouse by state.isRelativeMouseMovement.collectAsState()
+    val isWaylandSession by state.isWaylandMode.collectAsState()
     val isMouseDisabled by state.isMouseDisabled.collectAsState()
     val initOverlayOpacity by state.overlayOpacity.collectAsState()
     val controlsFollowTheme by state.controlsFollowTheme.collectAsState()
@@ -2797,6 +3664,7 @@ private fun ControlsContent(state: XServerDrawerState) {
             Triple("Vibration", subTab == 2) { state.setControlsSubTab(2) },
             Triple("Gyro", subTab == 3) { state.setControlsSubTab(3) },
             Triple("Players", subTab == 4) { state.setControlsSubTab(4) },
+            Triple(stringResource(R.string.swipe_tab), subTab == 5) { state.setControlsSubTab(5) },
         ),
         perRow = 3
     )
@@ -2941,6 +3809,16 @@ private fun ControlsContent(state: XServerDrawerState) {
                 perRow = 3
             )
 
+            if (isWaylandSession) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Wayland: mouse deltas go to the compositor; a game that locks the pointer receives them as relative motion",
+                    color = LocalAccentDim.current,
+                    fontSize = 11.sp,
+                    lineHeight = 13.sp
+                )
+            }
+
             // Tied directly to the toggle: the gestures only exist in absolute-cursor mode, so the
             // pane appears as part of switching Cursor to Touch on and leaves with it. No cog — one
             // less tap, and turning the mode on now shows you exactly what you turned on.
@@ -3017,7 +3895,49 @@ private fun ControlsContent(state: XServerDrawerState) {
 
         // ── Players ── manual per-device slot assignment (override when auto-assignment guesses wrong).
         4 -> PlayersSection()
+
+        // ── Swipe ── live per-category on-screen-control swipe gates (Buttons/D-pad/Sticks).
+        5 -> SwipeSection(state)
     }
+}
+
+// ───── Controls > Swipe — live per-category swipe toggles ─────
+// Buttons/D-pad let a finger slide onto (and off) those controls without lifting; Sticks lets a free
+// finger slide into a stick to grab it. Each chip reflects its StateFlow and round-trips through its
+// callback (apply-live-to-InputControlsView + persist), mirroring the Touch sub-tab's flag chips.
+@Composable
+private fun SwipeSection(state: XServerDrawerState) {
+    val accent = MaterialTheme.colorScheme.primary
+    val swipeButtons by state.swipeButtons.collectAsState()
+    val swipeDpad by state.swipeDpad.collectAsState()
+    val swipeSticks by state.swipeSticks.collectAsState()
+
+    Text(stringResource(R.string.swipe_tab), color = accent, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "Slide a finger onto a control to press it — chain buttons and roll the d-pad without lifting.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(Modifier.height(8.dp))
+
+    ToggleChipGrid(
+        listOf(
+            ToggleChipItem(stringResource(R.string.swipe_buttons), swipeButtons) {
+                state.setSwipeButtons(it)
+                state.onSetSwipeButtons?.accept(it)
+            },
+            ToggleChipItem(stringResource(R.string.swipe_dpad), swipeDpad) {
+                state.setSwipeDpad(it)
+                state.onSetSwipeDpad?.accept(it)
+            },
+            ToggleChipItem(stringResource(R.string.swipe_sticks), swipeSticks) {
+                state.setSwipeSticks(it)
+                state.onSetSwipeSticks?.accept(it)
+            },
+        ),
+        perRow = 3
+    )
 }
 
 // ───── Controls > Players — manual per-device XInput slot assignment ─────
@@ -3042,6 +3962,22 @@ private fun PlayersSection() {
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
     Spacer(Modifier.height(8.dp))
+
+    // Full landscape popup: the same slot controls in a left rail, plus a live "Controller Test"
+    // picture that lights up as each button/stick/dpad/trigger is pressed (game input is isolated
+    // while it's open). Opens the CONTROLLER_TEST dialog hosted by XServerDialogHost.
+    Button(
+        onClick = { XServerDialogState.show(XServerDialogState.ActiveDialog.CONTROLLER_TEST) },
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+    ) { Text("Physical Controller Test / Bind") }
+    Spacer(Modifier.height(4.dp))
+    Text(
+        "Test each physical controller, remap its buttons, and confirm every input registers.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(Modifier.height(10.dp))
 
     if (rows.isEmpty()) {
         Text(
@@ -3454,51 +4390,19 @@ private fun AdvancedContent(state: XServerDrawerState) {
 
     Spacer(Modifier.height(14.dp))
 
-    // ── Performance ── non-root power-user toggles; always enabled, applied + persisted live.
-    // Each row shows whether it's a per-game override or inheriting the App Settings global default,
-    // with a "Reset to global" affordance (a per-game toggle is only saved when it differs).
+    // ── Performance ── one entry that opens the full dashboard dialog (Form C). This REPLACES the
+    // old inline toggle stack; every control still binds to the SAME XServerDrawerState flows and
+    // perf/* objects — now inside PerformanceDashboardDialog — so it is a pure drop-in swap.
     SectionHeader("Performance")
+    var showPerfDialog by remember { mutableStateOf(false) }
+    AdvancedActionRow(
+        "Performance",
+        R.drawable.ic_sidebar_performance,
+        subtitle = "CPU / GPU clocks, thermal, memory — live gauges, root-aware.",
+    ) { showPerfDialog = true }
 
-    val overridden by state.overriddenKeys.collectAsState()
-
-    val sustainedPerf by state.sustainedPerfMode.collectAsState()
-    ToggleRow("Sustained Performance Mode", sustainedPerf) {
-        state.setSustainedPerfMode(it); state.onSustainedPerfModeChange?.run()
-    }
-    PerfOverrideLine("sustainedPerfMode" in overridden) { state.onResetPerfKey?.accept("sustainedPerfMode") }
-
-    val priorityBoost by state.perfPriorityBoost.collectAsState()
-    ToggleRow("Thread Priority Boost", priorityBoost) {
-        state.setPerfPriorityBoost(it); state.onPerfPriorityBoostChange?.run()
-    }
-    PerfOverrideLine("perfPriorityBoost" in overridden) { state.onResetPerfKey?.accept("perfPriorityBoost") }
-
-    val bigCores by state.preferBigCores.collectAsState()
-    ToggleRow("Prefer Big Cores", bigCores) {
-        state.setPreferBigCores(it); state.onPreferBigCoresChange?.run()
-    }
-    PerfOverrideLine("preferBigCores" in overridden) { state.onResetPerfKey?.accept("preferBigCores") }
-
-    // GPU max-clock pin — sits with the no-root toggles because on Adreno it works without root
-    // (KGSL turbo); it upgrades to the sysfs pin automatically when root is granted.
-    GpuClockLockRow(state, overridden)
-
-    Spacer(Modifier.height(14.dp))
-    RootPerformanceSection(state)
-
-    // One-tap "reset every per-game override" — shown only when this game overrides something.
-    if (overridden.isNotEmpty()) {
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "↺ Reset all game overrides to global",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .clickable { state.onResetAllPerf?.run() }
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-        )
+    if (showPerfDialog) {
+        PerformanceDashboardDialog(state) { showPerfDialog = false }
     }
 }
 
@@ -4251,11 +5155,33 @@ private fun TmContainerPanel(info: XServerDialogState.TmContainerInfo?) {
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
                     .padding(horizontal = 10.dp, vertical = 6.dp)
             ) {
-                ContainerInfoRow("Wine", info.wine)
-                ContainerInfoRow("DX wrapper", prettyDxWrapper(info.dxWrapper), accent)
-                ContainerInfoRow("Renderer", prettyRenderer(info.renderer), accent)
+                val wayland = info.displayBackend == "Wayland"
+                // A Linux session runs no Wine of ours and no DX wrapper of ours: a game the client
+                // launches brings Valve's Proton with its own DXVK/VKD3D, which we do not pick and
+                // cannot name from here. Say what is true and leave out what would be invented.
+                ContainerInfoRow(if (info.linuxRuntime) "Runtime" else "Wine", info.wine)
+                ContainerInfoRow("Display backend", info.displayBackend)
+                if (!info.linuxRuntime) ContainerInfoRow("DX wrapper", prettyDxWrapper(info.dxWrapper), accent)
+                // Wayland: the game presents through the embedded compositor's Vulkan backend, and the
+                // driver value is the "compositor: … · game: …" pair the activity resolved (wraps).
+                ContainerInfoRow(
+                    "Renderer",
+                    when {
+                        info.linuxRuntime -> "Vulkan (gamescope \u2192 Wayland compositor)"
+                        wayland -> "Vulkan (Wayland compositor)"
+                        else -> prettyRenderer(info.renderer)
+                    },
+                    accent,
+                )
                 ContainerInfoRow("Graphics driver", info.graphicsDriver)
+                // Wayland hands the GPU-name spoof to DXVK and leaves the Vulkan device alone, so this
+                // is the only place that can say the game is being told about a GPU that isn't here.
+                // Null (X11, or no spoof) = no row, the block exactly as it was.
+                info.gpuSpoof?.let { ContainerInfoRow("GPU name", "$it (spoofed, not the real GPU)") }
                 ContainerInfoRow("Resolution", info.resolution)
+                // What the panel the game is on reports, read live. Reporting only - there is no HDR
+                // output path, so there is deliberately no toggle beside it.
+                ContainerInfoRow("HDR", info.hdr)
                 ContainerInfoRow("Device", tidyDevice(info.device))
             }
         }

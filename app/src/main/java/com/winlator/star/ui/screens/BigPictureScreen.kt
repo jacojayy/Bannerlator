@@ -67,6 +67,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -80,6 +81,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -139,6 +141,15 @@ import com.winlator.star.communityconfigs.WorkerConfigEntry
 import com.winlator.star.ui.screens.adrenodownload.AdrenoDriverDownloadSheet
 import com.winlator.star.container.Shortcut
 import com.winlator.star.store.DownloadManagerActivity
+import com.winlator.star.store.GoldbergComponent
+import com.winlator.star.store.SteamGameUpdater
+import com.winlator.star.store.GoldbergMode
+import com.winlator.star.store.GoldbergPatcher
+import com.winlator.star.store.SteamDatabase
+import com.winlator.star.store.SteamLiteComponent
+import com.winlator.star.store.SteamLoginActivity
+import com.winlator.star.store.SteamPrefs
+import com.winlator.star.store.SteamSessionManager
 import com.winlator.star.store.StarLaunchBridge
 import com.winlator.star.ui.Screen
 import com.winlator.star.ui.findActivity
@@ -192,6 +203,132 @@ fun BigPictureScreen(navController: NavController) {
     var lastCommunityPick by remember { mutableStateOf<CommunityPick?>(null) }
     var bpInstallFor by remember { mutableStateOf<CommunityConfigApply.MissingComponent?>(null) }
     var bpDriverFor by remember { mutableStateOf<CommunityConfigApply.MissingDriver?>(null) }
+    // Steam launch-method popup (M3), couch UI: the Steam-origin game whose SteamLite-vs-Goldberg
+    // chooser is open, plus the download-on-launch progress overlay (shared for both components).
+    var launchChoiceFor by remember { mutableStateOf<Shortcut?>(null) }
+    // SteamLite launch pre-flight (session → network → cloud saves → update check BEFORE the container opens);
+    // every RealSteam launch routes through it. Mirrors ShortcutsScreen.
+    var preflightFor by remember { mutableStateOf<Shortcut?>(null) }
+    var componentDownloadFor by remember { mutableStateOf<Shortcut?>(null) }
+    var componentDownloadLabel by remember { mutableStateOf("") }
+    var componentDownloadProgress by remember { mutableFloatStateOf(0f) }
+    // Goldberg launch (persist sub-mode → component on demand → patch → launch); shared by the popup's
+    // Goldberg pick and the pre-flight's "Launch with Goldberg" fallback. Mirrors ShortcutsScreen.
+    fun launchWithGoldberg(s: Shortcut, gm: GoldbergMode) {
+        val appId = steamAppIdOf(s)
+        SteamPrefs.init(context)
+        SteamPrefs.setGoldbergMode(appId, gm)
+        val applyThenLaunch = {
+            Thread({
+                val installDir = runCatching {
+                    SteamDatabase.getInstance(context).getGame(appId)?.installDir
+                }.getOrNull().orEmpty()
+                activity.runOnUiThread {
+                    if (installDir.isEmpty()) {
+                        launchShortcut(activity, s)
+                    } else {
+                        GoldbergPatcher.applyModeAsync(context, appId, installDir, s.name, gm) { _, _ ->
+                            launchShortcut(activity, s)
+                        }
+                    }
+                }
+            }, "goldberg-apply-launch").start()
+        }
+        if (!GoldbergComponent.isInstalled(context)) {
+            componentDownloadFor = s
+            componentDownloadLabel = "Steam Emulator (Goldberg)"
+            componentDownloadProgress = 0f
+            GoldbergComponent.downloadAsync(
+                context,
+                { f -> componentDownloadProgress = f },
+                { ok, msg ->
+                    componentDownloadFor = null
+                    if (ok) applyThenLaunch()
+                    else Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                },
+            )
+        } else applyThenLaunch()
+    }
+    // SteamLite launch: package on demand, then the pre-flight dialog (which starts the container).
+    fun launchWithSteamLite(s: Shortcut) {
+        if (!SteamLiteComponent.isInstalled(context)) {
+            componentDownloadFor = s
+            componentDownloadLabel = "SteamLite (Real Steam / VAC)"
+            componentDownloadProgress = 0f
+            SteamLiteComponent.downloadAsync(
+                context,
+                { f -> componentDownloadProgress = f },
+                { ok, msg ->
+                    componentDownloadFor = null
+                    if (ok) preflightFor = s
+                    else Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                },
+            )
+        } else {
+            preflightFor = s
+        }
+    }
+    // RealSteam manual maintenance (the launch popup's Verify / Update buttons — SteamLite roadmap #3),
+    // couch UI: the game whose maintenance run is in flight, its progress (<0 = indeterminate "checking",
+    // 0..1 while working), a label, a dialog title, and the cancel handle. NO longer on the launch path —
+    // update/verify are explicit now, so a run never launches the game. Mirrors ShortcutsScreen.
+    var steamUpdateFor by remember { mutableStateOf<Shortcut?>(null) }
+    var steamUpdateProgress by remember { mutableFloatStateOf(-1f) }
+    var steamUpdateLabel by remember { mutableStateOf("") }
+    var steamUpdateTitle by remember { mutableStateOf("") }
+    var steamUpdateHandle by remember { mutableStateOf<SteamGameUpdater.UpdateHandle?>(null) }
+    // "Check for updates" is check-THEN-offer (never auto-applies): the cheap probe runs first, and a found
+    // delta (or a can't-tell-offline result) parks the game + its status here so the couch confirm sheet
+    // below can offer to apply it. null = no offer pending. Mirrors ShortcutsScreen.
+    var steamUpdateOffer by remember { mutableStateOf<Pair<Shortcut, SteamGameUpdater.UpdateStatus>?>(null) }
+    // Manual RealSteam maintenance: run a delta [update] or a full "verify integrity" [verify] pass,
+    // reusing the shared progress modal. Standalone — it never launches the game; the outcome is a toast.
+    // Cancellable via steamUpdateHandle.
+    fun runSteamMaintenance(s: Shortcut, verify: Boolean) {
+        val appId = steamAppIdOf(s)
+        steamUpdateTitle = if (verify) "Verifying game files" else "Updating game"
+        steamUpdateLabel = if (verify) "Verifying ${s.name}…" else "Checking ${s.name} for updates…"
+        steamUpdateProgress = -1f
+        steamUpdateFor = s
+        val progress = SteamGameUpdater.ProgressCallback { frac, label ->
+            steamUpdateProgress = frac; steamUpdateLabel = label
+        }
+        val done = SteamGameUpdater.DoneCallback { result, msg ->
+            steamUpdateFor = null
+            steamUpdateHandle = null
+            if (result != SteamGameUpdater.Result.CANCELLED && msg.isNotBlank()) {
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            }
+        }
+        steamUpdateHandle =
+            if (verify) SteamGameUpdater.verifyFiles(context, appId, progress, done)
+            else SteamGameUpdater.updateNow(context, appId, progress, done)
+    }
+    // "Check for updates": a cheap, network-free probe (shown in the shared progress modal as the animated
+    // "Checking…" indeterminate phase), then BRANCH — never auto-apply. Up-to-date / not-installed inform
+    // via a toast; an available (or can't-tell-offline) result opens the couch confirm sheet, whose
+    // [Update now] / [Check online] hands off to runSteamMaintenance. onResult lands on the main thread.
+    fun checkForUpdatesThenOffer(s: Shortcut) {
+        val appId = steamAppIdOf(s)
+        steamUpdateTitle = "Checking for updates"
+        steamUpdateLabel = "Checking ${s.name}…"
+        steamUpdateProgress = -1f   // opens in the animated indeterminate state, never a static 0%.
+        steamUpdateFor = s
+        steamUpdateHandle = SteamGameUpdater.checkForUpdate(context, appId) { status ->
+            steamUpdateFor = null
+            steamUpdateHandle = null
+            when (status.state) {
+                SteamGameUpdater.State.UP_TO_DATE -> {
+                    val b = if (status.installedBuild > 0L) " (build ${status.installedBuild})" else ""
+                    Toast.makeText(context, "${s.name} is up to date$b", Toast.LENGTH_LONG).show()
+                }
+                SteamGameUpdater.State.NOT_INSTALLED ->
+                    Toast.makeText(context, "${s.name} isn't installed", Toast.LENGTH_LONG).show()
+                SteamGameUpdater.State.UPDATE_AVAILABLE, SteamGameUpdater.State.UNKNOWN ->
+                    steamUpdateOffer = s to status
+            }
+        }
+    }
 
     // Decoded covers keyed by shortcut name; guarded by a plain in-flight set so we never re-fetch.
     val coverCache = remember { mutableStateMapOf<String, ImageBitmap>() }
@@ -283,8 +420,12 @@ fun BigPictureScreen(navController: NavController) {
     // Seed the root focus once so key events route to us from the first frame.
     LaunchedEffect(Unit) { grabFocus() }
 
-    // Re-grab focus after a sheet / dialog closes so D-pad keeps working.
-    LaunchedEffect(activeSheet, editShortcut) { if (activeSheet == null && !editShortcut) grabFocus() }
+    // Re-grab focus after a sheet / dialog closes so D-pad keeps working (the launch-method popup and
+    // its download overlay are their own windows too, so wait until they're gone before re-grabbing).
+    LaunchedEffect(activeSheet, editShortcut, launchChoiceFor, componentDownloadFor, preflightFor) {
+        if (activeSheet == null && !editShortcut && launchChoiceFor == null && componentDownloadFor == null
+            && preflightFor == null) grabFocus()
+    }
 
     // Preload the selected cover so the hero + blurred background are ready.
     LaunchedEffect(selectedIndex, shortcuts) {
@@ -304,7 +445,23 @@ fun BigPictureScreen(navController: NavController) {
     val selected = shortcuts.getOrNull(selectedIndex)
     val heroCover = selected?.let { coverCache[it.name] }
 
-    val onLaunch: () -> Unit = { selected?.let { runShortcut(activity, it) } }
+    // Every game opens the source-adaptive launch-method popup first (Steam → SteamLite/Goldberg/Raw;
+    // Epic/GOG/Custom → Raw-only), unless a remembered choice already exists. Mirrors the phone UI's
+    // requestLaunch (ShortcutsScreen): a remembered pick launches DIRECTLY (the launchMode extra is honored
+    // by the launch pipeline; "Raw" is a plain launch).
+    val onLaunch: () -> Unit = {
+        selected?.let { sc ->
+            val remembered = sc.getExtra("launchMode", "").isNotEmpty() &&
+                sc.getExtra("launchModeRemembered", "") == "1"
+            when {
+                // A remembered RealSteam pick still runs the SteamLite pre-flight (session check).
+                remembered && sc.getExtra("launchMode", "") == "RealSteam" && isSteamOriginShortcut(sc) ->
+                    launchWithSteamLite(sc)
+                remembered -> launchShortcut(activity, sc)
+                else -> launchChoiceFor = sc
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -499,7 +656,7 @@ fun BigPictureScreen(navController: NavController) {
                 // Per-game spec = the SAME resolved settings the game cards and the pre-launch screen
                 // show (buildLaunchSpec: renderer / driver / DXVK / VKD3D / frame-gen / x86 backend),
                 // so Big Picture matches the rest of the app instead of the old wrapper/box64 chips.
-                val spec = selected?.let { buildLaunchSpec(it, context.resources) }
+                val spec = selected?.let { buildLaunchSpec(it, context) }
                 val chips = spec?.let {
                     listOf(
                         "Renderer" to it.rendererLabel,
@@ -812,6 +969,173 @@ fun BigPictureScreen(navController: NavController) {
             },
         )
     }
+
+    // ── Steam launch-method popup (M3), couch UI: SteamLite (real Steam / VAC) vs Goldberg (offline) ─
+    launchChoiceFor?.let { s ->
+        val appId = steamAppIdOf(s)
+        LaunchMethodSheet(
+            shortcut = s,
+            onDismiss = { launchChoiceFor = null },
+            // Verify runs a full re-validate pass directly. "Check for updates" is check-THEN-offer: probe
+            // first, then a couch confirm sheet lets the user choose to apply — it never auto-updates. Both
+            // dismiss the sheet first (so no dialog is layered behind the ModalBottomSheet's window).
+            onUpdateFiles = { launchChoiceFor = null; checkForUpdatesThenOffer(s) },
+            onVerifyFiles = { launchChoiceFor = null; runSteamMaintenance(s, verify = true) },
+            onLaunch = { mode, goldbergMode, remember, controllerPassthrough, vacLaunch ->
+                // Persist the choice on the shortcut (contract literals: launchMode ∈ RealSteam/Goldberg/Raw,
+                // launchModeRemembered="1"), then stage the picked component and launch.
+                s.putExtra("launchMode", mode)
+                s.putExtra("launchModeRemembered", if (remember) "1" else "0")
+                // Per-game "Controller passthrough" (read only on RealSteam launches; inert otherwise).
+                s.putExtra("controllerPassthrough", if (controllerPassthrough) "1" else "0")
+                // Per-game "Requires secure (VAC) launch" override: "" = follow app-info detection, "1"/"0".
+                s.putExtra("steamVacLaunch", vacLaunch)
+                s.saveData()
+                launchChoiceFor = null
+                when (mode) {
+                    "Goldberg" -> launchWithGoldberg(s, goldbergMode ?: GoldbergMode.REGULAR)
+                    "Raw" -> {
+                        // Raw: run the game's .exe directly, no Steam layer (Epic/GOG/Custom, or a Steam
+                        // game the user chose to run raw). launchMode="Raw" is inert to the launch pipeline
+                        // (only "RealSteam" stages the agent), so this is a plain launch.
+                        launchShortcut(activity, s)
+                    }
+                    else -> {
+                        // RealSteam (SteamLite): package on demand, then the pre-flight dialog (session →
+                        // cloud saves → update check) and only then the container. Update/verify stay the
+                        // popup's manual buttons; the pre-flight only OFFERS an update.
+                        launchWithSteamLite(s)
+                    }
+                }
+            },
+        )
+    }
+
+    // ── SteamLite pre-flight ("Getting Steam ready") — runs BEFORE XServerDisplayActivity ──────────
+    preflightFor?.let { s ->
+        val appId = steamAppIdOf(s)
+        val installDir = remember(s) {
+            runCatching { SteamDatabase.getInstance(context).getGame(appId)?.installDir }.getOrNull().orEmpty()
+        }
+        val savePrefs = remember { context.getSharedPreferences("save_manager_prefs", Context.MODE_PRIVATE) }
+        SteamPreflightDialog(
+            shortcut = s,
+            request = SteamSessionManager.PreflightRequest(
+                appId = appId,
+                installDir = installDir,
+                gameName = s.name,
+                pullCloudSaves = savePrefs.getBoolean("auto_download_steam_on_launch", true),
+            ),
+            onLaunch = { preflightFor = null; launchShortcut(activity, s, preflightDone = true) },
+            onDismiss = { preflightFor = null },
+            onSignIn = {
+                preflightFor = null
+                context.startActivity(Intent(context, SteamLoginActivity::class.java))
+            },
+            onGoldberg = {
+                preflightFor = null
+                SteamPrefs.init(context)
+                launchWithGoldberg(s, SteamPrefs.getGoldbergMode(appId).let { if (it == GoldbergMode.OFF) GoldbergMode.REGULAR else it })
+            },
+            onUpdate = { preflightFor = null; runSteamMaintenance(s, verify = false) },
+        )
+    }
+
+    // Blocking progress dialog while the picked component downloads before launch.
+    componentDownloadFor?.let {
+        OutlinedAlertDialog(
+            onDismissRequest = { /* keep up until the download finishes */ },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            title = { Text("Downloading $componentDownloadLabel", color = MaterialTheme.colorScheme.onSurface) },
+            text = {
+                Column {
+                    LinearProgressIndicator(
+                        progress = { componentDownloadProgress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surface,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "${(componentDownloadProgress.coerceIn(0f, 1f) * 100).toInt()}% — the game launches when this finishes.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {},
+        )
+    }
+
+    // RealSteam manual maintenance: progress while a user-triggered Update or Verify pass runs.
+    // Cancellable — cancelling aborts the pass and stays in Big Picture (a run never launches the game).
+    steamUpdateFor?.let {
+        OutlinedAlertDialog(
+            onDismissRequest = { /* modal until it finishes or is cancelled */ },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            title = { Text(steamUpdateTitle, color = MaterialTheme.colorScheme.onSurface) },
+            text = {
+                Column {
+                    if (steamUpdateProgress < 0f) {
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surface,
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            progress = { steamUpdateProgress.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surface,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        // Prefix a live "N%" once real download progress starts; the indeterminate
+                        // "checking/setup" phase (fraction < 0) shows just the phase label.
+                        if (steamUpdateProgress >= 0f)
+                            "${(steamUpdateProgress.coerceIn(0f, 1f) * 100).toInt()}% — $steamUpdateLabel"
+                        else steamUpdateLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { steamUpdateHandle?.cancel() }) {
+                    Text("Cancel", color = MaterialTheme.colorScheme.primary)
+                }
+            },
+        )
+    }
+
+    // "Check for updates" outcome (couch UI): a delta is (or might be) due — offer to apply it. Reuses the
+    // fully D-pad + touch navigable BpSheetScaffold (a focusable bottom sheet), NOT a bare touch dialog.
+    // Never auto-updates; [Update now] / [Check online] runs the authoritative updateNow pass.
+    steamUpdateOffer?.let { (s, status) ->
+        val available = status.state == SteamGameUpdater.State.UPDATE_AVAILABLE
+        val title = if (available) {
+            if (status.installedBuild > 0L && status.liveBuild > 0L)
+                "Update available — build ${status.installedBuild} → ${status.liveBuild}"
+            else "Update available for ${s.name}"
+        } else {
+            "Couldn't check ${s.name} from cached data — check online?"
+        }
+        BpSheetScaffold(
+            title = title,
+            rows = listOf(
+                BpRow(Icons.Filled.Download, if (available) "Update now" else "Check online") {
+                    steamUpdateOffer = null
+                    runSteamMaintenance(s, verify = false)
+                },
+                BpRow(Icons.Filled.Close, if (available) "Later" else "Cancel") {
+                    steamUpdateOffer = null
+                },
+            ),
+            onDismiss = { steamUpdateOffer = null },
+        )
+    }
 }
 
 // ── Building blocks ─────────────────────────────────────────────────────────
@@ -1051,7 +1375,7 @@ private fun GameCommunitySheet(
                     BpCommunityCard(
                         pick = CommunityPick.File(
                             g,
-                            CommunityConfigRef(g, folder, e.filename, e.sha.ifBlank { null }, ns = if (e.appSource == "winhub") "winhub" else ""),
+                            CommunityConfigRef(g, folder, e.filename, e.sha.ifBlank { null }, ns = if (e.appSource == "bannerlator") "bannerlator" else ""),
                             e,
                         ),
                         entry = e,
@@ -1087,7 +1411,7 @@ private fun GameCommunitySheet(
                             type = "application/json"
                             putExtra(Intent.EXTRA_STREAM, uri)
                             putExtra(Intent.EXTRA_SUBJECT, res.game)
-                            putExtra(Intent.EXTRA_TEXT, "WinHub config for ${res.game}")
+                            putExtra(Intent.EXTRA_TEXT, "Bannerlator config for ${res.game}")
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }
                         context.startActivity(Intent.createChooser(send, "Share config"))
@@ -1499,7 +1823,9 @@ private fun playtimeStats(context: Context, name: String): Pair<Int, String> {
 }
 
 // Resolve a cover: existing custom art first, then a SteamGridDB grid (persisted as the custom cover).
-private fun loadCover(s: Shortcut): ImageBitmap? {
+// `internal` (not `private`) so the Games-wall screen (GamesWallScreen.kt) reuses the exact same
+// local-first → SteamGridDB resolution instead of forking a second copy.
+internal fun loadCover(s: Shortcut): ImageBitmap? {
     val custom = s.customCoverArtPath
     if (!custom.isNullOrEmpty()) {
         val f = File(custom)
@@ -1524,15 +1850,20 @@ private fun loadCover(s: Shortcut): ImageBitmap? {
     }
 }
 
-private fun runShortcut(activity: Activity, shortcut: Shortcut) {
+// `internal` so the Games-wall screen launches games through the identical entry point.
+// [preflightDone] = the SteamLite pre-flight already pulled cloud saves; the activity skips its own pull.
+internal fun launchShortcut(activity: Activity, shortcut: Shortcut, preflightDone: Boolean = false) {
     if (!XrActivity.isEnabled(activity)) {
         val intent = Intent(activity, XServerDisplayActivity::class.java).apply {
             putExtra("container_id", shortcut.container.id)
             putExtra("shortcut_path", shortcut.file.path)
             putExtra("shortcut_name", shortcut.name)
             putExtra("disableXinput", shortcut.getExtra("disableXinput", "0"))
+            if (preflightDone) putExtra(SteamSessionManager.EXTRA_PREFLIGHT_DONE, true)
         }
-        activity.startActivity(intent)
+        // Same "Launch this game on the TV" as the shortcut list (shared helper, so the two launch
+        // paths can't drift); false = no TV wanted, none connected, or the system refused it.
+        if (!launchOnExternalDisplay(activity, shortcut, intent)) activity.startActivity(intent)
     } else {
         XrActivity.openIntent(activity, shortcut.container.id, shortcut.file.path)
     }

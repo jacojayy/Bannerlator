@@ -9,6 +9,8 @@ import com.winlator.star.perf.PerfRevertRegistry
 import com.winlator.star.perf.PerformanceSettings
 import com.winlator.star.perf.RootManager
 import com.winlator.star.perf.TempWatchdog
+import com.winlator.star.store.SteamPrefs
+import com.winlator.star.store.SteamRepository
 
 /**
  * The app's Application. Its sole current job is standing up the power-user performance safety core
@@ -18,7 +20,7 @@ import com.winlator.star.perf.TempWatchdog
  * All of this is wrapped so a failure here can never take down app startup — the perf tier is
  * strictly additive.
  */
-class WinHubApp : Application() {
+class BannerlatorApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
@@ -32,7 +34,7 @@ class WinHubApp : Application() {
                 com.winlator.star.core.CrashReporter.install(this)
             }
         } catch (t: Throwable) {
-            Log.w("WinHubApp", "crash reporter not installed", t)
+            Log.w("BannerlatorApp", "crash reporter not installed", t)
         }
 
         // Exit-reason auto-save (opt-in, off by default): if the previous process died — including a
@@ -44,11 +46,11 @@ class WinHubApp : Application() {
                     .getBoolean(com.winlator.star.core.ExitReasonReporter.PREF_AUTOSAVE, false)) {
                 Thread {
                     try { com.winlator.star.core.ExitReasonReporter.captureToFile(this) }
-                    catch (t: Throwable) { Log.w("WinHubApp", "exit-reason autosave failed", t) }
+                    catch (t: Throwable) { Log.w("BannerlatorApp", "exit-reason autosave failed", t) }
                 }.start()
             }
         } catch (t: Throwable) {
-            Log.w("WinHubApp", "exit-reason autosave not scheduled", t)
+            Log.w("BannerlatorApp", "exit-reason autosave not scheduled", t)
         }
 
         // Reclaim stale update installers from the external cache. On a fresh cold start there is
@@ -58,10 +60,39 @@ class WinHubApp : Application() {
         try {
             Thread {
                 try { com.winlator.star.core.UpdateManager.pruneUpdateCacheAtStartup(this) }
-                catch (t: Throwable) { Log.w("WinHubApp", "update-cache prune failed", t) }
+                catch (t: Throwable) { Log.w("BannerlatorApp", "update-cache prune failed", t) }
             }.start()
         } catch (t: Throwable) {
-            Log.w("WinHubApp", "update-cache prune not scheduled", t)
+            Log.w("BannerlatorApp", "update-cache prune not scheduled", t)
+        }
+
+        // Steam: make the connection status live app-wide. Init the session prefs synchronously (cheap;
+        // the status pill in the top bar + drawer reads SteamPrefs.isLoggedIn on the first frame), then
+        // OFF the main thread build the repository and — if the user has ever signed in — auto-connect,
+        // so the pill is live at launch instead of only after the store is first opened (this is also
+        // why the game-launch screen used to report "not logged into Steam"). Best-effort: every step is
+        // wrapped so it can never block or crash startup.
+        try {
+            com.winlator.star.store.SteamPrefs.init(this)
+        } catch (t: Throwable) {
+            Log.w("BannerlatorApp", "steam prefs init failed", t)
+        }
+        try {
+            Thread {
+                try {
+                    // Native Rust Steam engine (Phase 0): load libblsteam.so and bind one JNI export
+                    // so a packaging/symbol regression is one loud logcat line ("BL_STEAM: ...") at
+                    // boot. With the hidden use_rust_steam_engine flag off this is its ONLY effect.
+                    com.winlator.star.store.blsteam.BlSteamClient.probe()
+                    val repo = com.winlator.star.store.SteamRepository.getInstance()
+                    repo.initialize(this)                 // sets appContext + prefs (idempotent, synchronized)
+                    if (com.winlator.star.store.SteamPrefs.isLoggedIn) repo.reconnectNow()
+                } catch (t: Throwable) {
+                    Log.w("BannerlatorApp", "steam auto-connect failed", t)
+                }
+            }.start()
+        } catch (t: Throwable) {
+            Log.w("BannerlatorApp", "steam auto-connect not scheduled", t)
         }
 
         try {
@@ -69,18 +100,35 @@ class WinHubApp : Application() {
             RootManager.onAppStartup(this)
             TempWatchdog.init(this)
             PerformanceSettings.init(this) // global defaults both perf surfaces bind to
+            // No-root Samsung Galaxy Performance SDK path (dormant off Samsung / without the SDK jar).
+            com.winlator.star.perf.galaxy.GalaxyPerfManager.initialize(this)
 
             // App-level background => revert privileged writes (a single game Activity stopping is
             // handled in XServerDisplayActivity; this catches process-wide backgrounding).
             ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+                override fun onStart(owner: LifecycleOwner) {
+                    // Reconnect Steam the moment the app returns to the foreground if the session dropped
+                    // while backgrounded (auto-reconnect gives up after a few tries, so friends/chat would
+                    // otherwise sit disconnected until something else pokes it). Guarded to OFFLINE only, so
+                    // a SteamLite game holding the session (SIGNED_IN_ELSEWHERE) is never tugged.
+                    try {
+                        if (SteamPrefs.isLoggedIn) {
+                            val repo = SteamRepository.getInstance()
+                            if (repo.status == SteamRepository.SteamStatus.OFFLINE) repo.reconnectNow()
+                        }
+                    } catch (t: Throwable) {
+                        Log.w("BannerlatorApp", "foreground reconnect failed", t)
+                    }
+                }
+
                 override fun onStop(owner: LifecycleOwner) {
                     try { PerfRevertRegistry.revertAll() } catch (t: Throwable) {
-                        Log.w("WinHubApp", "background revert failed", t)
+                        Log.w("BannerlatorApp", "background revert failed", t)
                     }
                 }
             })
         } catch (t: Throwable) {
-            Log.w("WinHubApp", "perf safety-core init failed", t)
+            Log.w("BannerlatorApp", "perf safety-core init failed", t)
         }
     }
 }

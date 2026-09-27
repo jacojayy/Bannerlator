@@ -1,5 +1,2690 @@
 # Star-Compose — Progress Log
 
+## 2026-09-17 — Linux runtime: gamescope + native ARM Steam, phase 1 (branch `feat/linux-gamescope-runtime`)
+
+> **What this is.** A second runtime beside Wine: a glibc aarch64 rootfs (`linuxfs`) run under proot, with Valve's **gamescope** as a Wayland client of our own compositor, Xwayland on Zink for X11 programs, and Valve's **native aarch64** Linux Steam client. No Wine, no box64, no FEX — the client is a real arm64 ELF. Modelled on Max's WinNative `feature/wayland-gamescope`; both repos are GPL-3.0, so his `tools/linuxfs` and preloads are adaptable with attribution.
+>
+> **Product shape (user's call).** `linuxfs` ships the way the Steam client does — a catalog row users opt into, which the app downloads, extracts and installs, leaving a permanent **Steam (Linux)** entry in the Games tab. It is a separate track from Wayland, but it runs on the Wayland compositor.
+>
+> **Phases.** 1 a Linux ELF runs as our uid · 2 gamescope composites into our surface · 3 the GPU (glibc Turnip, KGSL presented as a DRM node) · 4 Steam · 5 the download/install product.
+
+### 2026-09-18 — r4: the first runtime that installs without root
+
+> `linuxfs-r4` is live: sha256 `26cfa553...`, 789,167,503 B, catalog repointed, download URL
+> verified 200 with a matching content-length. Before publishing, the tarball was listed to confirm
+> it really carries `opt/android-host/{proot,loader,libtalloc.so.2}` with their exec bits.
+>
+> The proot in it is built by this project from the Termux fork `v5.1.107.92`. That closes a problem
+> that turned out to be older than this branch: the copy in the app comes from an old snapshot of
+> upstream proot 5.1.0 and cannot exec anything on a current Android, so **no released build has ever
+> been able to start the runtime** - every working install had been patched by hand. Two things had
+> to be true at once to see it. The workflow that builds the fork already existed and was already
+> right about the source, but it shipped talloc as `libtalloc.so` when the name recorded in NEEDED
+> comes from the SONAME, `libtalloc.so.2`; and nothing consumed its artifact, so the good binary was
+> built and discarded on every run while the apk compiled the dead tree.
+>
+> Carrying proot in the runtime rather than the apk also fixes the shape of the problem: it is no
+> longer the one binary an app update replaces, which is exactly how a working device was broken
+> earlier tonight.
+>
+> What this unblocks is the part that matters: a device nobody has touched can now install the
+> runtime and run it. That is the precondition for testing on a second device, which is the real
+> validation and has not happened yet.
+
+### 2026-09-18 — the _GNU_SOURCE theory was wrong; proot is still broken
+
+> `9e2b2c44` defined `_GNU_SOURCE` and made implicit declarations an error, on the theory that
+> undeclared `process_vm_readv`/`process_vm_writev` were having their 64-bit returns truncated. The
+> build came out clean - no "call to undeclared" warnings at all - and **the packaged proot fails
+> exactly as before**. The commit is worth keeping, because those functions should be declared, but
+> it is not the fix and the log should not pretend otherwise.
+>
+> This was caught by testing the binary in isolation, pulled straight out of the APK and run through
+> the bridge, before installing anything. That is the right order and it is how it should be done
+> from now on: the previous round installed first and cost an hour of recovery.
+>
+> What is actually established. Bisection puts the defect in **our proot binary, not our loader**: a
+> working proot paired with our loader runs fine, while our proot fails with either loader, so the
+> 2,416-byte loader is correct and judging it by size was a mistake. A verbose run shows proot
+> resolving its bindings, the executable and argv correctly and failing only at the execve step where
+> it injects the loader into the traced process. Our binary is 126,696 bytes against a working
+> 214,416, and our source tree has no `extension/` directory where the upstream one does, so the
+> CMake build compiles a subset of proot's sources - worth checking whether something the Android
+> execve path needs simply is not built in.
+>
+> Two ways forward, neither chosen: work out what Termux patches into proot for Android and apply it
+> here, or ship a known-good proot build instead of ours. The second is faster but is a licensing and
+> provenance decision rather than a technical one.
+
+### 2026-09-18 — the packaged proot is broken, and it blocks every fresh user
+
+> Installing the new APK on the test device stopped the runtime from starting at all: the session
+> activity opened and exited within a second, no session log, nothing in logcat. The reason only
+> appears in the **crash buffer**, which is worth remembering for any future "it exits instantly":
+>
+> ```
+> CANNOT LINK EXECUTABLE ".../libproot-real.so": library "libtalloc.so.2" not found
+> ```
+>
+> Behind that is the real problem. **`build-proot.yml` produces a broken proot**: its freestanding
+> loader comes out at 2,416 bytes where a working one is 18,136. proot starts, prints its banner and
+> dies. Every session that has ever worked on this device worked because the device was running a
+> hand-patched proot taken from Termux, and installing an APK overwrites it. Both the new APK and the
+> older one it was rolled back to ship the same broken pair, so this is not a regression from this
+> branch - it has been true all along and was masked by the patch.
+>
+> **No shipped APK can start the Linux runtime.** That makes it the first thing to fix, ahead of
+> anything else on this track: r3 and the automatic Proton selection cannot reach a fresh user until
+> proot builds correctly. The device patch and the exact restore steps are written down in memory,
+> including the two details that are easy to miss - Termux's proot is dynamically linked against
+> libtalloc, and Android's linker will not search the app's own library directory for a plain
+> executable, so the wrapper has to export LD_LIBRARY_PATH.
+
+### 2026-09-18 — r3 live, APK staged: the fresh-user path is complete
+
+> **`linuxfs-r3` is live and verified**: sha256 `38f116b4...`, 788,991,458 B, `linuxfs.json`
+> repointed at it, and the download URL returns 200 with a matching content-length. r3 is the first
+> runtime that selects the ARM64 Proton by itself, so a user no longer points each title at a
+> compatibility tool by hand.
+>
+> **The APK is built and staged** as `Bannerlator-3.1.2-linuxsteam-pubg.apk` (sha256 `a0187ec8...`,
+> versionCode 85, unchanged). It carries the frame-counter fix and the real
+> `-i Process.myUid()` proot invocation, which retires the hand-written `libproot.so` wrapper with a
+> hardcoded uid that had been sitting on the test device.
+>
+> That completes the path for someone starting from nothing: install the APK, install the Linux
+> Runtime from Contents, open Steam (Linux) from the Games tab, sign in, install a game, launch it.
+> **Neither artifact has been device-tested yet.** The two things to watch on the first run are the
+> frame counter reading real numbers on a Source title, and games starting without the Compatibility
+> box being touched. A game currently installed as a Linux build will re-download its Windows depot
+> once on that first session.
+>
+> The rootfs run that produced r3 reports as failed, and it is worth knowing why: the tarball built
+> and uploaded at step 6, and only the extra step that collects the guest shims failed afterwards,
+> because it looked for the rootfs in the workspace while the build script cds into RUNNER_TEMP. The
+> script now places those shims beside the tarball itself.
+
+### 2026-09-18 — picking Proton automatically, the frame counter, and where VAC stands
+
+> **Users should not have to tick the Compatibility box per game.** The `"0"` mapping is the
+> client's "Steam Play for all other titles" and only decides how a title is *installed*, so it
+> settles new downloads and leaves anything already installed as a Linux build running as one -
+> which is exactly why Half-Life stayed on `hl_linux` until that box was ticked by hand. Ticking it
+> writes a per-app entry at priority 250, and that is what moves a title across. So the registrar now
+> writes one per installed title, skipping the client's own tools and runtimes by app id. The first
+> session after this costs a Windows-depot download for each game currently installed as Linux.
+>
+> **The frame counter was blind, not broken.** The HUD read `0.0 fps / 1000.0ms` on the Source titles
+> while GPU load and power draw moved correctly. `take_dmabuf` only ever receives GPU buffers, so
+> every buffer reaching it is a presented frame - but the counter also asked whether the compositor
+> had imported the buffer or whether it carried a gralloc handle. That is a question about the copy
+> path, not about whether a frame happened, and a game whose buffers go straight to the display layer
+> satisfies neither. The surface-binding code four lines above already had the right rule written
+> down. Needs an APK to verify on device.
+>
+> **A packaging bug of my own broke the rootfs build**: the guest-shim loop wrote each shim to `$out`,
+> which already held the path of the tarball the script produces, so the final `zstd -o "$out"` wrote
+> a 1.31 GiB archive into `libblsysv-x86_64.so` while tar was reading that directory. Both shims had
+> compiled correctly; only packaging was broken.
+>
+> **VAC is open and instrumented.** Counter-Strike: Source launches but drops to insecure mode.
+> Nothing passes `-insecure` - `localconfig.vdf` had no launch options at all - and Steam integration
+> is healthy: the game reports `CClientSteamContext logged on = 1`, with Proton's real
+> `steamclient.dll` and `steamclient64.dll` in the prefix. So VAC itself is declining. `-condebug` is
+> now set for the app, and the log gave the verdict at connect: `Connecting to
+> 104.167.215.199:27015...` followed by `You are in insecure mode.  You must restart before you can
+> connect to secure servers.` "You must restart" means the session started insecure - VAC never
+> initialised at process start, before a server was ever chosen.
+>
+> Everything under our control is correct, so what is left is whether Valve's ARM Linux client can
+> hand a Proton game the Windows VAC module at all. That reads as a gap in the ARM client rather than
+> anything in this runtime, and it fits the app's SteamLite path working: that one runs the *Windows*
+> Steam client inside the same prefix, where a Windows VAC module loads natively, while here Steam is
+> an aarch64 Linux process outside it. Going further would mean reverse-engineering anti-cheat
+> plumbing, so this stops here; the answer is to offer both paths and send VAC-secured multiplayer to
+> SteamLite.
+>
+> The same log turned up something separate worth its own look: `Network: IP 127.0.0.1` - the game
+> enumerated only loopback as its local address. Not fatal, since the server browser works and it
+> reached the server, but that is the `net` preload's interface enumeration and it could bite real
+> multiplayer.
+
+### 2026-09-18 — four games playable, and what the screenshots prove
+
+> Brawlhalla, Stumble Guys, Half-Life and **Half-Life 2**, all through the native Linux Steam client.
+> HL2 is genuinely being played, not sitting on a menu: City 17, crowbar out, HEALTH 100 / SUIT 30,
+> Vulkan, GPU 62-71%.
+>
+> Two results worth more than the launches themselves. **Half-Life's server browser lists 153
+> internet servers with real latencies (29-144 ms)**, so networking works end to end through the
+> Linux client, proot and the `net` shim - these titles are multiplayer-capable, not just rendering.
+> And **Steam's in-game overlay works**, down to the official Half-Life 2 controller layout with a
+> full Xbox mapping, which means Steam Input is live too.
+>
+> Three rendering paths are now proven: DXVK (Brawlhalla, Stumble Guys), Wine WGL → Zink (Half-Life's
+> GoldSrc, which is OpenGL) and Vulkan (HL2).
+>
+> **One bug the screenshots exposed:** the perf HUD reads `0.0 fps / 1000.0ms` on every one of these
+> Source titles while GPU percentage and power draw move correctly - so the frame counter is not
+> hooking on this path, though it does for Brawlhalla. Cosmetic, but it makes the HUD useless for
+> exactly the games that just started working.
+
+### 2026-09-18 — Half-Life launches: three games, three rendering paths
+
+> `hl.exe` at 348 MB resident, `[Gamescope WSI] Executable name: hl.exe`, swapchain 13.88 ms, HUD
+> **OpenGL 66.9 fps / 14.9 ms**. GoldSrc renders in OpenGL, so it runs Wine WGL → Zink → Vulkan →
+> Turnip rather than DXVK — a third rendering path proven, alongside Brawlhalla and Stumble Guys
+> (both DXVK, ~72 fps).
+>
+> **It went through its Windows build, not the Linux one.** A native-Linux title that also ships a
+> Windows build can take the ordinary Proton path and skip every native-Linux problem — but the
+> platform switch is only reachable from the client UI: *Properties → Compatibility → Force the use
+> of a specific Steam Play compatibility tool → **Proton (ARM64)***. Setting a per-app
+> CompatToolMapping, writing `platform_override_source "windows"` into the app manifest, and driving
+> `steam://validate` and `steam://install` were all tried and measured: Steam honoured the Proton
+> mapping and built a `compatdata/70` prefix, but never fetched the Windows depot. Once the UI toggle
+> was used it downloaded `hl.exe`, `hlds.exe` and `hltv.exe` and launched straight away.
+>
+> The native-Linux work still matters for titles Valve ships only as Linux builds — CS:S and HL2
+> among them — and its last blocker is measured: `shmget`/`semget`/`msgget` return ENOSYS in the
+> guest, so the System V shim now builds for i686 and x86_64 as well.
+
+### 2026-09-18 — r1 uploaded, r2 cut and live; native-Linux games root-caused
+
+> **The runtime is downloadable.** The missing 789,000,670 B asset is uploaded to the `linuxfs-r1`
+> release, which is deliberately left a **draft** — r1 predates the launch fixes and would install
+> fine and then launch nothing. **`linuxfs-r2` is the first public runtime**: built by CI from
+> `9dc41739`, the exact commit proven to launch Brawlhalla end to end, sha256 `5d32a176…`,
+> 788,990,267 B. `linuxfs.json` is repointed at it and the URL that used to 404 now returns 200 with
+> a matching content-length.
+>
+> **The registrar needed a second half.** The client writes its own **per-app** CompatToolMapping
+> entry at priority 250, which outranks the `"0"` default — so setting that default alone changed
+> nothing. Every Proton the client can pick is one this runtime cannot start, so every Proton
+> mapping is now repointed and non-Proton tools are left alone. Proven from a clean state:
+> `compatibilitytools.d` emptied, the client's own `config.vdf` restored, and the session registered
+> the tool by itself and launched the game.
+>
+> **Native-Linux x86 titles (Half-Life, CS:S, HL2) are a different wall, now understood.** They
+> never touch the Proton path. Valve's `fex-compat-tool` dies before doing anything because Steam
+> launches it with fd 1 and 2 closed, so `sys.stdout` is `None` and `os.dup(sys.stdout.fileno())`
+> raises. Past that, **FEX cannot present its rootfs here at all**: with `FEX_ROOTFS` absolute, with
+> `FEX_PORTABLE`, as a name under `~/.fex-emu/RootFS/`, and with nothing set, the result is
+> byte-identical — `libc.so.6: cannot open shared object file` — though the guest tree holds that
+> libc. FEX serves its rootfs through a mount namespace, which an Android app does not get; the same
+> class of wall as pressure-vessel. Windows games are untouched by this because arm64ec Wine runs
+> FEX as a DLL inside the Wine process and never needs a rootfs — which is exactly why Proton works
+> here and native Linux does not.
+>
+> FEX itself is healthy: `FEX /usr/bin/uname -m` prints `x86_64` once `LD_LIBRARY_PATH` names the
+> guest libraries directly. With Valve's scout `i386` tree supplying the 32-bit set the Arch guest
+> lacks, Half-Life run by hand from its own directory loads every library, starts its breakpad
+> handler and reaches `SteamAPI_Init`. Launched through Steam with the same path wired into the
+> compat tool the library failures are gone, but the game still exits without output. Not solved,
+> and the compat-tool patches live in Valve's depot, so shipping them needs the symlink mirror used
+> for Proton.
+
+### 2026-09-18 — first game launch: Brawlhalla (`c3711182`)
+
+> **The x86-64 Windows build of Brawlhalla runs and presents** through the native Linux Steam
+> client: arm64ec Wine → FEX → DXVK → Turnip → gamescope's WSI layer → our Wayland compositor.
+> `Brawlhalla.exe` at 2.6 GB RSS, `[Gamescope WSI] Swapchain received new refresh cycle: 13.88ms`
+> (~72 fps presenting), and a clean shutdown afterwards — no crash signature.
+>
+> **The blocker was one line in a manifest.** Steam downloads a native aarch64 Proton as an ordinary
+> depot — `Proton Experimental (ARM64)` (4427310) and `Proton 11.0 (ARM64)` (4628740), both carrying
+> `files/bin-arm64/wine` — and both toolmanifests declare `require_tool_appid 4185400`, the Steam
+> Linux Runtime 4 for arm64. Steam therefore stacks **pressure-vessel** underneath, pressure-vessel
+> needs unprivileged **user namespaces**, and an Android app does not get them. Steam then dropped
+> the launch silently: no window, no log, straight back to the library. That silence is why no
+> compatibility tool ever appeared to run, and why the search through FEX rootfs and graphics
+> providers turned up nothing — nothing was being executed. ROCKNIX strips the same line.
+>
+> **`bannerlator-steam-compat` now re-registers Valve's own depot** as
+> `compatibilitytools.d/bannerlator-proton-arm64/`: every entry symlinked, so nothing is copied and
+> the client still updates the real depot, with our own `toolmanifest.vdf` minus
+> `require_tool_appid`. Proton takes its base directory from `dirname(sys.argv[0])` without
+> resolving it, so `files/` resolves back through the symlink. Zero extra download. The
+> FEX-under-Proton tool and `bannerlator-fex-rootfs` are gone — the ARM64 build drives the host's
+> Turnip directly and wants no graphics provider.
+>
+> **Two traps worth remembering.** Wine derives its server directory from `getuid()` and refuses any
+> prefix whose `st_uid` differs (`wine: '…/pfx' is not owned by you`); 547 paths inside `linuxfs`
+> had been left root-owned by debugging through the root bridge, so **nothing may be created in the
+> rootfs as root**. And an x86-64 prefix is wrong for arm64ec Wine, which wants
+> `files/share/default_pfx_arm64` — delete `compatdata/<appid>` and let it rebuild. Separately,
+> Steam rebuilds `LD_PRELOAD` for every game process and appended ours to its overlay entry without
+> a separator, so `libblsession.so` was silently dropped for everything it launched; the preload now
+> lives in the rootfs's `/etc/ld.so.preload`, which Steam cannot mangle.
+>
+> **Still open.** The 752 MB `linuxfs-r1.tar.zst` asset upload (`linuxfs.json` is live and points at
+> nothing), rootfs r2, a dedicated GameScope container, and the Runtime row in the container editor.
+
+### What was checked before writing anything
+
+> - `targetSdkVersion 28` keeps us in `untrusted_app_27`, the last SELinux domain allowed to exec a file out of `files/`. **Raising it ends this approach.**
+> - `abiFilters 'arm64-v8a'` with `useLegacyPackaging = true`, so `add_executable(lib*.so)` is packaged and extracted like any other jniLib — which is how proot and its loader ship.
+> - **Our compositor already advertises every global gamescope's Wayland backend demands** (it aborts if one is missing): `wl_compositor` 6, `wl_subcompositor`, `wl_shm`, `xdg_wm_base`, `zwp_linux_dmabuf_v1` 4, `wp_viewporter`, `wp_presentation` 2, relative-pointer, pointer-constraints, `wl_seat` 5, `wl_output` 2.
+> - **Two compositor gaps, both ones Max hit first.** `compositor.c:1154` has `.set_fullscreen = xdg_toplevel_noop_parent`, so we never send the configure gamescope waits for before dropping its libdecor frame; and `compositor.c:428` keeps one pointer resource per seat, where gamescope holds two pointer/keyboard pairs and reads input on the second. Both are correctness bugs in our xdg-shell and seat handling that any client could hit, so they belong on the Wayland line regardless. Phase 2.
+> - **The GPU situation on the Pocket FIT is the same as on his tablet.** `/dev/dri/card0` and `renderD128` exist at mode 0666 but are labelled `u:object_r:graphics_device:s0`, which stock policy does not grant `untrusted_app`; `/dev/kgsl-3d0` is `gpu_device`, which it does. So presenting KGSL as `/dev/dri/renderD<n>`, faking the `/sys/dev/char` entries libdrm reads, and keeping a PRIME handle table are needed here too. Phase 3.
+
+### Phases 2–5 in flight
+
+> **Phase 1 gate passed.** CI `35261996392` green on all three flavors: proot compiles, links its freestanding loader and packages as a jniLib.
+>
+> **Phase 2 (`594943c7`).** Both compositor fixes landed. `set_fullscreen`/`unset_fullscreen` now reconfigure with the fullscreen state (gamescope draws nothing until it sees it) and a toplevel's first configure goes through the same path. Every seat delivery — enter/leave, motion, buttons, axis, keys — walks all of a client's `wl_pointer`/`wl_keyboard` objects instead of the first; gamescope holds two pairs and reads input on the second. **This changes input delivery on the live Wayland path, so it wants a regression check on device.**
+>
+> **Phases 3–4 assets (`a8110ffa`).** `tools/linuxfs` ported and renamed (`bannerlator-session`, `libblsession.so`, `BL_*`, `/etc/bannerlator/`), carrying Max's corrected lsof answer. `build-linuxfs.yml` assembles the rootfs on an Ubuntu runner and fails the job if gamescope, Xwayland, the Turnip build, the preload, the session scripts or GTK 2 are missing. `workflow_dispatch` only works for a file already on the default branch, so while this lives on its own branch the job runs on pushes that touch it.
+>
+> First rootfs run resolved **297 packages**, extracted the base, applied the Turnip KGSL patch, and died at meson: Ubuntu ships 1.3.2 and Mesa 26.2 wants >= 1.4. Taking meson from pip instead.
+>
+> **Phase 4 wiring (`1a716976`).** `Container` carries a Runtime (`wine` / `gamescope`), overridable per shortcut. Choosing gamescope pins the backend to Wayland and **bypasses the Wayland layer check** — that check asks whether the selected Proton layer ships `winewayland.so`, and a gamescope session has no Wine in it at all. `setupXEnvironment` hands the session over before any Wine component is built.
+>
+> **Phase 5 (in progress).** `LinuxRuntimeInstaller` downloads the rootfs from a catalog row, checks its sha256, unpacks to a staging directory and swaps it in, so a failed install cannot leave a half runtime that `isInstalled()` would launch. It carries its own extractor rather than the shared one: a distribution rootfs is full of **hard links**, which the shared extractor writes as empty files.
+
+### Second pass over the WinNative diff (`ebe412d7`)
+
+> Going back over his compositor diff hunk by hunk after the first port turned up **three misses in one hunk**, all hard blockers:
+>
+> - `wl_output` advertised **2**; libdecor, which gamescope links, binds it at **4**, and binding above the advertised version is a protocol error that kills the client on connect. Now 4, with the `name`/`description` events that version adds, sent before `done`.
+> - `wl_seat` advertised **5**; gamescope's Wayland backend refuses a seat older than **8**. Now 9.
+> - a version-9 seat means a version-9 pointer, and from 8 `axis_discrete` is replaced by `axis_value120` and **must not be sent**. The scroll fan-out I had written still sent `axis_discrete` — a protocol error on the very pointers this work adds. Now sends whichever the pointer's version allows.
+>
+> Lesson recorded: when porting from a proven tree, diff the *whole* file, not the parts the commit message names.
+>
+> **Runtime layout, for the record:** `files/linuxfs` is one shared rootfs per app install, beside `imagefs` — not per container. A gamescope session uses its container only for screen size, audio driver, fps cap and as the shortcut's home; none of the Wine settings apply. Steam's login and library live inside the rootfs, so they are app-wide. Updating or removing the runtime affects every gamescope entry at once.
+>
+> **Rootfs build:** four host-toolchain failures in a row, each one step further — meson 1.3.2 (pip), `glslangValidator` (`glslang-tools`), `wayland-scanner`/cmake/`wayland-protocols` (host tools + target `.pc` files), then Mesa asking the *sysroot's* pkg-config for `wayland-scanner` and getting the aarch64 binary (a Meson native file). Then one transient mirror 500 out of ~300 fetches; every curl now retries.
+
+### Gates passing (late 2026-09-17)
+
+> - **APK `35267143258` green at `39c11fa3`** — the full branch compiles: proot, compositor changes, activity wiring, installer, Linux Runtime tab. Checked the artifact itself rather than trusting the colour: `libproot.so` (126 KB) and `libproot-loader.so` (2.4 KB) are in `lib/arm64-v8a/`, and the loader is a static `EXEC` with one `LOAD` at `0x2000000000` (= arm64 `LOADER_ADDRESS`), no `INTERP`, no `DYNAMIC` — the freestanding flat binary proot execs, not a disguised shared object.
+> - **Rootfs build reached the end.** The wall that mattered was version, not path: Mesa 26.2's Wayland module demands `wayland-scanner` **>= 1.26** on the build machine and Ubuntu 24.04 ships 1.22, so the scanner is now built alone from the pinned 1.26.0 release (seconds) and handed to Meson through a native file. Then: **298 packages, Mesa `[725/725]`, `libvulkan_freedreno.so` 15.7 MB** — Turnip with the KGSL backend, cross-built. The run died on the last line because the script `cd`s into its work dir and the workflow passed a relative output path; pinned absolute on both sides.
+> - Hand-off APK dispatched at head `8072b875` → run `35268263770`.
+> - One warning to keep an eye on from the qemu hook pass: `gdk-pixbuf-query-loaders` could not create `loaders.cache` — the loaders dir is missing in the aarch64 package layout. Cosmetic for Steam (pcmanfm icons at worst); not blocking.
+
+### Hand-off APK staged
+
+> Run `35268263770` at `8072b875` green → `pubg` artifact staged as **`/sdcard/Download/Bannerlator-gamescope-final-pubg.apk`** (534,905,742 bytes, sha256 `21e23a011702b5a5a64af0b577bbd88184d19ba2df5336f931f08f8e245ed036`; both proot libs confirmed inside). **Test order:** a normal Wayland game launch first (the seat fan-out and the `wl_seat` 9 / `wl_output` 4 bumps changed the live Wayland path), then Contents → Linux Runtime → Install (needs `linuxfs.json` published), then the Steam (Linux) entry.
+
+### First device run (2026-09-17 evening) — the app-side chain works; our old proot did not
+
+> Rootfs r1 published as a **local copy** (`/sdcard/Download/linuxfs-r1.tar.zst`, 789,000,670 B, sha256 `7002a594…a38b`; the 752 MB GitHub upload 500'd and is deferred to better internet — **`linuxfs.json` is already live and points at an asset that is not there yet**), unpacked with GNU tar (hard links kept, 76,069 entries, 3.2 GB) and swapped into `files/linuxfs` as the app uid with `.version` r1. Valve's arm64 client (933 MB) fetched from here and copied in, `.steam` links recreated with in-rootfs targets. `Steam (Linux)` and a `Linux Desktop` shortcut written into container 8.
+>
+> **Launch by intent (`container_id 8`, `shortcut_path`) → the whole app-side chain fired:** runtime resolved to gamescope, `linuxSessionArgs` = `[desktop]`, `LinuxLauncher` exec'd `libproot.so --kill-on-exit -r …/files/linuxfs …` with `PROOT_LOADER`/`PROOT_TMP_DIR`. Then proot died in 56 ms: `execve("/usr/bin/env"): Function not implemented`, `ptrace(PEEKDATA): I/O error`, `can't chmod …: Bad address`.
+>
+> **Diagnosis, not a guess:** as root it fails identically with seccomp on *and* off (`PROOT_NO_SECCOMP=1`) → not the sandbox. Under Termux's known-good proot the *same* rootfs runs `/usr/bin/env` → not the rootfs. Our proot was an older base whose `loader.c`/`assembly-arm64.h` differ from WinNative's (which never touched them) — the loader does not work on this kernel. **Fix `d4b538ab`: our proot tree replaced wholesale with WinNative's proven one** (carries everything hand-ported plus `#!` interpreters and `execveat`, and handles `setresuid`). Cloud build `35274984079`; the hand-ported `45fe2a8a` is superseded.
+>
+> Also shipped: per-launch debug logs under `Downloads/Bannerlator-LinuxSteam/` (`e3cc9695`) — the script half is in `tools/linuxfs`, so it lands in rootfs **r2**, not the installed r1; patch on device for now.
+>
+> Max's five new commits reviewed: the two proot fixes (now in via the swap); a fake evdev input layer for controllers, `steam-library`/`steam-compat` scripts and a Proton compat tool for running Windows games through Proton+FEX inside the session — all follow-ups, none needed for the client to come up.
+
+### ⏸️ CHECKPOINT 2026-09-17 ~17:20 — paused until the user is home (no Wi-Fi at work)
+
+> **State of the branch** `feat/linux-gamescope-runtime` @ `d4b538ab` (+ log commits), all pushed. Cloud build **`35274984079`** = the APK with **WinNative's proot tree swapped in wholesale** — the fix for the only blocker found on device. It builds without us; the artifact is downloaded when there is internet again.
+>
+> **On the device right now:** APK `8072b875` installed (old proot — will fail at the first exec until the new APK is staged); rootfs r1 at `files/linuxfs` as the app uid with the Valve client (933 MB) inside and `.steam` links fixed; session script already patched with the Downloads logging; shortcuts `Steam (Linux)` + `Linux Desktop` in container 8; `/sdcard/Download/Bannerlator-LinuxSteam/` exists.
+>
+> **Update 17:27:** run `35274984079` green; APK **staged** at `/sdcard/Download/Bannerlator-gamescope-proot3-pubg.apk` (534,905,828 B, sha256 `6107345bae4161caa9e7701614b9dbc4238739c1df71af966fc91b247e9b5d21`, headSha `d4b538ab`; both proot libs in, loader `EXEC` at `0x2000000000`). Not installed yet — **no internet needed to resume.**
+>
+> **Resume sequence:**
+> 1. Install that APK → confirm sha over the bridge.
+> 2. `am start -n com.tencent.ig/com.winlator.star.XServerDisplayActivity --ei container_id 8 --es shortcut_path "/data/data/com.tencent.ig/files/imagefs/home/xuser-8/.wine/drive_c/users/xuser/Desktop/Linux Desktop.desktop"` → expect pcmanfm under gamescope. Log: `/sdcard/Download/Bannerlator-LinuxSteam/session-*.log`; proot stderr is in the session pid's logcat under `System.out`.
+> 3. Same with `Steam (Linux).desktop` → client updates itself (exit 42 loop) → gamepad UI → sign in.
+> 4. Upload the 752 MB asset: `gh release create linuxfs-r1 /sdcard/Download/linuxfs-r1.tar.zst#linuxfs.tar.zst -R The412Banner/winlator-contents …` — **`linuxfs.json` is already live and points at it**, so the in-app Install fails for everyone else until this lands.
+>
+> **Then, in order:** dedicated GameScope container the way Max does it (normal creation from the newest Proton, then `runtime=gamescope`); rootfs **r2** (session-script logging is only in the repo, not r1); shared Steam library (bind our downloads into `steamapps/`); controllers (fake evdev); Runtime row in the container editor.
+
+### Evening, home: the proot blocker bisected to the NDK
+
+> New-proot APK (`d4b538ab`, WinNative's tree) installed and launched: **identical failure** — `execve("/usr/bin/env"): Function not implemented`, `ptrace(PEEKDATA): I/O error`, `Bad address`. So the source was never the problem.
+>
+> **Bisect as root, cross-pairing binaries:** Termux's proot + **our** loader → runs. **Our** proot + Termux's loader → fails. Termux + Termux → runs. The loader is fine; **our `libproot.so` binary is what's broken.** Same source, different build: **we build with NDK 29 (`29.0.14206865`), WinNative with NDK 27 (`27.3.13750724`)**; CMake flags otherwise identical. Our binary also has no `process_vm_*` linked (Termux's does), so every tracee memory access goes through `PTRACE_PEEKDATA` — exactly the path that dies. The symptom triple reads as a mangled syscall number at `execve` (ENOSYS), then garbage register/memory reads (EIO, EFAULT).
+>
+> **Fix in flight:** `build-proot.yml` builds proot on its own with NDK 27 (`nttld/setup-ndk r27c`, android-26, arm64-v8a) → run `35280875827`. A/B plan: drop the built `libproot.so`/loader into the installed app's `lib/arm64/` as root (dir is root-writable, `system:system` 755, `apk_data_file`) and relaunch — minutes per iteration instead of a 30-minute app build. If it runs, proot ships as prebuilt jniLibs pinned to NDK 27 and leaves the app's CMake.
+>
+> Max's `main`-branch CI artifacts predate the gamescope branch (no proot in them), so no shortcut from his APK.
+
+### ✅ 2026-09-17 ~18:35 — gamescope session RUNS on device; Steam client self-updating
+
+> **pcmanfm rendered under gamescope**, HUD reading Adreno 750 / Vulkan / Wayland, and then the native arm64 Steam client launched and pulled its own 665 MB update (Steam dir 933 MB → 3.9 GB). proot → gamescope → Xwayland (glamor on Zink) → GTK app → Valve's client, all on the device.
+>
+> **Two real blockers, both now understood:**
+>
+> 1. **Our proot binary was broken, not our proot source.** Bisected by cross-pairing: Termux's proot + *our* loader runs; *our* proot + Termux's loader does not. Same for the NDK-27 rebuild, so it was never the toolchain either — the tree in `cpp/proot` is an old snapshot of the Termux fork, thousands of lines behind in the ptrace/exec core (`syscall/enter.c` alone differs by ~2,500 lines). Termux's binary of the fork at v5.1.107.92 runs the rootfs; that is what `build-proot.yml` now builds.
+> 2. **`-i uid:gid` is required.** Xwayland's `Popen()` does `setgid(getgid()); setuid(getuid())` in the child and `_exit(127)`s if either fails; Android's app seccomp policy traps both, so xkbcomp never exec'd and Xwayland died with "XKB: Failed to compile keymap". Proved by instrumenting `/usr/bin/xkbcomp` — the log stayed empty (never invoked), then with `-i` it was invoked and returned warnings only. **Note the earlier `setpriv` A/B that seemed to clear `-i` was invalid: it ran in a root shell, which carries no app seccomp filter.** Also needed: `xkeyboard-config` (the closure never pulled it; `/usr/share/X11/xkb` was empty) — seeded for rootfs r2, hand-installed on r1.
+>
+> **Confirmed we are not missing any Wayland work of Max's:** across his whole gamescope branch the only compositor file touched is `compositor.c` (166 lines), and all ten markers of it are present in ours — fullscreen configure, seat fan-out, `wl_output` 4 + name/description, `wl_seat` 9, `axis_value120`.
+
+### 🏁 2026-09-17 18:41 — NATIVE ARM STEAM CLIENT FULLY WORKING ON DEVICE
+
+> Signed in as The412Banner, **Online**, Big Picture interactive: real library (Battlefield, Brawlhalla, Half-Life, Crystal Clash), game pages with Install / space required / playtime / controller support, friends list live, account settings. **60–67 fps, Vulkan, Adreno 750, Wayland**, 15 ms frametime, 3–9 W.
+>
+> The full chain, device-proven: proot → gamescope 3.16.29 → Xwayland (glamor on Zink) → Valve's native aarch64 client → steamwebhelper (6 CEF processes) → gamepad UI, compositing through our own Wayland compositor on Turnip.
+>
+> **The `WebUITransport` peer check never appeared in the log** — the `net.c` shim answering Steam's `lsof` with both address halves worked first try, so the thing that blocked Max for a day never surfaced for us.
+>
+> **Not shippable yet — one gap:** the proot on the device is Termux's *binary*, hand-dropped into the APK's `lib/arm64/` (originals saved in `.orig-ndk29/`, `libproot.so` is a shebang wrapper adding `-i`). `build-proot.yml` must go green so proot ships as prebuilt jniLibs and `add_subdirectory(proot)` can be dropped. Rootfs **r2** also owed: `xkeyboard-config` (hand-installed on r1) and the Downloads logging script.
+
+### Phase 1 — proot in the build (`ba0a5786`)
+
+> The tree had been sitting in `cpp/proot` unused since the old Xvfb Steam attempt, absent from `CMakeLists.txt`. Our copy is an older base than his and is CRLF/tab-formatted, so his diffs do not apply; the changes were ported by hand.
+>
+> - `add_subdirectory(proot)`, and the loader relinked as a **freestanding flat binary** at `LOADER_ADDRESS` (`0x2000000000` on arm64, matching `--image-base`), named `libproot-loader.so` so the installer places it beside `libproot.so`.
+> - `statx` translated like the other `*at` syscalls — glibc stats through it — with the wrinkle that its `AT_` flags are in arg 3, not arg 4, and kept off the seccomp fast path so it reaches the tracer at all.
+> - The **whole `set*id` family** answered inside proot. Android's app seccomp policy traps them; our tree already answered `setresuid`/`setresgid`, but not `setuid`/`setgid`/`setreuid`/`setregid`/`setfsuid`/`setfsgid`, which Xwayland's xkbcomp and the X access control call. Without privileges a process may only take an id it already holds, so the answer is known without the kernel.
+> - `PROOT_NO_SECCOMP` disables the accelerator, which otherwise hides syscalls from the tracer while debugging.
+>
+> CI run `35261996392`, headSha verified `ba0a5786`. This gate is *compiles*, nothing more — no rootfs exists yet, so nothing has been run on device.
+
+
+## 2026-09-16 — Fix: a physical stick bound to mouse movement now moves the cursor (branch `fix/physical-lane-mouse-move`)
+
+> **Bug (user):** in the drawer's *Physical Controller Test / Bind*, binding the right stick to mouse up/down/left/right did not move the Windows mouse or the on-screen cursor.
+>
+> **Cause:** `InputControlsView.createMouseMoveTimer()` returned early when the on-screen controls profile (`profile`) was null, and took the cursor speed from it. The physical pad's bindings live in a separate lane (`physicalProfile`, Players > Bind) that is used with the on-screen controls hidden. So the stick's mouse offsets were computed (`processControllerMappings`) but the timer that applies them never started.
+>
+> **Fix:** `mouseMoveProfile(profile, physicalProfile)` picks the on-screen profile if active, else the physical lane. The timer runs for either and uses that profile's cursor speed. Unit test added (`InputControlsViewTest`).
+>
+> **Backends:** X11 moves the X pointer (or sends relative moves through WinHandler when the game uses relative mouse). On Wayland the same X pointer moves reach the compositor through `XServer.InputSink` (`XServerDisplayActivity`), so both backends get the fix.
+>
+> **Status:** CI run 35102525936 green. ✅ **Device-proven by the user** (pre-release 9 code + this fix, pubg): a physical right stick bound to mouse movement moves the cursor with the on-screen controls hidden. Merged to main 2026-09-16.
+
+## 2026-09-16 — 🏁 **Wayland pre-release 9 released** (`3.1.2-wayland-pre9`) + HUD pill top line merged
+
+> **main** fast-forwarded `6e7d174b` → `be893205` (= `feat/fusion-pill-gpu-name-top`, CI run 35093274094 green): in the Fusion pill, a GPU name wider than the stats (a Wayland spoof) gets its own top line instead of stretching the capsule. Not device-tested.
+>
+> **Pre-release 9:** branch `release/3.1.2-wayland-pre9` off `be893205` → `70709a95` (versionName `3.1.2-wayland-pre9`, `docs/releases/3.1.2-wayland-pre9.md` with pre9 open and pre8 and older collapsed, kit README) → `497b3f88` (release.yml branch-only step attaching the **v16** layer from proton-wine run 35051048569, sha `28d8c360…ba87`, plus the AIO HDR card and README, server-side). Annotated tag `3.1.2-wayland-pre9` → `497b3f88`; release.yml run 35094728985 with `make_prerelease=true`. Not offered in-app; 3.1.1 stays Latest.
+>
+> **Headline:**
+> - TV launch;
+> - Wayland performance phase 1: Vulkan +9%, D3D12 +12%, DirectDraw +20% on the Pocket FIT copy path;
+> - Wayland GPU name spoof through a generated dxvk.conf;
+> - Unreal Engine HDR helper;
+> - RE Engine HDR via an AMD spoof + v16's builtin AGS. Resident Evil 3 asks "Enable HDR?" and AGS reports Stage 7 / HDR10 1, proven on the handheld today; not yet seen on an HDR screen.
+>
+> **This commit on main:** the pre9 notes file and kit README only; versionName stays 3.1.1.
+
+## 2026-09-16 — Fusion HUD pill: a long GPU name gets its own top line (branch `feat/fusion-pill-gpu-name-top`)
+
+> **Why (user):** in Pill size a Wayland GPU spoof name such as "Radeon RX 6800/6800 XT / 6900 XT spoof" headed the right-hand stack, so the stack's width, and with it the whole capsule, stretched to fit that one line over empty space. Asked to move it over the API label so it fills the pill.
+>
+> **Change (`FusionHudView.buildPill`):**
+> - The GPU-name line is held back while the stack is built.
+> - If it is wider than every stat line, it is placed on its own line across the top of the pill. It is left-aligned over the API caption and pulled in just far enough to clear the capsule's rounded end at that height. The body (API · FPS · clock | stats) moves down one line, and the stats set the width again.
+> - A name that fits (e.g. "Adreno 750") stays at the top of the stack exactly as before. The name is fixed per session, so the layout never jumps.
+> - `fitCapsule`'s curve maths is factored into `capsuleCurveIn` / `capsuleMargin` so the top line uses the same outline rule. Full / Tiles / Minimal are unchanged.
+>
+> **Status:** built in CI, not device-tested yet (needs a Wayland session with a GPU spoof set).
+
+## 2026-09-16 — 🔀 **Merged to main: launch a game on the TV (TV tab + companion screen) + Wayland GPU spoof through a generated dxvk.conf**
+
+> **main** fast-forwarded `a1651e45` → `29c8c5f0` (= `feat/tv-launch-tab` r4, built green in CI run 35051011112), then this log entry. versionName stays 3.1.1 (vc85).
+>
+> **What's in it:**
+> - **TV tab** in a game's settings (classic shortcut dialog and the XMB mirror). It appears while an external screen is connected, or when the game is already set to use one. It reads the screen's modes and HDR support; HDR is automatic, never a question.
+> - **Launch on the TV:** `ActivityOptions.setLaunchDisplayId`, with a normal-launch fallback and toast when the system declines. Session identity comes from the display the window really landed on. Optional match-resolution and output-mode settings.
+> - **Unplug:** the game pauses and is handed back to the handheld, where it resumes. `colorMode|touchscreen|uiMode` were added to `configChanges`, so a display move no longer recreates the session.
+> - **No freeze on a TV session:** `onPause` from the handheld taking focus no longer SIGSTOPs the guest while the game is still visible on the TV.
+> - **Companion screen** on the handheld (`TvCompanionActivity`, non-focusable, own taskAffinity): game name, "Playing on <screen>", Send input back to the TV, End the game. Reopening the app during a TV game returns to it and sends input back.
+> - **HDR readouts follow the screen the game is on:** Fusion HUD and drawer. "HDR ready" is no longer shown on a panel without HDR10.
+> - **Wayland GPU spoof** delivered as a generated `dxvk.conf` (`dxgi.custom*`, `d3d9.custom*`): works on DXVK versions that ignore `DXVK_CONFIG`, and card names keep their spaces. The HUD shows "<card> spoof".
+> - The old X11 "Play on TV" is untouched (`TV_OUTPUT_ENABLED` stays false).
+>
+> **Device-proven on the Pocket FIT (Adreno 750):**
+> - launch on the TV from the Games tab with the HDR gate open for the TV;
+> - no freeze when touching the handheld (54 fps, guest stayed running, controller stayed on the TV);
+> - End the game;
+> - cable pull → pause → resumes on the handheld with sound;
+> - GPU spoof reaching DXVK 2.4.1 and the HUD label.
+>
+> **Not device-tested yet:**
+> - Home → reopen → companion + automatic input send-back;
+> - match resolution and the output-mode picker;
+> - the HUD "not on this screen" wording on r4.
+>
+> **Still open (not in this merge):**
+> - app: add `amd_ags_x64.dll` to the builtin DLLs copied into `system32` on a layer switch (the RE Engine HDR work, layer v16);
+> - new containers default to an FEXCore nightly that isn't installed.
+
+## 2026-09-15 16:10 — 🔀 **Merged to main: Wayland performance Phase 1 + Wayland driver settings (GPU spoof) + Unreal Engine HDR with bundled dxvk-nvapi** (user: "merge it to main branch")
+
+> **main** fast-forwarded `8fd31faa` → `2541e7fb` (= `feat/wayland-gpu-spoof`, built green in CI run 35017580310; the checkpoint before it is `8fd31faa`). versionName stays 3.1.1, vc85; no DETECT_SCREEN_* permissions. Test build for the Fold: Gamehub-Components `bannerlator-wl-test-r1`.
+>
+> **What's in it:**
+> - **Phase 1:**
+>   - the compositor `perf` line;
+>   - the black base kept under the zero-copy layer, and letterbox-only clears;
+>   - a 5-buffer layer pool with GPU-side release waits and UBWC requests;
+>   - the named `wl-compositor` thread;
+>   - CPU affinity armed on Wayland;
+>   - "Prefer big cores" = every core ≥70% of peak.
+>
+>   Pocket FIT AIO copy path vs pre-release 8: Vulkan +9%, D3D12 +12%, DirectDraw +20%, higher 1% lows on every API.
+> - **Wayland driver settings gear:**
+>   - GPU spoof through DXVK `dxgi.*` + `d3d9.custom*`;
+>   - max device memory;
+>   - present mode (mailbox/FIFO);
+>   - the UBWC flag hint.
+> - **Unreal Engine HDR:** Off / DirectX 12 fix (`DXVK_ENABLE_NVAPI=1`) / DirectX 11 (experimental), which swaps in the bundled dxvk-nvapi v0.9.2 (fetched in CI with pinned hashes) with backup/restore.
+>
+> **Not device-tested yet:** the spoof, the Unreal Engine HDR modes, and Phase 1's zero-copy changes. Phase 1's copy path is proven on the Pocket FIT.
+>
+> **Still open:**
+> - Unreal Engine HDR currently shows on X11 too (proposed: Wayland-only);
+> - layer v12 (UBWC zero-copy) is built but untested;
+> - the native-Vulkan spoof + extension blacklist → layer v13.
+
+## 2026-09-15 — 🎛️ **Wayland driver settings (GPU name spoof) + "Unreal Engine HDR" (DirectX 12 fix / DirectX 11 with bundled dxvk-nvapi): branch `feat/wayland-gpu-spoof`** (on top of `feat/wayland-perf-p1` `b612a869`; CI only, not device-tested, not merged)
+
+> **Wayland driver settings: the gear next to "Wayland game driver"** (container editor, game editor, XMB). Same `graphicsDriverConfig` keys as X11's driver configuration, so choices follow a game across backends; OK writes only these keys.
+> - **GPU name (spoof):** the X11 list, off by default ("Device"), with the NVIDIA (NVAPI/DLSS/Reflex) and AMD (AGS) warning. On Wayland it reaches DirectX games through `DXVK_CONFIG`:
+>   - `dxgi.customVendorId/DeviceId/DeviceDesc` covers D3D10/11, and D3D12, whose adapter vkd3d-proton takes from DXVK's DXGI; `d3d9.custom*` covers D3D9/D3D8, which ignore the dxgi keys.
+>   - Our keys go first (in DXVK a later value wins, and an `[exe]` piece scopes what follows). A key the user sets in DXVK_CONFIG or DXVK_CONFIG_FILE is left out. The name is quoted (an unquoted value stops at a space); ids are 4 hex digits (DXVK's parsePciId).
+>   - WRAPPER_* stay exported for the future Turnip patch. Exact-name lookup (X11's contains() lands on the wrong card for GTX 560/770/1060).
+> - **Max device memory** → `dxgi.maxDeviceMemory`. **Present mode:** mailbox / fifo only (the compositor has no tearing-control); a stored immediate/relaxed stays, labelled X11-only. **OneUI / HyperOS fix** → `FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1` (it already reached Wayland; now shown there).
+> - **Not on Wayland:** Vulkan version (the Wayland Turnips hard-code apiVersion and never call `vk_get_version_override`, so `MESA_VK_VERSION_OVERRIDE` does nothing), BCn, resourceType, syncFrame, disablePresentWait, and the extension blacklist (needs the Turnip patch, layer v13).
+> - Session log: `gpu       spoof: "NVIDIA GeForce GTX 1080" (vendor 10de device 1b80) via DXVK_CONFIG (dxgi + d3d9)`.
+>
+> **Unreal Engine HDR** (container default, per-game override, XMB; both backends; under HDR output): Off · DirectX 12 fix · DirectX 11 (experimental, NVAPI).
+> - **DirectX 12 fix** = `DXVK_ENABLE_NVAPI=1`: skips DXVK's isHDRDisallowed(), which turns HDR off for "-Win64-Shipping" exes before d3d12.dll loads (UE4 creates DXGI first, so `-dx12` games lose HDR too).
+> - **DirectX 11** = that, plus dxvk-nvapi v0.9.2 (jp7677, MIT) swapped into system32/syswow64 at every launch, `WINEDLLOVERRIDES += nvapi,nvapi64=n` and `DXVK_NVAPI_ALLOW_OTHER_DRIVERS=1`, plus a hint to spoof an NVIDIA GPU (GTX 1080: Pascal, what dxvk-nvapi reports on other drivers).
+>   - The prefix's own files are backed up once to `.wine/bannerlator-nvapi/backup/`, with the marker `installed.properties`. Every copy goes through a temp file + rename; a slot is "ours" only by sha256.
+>   - Off or DX12 puts the prefix's files back.
+> - **Bundling:** `_build.yml` downloads the tarball pinned in `assets/dxvk-nvapi/manifest.json` (sha256 `60c28422…70d6`) and checks both dlls (`nvapi64.dll` `1bcf9b68…e12e`, `nvapi.dll` `afb3bfad…6d19`). The dlls are never committed.
+> - Session log: one `nvapi` line with the mode, files, env, and anything that still blocks it (HDR output off, DXVK older than 2.6, no NVIDIA spoof, DX wrapper not DXVK).
+>
+> **Status:** CI dispatched on this branch (all three flavours). Not device-tested. **Roll back:** `feat/wayland-perf-p1` `b612a869`.
+
+## 2026-09-15 — ⚙️ **Wayland performance Phase 1, app/compositor half: branch `feat/wayland-perf-p1`** (off `8fd31faa`; CI only, not device-tested, not merged)
+
+> **What changed (code `0255dfea` compositor, `3c4b8983` app):**
+> - **`perf` line every 10 s** in `Download/Wayland-logs/wayland-*.log`, next to the stats line:
+>   `perf  last 10 s: T ticks, S scenes, N on screen (copy C, zero-copy Z, layer copy L) | render_scene a/m ms | base K black kept, P presented | acquire a/m ms | present a/m ms (n) | fence wait a/m ms (n, G GPU release waits) | release a/m ms (n, h held) | D pool drops` (a/m = average/max).
+> - The GPU-frame import line no longer says "(zero-copy)" on the copy path.
+> - **Zero-copy: the black base frame is presented once and kept**, not cleared and presented every refresh; effects / frame generation no longer run on it. A resized surface is noticed by asking it (every 100 ms at most).
+> - **Copy path: only the letterbox bars are blacked** when one draw covers the scene.
+> - **Layer pool: 5 buffers**, release fences waited for on the GPU (VK_KHR_external_semaphore_fd) instead of a CPU poll; the pool asks gralloc for UBWC (`AHARDWAREBUFFER_USAGE_VENDOR_0` + `COMPOSER_OVERLAY`) with the plain and linear requests as fallbacks, and logs the layout it got.
+> - **Compositor thread** named `wl-compositor`, asks for THREAD_PRIORITY_URGENT_DISPLAY; Thread Priority Boost matches it.
+> - **CPU affinity now arms on Wayland** (from the game's first presented frame: pid + executable from the compositor).
+> - **Prefer big cores = every core ≥ 70% of the peak max frequency** (both backends; 8 Gen 3: cpu7 → cpus 2-7), logged once per session.
+> - Not changed: presentMode and TU_DEBUG defaults (A/B with env vars in a test container), the Turnip zero-copy bit (Track B, layer v12).
+>
+> **Status:** CI dispatched on this branch; the Pocket FIT device test is a separate agent. **Roll back:** main `8fd31faa`.
+
+## 2026-09-15 12:40 — 🔖 **CHECKPOINT before Wayland performance Phase 1** (the fallback point)
+
+> **Tips.**
+> - Bannerlator main `0f2d47b1`: the pre-release 8 code, AIO 2.1.0 baked into the container template, and the Start-menu "AIO Graphics Test (HDR)" entry; versionName 3.1.1, vc85.
+> - Pre-release `3.1.2-wayland-pre8` is live (tag → `35b496a2`); 3.1.1 is Latest.
+> - proton-wine Wayland line `825a546ca3a` = layer v11; the next layer build stamps versionCode 12.
+> - AIO-Graphics-Test main `582454dc` = release 2.1.0.
+> - The Pocket FIT runs the pre8 pubg APK with layers -9/-10/-11; the user's containers 3/4/6/7 are untouched.
+>
+> **Saved AIO baselines** (Pocket FIT, Adreno 750, one launch cycling all eight APIs, same container and Proton), X11 vs Wayland copy path:
+>
+> | API | X11 | Wayland |
+> |---|---|---|
+> | Vulkan | 752 | 596 |
+> | OpenGL | 172 | 230 |
+> | D3D12 | 430 | 336 |
+> | D3D11 | 2298 | 2144 |
+> | D3D10 | 396 | 303 |
+> | D3D9 | 292 | 284 |
+> | D3D8 | 291 | 288 |
+> | DirectDraw | 224 | 231 |
+>
+> **Why Wayland isn't faster yet.** Two read-only audits looked at our code and four other projects (GameNative, WinNative, StevenMXZ Ludashi, Pipetto). Proven in code:
+> - zero-copy renders into linear gralloc buffers: the Turnip patch never sets the UBWC usage bit, and the `TU_DEBUG=noconform,sysmem` default forces bypass rendering;
+> - the compositor clears and presents a black base frame every refresh with a CPU fence wait, even in zero-copy;
+> - one compositor thread does everything (X11 renders on its own thread with 2 frames in flight);
+> - the container's `mailbox` present mode reaches Wayland games;
+> - CPU affinity never arms on Wayland, and "prefer big cores" pins to a single core on 8 Gen 3.
+>
+> **Phase 1** (approved): measurement hooks, skip the black base during zero-copy, UBWC for zero-copy, the CPU affinity / big-core / thread-priority fixes, more pool buffers, and A/B of existing settings. It will be device-tested on the Pocket FIT with the AIO Graphics Test on Wayland (8 APIs × 10–15 s) against the table above.
+>
+> **Roll back:** main `0f2d47b1`, the pre8 APK, layer `-11`.
+
+## 2026-09-15 10:25 — 🧪 **AIO Graphics Test v2.1.0 (the HDR test card) released and baked into new containers; "AIO Graphics Test (HDR)" in the Start menu**
+
+> - **AIO v2.1.0** is Latest in The412Banner/AIO-Graphics-Test (tag `2.1.0` → `582454dc`; build run 34979767242, release run 34980102732). Its new `release.yml` publishes server-side.
+>   - Assets: `AIO-Graphics-Test-64bit.exe` (4,289,335 B, sha256 `1c27a4a7…`) and `-32bit.exe` (4,367,103 B, sha256 `d8fa9b02…`).
+>   - The HDR card is Display Tests → HDR; `--hdr` opens straight on it.
+> - **Container template:** the new `bake-aio.yml` workflow (`82059399`) re-baked `container_pattern_common.tzst` on the runner (run 34980372357, commit `69ec7ca5`), with no 84 MB upload from the phone.
+>   - It swapped only the two exes under `drive_c/AIO Graphics Test v2/` for 2.1.0, with the siblings' owner and mode.
+>   - Still 237 entries; the embedded exes' sha256 match the release; the template is now 84,885,816 B.
+> - **Start menu:** a new "AIO Graphics Test (HDR)" group (32/64-bit, `--hdr`), commit `abb98231`.
+> - CI build of the branch: run 34980627779, all three flavours green. main fast-forwarded `82059399` → `69ec7ca5`.
+> - New containers only: existing containers keep the AIO they were created with. The new exe is on the AIO release page.
+> - The Gamehub-Components HDR test release was deleted (tag kept); pre-release 8 replaces it.
+
+## 2026-09-15 07:20 — 🏁 **Wayland pre-release 8 live: real HDR10, layer v11, HDR test card; the code is merged to main**
+
+> **Release `3.1.2-wayland-pre8`** (pre-release, not Latest; 3.1.1 stays Latest)
+> - Tag → `35b496a2` on `release/3.1.2-wayland-pre8`; release.yml run 34960984503.
+> - Assets:
+>   - `Bannerlator-3.1.2-wayland-pre8-{standard,pubg,ludashi}.apk` (versionName `3.1.2-wayland-pre8`, versionCode 85);
+>   - `proton-11.0-2.1-arm64ec-wayland-v11.wcp` (sha256 `7f58c98d…`, installs as `Proton-11.0-2.1-arm64ec-11`);
+>   - `AIO-Graphics-Test-HDR-64bit.exe` (AIO-Graphics-Test `feat/hdr-test-scene` `5174cc11`, sha256 `19ed2433…`);
+>   - `README-Wayland-test-kit.txt`.
+> - The layer and the test card were fetched from their CI runs and hash-checked server-side.
+> - The pre-release 7 release was deleted; its tag stays.
+>
+> **What shipped**
+> - HDR10 on Wayland (opt-in, HDR screens only):
+>   - the HDR output setting and the live drawer switch;
+>   - HDR kept through composition, effects, windowed games and frame generation (FP16 engine into a 10-bit HDR10 swapchain);
+>   - the HUD HDR line;
+>   - heat and brightness evidence beside the headroom lines;
+>   - an explicit HDR headroom request (Android 15+).
+> - v11: games see the real screen description.
+> - The Fusion HUD defaults and the frame generation picker on Wayland.
+> - The public build has **no** DETECT_SCREEN_* permissions and no screenshot/recording detection; `feat/wayland-hdr` keeps them for test builds.
+>
+> **Proven:**
+> - On the Galaxy Z Fold 8 Ultra (Adreno 840):
+>   - zero-copy 10-bit PQ;
+>   - the composed path;
+>   - frame generation at 120 fps in HDR10 with 0 tone-mapped frames;
+>   - 3.0–3.6x headroom on the light test card.
+> - The screen description reached DXGI on three phones (1345 / 1207 / 892 nits).
+>
+> **Not proven:**
+> - that the headroom request helps a ROG Phone 9 Pro, which got no HDR boost;
+> - scRGB;
+> - the SDR handheld was not re-run on this exact build.
+>
+> **main** fast-forwarded `55566dbd` → `d1a002be`: the public HDR merge `4938f357` + pre-release 8 docs + the updated Wayland deck (live on Pages). versionName stays 3.1.1. Post-merge CI: run 34962219312. The Wayland layer line in proton-wine is at v11 (`825a546ca3a`); the next layer build stamps versionCode 12.
+
+## 2026-09-15 00:05 — 🔖 **CHECKPOINT: HDR round 2d + Wayland layer v11 + HDR test card published for the Fold; untested overnight** (nothing merged to main, no Bannerlator release)
+
+> **Where things are.**
+> - Bannerlator: `feat/wayland-hdr` = `527fa8f0` (round 2d, CI 34925154897), not merged. `feat/fusion-hud-defaults` = `d41a86da` (code `1a9dbe57`), not merged; it rides the HDR branch through merge `be2f4501`.
+> - proton-wine: `fix/wayland-hdr-edid-v11` = `825a546ca3a` (code `48fb81bc902`, CI 34925241464, wcp sha256 `7f58c98d4482e54d6acbb588e65b93efade4a7cb3e152e19227dd2312620309e`, installs as `Proton-11.0-2.1-arm64ec-11`). `feat/winewayland-desktop-11.0-2` is still `459bf7a8a7c` (v9).
+> - AIO-Graphics-Test: `feat/hdr-test-scene` = `52f317c1` (CI 34924769970), no AIO release.
+> - All three are on the test pre-release `bannerlator-hdr-test-r1` in The412Banner/Gamehub-Components, together with SHA256SUMS; older test builds were removed from it. Pre-release 7 stays the public Wayland tester link and 3.1.1 stays Latest.
+>
+> **Proven on the Galaxy Z Fold 8 Ultra so far** (non-rooted, Adreno 840, HDR10/HLG/HDR10+, Android reports 1351 nits):
+> - HDR10 end to end: a game's own 10-bit PQ frames go zero-copy to a BT2020_PQ display layer.
+> - The drawer HDR output switch tone-maps correctly.
+> - Screen effects and windowed programs stay HDR through the composed 10-bit picture.
+> - Every HUD HDR state was seen, including `HDR tone-mapped`.
+> - DXVK 2.4.1 does HDR10.
+> - Zero washed-out frames in every run.
+>
+> Android's HDR/SDR headroom drops for screen captures (screenshots matched to the second) and for heat. A light test card holds 3.61x steady, while God of War loses it within 30 s as the phone throttles.
+>
+> **What round 2d, v11 and the test card change (all untested):**
+> 1. **Frame generation can keep HDR.** The compositor read only the first 32 surface format/colour-space pairs, and the phone lists 11 colour spaces per format, so the HDR pairs were missed. It now reads all pairs, picks A2B10G10R10/HDR10 (then FP16, then 8-bit), passes VK_EXT_hdr_metadata when available, and runs frame generation on HDR frames in FP16. If a chain fails to build, it falls back to 8-bit.
+> 2. **Headroom evidence in the log.** Thermal status and thermal headroom, brightness and its mode, and screenshot/recording callbacks are logged beside the headroom lines. The no-headroom lines name the likely cause. The two DETECT_SCREEN_* permissions are for test builds only and must be removed before HDR is merged to main.
+> 3. **Layer v11: games now see the real screen.** The Wayland session runs as a Windows virtual desktop. win32u's `add_virtual_source()` built the only active monitor from an empty `gdi_monitor`, so it got `Default_Monitor` + `BAD_EDID`. DXVK read that monitor and fell back to 1499/799/0.01 nits. The virtual monitor now inherits the primary monitor's EDID. It carries into v8 together with v10's `612401793ce`.
+> 4. **HDR test card (DX11 PQ scene):** a true fullscreen mode (a borderless popup covering the whole desktop, so the compositor can use zero-copy), a report rewritten every few seconds, and a clean exit.
+>
+> **Morning test on the Fold:**
+> - The card should say "DXGI reports your screen (~1345 nits)" and `fullscreen: yes (1280 x 960 at 0,0)`.
+> - With frame generation on, the HUD should read `HDR` and the 10-bit banding strip should stay smooth.
+> - wine_debug should show the `win32u: display update … on a virtual desktop … Device Parameters\EDID 256 bytes` line.
+> - The Wayland log should show `screen swapchain built as HDR10 …` and the FP16 frame-generation lines.
+>
+> **Afterwards:** fast-forward the Wayland layer line to v11. Queued for later: Auto HDR for SDR games in the compositor.
+>
+> **Rollback:** app = the round 2c build (`be2f4501`, run 34915289832) or pre-release 7; layer = `-10` / `-9` via the card's revert; test card = run 34921945484.
+
+## 2026-09-15 — 🌈 **Wayland HDR round 2e: ask for HDR headroom explicitly (layer + screen surface), log the display's ceiling and the HDR layer's screen coverage, fix the no-headroom cause wording** (`feat/wayland-hdr`, on `527fa8f0`; CI only)
+
+> **2d results (lead):** the user's Fold passed everything (68 surface pairs → HDR10 swapchain A2B10G10R10, FG in FP16 at 120 fps with 600 HDR10-swapchain frames / 10 s and 0 tone-mapped, zero-copy 599 / 10 s, VK_EXT_hdr_metadata, headroom 3.00 steady, thermal NONE, brightness 255/255 auto still 3.00). A tester's ASUS ROG Phone 9 Pro (Adreno 830, API 36): HDR frames correct but the HDR/SDR ratio stayed 1.00 all session (not hot, not recording, brightness 8-223 manual, composed path, layer ~80% of 2400x1080, card windowed).
+> **Built:** `setDesiredHdrHeadroom` on the game layer (NDK, API 35) and on the SurfaceView for the HDR10 swapchain path (API 35, reflection) — content peak / 203 capped at the display's highest ratio, cleared when HDR stops, logged once per change; `Display.getHighestHdrSdrRatio()` (Android 16+, reflection) in the first display line and the verdict; the HDR layer's coverage %; "brightness at maximum" only for manual ≥ 250, else "this phone may not boost HDR from apps (asked …, highest ratio …)". Tester note: "Round 2e" (ROG: AIO card fullscreen, HDR10 vs SDR, 400/600/1000 vs 203 patches; Fold: 1-minute regression). `HDR_RECON.md` §11.7.
+
+## 2026-09-15 — 🌈 **Wayland HDR round 2d: every surface format scanned (the "no HDR10 swapchain" was a 32-entry array), HDR10 swapchain metadata, FP16 frame generation for HDR, thermal/brightness/recording evidence beside the headroom** (`feat/wayland-hdr`, on the lead's `be2f4501`; CI only)
+
+> **Fold evidence (2c, lead):** the AIO HDR card held headroom 3.61; God of War fell to 1.00 within 30 s with fps 47 → 13 and GPU 95 % (heat/load, unprovable from the log). Test E (FG 2× on the card) logged `lists no HDR10 swapchain format (37/0 37/1000104001 … 37/1000104012)` and tone-mapped; the HUD read `HDR tone-mapped` correctly.
+> **Built:** (1) `swap_init` reads all pairs (the Fold lists 11 colour spaces per format; the old `fmts[32]` dropped the 10-bit/FP16 rows) and logs the total, colour spaces per format and every HDR-capable pair; HDR10 pick A2B10G10R10 → A2R10G10B10 → FP16 → 8-bit, SDR fallback if the driver refuses. (2) `VK_EXT_hdr_metadata` in HDR sessions: the game's metadata on the HDR10 swapchain. (3) FG on HDR frames in FP16 where the engine can (lsfg-vk's own HDR format): FP16 scene + encode output + effects + ring; a failed FP16 chain refuses the format and restarts the engine in 8 bits. (4) Evidence: thermal status + listener + headroom, brightness + mode + observer, screenshot (API 34) and screen recording (API 35) callbacks (normal permissions) → the no-headroom lines, the 10 s line and the verdict name the likely cause. Tester note: "Round 2d" section at the top of `docs/HDR-test-r2.md`. Details: `HDR_RECON.md` §11.6.
+
+## 2026-09-14 23:55 — 🌈 **HDR10 on Wayland, round 2: a real setting, HDR kept through effects / windows / zero-copy off / frame generation, and a live in-game switch** (`feat/wayland-hdr`; testing build for the user's Galaxy Fold, NOT for main; CI only, nothing device-proven yet)
+
+> **Round 1 is proven on the Fold** (God of War + DXVK v3.1: 10-bit zero-copy, `BT2020_PQ`, HDR/SDR ratio 1.00 → 2.51, `HDR on screen: yes`). DXVK 2.4.1 showed no HDR option (`VK_EXT_swapchain_colorspace supported: 0`) — the Wine specialist fixes that in layer v10.
+>
+> **(a) Setting.** *HDR output (HDR10)* in the container editor, game shortcut and XMB (shortcut `waylandHdr` 1/0/unset wins over the container's; one resolver `display/WaylandHdr.effective`). Greyed with the reason on screens without HDR10; help text says it applies from the next launch. `BANNER_WAYLAND_HDR` still overrides. ON exports `DXVK_HDR=1` unless the user set it. (Editors built by an android-app-engineer agent on `feat/wayland-hdr-editors`, merged `68103fd0`.)
+> **(b) HUD** `Wayland · HDR` while HDR frames are really on screen (tagged < 1.5 s ago, ratio > 1.01 where reported); `Wayland · HDR (no headroom)` when HDR frames are on screen but the ratio has been ≤ 1.01 for 5 s+ (the Fold's 2nd run: 3.23 then 1.00 for 3+ min at max brightness while the verdict still said "rose to 3.23"); `Wayland · HDR off` while the drawer switch is off. The 10 s line, the steady ratio line and the verdict now carry the current ratio, a brightness-at-maximum hint during a no-headroom streak, and the share of HDR time with headroom (`headroom above 1.00 for P% of the HDR time (a of b s), now R`).
+> **(c) DXVK < 3 warning — built, then REMOVED on the lead's correction:** the premise was wrong (Wine already exposes `VK_EXT_swapchain_colorspace` at instance level; DXVK ≥ 2.1 checks the device list, logs 0 on every Mesa system incl. the working v3.1 run, and never uses it for the HDR decision). GoW's missing HDR option on DXVK 2.4.1 is unexplained → Fold A/B.
+> **(d) Brightness hand-off** `BANNER_WAYLAND_HDR_MAX_NITS` / `_MAX_AVG_NITS` / `_MIN_NITS` (decimal nits from `getHdrCapabilities`, unknown / 0-max omitted), **only when the game's display lists HDR10** (an SDR panel never gets an EDID claiming PQ), logged in one `session environment:` line. Layer v10 (run 34909438885, wcp `31d165a5…`, `Proton-11.0-2.1-arm64ec-10`) turns them into EDID: Fold 1351/1351/0 → DXGI 1345.43 / 1345.43 / 0.01.
+> **(e) HDR-aware composition** (`hdr_compose.c` + `hdr_encode.frag`, routes in `compositor.c hdr_plan`): effects, a window above (display without a second layer), windowed, zero-copy off → the whole scene composed into one 10-bit PQ BT.2020 picture (SDR at 203 nits, effects in 10-bit) on the game's layer, tagged; frame generation → HDR10 swapchain where the surface lists `A2B10G10R10`/`HDR10_ST2084`, else a correct tone-map to SDR; unimported frames stay layer-only. Details: `waylandcomp/HDR_RECON.md` §11.
+> **Lead's addition: live "HDR output" switch** in the drawer's Graphics tab, HDR sessions only, per session (starts on): off = the same frames tone-mapped to SDR, untagged, no relaunch, game untouched; each flip logged; counted in the verdict.
+>
+> **Commits:** `b1e9510d` core, `a361e2c3`, `68103fd0` editors merge, `8f1fefc5` composition, `23a447ee` link fix (`duplicate symbol: upscale_vert_code` → hdr_compose.c's own copy), `68fcd348` live switch + effects-format flip-flop fix (the plain base frame set the chain back to 8-bit every frame → 13 pipelines rebuilt per frame under the HDR picture), then log-text/doc commit. Quick compositor builds 34909269426 (`23a447ee`) ✅, 34910376790 (`68fcd348`) ✅.
+>
+> **Later the same night (lead):** the DXVK < 3 warning dropped (premise wrong, see (c)); brightness vars on HDR10 displays only; live headroom (see (b)); `0e746b0e` the HDR pass forgets its cached views when an image is destroyed (a reused handle could have drawn through a stale view). **Build under test: run 34911468350 ✅ on `009f69ab` (headSha verified; standard/pubg/ludashi `Bannerlator-hdr-r2-*`), quick compositor build 34911466487 ✅.** Full runs 34910378252 / 34911026074 / 34911182630 were cancelled as stale.
+>
+> **First Fold run of round 2 (lead, 20:23):** gate opened from "the container's HDR output setting" (no env vars); `DXVK_HDR=1` + `BANNER_WAYLAND_HDR_MAX_NITS=1351 _MAX_AVG_NITS=1351 _MIN_NITS=0.0005` auto-exported; instance enabled `VK_EXT_swapchain_colorspace`; GoW 5121 frames 10-bit zero-copy + 1 layer copy, ratio 2.98; HUD showed `Wayland · HDR (no headroom)`, the 5 s line fired, summary "headroom above 1.00 for 9% of the HDR time (19 of 218 s)". **The headroom loss was the user's SCREEN RECORDING** (started ~20:23:59, ratio 2.98 → 1.00 at 20:24:00.9 until the end) → every no-headroom hint now says "brightness at maximum, or the screen is being recorded (Android turns HDR headroom off while recording)" (committed, NOT built — batched with the next Fold round). Not exercised yet: drawer switch, effects, zero-copy off, FG, window above, windowed.
+>
+> **Round 2b (user's HUD request, lead):** the HDR state moved off the `<latency> · Wayland` line (it overflowed the pill: `40.3ms · Wayland · HDR (no headroom)`) onto its own line directly under it — `HDR` / `HDR (no headroom)` / `HDR off` / `HDR tone-mapped` / `HDR ready` — only in HDR-gate-open sessions (all other HUDs unchanged); the pill fits its capsule to the taller content (`fitCapsule`); Full/Tiles/Minimal/Mega carry it too. Batched with the recording hint (`6b463f24`).
+>
+> **Tester note:** `docs/HDR-test-r2.md` (setup with the setting, tests A–H incl. flipping the switch on a bright scene, effects, zero-copy off, frame generation, window above, windowed, DXVK 2.4.1 on v10; expected lines per route; failure lines). Hand-over through the lead (Gamehub-Components release, with the v10 layer). **No Pocket FIT work** (user: no handheld testing right now).
+
+## 2026-09-14 17:00 — 🌈 **HDR10 on the Wayland backend, round 1: opt-in gate + wp_color_manager_v1 + BT2020_PQ on the game's display layer** (`feat/wayland-hdr`, off `main` `4c3fb73b`; testing build for the user's Galaxy Fold, NOT for main)
+
+> **What it is.** The compositor half of `waylandcomp/HDR_RECON.md` Phase A. The game half already ships (Mesa's Wayland WSI in our Turnip is a `wp_color_manager_v1` client; DXVK takes `VK_COLOR_SPACE_HDR10_ST2084_EXT` with `DXVK_HDR=1`; the zero-copy WSI already maps `A2B10G10R10` to a gralloc `R10G10B10A2`). No layer change.
+>
+> **Gate (nothing changes without it).** `BANNER_WAYLAND_HDR=1` (container or shortcut env) AND the game's display lists HDR10 (`DisplayHdrInfo.supportsHdr10`) AND display layers with `ASurfaceTransaction_setBufferDataSpace` AND the zero-copy global. Closed = no colour-management global, no 10-bit formats, and a `color … HDR gate CLOSED: <why>` + `HDR on screen: no, because …` line. `=force` skips the display check (testing on SDR panels). On an HDR10 display the app turns zero-copy on for the session (an HDR frame is only right on the game's own layer).
+>
+> **Open gate offers** `wp_color_manager_v1` v1 (perceptual; parametric + mastering metadata; BT.2020 + ST 2084 PQ — exactly what Mesa lists HDR10 from) and `AB30`/`XB30` dma-buf formats. Image descriptions are double-buffered on `wl_surface.commit`; the game layer gets `BT2020_PQ` + SMPTE 2086 / CTA-861.3 from the game's `vkSetHdrMetadataEXT`. A never-tagged layer is never touched.
+>
+> **Non-zero-copy decision (round 1):** no tone-mapping anywhere. An HDR fullscreen game KEEPS its display layer: screen effects and frame generation are skipped for it (logged on/off). What still cannot keep the layer (a window above it on a display that cannot compose a second layer, a windowed game, zero-copy switched off) goes through the 8-bit copy untone-mapped, counted with its reason. The pool (8-bit) layer copy keeps the PQ tag.
+>
+> **Proof without root:** `color` lines in `Download/Wayland-logs/wayland-*.log` (gate + inputs, bind, every image description, buffer format changes, dataspace + metadata on the layer, 10 s HDR stats, HDR/SDR ratio samples from `Display.getHdrSdrRatio()` every second, verdict `HDR on screen: …`), plus DXVK's `<exe>_dxgi.log`/`_d3d11.log`.
+>
+> **CI:** `25dd6034` compositor-only build 34893896427 ✅; full build 34894335581 ❌ (javac: `Display.registerHdrSdrRatioListener` not in the compile SDK stubs) → `5325e5d6` reflection, run 34895296297 ✅ → `a194c1ef` (an HDR subsurface whose 10-bit frame the compositor cannot import still goes on the display layer — a Vulkan swapchain is a subsurface and the old layer-only fallback looked at toplevels only; the format line says "imported" / "could NOT import") → `5d628a54` (verdict counts only HDR/SDR readings taken while HDR frames were on screen), **run 34897295593 ✅ (headSha verified) = the build under test**; quick compositor builds 34896797528 / 34897292907 ✅.
+>
+> **Fold hand-over (lead's call):** a GitHub release in `The412Banner/Gamehub-Components`, tag `bannerlator-hdr-test-r1`, cut server-side by the lead (first from 34895296297, APKs replaced in place with 34897295593's `Bannerlator-hdr-r1-standard`). Tester note = `docs/HDR-test-r1.md` (game, env vars `BANNER_WAYLAND_HDR=1` + `DXVK_HDR=1` on the game's shortcut, what to look for, which files to send back, success/failure log lines). Nothing staged on the phone.
+>
+> **Pocket FIT:** on hold until the user's go (lead's rule). Plan: switch off (user's Wizardry + Insane2 unchanged), `=1` on a ZZ copy (gate closed), `=force` (gate open, SDR game untouched), then reinstall the `cd553d8c` reference.
+## 2026-09-14 17:25 — 🌈 **HDR round 1 in flight** (branch `feat/wayland-hdr`; nothing merged, no Bannerlator release)
+
+> **Why now.** `app/src/main/cpp/waylandcomp/HDR_RECON.md` parked HDR until an HDR panel was in the loop and multi-layer presentation had landed. Both are now true: the user's Galaxy Fold (Adreno 840, API 37) reports `HDR10, HLG, HDR10+ | 1351 nits | HDR/SDR headroom available`.
+>
+> **Round 1, app-only (no wcp change).** Opt-in `BANNER_WAYLAND_HDR=1` + the display's own HDR10 capability as the gate (closed on the SDR Pocket FIT); `wp_color_manager_v1` v1 subset (perceptual; parametric + mastering; BT.2020 + PQ); 10-bit `AB30`/`XB30` dma-buf formats; `BT2020_PQ` dataspace + SMPTE 2086 / CTA 861.3 metadata on the zero-copy game layer; effects and frame generation skipped for an HDR game (logged); frames that cannot keep the layer go through the copy untone-mapped with a counted reason; live `getHdrSdrRatio()` samples as the non-root proof that the panel really showed HDR. Every one of the eight bundled v9 Wayland drivers already carries `wp_color_manager_v1`, `banner_ahb_v1` and `VK_EXT_hdr_metadata` (checked with `strings`).
+>
+> **Builds.** `b2c882b0` failed javac (`Display.registerHdrSdrRatioListener` is not in the compileSdk 34 stubs; now reflection + a 1 s sampler). `5325e5d6` (run 34895296297) was published first, then a hole was found: an HDR game on a subsurface whose 10-bit buffer the compositor's own Turnip cannot import would be black. `a194c1ef` routes such a fullscreen HDR subsurface onto the display layer; `5d628a54` makes the verdict count only HDR/SDR readings taken while HDR frames were on screen. Replacement build: run 34897295593.
+>
+> **Distribution, kept off Bannerlator's release page on the user's request:** a pre-release in The412Banner/Gamehub-Components, tag `bannerlator-hdr-test-r1`, published server-side by that repo's `Bannerlator test build release` workflow (fetches the APKs from a green Bannerlator run, verifies the commit, optionally attaches a proton-wine layer by sha). Tester note: `docs/HDR-test-r1.md` on the branch. Test setup: layer `Proton-11.0-2.1-arm64ec-9`, any Wayland game driver, compositor driver unchanged; shortcut Env Vars `BANNER_WAYLAND_HDR=1` + `DXVK_HDR=1`; in-game HDR on.
+>
+> **Next:** refresh the Gamehub release with run 34897295593 + the v9 layer; the user tests on the Fold and sends back the session log + the game's DXVK logs; Pocket FIT regression waits for the user's go. Rollback point: the 15:50 checkpoint below (main `cd553d8c`).
+
+## 2026-09-14 15:50 — 🔖 **CHECKPOINT: Wayland pre-release 7 live with the v9 layer; main carries two small fixes on top**
+
+> **Public tester link:** `3.1.2-wayland-pre7` (pre-release, tag → `5907fd2a`, release branch `release/3.1.2-wayland-pre7` tip `1d7b0941`). Assets: `Bannerlator-3.1.2-wayland-pre7-{standard,pubg,ludashi}.apk` (versionName `3.1.2-wayland-pre7`, versionCode 85), `proton-11.0-2.1-arm64ec-wayland-v9.wcp` (sha256 `bce6e7cc0e8b4251e9cc1b58a11c3efe6a485857ec02b270a7bb9a61940e6961`, installs as `Proton-11.0-2.1-arm64ec-9`), `README-Wayland-test-kit.txt`. Pre-release 6 deleted (tag kept). **3.1.1 is still Latest**; the in-app updater offers nothing new.
+>
+> **main = `cd553d8c`** (versionName `3.1.1`, versionCode 85; build run 34887132494 ✅, pubg `e41af47b473d792fcf62f7eafb9e731d14a7609096b117c869e6cfa844f2e3c0`). Since the pre-release 7 app: `49248c3e` Frame Generation picker live on Wayland in the container, shortcut and XMB editors (was greyed with a stale "not available on Wayland yet" note) and `cd553d8c` the compositor's `dmabuf` / `opengl` log lines for phones with no display device and GL software fallback, plus the `BANNER_WAYLAND_NO_RENDER_NODE=1` repro switch. No pre-release 8 yet (the user's call); it would be the pre-release 7 app + these two, v9 carried over.
+>
+> **Wayland layer line `11.0-2.1-arm64ec`:** proton-wine `feat/winewayland-desktop-11.0-2` = `459bf7a8a7c` (versionCode 9; the next build must stamp 10). Banners-Turnip `wayland` = `644f1a5c` (the no-DRM-node EGL patch). v8 added the XP Control Panel fix, v9 the OpenGL fix for phones that expose no `/dev/dri` node (proven on a retail Adreno 840 by the user, and on the Pocket FIT in both normal and forced no-node modes).
+>
+> **Carry into v8 (all seven AIO parents, to be built together when Wayland is done):** proton-wine `2b01f10fcd7` (explorer: `::` names skip `GetFullPathNameW`) + `6b8452edae4` (XP Start menu Control Panel → `control.exe` + icon); `android/wayland-deps/usr/lib/libEGL.so.1` from a Banners-Turnip `wayland` run at or after `644f1a5c` plus the `TURNIP.md` "render node is optional since versionCode 9" paragraph; and the Wayland support itself. Wine-side libwayland is 1.25.0 (the compositor is on the current 1.26.0); bump it in a later layer build.
+>
+> **Pocket FIT state:** installed app = the frame-gen build `c6e9db8b…` (main-equivalent minus the log lines); layers `-7`, `-8`, `-9` installed; the user's containers 3 ("P11-2 Arm"), 6 ("p11-6 GE v6") and 7 ("wayland") on `Proton-11.0-2.1-arm64ec-9` (updated by the user through the app), each with `.layer-update-backup/` snapshots. `/sdcard/Download/Wayland/` = `Bannerlator-wayland-main-cd553d8c-pubg.apk` + the v9 wcp + README. Everything left over from testing has been removed.
+>
+> **Open, none blocking:** New Container Defaults do not reach a new arm64ec container's settings (seeded from the first Wine in the list; also why a new container starts with Show FPS off, which explains the "missing HUD" seen once), and the Defaults screen cannot pick Wayland; no warning for an unusable explicit compositor-driver pick; driver-delete cleanup skips the Defaults profile; the prefix-update step is not headless on Wayland (`XDG_RUNTIME_DIR` leaks through `ProcessBuilder`); the Mono fix is unproven on x86_64 layers; a brand-new container's first launch stalled black once (Insane 2), relaunch clean; the OpenGL threaded-driver crash itself is unfixed (safe mode works around it). The user has not yet reported the frame-gen picker test.
+>
+> **Roll back to here:** `git checkout cd553d8c` (app) · proton-wine `459bf7a8a7c` / Banners-Turnip `644f1a5c` (layer) · reinstall `Bannerlator-wayland-main-cd553d8c-pubg.apk` from the Wayland folder and point a container at `Proton-11.0-2.1-arm64ec-9` (or use the card's layer revert to go back to -8).
+
+## 2026-09-14 14:05 — ⬛📱 **Native OpenGL black with sound on phones that expose no DRM node (Adreno 830/840): the fix is in the Wayland LAYER (v9); this branch only adds a repro switch + session-log lines** (`fix/wayland-gl-no-drm-node`, off `main` `f81a666e`; testing build, not for pre-release 7)
+
+> **The report.** The user's own A840 (standard flavour, layer `Proton-11.0-2.1-arm64ec-8`, Turnip a8xx-white): Wizardry 30 s of `0 GPU frames from games | ~293 window redraws`, and at the game's first dma-buf bind `feedback ready: 8 format/modifier pairs, main device 0:0`. The phone gives apps no `/dev/dri` node, so `dmabuf_render_node()` returns 0.
+>
+> **Root cause (Mesa, read at 7cda7850 — the tree that ships libEGL/libgallium; `platform_wayland.c` is identical at all six refs the layer builds and at upstream main).** `default_dmabuf_feedback_main_device()` → `loader_get_render_node(0:0)` finds nothing → `fd_render_gpu` stays -1 (no wl_drm fallback: `HAVE_BIND_WL_DISPLAY` is off in our build). `dri2_initialize_wayland_drm()` still builds the kopper screen (fd -1 already means "no DRM" in `kopper_init_screen` → `pipe_loader_vk_probe_dri` → `zink_create_screen`), then **`dri2_setup_device(disp, false)` (platform_wayland.c:2752) fails**: `loader_is_device_render_capable(-1)` is false and `dri_query_compatible_render_only_device_fd(-1)` returns -1 → `eglInitialize` retries `Zink=FALSE, ForceSoftware=TRUE` → swrast, which this build cannot draw → black.
+>
+> **Fix = layer only** (Banners-Turnip `wayland` `644f1a5c`, `patches/wayland/egl_wayland_no_drm_node.py` → proton-wine `Proton-11.0-2.1-arm64ec-9`). Pre-release 7's app works unchanged with it.
+>
+> **Proven (2026-09-14 15:00–15:15).** The user's A840 renders Wizardry on layer v9 with pre-release 7's app (v9 now replaces v8 on pre-release 7). Pocket FIT, pre-release-7-equivalent app (`fix/wayland-framegen-settings`, pubg `c6e9db8b…`) + v9, node present: `main device 226:128` → `presenting GPU frames … XR24, qcom_compressed` → `300 GPU frames from games`, Wine `accelerated: 1` `zink … Turnip Adreno (TM) 750`; Insane 2 (DXVK) 143 fps. This branch's build (pubg `6040fe41…`, run 34878127212) with `BANNER_WAYLAND_NO_RENDER_NODE=1`: on v8 `main device 0:0` + `0 GPU frames | 300 window redraws` + the new `opengl … fell back to software rendering … expect a black picture` line (fired 11 s after the game connected); on v9 the new `dmabuf … no DRM device named (forced …)` line, `300 GPU frames from games`, Wine `MESA-EGL: warning: wayland-egl: the compositor names no DRM render node this process can open; running zink on the Vulkan device without one`, HUD "OpenGL 30.0 fps". Not merged; the fgfix app was reinstalled afterwards.
+>
+> **This branch (debug/visibility, own testing):** `BANNER_WAYLAND_NO_RENDER_NODE=1` (container/shortcut env) → `nativeSetNoRenderNode` → the compositor advertises `main device 0:0` on a device that has a node (reproduces the A840 on the Pocket FIT without touching `/dev/dri`). Session log: `dmabuf` line when the main device is 0:0 (`… OpenGL games need Wayland layer versionCode 9 or newer …`), and an `opengl` line once per program that asked for dma-buf feedback and then drew 150 wl_shm frames with no dma-buf buffer (`… its OpenGL fell back to software rendering … expect a black picture`).
+
+## 2026-09-14 09:20 — 🧪 **No more Wine Mono download prompt on first boot or after a layer switch — every layer** (`fix/wine-mono-prompt` `83c28493`, run 34847411880 green, headSha verified, pubg `e6b37f4e…`; device-proven: new container + real layer switch on Wayland, X11 on GE 11.0-6; box64/Wine 9.5 and a live .NET run still untested)
+
+> **The bug.** A new container's first boot, and the first launch after a container's layer changed, opened Wine's "Wine Mono Installer" dialog (Cancel / Install = download from winehq.org). Seen today on `Proton-11.0-2.1-arm64ec-7` (Wayland session logs 07:17 and 08:06, and 09-13 15:22 where Install was clicked).
+>
+> **Mechanism (source + device).** Stale prefix → ntdll spawns `wineboot --init` → `rundll32 setupapi,InstallHinfSection DefaultInstall 128 wine.inf` → `RegisterDllsSection` registers `mscoree.dll` → mscoree's `DllRegisterServer` calls `install_wine_mono()` → no `C:\windows\mono`, no `share/wine/mono` → `control.exe appwiz.cpl install_mono` → nothing in MonoCabDir / datadir / `~/.cache/wine` → `get_url()` (never NULL) → the dialog. The Wayland log of 09-13 15:22 shows exactly that chain: `rundll32.exe` → `control.exe` → window "Wine Mono Installer" → `msiexec` after Install.
+>
+> **Not a Wayland-layer difference.** The five installed arm64ec layers ship the SAME prefixPack (sha256 `ade99dc8…`) with no `.update-timestamp`, so every new container updates on first boot; the stamp mismatches after any layer switch. `mscoree` `DllRegisterServer` → `install_wine_mono` and the appwiz dialog are byte-identical on upstream Wine 9.5 and all seven parent branches plus `feat/winewayland-desktop-11.0-2`. Wine 9.5 prompted too: container 4 has `.cache/wine/wine-mono-9.0.0-x86.msi` from 2026-08-23 20:58, two minutes after that layer was installed. Only the x86_64 Proton pack is immune (stamp says `disable`, so it never updates). No layer ships Mono. Gecko never prompts during an update (no layer's mshtml `DllRegisterServer` loads Gecko); it prompts only when a program uses mshtml, which stays as is.
+>
+> **Fix (app only, `GuestProgramLauncherComponent`).** The stale-prefix step that Wayland already ran before the session (`updatePrefixBeforeSession`, same stamp test as wineboot) now runs for X11 too (`box64 wine` on x86_64 layers), and its env gets `mscoree=d` appended to `WINEDLLOVERRIDES`. setupapi then skips mscoree's registration (its COM classes are already in every prefixPack), so no prompt and no network. The game session's env is untouched, so a .NET game still loads mscoree and the Wine Mono the Components installer put in the prefix. X11 keeps `DISPLAY` for the step (its X server is already up), so its update runs exactly as it did in-session. Why not in-session: ntdll hands the first process's env to `wineboot --init`, so the override would reach the game.
+>
+> **Device, so far (Pocket FIT).** BEFORE (installed `a39e8805…`, = main): new container "ZZ Mono Before" on `Proton-11.0-2.1-arm64ec-7`, Wayland, Turnip r4 → **"Wine Mono Installer" on screen**; `ps`: `wine wineboot -h` (parent = app) → `wineboot.exe --init` → `rundll32.exe setupapi,InstallHinfSection DefaultInstall 128 …wine.inf` → `control.exe appwiz.cpl install_mono`; `control.exe` environ carried `XDG_RUNTIME_DIR=/data/user/0/com.tencent.ig/files/.wayland-rt` (see finding below); step `finished in 88214 ms` after Cancel. AFTER (this build `e6b37f4e…`, sha-verified installed): same layer/backend/driver, "ZZ Mono After" → **no dialog, desktop up**; `prefix update: … before the Wayland session, WINEDLLOVERRIDES=mscoree=d` then `finished in 5018 ms (wineboot exit 0), .update-timestamp now "1789358770"`; the session's explorer environ has no `WINEDLLOVERRIDES`; Wayland log has no `control.exe`. `system.reg`/`user.reg` of the two prefixes: same 17,410 keys and byte size, only per-boot device GUIDs differ.
+>
+> **Layer switch and another layer, same build (from launches by others, captured by the same logcat filter).** 10:55, the user's container 7 moved `-7` → `Proton-11.0-2.1-arm64ec-8` by the in-app updater: `prefix update: .update-timestamp "1789358770" != wine.inf mtime 1789390901 … before the Wayland session, WINEDLLOVERRIDES=mscoree=d` → `finished in 8320 ms`, its Wayland log has no `control.exe` / no "Wine Mono Installer", nothing new in its `.cache/wine`. 10:12, a new container on GE `Proton-11.0-6-arm64ec-6`: `… before the X11 session, WINEDLLOVERRIDES=mscoree=d` → `finished in 6291 ms` (every dialog case took 60–88 s: the step waits for a click). Control: at 11:10 and 11:14 another build (`14e10dde…`, no fix) was installed and two new containers on `-8` opened "Wine Mono Installer" again.
+>
+> **Not device-tested yet.** The x86_64 path (`box64 wine wineboot -h`, Wine 9.5 / Proton x86_64 without a `disable` stamp) is CI-green only; failure falls back to the old in-session update. A managed exe after installing `mono-10.4.1` from Components was not run; what is proven is that the session's own environment carries no `mscoree` override. Throwaway containers "ZZ Mono Before" (10) and "ZZ Mono After" (11) are still on the device.
+>
+> **Finding (not changed here).** The Wayland step was never headless: `waylandcomp_jni.c` `setenv("XDG_RUNTIME_DIR")` lands in the app process env, Android's `ProcessBuilder` starts children from it and `ProcessHelper.exec` only adds our map, so `env.remove("XDG_RUNTIME_DIR")` has no effect and libwayland connects to `wayland-0`. That is why the dialog was visible on Wayland.
+>
+
+## 2026-09-14 08:43 — 🏷️ **Cards name the X11 backend too: "Vulkan (X11)", "OpenGL (X11)", "SurfaceFlinger (X11)"** (`fix/renderer-chip-backend` `acd06e7d`, run 34843443878, pubg `a39e8805…`)
+
+> **The request.** Wayland cards already read "Vulkan (Wayland)"; an X11 card read a bare "Vulkan" or "OpenGL", so the backend could not be told apart at a glance. `rendererLabelOf()`'s X11 branch now appends "(X11)" — every stored renderer id is an X11 present path. Display only: the chip, launch overlay, XMB and Big Picture share the label; the editors keep their own renderer state and nothing compares against it.
+>
+> **Device.** Installed and sha-verified on the Pocket FIT. Games list: The Crew 2 and Watch Dogs (Wine 9.5 x86-64, X11) read **"Vulkan (X11)"**; Stumble Guys, Team Fortress 2, Skyrim, Titanfall 2 and Wizardry read **"Vulkan (Wayland)"**.
+## 2026-09-14 11:25 — ✅ **Device-proven: a Wayland container no longer starts with a blank Compositor driver; it gets a Turnip that can import the game's frames, and the session renders** (`fix/wayland-compositor-driver-default`, code `7f1b2254`, run 34846772508, pubg `14e10dde…`, installed and sha-verified)
+
+> **Waited 09:13–11:06 for the shared phone** (lock held by two other engineers in turn, then the user in sessions and Discord). Held it 11:06–11:21. Installed `/sdcard/Download/Bannerlator-compdrv-pubg.apk` with `pm install -r`; installed `base.apk` sha256 `14e10dde00c6304343fa4c33fea7e93419df9284c924bc5d41cf6d596d4befd8`. Layer `Proton-11.0-2.1-arm64ec-8`. This build is left installed.
+
+> **1. Create on Wayland, compositor field untouched.** New container "ZZ compdrv wl": Wine Version `Proton-11.0-2.1-arm64ec-8`, Display backend **Wayland**. The field filled itself in the same UI dump that showed the backend change:
+> ```
+> 'Mesa Turnip v26.3.0-20260830-r4'   EditText   (Compositor driver)
+> 'Picked for you: the driver in your New Container Defaults.'
+> ```
+> No red warning. logcat, the verdict for every installed driver (all five probed in 70 ms):
+> ```
+> 11:08:58.959 I/CompositorDriver: v819: not usable - proprietary Qualcomm driver, not a Turnip (not probed)
+> 11:08:58.972 I/CompositorDriver: turnip-sdk36: usable - imports dmabufs, Vulkan 1.4.335
+> 11:08:58.992 I/CompositorDriver: WN-Turnip-1.10-p Axxx: usable - imports dmabufs, Vulkan 1.4.359
+> 11:08:59.012 I/CompositorDriver: Mesa Turnip v26.3.0-20260830-r4: usable - imports dmabufs, Vulkan 1.4.359
+> 11:08:59.027 I/CompositorDriver: Mesa Turnip v26.3.0-7cda785 (Android + Wayland): usable - imports dmabufs, Vulkan 1.4.362
+> 11:08:59.027 I/CompositorDriver: default for a Wayland form: Mesa Turnip v26.3.0-20260830-r4 (the New Container Defaults driver; newest usable is Mesa Turnip v26.3.0-7cda785 (Android + Wayland))
+> ```
+> Saved `xuser-12/.container`: `graphicsDriverConfig … version=Mesa Turnip v26.3.0-20260830-r4 …`, `extraData.displayBackend=wayland`. (Its other driver keys, e.g. `vulkanVersion=1.3`, are the built-in defaults rather than the arm64ec profile's `1.4`: the seeding bug below, untouched here.) First launch, `wayland-2026-09-14_11-10-00.log`:
+> ```
+> 11:10:00.617  gpu       compositor renders on Adreno (TM) 750 with libvulkan_freedreno.so
+> 11:10:00.617  gpu       driver folder /data/user/0/com.tencent.ig/files/contents/adrenotools/Mesa Turnip v26.3.0-20260830-r4/
+> 11:10:04.530  program   connected over Wayland: explorer.exe (pid 32403)
+> 11:10:06.769  window    opened "Wine Mono Installer" (control.exe) 396x186 at 442,267
+> 11:10:10.627  stats     last 10 s: 20 frames on screen (2.0 fps) | 0 GPU frames from games | 13 window redraws | 2 windows open
+> ```
+> Screenshot: the XP desktop, taskbar and the Mono dialog drawn, not black. Escape closed the Mono prompt (`window closed "Wine Mono Installer"`), explorer came back after first boot.
+
+> **2. X11 created normally keeps its old default.** "ZZ compdrv x11" on the same layer, backend left at X11: `version=turnip-sdk36`, `extraData.displayBackend=x11` (the writer's X11 finalize, same value the user's X11 container `xuser-4` carries), and **zero** `CompositorDriver` lines, so no Wayland probe ran for an X11 form.
+
+> **3. Edit path.**
+> - **A stored Turnip is kept.** That X11 container (`turnip-sdk36`) switched to Wayland shows `turnip-sdk36`: no fill, no note, no warning. Saved on Wayland and launched (`wayland-2026-09-14_11-14-21.log`): `compositor renders on Adreno (TM) 750 with vulkan.ad08XX.so` / `driver folder …/adrenotools/turnip-sdk36/`, desktop and dialog on screen. So the **bundled** Turnip works as the compositor driver, the no-imports case.
+> - **An explicit X11 "System" gets the default on Wayland and comes back on X11.** Set "System" in the X11 driver config dialog (Graphics Driver Version → System → OK), then Display backend → Wayland: `'Mesa Turnip v26.3.0-20260830-r4'` + `'Picked for you: the driver in your New Container Defaults.'` Back to X11 and saved: `.container` `version=System`, `displayBackend=x11`.
+> - **An explicit pick is never replaced.** Wayland again (filled r4), then picked `Mesa Turnip v26.3.0-7cda785 (Android + Wayland)` from the dropdown: the "Picked for you" note goes away. X11 → Wayland round trip: still `…7cda785 (Android + Wayland)`, neither restored to System nor refilled. Saved on Wayland: `version=Mesa Turnip v26.3.0-7cda785 (Android + Wayland)`, `displayBackend=wayland`; reopened, the field shows it with no note.
+
+> **4. New Container Defaults cannot reach Wayland on this phone (pre-existing, not fixed).** Opened read-only: Architecture `arm64ec`, Display backend `X11`, with the hint "The selected layer does not include winewayland and its Wayland Turnip." Defaults mode judges Wayland capability against `selectedWineVersion`, which there is the first wine entry (`Wine-9.5-X86_64-1`), not a layer of the chosen architecture. The fill runs in defaults mode through the same `loadContainerData`/`onDisplayBackendChanged` hooks, but it could not be exercised through the UI here. Nothing saved; the profile's mtime is still 2026-09-05.
+
+> **Device left clean.** Both ZZ containers removed through the app's Remove (`Remove "ZZ compdrv x11" permanently?`, `Remove "ZZ compdrv wl" permanently?`), `xuser-12`/`xuser-13` gone. At the lead's request, re-took the lock at 11:22 and also removed the Mono engineer's leftovers the same way (`Remove "ZZ Mono Before" permanently?`, `Remove "ZZ Mono After" permanently?`, ids 10 and 11), checking that `com.tencent.ig` was the focused app before every input batch. Left: `xuser-3` "P11-2 Arm", `xuser-4` "Wine 9.5 x86-64", `xuser-6` "p11-6 GE v6", `xuser-7` "wayland", all untouched. The defaults profile is untouched, temp dumps and screenshots are deleted, the lock was released at 11:24 and Termux is back in front. My two session logs stay in `Wayland-logs/`.
+
+## 2026-09-14 09:10 — 🧭 **A Wayland container no longer starts with a blank Compositor driver: the form fills in the newest installed Turnip that can import the game's frames** (`fix/wayland-compositor-driver-default` `7f1b2254`, off `main` `c518c7af`; run 34846772508 green, pubg `14e10dde…` staged as `/sdcard/Download/Bannerlator-compdrv-pubg.apk`)
+
+> **Build.** Run 34846772508 green on all three flavours at `7f1b2254` (headSha verified). pubg `14e10dde00c6304343fa4c33fea7e93419df9284c924bc5d41cf6d596d4befd8`. Two earlier runs (34846176385, 34846678820) were cancelled by me when the defaults-profile preference and its log line were added; neither is a result.
+
+> **The report.** A new container created with Display backend = Wayland showed an empty "Compositor driver" field and the red `Wayland needs a Turnip driver here. "System" cannot import the game's frames and shows a black screen.` The user had to pick a Turnip by hand or the session was black.
+
+> **Why the field was BLANK and not "System".** `Container.DEFAULT_GRAPHICSDRIVERCONFIG` carries `version=` (empty). The picker's options are `compositorDriverChoices()` = supported bundled ids + imports, with "System" left out on purpose, and the field was rendered as `if (version in choices) version else ""`. Neither `""` nor a carried-over `"System"` is ever in that list, so both rendered as nothing. At launch both mean the same thing: `XServerDisplayActivity`'s Wayland resolve skips adrenotools for an empty or "System" id, the compositor opens the system Vulkan driver, and `vkCreateDevice` fails on the missing dmabuf-import extensions. The same mapping sat in all three editors (container, shortcut pop-up, XMB).
+
+> **Why nothing filled it.** Nothing ever looked. The only place an empty version is replaced is the writer's X11 finalize (`applyFormTo`: empty → `DefaultVersion.WRAPPER_ADRENO` if supported, else "System"), which is invisible to the form and knows nothing about Wayland.
+>
+> **And the user's own default never arrived.** The Pocket FIT has a New Container Defaults profile for arm64ec naming `version=Mesa Turnip v26.3.0-20260830-r4` (there is no x86_64 profile). The create form seeds its arch-agnostic fields, `graphicsDriverConfig` among them, from the arch of the FIRST wine entry, which here is `Wine-9.5-X86_64-1`; with no x86_64 profile it falls back to the built-in empty `version=`. Picking the arm64ec Proton afterwards re-seeds only the arch-dependent fields (emulator, box64, FEXCore). So the user's saved Turnip never reached an arm64ec container.
+
+> **The rule (form state, all three paths).** `ContainerDetailViewModel.syncCompositorDriverWithBackend()` runs when the form loads (create, edit, New Container Defaults), when the Display backend changes and when a wine change makes a stored Wayland effective. On the EFFECTIVE Wayland backend with an empty or "System" version it fills in `defaultCompositorDriver()`'s pick; an explicit value is never replaced, an explicit pick from the dropdown is kept from then on, and going back to X11 before saving restores the pre-fill value (the same `version` key is the X11 game driver's). A save pressed while the probe is still running waits for it. `applyFormTo` is untouched.
+
+> **How the default is chosen (evidence, not names).** Candidates are exactly what the picker offers. A driver whose `meta.json` declares a proprietary vendor (the bundled `v819` says `"vendor": "Qualcomm"`) is not a Turnip and is skipped without being probed, as is an import that is not a Mesa `libvulkan_*` build (the config dialog's existing never-probe-a-blob rule). Every other candidate is probed through the same native path the config dialog's extension list uses: it must load itself (no fall-back to the system ICD) and list all four dmabuf-import extensions the compositor enables at `vkCreateDevice` (`VK_KHR_external_memory_fd`, `VK_EXT_external_memory_dma_buf`, `VK_EXT_image_drm_format_modifier`, `VK_KHR_image_format_list`, from `waylandcomp/src/vk_present.c`). Of those, the driver the user's own **New Container Defaults** name for that architecture wins if it passes; otherwise the one reporting the highest Vulkan version wins (the newest Mesa), a tie keeping the picker's order. The app's bundled Turnip (`turnip-sdk36`, Mesa 26.0.0-devel, `meta.json` has no vendor) goes through the same test, so a user with no imports still gets one. If nothing passes, the field reads "System", the red warning stays, and a **Download a Turnip driver** button opens the existing Adrenotools driver sheet; installing one re-runs the search. Every verdict is logged to logcat under tag `CompositorDriver`.
+
+> **Label fix on its own, in all three editors.** The field now names what is stored: "System" for empty/"System", `<id> (not available)` for an id the picker no longer offers, the id otherwise; the red warning also covers a missing id. The shortcut and XMB editors get the label and warning only; they do not auto-fill (per-game values are overrides, left to the user).
+
+> **Device plan.** (1) Create `ZZ` on Proton-11.0-2.1-arm64ec-7 + Wayland without touching the compositor field → field shows a Turnip, `.container` carries it, first launch's session log names its driver folder and renders. (2) An X11 `ZZ` container with "System" switched to Wayland gets the default; back to X11 restores "System"; an explicit pick is not replaced. (3) An X11 container created normally keeps `turnip-sdk36`. (4) The logcat verdicts for every installed driver.
+
+## 2026-09-14 08:20 — ✅ **Combined build device-proven: new containers keep Wayland and their drivers, the HUD names OpenGL for Wizardry, X11 unchanged** (`feat/wayland-phase2` `4a9b1c14`, run 34839775874, pubg `810d3346…`)
+
+> **Build.** Run 34839775874 green on `4a9b1c14` (headSha verified). pubg `810d3346509cf0164b0d14ad2d759d43519a546742cb1f42e1e304767015afdd`, staged as `/sdcard/Download/Bannerlator-p5d-pubg.apk`, installed with `pm install -r` and sha-verified on the Pocket FIT. Layer unchanged (`Proton-11.0-2.1-arm64ec-7`).
+
+> **1. Creating a container keeps what the screen showed.** Created "ZZ createtest" through the real UI: Proton 11.0-2.1-arm64ec-7, Display backend **Wayland**, Compositor driver **Mesa Turnip v26.3.0-20260830-r4**, Wayland game driver **Bundled (Adreno 6xx / 730–750)**, DXVK **2.4.1-1-gplasync-pre-reg-0**, VKD3D **3.0.1-d01924b6-1**, and the default `ZINK_DEBUG` **deleted** from the environment tab. The saved `.container` carried every one of them: `extraData.displayBackend=wayland`, `extraData.waylandGameDriver=bundled`, `graphicsDriverConfig version=Mesa Turnip v26.3.0-20260830-r4`, `dxwrapperConfig version=2.4.1-1-gplasync-pre-reg-0 … vkd3dVersion=3.0.1-d01924b6-1`, and no `ZINK_DEBUG`. Before this fix the first two were the ones lost. The editor re-opened with all of them.
+>
+> **First launch** of that container ran on Wayland (a new session log, `explorer.exe` connected over Wayland). Read back after the first boot had saved the file (`appVersion` now 85): backend, game driver and compositor driver unchanged, `ZINK_DEBUG` still absent, and the install marker `dxwrapper=dxvk-2.4.1-1-gplasync-pre-reg-0;vkd3d-3.0.1-d01924b6-1;none` proves the chosen DXVK/VKD3D were the ones actually extracted into the prefix.
+>
+> **Cards.** The three Wayland containers read "Vulkan (Wayland)", the X11 Wine 9.5 container still reads "Vulkan".
+
+> **2. HUD labels.** Wizardry (native OpenGL, Wayland): **`OpenGL` · 30.0 fps · Wayland** (was "DXVK"). Insane 2 (D3D9, Wayland): **`D3D9 · DXVK` · 141.4 fps · Wayland**. Insane 2 on an X11-forced copy: **`D3D9 · DXVK` · X11**, title screen at 1680 fps.
+>
+> ⚠️ The first X11 launch, started seconds after force-stopping the Wayland Insane 2 session, minimised itself: DXVK logged a third swapchain at **160x23** (a minimised window) after the 1280x720 one, the screen stayed black with a cursor and a tap did not restore it. A clean relaunch drew normally and logged only 105x76 → 1280x720, as the two earlier good runs (06:08, 07:00) did. Seen once, not reproduced.
+
+> **The user's own containers.** The 07:15 hand-swap of `xuser-3` ("P11-2 Arm") and `xuser-6` ("p11-6 GE v6") to the Wayland layer had written `displayBackend`/`waylandGameDriver` as **top-level** keys. The backend lives in `extraData` (`Container.getDisplayBackend()` = `getExtra("displayBackend")`), so neither container was ever on Wayland; `xuser-6` lost the dead keys on its next save at 07:21:34. Titanfall 2 and Half-Life 2 had run on Wayland only through their own shortcut overrides. Fixed with the app stopped: `extraData.displayBackend=wayland`, dead keys removed, owner and mode kept; a diff against the backup shows only those keys. Pre-fix copies in `/sdcard/Download/wayland-backup/xuser-{3,6}-pre-fix-0750/`.
+
+> **Found on the way, not fixed:**
+> - A new container's **Compositor driver** field is blank on Wayland, with the warning that "System" shows a black screen; it had to be picked by hand.
+> - Every new container on layer v7 gets Wine's **Mono downloader prompt** on first boot.
+> - In landscape the **"+" button covers the last container card's settings gear** (the list has no bottom padding); it was reached with keyboard focus.
+
+> **Device left clean.** "ZZ createtest" removed through the app's own Remove (dialog named it), the X11 shortcut copy deleted, temporary screenshots and the test log folder removed, rotation settings restored. The user's shortcuts untouched, including the `The Elder Scrolls V - Skyrim` shortcut they added to container 7.
+
+## 2026-09-14 (after the session crash) — 🧩 **Renderer labels + container-create fixes merged into `feat/wayland-phase2` for one combined build** (`9088f27b`, run 34839563917)
+
+> **Recovery note.** The session that owned the two fixes below crashed at ~07:31 while the user was in Titanfall 2. Both agents had already pushed and gone green (`7ec71021` run 34837932610, `5dd56079` run 34837591889); neither had been device-tested or merged. State was rebuilt from the transcript and the agents' own logs, nothing re-derived.
+>
+> **Merged, no conflicts:** the two branches touch disjoint files (labels: `XServerDisplayActivity`, `WineWaylandSupport`, the five card/launch surfaces; create: `Container`, `AdrenotoolsManager`, `ContainerDetailViewModel`). App-only: the layer stays `Proton-11.0-2.1-arm64ec-7`, no wcp change.
+>
+> **Device plan for this build:** (1) create a container with Wayland selected and read its `.container` back (`displayBackend`, `waylandGameDriver`, driver + DXVK/VKD3D choices); (2) Wizardry on Wayland → HUD must not say DXVK; (3) a D3D title on Wayland (HL2) → HUD still names D3D9 · DXVK; (4) Wayland cards read "Vulkan (Wayland)"; (5) an X11 launch unchanged.
+>
+> **User's own containers, changed by hand at 07:15–07:16 at their request:** `xuser-3` ("P11-2 Arm", was GE 11.0-6) and `xuser-6` ("P11-6 GE v6") now point at `Proton-11.0-2.1-arm64ec-7` with the Wayland backend. Prefixes untouched; `.container` + the three registry files backed up to `/sdcard/Download/wayland-backup/xuser-{3,6}-pre-wayland/`. First launch shows Wine's Mono prompt → Cancel.
+
+## 2026-09-14 (later) — 🏷️ **The HUD and the cards stop printing the container's config as the live renderer on Wayland** (`fix/wayland-renderer-labels` `7ec71021`, run 34837932610)
+
+> **The report.** Wizardry: The Labyrinth of Lost Souls, a native OpenGL title, showed "DXVK" in the HUD on Wayland, and Wayland container cards showed an "OpenGL" chip.
+>
+> **Why both lied.** The HUD seeded its renderer line from the container's X11 renderer setting and its wrapper from `dxwrapperConfig`. On Wayland the renderer setting picks a present path that never runs (the compositor is always Vulkan), and the configured wrapper only names what a D3D game *would* load. The cards had the same fault as a chip: `rendererLabelOf()` rendered the stored id.
+>
+> **The fix.** On Wayland the HUD starts at the one thing true of every session (the compositor's Vulkan, no wrapper named) and upgrades only on evidence. The existing resolvers (app-declared, engine log, DXVK/VKD3D wrapper logs) still prove the D3D API. A new per-process resolver answers the native case from the game's own `/proc/<pid>/maps`: the layer's host-side `libEGL.so.1` / `libgallium` / `libwayland-egl.so` mean OpenGL, `winevulkan.so` means Vulkan (both file-backed even on arm64ec, where the PE-only DLLs are invisible). Measured on a live Wayland D3D11/DXVK session (Titanfall 2): `winevulkan.so` mapped, none of the GL libraries, **but `opengl32.so` resident**, which is why `opengl32.so` is not treated as evidence. No evidence leaves the neutral label.
+>
+> The game and container cards (and the launch overlay, XMB and Big Picture, which share `buildLaunchSpec`) resolve the effective backend through `WineWaylandSupport.runsOnWayland` (the editors' rule, moved into the class that owns the capability probe) and show "Vulkan (Wayland)". X11 untouched on both surfaces.
+
+## 2026-09-14 (later) — 🧱 **Creating a container now saves what the create screen was showing** — create, edit and New Container Defaults go through one writer (`fix/container-create-settings` `5dd56079`, run 34837591889, pubg `e13d5b21…`, staged, not installed)
+
+> **The report.** "Selecting Wayland, then creating the container, leaves it back on X11", and "settings do not seem to be sticking on first time container launches not only for that but sometimes drivers and components like dxvk and vkd3d etc".
+
+> **What was actually wrong.** The container editor had **three** hand-maintained lists of what a save writes, and they had drifted:
+> 1. `buildCreateData()` — a JSON payload of ~40 keys handed to `ContainerManager.createContainerAsync`.
+> 2. the `createContainerAsync` callback — a second, different list re-applied through setters once the container existed (frame-gen, gyro, vibration, reshade, refresh, renderScale, autoCloseOnExit…).
+> 3. the **edit** branch of `doConfirm` — the full list, written straight onto the real container.
+>
+> Anything present in (3) but absent from both (1) and (2) was **silently dropped on create**. Mechanically diffing the three:
+>
+> | field | edit | create payload | create callback | result |
+> |---|---|---|---|---|
+> | `displayBackend` | ✅ `c.setDisplayBackend(…)` | ❌ | ❌ | **lost — every new container born X11** |
+> | `waylandGameDriver` | ✅ `c.setWaylandGameDriver(…)` | ❌ | ❌ | **lost — reverts to Auto** |
+> | `runAsAdmin` | ✅ `saveRunAsAdmin(c)` (registry) | ✅ flag → `ContainerManager` stamps EnableLUA | — | ok, different mechanism |
+> | everything else (70 fields) | ✅ | ✅ / ✅ | | ok |
+>
+> `displayBackend` never appears in the create payload at all — `grep -c '"displayBackend"'` over that block was **0** — and the view-model's own state was read only when seeding the form (`loadContainerData`) and in the Wayland capability guard (`onWineVersionChanged`). So the Wayland half of the report is exactly this: the value was chosen, shown, gated, and then thrown away at the moment of creation. `waylandGameDriver` — the *game's* Vulkan driver on a Wayland session — went with it, which is also the "drivers don't stick" half for anyone creating a Wayland container: that IS a driver setting, lost on create.
+>
+> **The same defect hit the New Container Defaults profile**, which is built from the same payload: a user could not save "Wayland" as their default at all, and `loadContainerData` seeded `displayBackend` from a profile that could never contain it.
+
+> **Followed the value the rest of the way, and the other half of the report is NOT in the create payload.** `graphicsDriver`, `graphicsDriverConfig`, `dxwrapper`, `dxwrapperConfig` and `wincomponents` *were* all in the payload and all survive to the `.container` file: `ContainerManager.createContainer` does `container.loadData(data)` → `container.saveData()`, and at first launch `XServerDisplayActivity.setupWineSystemFiles` extracts them because the marker extras (`container.getExtra("dxwrapper")`, `getExtra("wincomponents")`) are empty on a fresh container and `extractWinComponentFiles` forces every component through on `firstTimeBoot`. Two *other* things were rewriting driver config the user never chose, and both are fixed here — see below.
+
+> **The fix: one writer, not a fourth list.** A one-line `put("displayBackend", …)` would have fixed today's symptom and left the design that produced it, so `applyFormTo(container, …)` is now **the** place the form becomes container config, and all three callers use it:
+> - **edit** — called on the real container, then `saveData()`.
+> - **create** — called on a **throwaway** `Container(0, manager)`; its `getData()` *is* the payload. `Container.loadData` round-trips `getData()` in full, `extraData` included — the property `duplicateContainer` already depends on ("Copy the FULL source config (40+ fields) so nothing is dropped") — so every field reaches the new container and nothing is re-applied afterwards. Two keys are added by hand because `getData()` cannot carry them: `wineVersion` (omitted for the bundled main wine, but `createContainer` requires the key) and `runAsAdmin` (a registry stamp, not a config field).
+> - **New Container Defaults** — called on the profile template, which also deletes ~60 lines of computation duplicated from `doConfirm`.
+>
+> Net `-307/+211` in the view-model. A field added to the editor from now on is written once and sticks in create, edit and defaults together.
+
+> **Gating unchanged, and now it covers create too.** `applyFormTo` persists the **effective** backend (`isWaylandBackend` = stored Wayland **and** `WineWaylandSupport.isWaylandCapable(selectedWineVersion)`), which is the same line the edit path always used. Because create now goes through it, a container can no longer be *born* claiming a Wayland its Proton layer cannot drive — previously unreachable only because create wrote nothing at all.
+
+> **Two places that wrote configuration the user never chose, found on the way and fixed:**
+> - `AdrenotoolsManager.reloadContainers()` (runs on **every driver delete**) matched containers by driver *name* read from the driver's `meta.json`. An absent or unreadable `meta.json` makes `getDriverName()` return `""` — and `String.contains("")` is **true for everything**, so deleting one driver reset `graphicsDriverConfig.version` on **every container**, and pinned a `graphicsDriverConfig` override onto **every shortcut** that had only ever inherited one (`shortcut.getExtra("graphicsDriverConfig", container default)` read the inherited value straight back into `putExtra`). A null `version` would also NPE mid-loop and abandon the rest. Now: an empty driver name migrates nothing, a null version is skipped, and a shortcut with no override of its own is left inheriting (its container was just migrated anyway).
+> - `Container.checkObsoleteOrMissingProperties()` read an **absent** `appVersion` stamp as "written by app version 0" and re-added every `DEFAULT_ENV_VARS` entry. An absent stamp means *never booted* — which is exactly what a container the editor just wrote looks like, and what the defaults profile **always** looks like — so an env var the user deliberately deleted came back by itself. Only a container carrying a real old stamp is migrated now, and the stamp is parsed defensively (a junk value threw `NumberFormatException` straight out of `loadData`, which no caller catches). This also had to be right before create could carry `extraData` in its payload at all.
+
+> **Per-game shortcuts do NOT have this bug.** There is no create-vs-edit split to drift: creating a shortcut (`ExeShortcutImporter.writeExeShortcut`, or the `.desktop` generated from a `.lnk`) writes identity only — `Name`/`Exec`/`Icon`/`storeSource` — and a shortcut with no extra of its own **inherits** the container (`shortcut.getExtra(key, container-value)`). Every setting is written by the single `with(shortcut) { putExtra(...) }` block in `ShortcutsScreen` (which already carries `displayBackend` **and** `waylandGameDriver`), or by `XmbGameSettings`' equally single `xmb.set(p, key, …)`. One writer, so nothing to drop.
+
+## 2026-09-14 (later still) — 🌊🚦 **The overlay layer is now GATED on whether the display can actually compose it — and on this panel a window above the game keeps `DEVICE/DEVICE`** (`feat/wayland-phase5` `5334b3d3`, run 34834608772, pubg `5be0ea93…`)
+
+> Acting on the measurement from the previous entry, as a gate rather than a removal: the overlay layer capability stays, it is simply not raised on a display where raising it costs the hardware composition the first layer was worth having.
+
+> **The rule and where its inputs come from.** Raise the overlay only when the game layer is **not both rotated and scaled**. Neither input is a device or panel allowlist:
+> - **rotation** — `VkSurfaceCapabilitiesKHR::currentTransform`, captured when the swapchain is built and exposed as `vkp_surface_rotation_degrees()`. That is the presentation engine stating what it will do to *every* layer we hand it, so it follows the panel's install orientation and the session's orientation together, on any device. (It is also the same fact behind the long-standing `surface reports SUBOPTIMAL (panel rotation)` line.)
+> - **scale** — the game layer's own `src -> dst` rectangles, the ones passed to `ASurfaceTransaction_setGeometry`. Kept in `g_game_src`/`g_game_dst`, which survive a SurfaceControl retire and the recovery swap (the per-layer `geo_valid` does not).
+>
+> **Decided before the game is committed to a layer, not after.** `render_scene()` asks `sc_layer_overlay_affordable()` next to the existing `fx_blocks` test and drops `li = -1; over = 0` when the answer is no, so the whole scene goes down the copy path from the start. Deciding it inside `sc_layer_present_overlay()` alone would have shown the game layer and hidden it again on **every frame** — a per-frame visibility transaction, which is exactly the flicker this is supposed to avoid. The guard inside `sc_layer_present_overlay()` stays as belt and braces.
+
+> **Why the gate predicts instead of measuring, which would be better.** The composition type is not readable by an app. It lives in the Composer HAL; `ASurfaceTransactionStats` carries latch time and fences and nothing else; the only published copy is `dumpsys android.hardware.graphics.composer3.IComposer/default`, which needs `android.permission.DUMP` and string-parsing, and it would arrive at least a frame after the layer went up — so a measure-then-back-out would itself be the visible change being avoided. Hence the transform rule.
+
+> **Proved on device** (run 34834608772 green on all three flavours at `5334b3d3`; pubg sha256 `5be0ea936a5923b55191590537af728d005cf300113474f3bd5cee716145f44e`, installed and sha-verified, left installed). Wizardry on the game layer, Wine's Task Manager opened above it:
+> ```
+> 06:57:29.314  layer  overlay layer declined: this display rotates every layer 90° and the game layer is
+>                      scaled 1280x720 -> 1920x1080, and on that combination a second layer drops the whole
+>                      frame to GPU composition for the rest of the session (measured). The window above the
+>                      game goes on the copy path instead - same picture, one blit.
+> 06:57:29.314  layer  zero-copy paused: a window above the game would need a second display layer, which this
+>                      display cannot compose in hardware - whole scene on the copy path
+> 06:57:29.315  layer  layers hidden (scene is not a single fullscreen window)
+> ```
+> and the composer dump with that window up — **no `AHardwareBuffer` layers at all, everything DEVICE**:
+> ```
+> SurfaceView[com.tencent.ig/com.winlator.star. | z=0 DEVICE/DEVICE t=90
+> VRI[XServerDisplayActivity]#0(BLAST Consumer) | z=1 DEVICE/DEVICE t=0
+> VRI[ScreenDecorHwcOverlay]#0(BLAST Consumer)0 | z=2 DISPLAY_DECORATION/CLIENT t=0
+> ```
+> against the **three `DEVICE/CLIENT` layers** the same scene produced yesterday. **The picture is identical** — screenshot shows the Task Manager drawn crisply over Wizardry's title screen, right place, right size, no black box, no darkening, no black frame at the transition. **The frame rate is not worse**: `305 / 276 / 306 / 308 / 305 frames on screen (30.5 / 27.6 / 30.6 / 30.8 / 30.5 fps) | 300 GPU frames from games` with the window up, against `305 / 308 frames (30.5 / 30.8 fps) | 300 GPU frames` measured on the two-layer path yesterday. Same numbers, hardware composition kept.
+> **And it comes back by itself.** Closing the window: `effects  zero-copy resumed: the game is back on its own display layer`, the game layer is back in the dump (`AHardwareBuffer pid [31209] | z=0 DEVICE/DEVICE t=90`), `267 layer frames` in the next window. **The session never leaves `DEVICE/DEVICE` at any point** — which is the whole point, because before the gate this sequence cost it for the rest of the session.
+
+> **Short regression set, all green on the same build:**
+> - **Layer path with no window above** — baseline `300 frames on screen (30.0 fps) | 300 GPU frames from games | 300 layer frames`, composer `AHardwareBuffer z=0 DEVICE/DEVICE transform=90`. Unchanged.
+> - **Effects applied live** — `effects  scaling=None, CAS on 60%, Look="Custom"` → `chain ready: 13 passes (SGSR, SGSR HQ, NIS, FSR EASU+RCAS, CAS, colour, FXAA, Toon, HDR, NTSC, CRT, deband) on Adreno (TM) 750`, the game kept its layer (`300 layer frames`) and the composer stayed `DEVICE/DEVICE` with effects on. Switched off cleanly.
+> - **X11 launch** — an x11-forced copy of a container-7 shortcut: **zero** `OpenGL safe mode` / `GALLIUM_THREAD` lines, **zero** `overlay layer` lines, and **no new Wayland session log** (`wayland-2026-09-14_06-55-19.log` stayed newest). HDR still reported to logcat only. Insane 2 in-race at `D3D9 · DXVK · 202.4 fps · 4.9 ms · X11`.
+>
+> The fresh-SurfaceControl swap from the previous round is untouched — it is free and correct, and it still runs on any display where the overlay *is* raised.
+
+> **Device left clean:** app force-stopped, both `ZZ …` test shortcuts deleted, temp logs and screenshots removed, the stale staged APK removed. Container 7's Desktop is the user's seven. `Bannerlator-p5c-pubg.apk` is the only staged build and matches what is installed. No release, no tag, nothing in `/sdcard/Download/Wayland/`.
+
+## 2026-09-14 (later) — 🌊🧱 **Wayland phase 5, round 2: composition recovery MEASURED and it does NOT work on this panel; effects-live and X11 regressions green** (`feat/wayland-phase5` `93d40b88`, run 34832708528)
+
+> Picking up the three things the first round could not reach. Build under test for the device work was still `207154ce…` (run 34825893993 @ `217efe9e`) — `feat/wayland-phase2` had been merged in the meantime and fast-forwarded with no code drift, so the installed binary was exactly the code being measured.
+
+> ### ❌→📏 (1) Display-layer composition recovery — the mechanism works, the cure does not
+> **Getting two layers up.** Fullscreen HL2 was the wrong vehicle: it self-minimises when Wine's Task Manager takes guest focus (`window moved "HALF-LIFE 2 - Direct3D 9" (hl2.exe) to -32000,-32000` → `layers hidden`). **Wizardry works** — it is a borderless-fullscreen toplevel that does not minimise. A copy of its shortcut with `BANNER_WAYLAND_ZERO_COPY=1` puts it on the game layer (`300 layer frames` per 10 s at its 30 fps cap), and Wine's Task Manager then lands on the overlay layer:
+> ```
+> 06:00:45.211  layer  SurfaceControl "banner_wayland_overlay" created as a child of the screen surface (z=2)
+> 06:00:45.213  layer  banner_wayland_overlay geometry: buffer 0,0-404,453 -> screen 657,200-1263,879
+> 06:00:45.213  layer  2 display layers in use: "banner_wayland_game" (z=1) and "banner_wayland_overlay" (z=2) above it …
+> ```
+> **The recovery fires exactly as designed.** Closing the overlay window (the guest `taskmgr.exe` was ended from the host, because Wizardry holds a persistent pointer lock so taps never reach the guest window's close box):
+> ```
+> 06:03:47.177  layer  banner_wayland_overlay: SurfaceControl retired (window 0x79574d3530)
+> 06:03:47.177  layer  banner_wayland_overlay: gone (nothing is above the game any more)
+> 06:03:47.183  layer  composition recovery: banner_wayland_game got a fresh SurfaceControl …
+> 06:03:47.183  layer  banner_wayland_game geometry: buffer 0,0-1280,720 -> screen 0,0-1920,1080
+> 06:03:47.183  layer  banner_wayland_game: layer shown
+> ```
+> **6 ms** from the overlay retiring to the swap, SurfaceFlinger really hands out a new layer (its id goes `17632` → `17636`), and the game does not drop a frame across the boundary (`305 frames on screen (30.5 fps) | 300 GPU frames from games | 414 layer frames`). No black frame. The atomic-transaction design does what it claims.
+>
+> **But it does not bring hardware composition back, and that is now measured rather than assumed.** `dumpsys android.hardware.graphics.composer3.IComposer/default`, one line per layer, reproduced twice end to end:
+> ```
+> one layer (baseline)                        AHardwareBuffer z: 0  composition: DEVICE/DEVICE  transform: 90/0/0
+> two layers (overlay up)                     z: 0 DEVICE/CLIENT · z: 1 DEVICE/CLIENT · z: 2 DEVICE/CLIENT
+> overlay retired + fresh SurfaceControl      z: 0 DEVICE/CLIENT          (and at +8 s, +16 s, +24 s)
+> layer path dropped entirely and re-created  z: 0 DEVICE/CLIENT
+> drawer opened and closed, no second window  z: 0 DEVICE/DEVICE          ← control
+> HOME + resume                               z: 0 DEVICE/DEVICE
+> ```
+> The control matters: the drawer alone does **not** cause the fallback on this build, so the second display layer really is the cause. And the cure is not the child layer — **HOME + resume re-creates the app's whole window and SurfaceView** (`VRI[XServerDisplayActivity]#0` becomes `#4` in the dump), which is the only thing that clears it. **So the phase-4 note written into `sc_layer.h` — "only re-creating the GAME layer's SurfaceControl clears it" — is wrong**; it was inferred from HOME + resume, which re-creates everything. The sticky client-composition state belongs to the parent surface or the display.
+>
+> **What was changed in response** (`93d40b88`): the swap is **kept** — it is free, correct, and the mechanism may well differ on hardware that is not rotating and scaling every layer — but the header comment, the function comment and the log line no longer promise an outcome that was not observed. The log line now reads `composition recovery: banner_wayland_game got a fresh SurfaceControl now that nothing is above the game (measured on this panel: hardware composition does NOT return from this alone)`, and `sc_layer.h` carries the five-line measurement table above.
+> **Recommendation, not implemented** (it is a behaviour change, not a bug fix): the only cure that keeps the single-layer win is **prevention** — do not put a second display layer up at all while the game layer is rotated and scaled, and send the window above the game down the copy path instead, which is what the pre-phase-4 code did. That costs one blit SurfaceFlinger would have done anyway and keeps `DEVICE/DEVICE` for the whole session. Re-creating the parent SurfaceView, the only other lever, would cost a real black frame and a swapchain rebuild — far worse than the few percent of GPU that client composition costs.
+
+> ### ✅ (2) Effects applied live, over a running game, still on the game's layer
+> CAS switched on from the drawer while Wizardry ran on the game layer:
+> ```
+> 06:07:10.861  effects  scaling=None, CAS on 60%, Look="Custom"
+> 06:07:10.862  effects  scene image 1280x720 for the effect chain
+> 06:07:11.500  effects  chain ready: 13 passes (SGSR, SGSR HQ, NIS, FSR EASU+RCAS, CAS, colour, FXAA, Toon, HDR, NTSC, CRT, deband) on Adreno (TM) 750
+> 06:07:13.616  stats    last 10 s: 283 frames on screen (28.3 fps) | 284 GPU frames from games | … | 283 layer frames
+> ```
+> The chain built live, the game **kept its display layer** through it (`283 layer frames` — the chain's result goes into the game's own layer, not the compositor's swapchain), and the composer stayed `DEVICE/DEVICE` **with effects on**. Switched back off cleanly (`effects  all off: scaling=None (plain blit)`).
+
+> ### ✅ (3) X11 is untouched
+> A copy of a container-7 shortcut forced to `displayBackend=x11` (Insane 2). In the whole session logcat: **zero** occurrences of `OpenGL safe mode` or `GALLIUM_THREAD` (the export is gated on the Wayland backend), and **no new Wayland session log was created** (`wayland-2026-09-14_05-57-53.log` stayed the newest), so nothing wrote into the compositor log either. The HDR read still runs — it is backend-agnostic by design — and goes to logcat only: `06:08:14.269 I XServerDisplayActivity: HDR: HDR capability of "Built-in Screen" (display 0, Android API 34): formats none | …`. The game itself: in-race at `D3D9 · DXVK · 121.8 fps · 8.2 ms · X11`.
+
+> ### ◑ (4) HDR re-read on a display change — still code-only, and here is exactly how far it got
+> Nothing can be plugged into this device's USB-C port today, so a simulated secondary display was used instead (`settings put global overlay_display_devices "1280x720/213"`, removed again afterwards). The framework did create it and report it — `DisplayDeviceInfo{"Overlay #1" … type OVERLAY, hdrCapabilities null}`, `DisplayViewport{type=VIRTUAL, displayId=7}` — and `onDisplayAdded` reached the reporter. **No second line was logged, correctly**: the game stayed on the built-in panel, so `hdrTargetDisplay()` returned the same display and `sameAs()` suppressed the duplicate, which is the de-duplication the row is supposed to do. Moving the game onto the simulated display through the TV tab was not reached before the session was wound up. So: the listener, the per-display read and the de-duplication are all exercised; **the "log again with different values when the game's display changes" path is code, not a device result.** One useful detail fell out of it — a display can report `hdrCapabilities null`, which `DisplayHdrInfo.read()` already handles (formats become `unknown` rather than throwing).
+
+> ### ✅ Corrected build verified on device
+> Run **34832708528** green on all three flavours at `93d40b88`; pubg sha256 **`b6b98793bfa1071d33583b029072f3724a33f0479ccc352491f14dca4bd0eb6d`**, installed and sha-verified, and **left installed**. The whole two-layer arc was driven once more on it — third independent reproduction — and the log line now says what is true:
+> ```
+> 06:35:03.393  layer  banner_wayland_overlay: gone (nothing is above the game any more)
+> 06:35:03.399  layer  composition recovery: banner_wayland_game got a fresh SurfaceControl now that nothing is above the game (measured on this panel: hardware composition does NOT return from this alone)
+> ```
+> Same 6 ms, same persisting `DEVICE/CLIENT`.
+
+> **Device left clean:** app force-stopped, every `ZZ …` test shortcut deleted, temp logs and screenshots removed, the simulated display setting deleted (`settings get global overlay_display_devices` → `null`). Container 7's Desktop is the user's seven. Only `Bannerlator-p5b-pubg.apk` is staged in `/sdcard/Download/` (the installed build); the stale one was removed. No release, no tag, nothing in `/sdcard/Download/Wayland/`.
+
+## 2026-09-14 — 🌊🔧 **Wayland phase 5 DEVICE RESULTS: OpenGL safe mode and HDR reporting PROVEN; layer composition recovery UNPROVEN (device handed back mid-test)** (`feat/wayland-phase5` `217efe9e`, run 34825893993, pubg `207154ce…`)
+
+> Build: CI run **34825893993** green on all three flavours at `217efe9e` (headSha verified). pubg APK sha256 **`207154ce007a5279bf985a400dbd2e8394bb3691d89945d1e680b18f26c2bd5e`**, installed on the Pocket FIT and sha-verified against the installed `base.apk`. Container 7, `Proton-11.0-2.1-arm64ec-7`, unchanged — no `.wcp` work in this phase.
+>
+> Testing stopped part-way on the user's instruction (the phone was needed). What is below is what was actually observed; what was not reached is named as such and nothing is inferred.
+
+> ### ✅ (a) OpenGL safe mode — proved as an A/B/A on one shortcut, with no hand-typed env var anywhere
+> A copy of the Wizardry shortcut **without** the `envVars=GALLIUM_THREAD=0` line the user added (`ZZ Wiz GL`, deleted afterwards) was launched three times on container 7. Nothing else changed between runs.
+> - **ON (the default, nothing configured)** — `09-14 05:22:09.149 I XServerDisplayActivity: wayland: OpenGL safe mode on - exporting GALLIUM_THREAD=0`, then the game **ran for 90+ s at its own 30 fps cap**: `05:23:09.155 stats last 10 s: 302 frames on screen (30.2 fps) | 300 GPU frames from games`, repeated `300 | 300` for every window after. Screenshot: the title screen (Continue / Settings / Exit), HUD `30.0 fps · 33.3ms · Wayland`. An earlier run of the same shortcut held the same 30 fps for **three minutes**.
+> - **OFF, flipped in the in-game drawer** — the row wrote to the shortcut, the owner `resolvedWaylandGlSafeMode()` reads: `waylandGlSafeMode=0` appeared in the `.desktop` immediately, and the helper text switched to the "Off:" wording. The game kept running (30.1 fps) because the variable is only read when Mesa starts — which is what the row says. Relaunched: `05:25:53.288 I XServerDisplayActivity: wayland: OpenGL safe mode is OFF for this launch - Mesa's threaded context stays on`, then
+> ```
+> 05:26:10.832  vulkan    "Wizardry…" (LoLS_win32.exe) is presenting GPU frames through Wayland: 1280x720, format XR24, qcom_compressed
+> 05:26:11.141  program   disconnected: LoLS_win32.exe (pid 24534)
+> 05:26:13.307  stats     last 10 s: 17 frames on screen (1.7 fps) | 1 GPU frames from games
+> ```
+> **309 ms from the first presented frame to gone**, one GPU frame in the whole window — the documented silent death, reproduced on demand. No tombstone was written (newest in `/data/tombstones` is still 2026-09-12), no Wine exception, no dialog; logcat's only trace is `ActivityManager: Process com.tencent.ig (pid 24320) has died: fg TOP`.
+> - **ON again** (flag restored, same shortcut, same binary): `05:29:12.723 stats last 10 s: 300 frames on screen (30.0 fps) | 300 GPU frames from games` and steady for the rest of the run.
+> So the switch, and nothing else, decides whether that game lives. The row is at the bottom of the drawer's Graphics tab under Zero-copy presentation, labelled **"OpenGL safe mode"**, and reads *"On: stops native OpenGL games disappearing with no error. Costs a little OpenGL speed; DirectX games are unaffected. Saved for this game — takes effect the next time it starts."*
+>
+> ⚠️ **What this means for the user's own Wizardry shortcut.** Its `envVars=GALLIUM_THREAD=0` is now **redundant** — safe mode exports exactly that by default — but it is not merely cosmetic: the launch path deliberately leaves an explicit user value alone (`wayland: OpenGL safe mode on, but GALLIUM_THREAD=0 is already set in the environment variables - leaving the user's value alone`), so **while that line is there the in-game toggle cannot turn the protection off for that game**. Removing it hands the game to the switch. Left in place as instructed.
+
+> ### ✅ (b) HDR capability reporting — the line is in the session log and the row is in the Task Manager
+> First line of every Wayland session log, before the compositor's own opening line (the pre-open buffer in `banner_log()` doing its job):
+> ```
+> 05:16:37.485  display   HDR capability of "Built-in Screen" (display 0, Android API 34): formats none | luminance max 500 nits, max average 500 nits, min 0 nits | HDR/SDR headroom not available on this display -- SDR only: an HDR layer here would be tone-mapped and dropped to GPU composition [session start]
+> ```
+> Identical in all five sessions driven today. That matches the recon figures exactly (`supportedHdrTypes=[]`, `mMaxLuminance=500.0`, `hdrSdrRatio not_available`) — so **this device reports no HDR of any kind**, and the report says so in one line a tester can paste. In-game Task Manager, CONTAINER block, between Resolution and Device: `HDR    none · panel 500 nits` (screenshot taken on both Wizardry and Half-Life 2 sessions). No toggle, by design.
+> **Not exercised:** the re-read on display change. The listener is registered and the read is per-display (`ExternalDisplayController.getExternalGameDisplay()` picks the TV when the game is on it), but nothing was plugged into the USB-C port, so the "log again when the display changes" path is code, not a device result.
+
+> ### ❌ (c) Display-layer composition recovery — NOT PROVEN
+> Implemented and building, but the measurement was not reached. What was established:
+> - **Baseline confirmed on this build.** Half-Life 2 with zero-copy on, one display layer: `layer: 17493 name: AHardwareBuffer pid [28765] z: 0 composition: DEVICE/DEVICE … transform: 90/0/0` in `dumpsys android.hardware.graphics.composer3.IComposer/default`.
+> - **The overlay pair was never up.** Fullscreen HL2 **minimises itself** when the Wine Task Manager takes guest focus — `05:33:21.720 window moved "HALF-LIFE 2 - Direct3D 9" (hl2.exe) to -32000,-32000` → `05:33:21.724 layer layers hidden (scene is not a single fullscreen window)` — so the scene went to the copy path instead of game-layer + overlay-layer. Relaunched with `-window -noborder -width 1280 -height 720` (which is how the phase-4 multi-layer round got its pair), the layer came up correctly (`SurfaceControl "banner_wayland_game" created`, `DEVICE/DEVICE`) and the Wine Task Manager did open over it, but HL2 had by then gone `Not Responding` from a mistimed input during a map load, and the device had to be handed back before a clean run.
+> **So `DEVICE/CLIENT` with an overlay up, the `composition recovery: banner_wayland_game got a fresh SurfaceControl …` line, and the return to `DEVICE/DEVICE` are all still unobserved.** Re-test recipe, for whoever picks it up: windowed HL2 (`-window -noborder`), let it settle at the main menu, drawer → Task Manager → New Task → `taskmgr.exe` → OK → close the drawer, dump the composer (expect DEVICE/CLIENT on both layers), then close the Task Manager window and dump again on the next frame (expect the recovery line then DEVICE/DEVICE).
+
+> ### ◑ (d) Regressions — one of three
+> - ✅ **Half-Life 2 with zero-copy on, unchanged.** `05:30:26.406 vulkan "HALF-LIFE 2 - Direct3D 9" (hl2.exe) is presenting GPU frames through Wayland: 1280x720, format XB24, linear (zero-copy)` → `zero-copy: presenting … without a copy`, then **seven consecutive 10 s windows of `600 frames on screen (60.0 fps) | 600 GPU frames from games | 0 window redraws | 600 zero-copy frames`**. Frames are still copy-free and the rate is the same 60 fps this game has held on every previous Wayland build. HUD: `D3D9 · DXVK · 60.0 fps · 16.7 ms · Wayland`.
+> - ❌ **Effects chain applied live** — not reached.
+> - ❌ **X11 launch** — not reached. (An `x11` copy of a container-7 shortcut was prepared for it and deleted unused.) The code path is gated on `waylandMode` in both places it could touch X11 — the `GALLIUM_THREAD` export and the session-log write — and the HDR read itself is backend-agnostic, but that is a code argument, not a device result.
+
+> **Device left clean:** app force-stopped, nothing running, all three `ZZ …` test shortcuts deleted, temporary logs and screenshots removed. Container 7's Desktop is exactly as found (AIO Graphics Test, DiRT Rally 2.0, DiRT Showdown, God of War, Insane2, SPRAWL zero, Wizardry — the user's own `SPRAWL zero` was added at 04:37 today and was not touched). Nothing staged in `/sdcard/Download/Wayland/`, no release, no tag. The phase-5 build (`207154ce…`) is left installed.
+
+## 2026-09-14 — 🧭🌊 **CHECKPOINT: Wayland phase 5 in CI** (`feat/wayland-phase5` `217efe9e`, run 34825893993)
+
+> Three app-side changes, no Proton layer change (the shipped layer stays `Proton-11.0-2.1-arm64ec-7`). Branch cut from `origin/feat/wayland-phase2` `3f26c4b1`. Written before the device tests, per the checkpoint rule.
+>
+> **1. OpenGL safe mode** — `GALLIUM_THREAD=0` promoted from a hand-typed env var to a real per-container setting with a per-game override and a live drawer row, **default ON**, Wayland only. `Container.isWaylandGlSafeMode()` / `setWaylandGlSafeMode()`, `resolvedWaylandGlSafeMode()`, and `WaylandGlSafeModeRow` under Zero-copy presentation on the Graphics tab. It is deliberately **not** a live switch: Mesa reads the variable when the guest's GL driver starts, so the row is the next-launch default and the helper text says exactly that instead of pretending the flip reached the running game. The writer writes the SAME owner the resolver reads (the shortcut on a shortcut launch, else the container) — that is the shape `resolvedMatchRefreshRate()` gets wrong, where the resolver prefers a shortcut extra while the drawer writes the container and the in-game toggle goes inert. The export sits next to `BANNER_WSI_AHB`, gated on `waylandMode` so X11 is untouched, and an explicit `GALLIUM_THREAD` in the user's own environment variables still wins (logged either way).
+>
+> **2. HDR capability reporting**, reporting only — no toggle, because nothing in the stack emits HDR metadata and a greyed switch would be misleading. New `display/DisplayHdrInfo.java` reads the real platform answer with every API version-guarded and every call wrapped: per-mode `getSupportedHdrTypes()` on API 34+, else `Display.getHdrCapabilities()`; desired max / max-average / min luminance; `isHdrSdrRatioAvailable()` / `getHdrSdrRatio()`. One `display` line per session in the compositor's session log and an `HDR` row in the Task Manager's CONTAINER block. Capability is **per display** and changes at runtime, so it is read live for the display the game is on (`ExternalDisplayController.getExternalGameDisplay()` was added for that) and re-logged whenever the answer changes. `banner_log()` now buffers up to 32 lines logged before the session file exists and flushes them when it opens — the compositor thread opens that file asynchronously, so the app's first report would otherwise have reached logcat only.
+>
+> **3. Display-layer composition recovery** — acting on what the multi-layer round measured into `sc_layer.h`: a second display layer flips the frame to `DEVICE/CLIENT` and it does **not** come back when the overlay goes; only a new `ASurfaceControl` for the GAME layer clears it. Retiring the overlay now arms the game layer, and the next frame is presented on a fresh SurfaceControl while the old one is hidden and unparented **in the same transaction**. SurfaceFlinger applies a transaction atomically, so no composited frame is ever missing the game: no black frame and no dropped frame beyond the layer creation itself. `add_complete_on()` takes the release fence and the retire from the OLD SurfaceControl; the zero-copy same-token shortcut is skipped while a swap is due and reports no release for that buffer (it moved, it is not free).
+>
+> **Device state at checkpoint:** AYANEO Pocket FIT, `3.1.2-wayland-pre6` sha `48377d13…` installed, container 7 on layer 7, nothing driven yet. Proof for (a)-(d) follows in the next entry.
+
+## 2026-09-13 22:20-23:05 — 🌊🖼️ **Wizardry black screen on Wayland: native OpenGL windows have never presented — Mesa's EGL needs `zwp_linux_dmabuf_v1` v4 feedback** (`fix/wayland-gl-wizardry`)
+
+> **Symptom.** "Wizardry: The Labyrinth of Lost Souls" (`LoLS_win32.exe`, 32-bit x86 under FEX) on container 7 / Wayland / `Proton-11.0-2.1-arm64ec-6`: sound plays, the window opens, input works, the screen is solid black and the perf HUD never appears.
+
+> **What the evidence said, in order.**
+>
+> **1. It is a native OpenGL game, and it is broken on X11 too.** Wine log: `winewayland: OpenGL through …/libEGL.so.1 (Zink)`, no DXVK/VKD3D init anywhere, six `ATTENTION: default value of option mesa_glthread overridden by environment` (a GL-only driconf option). A copy of the shortcut forced to `displayBackend=x11` (22:35) shows the game's own error box — screenshot in the report — reading:
+> ```
+> Failed to create OpenGL context.
+> Please ensure your graphics card drivers are up to date.
+> Could not create GL context: Invalid window handle.
+> ```
+> with `Mesa: warning: Window 4194306 has no colormap!` in its log. So **the game does not run on either backend today**; Wayland gets strictly further (context created, game running, audio, input).
+>
+> **2. The compositor is not dropping the frames — it is drawing them, and they are black.** The 10 s stats read `0 GPU frames from games | ~294 window redraws` (≈30 shm commits/s). Wine's own GDI path cannot be the source: with `WINEDEBUG=+waylanddrv` the whole run has **13** `wayland_surface_attach_shm` calls, while `wayland_surface_ensure_contents … needs_contents=0` fires 1082 times and returns immediately (`if (!needs_contents) return;`). The ~30/s commits are Mesa's.
+>
+> **3. `WAYLAND_DEBUG=1` names the culprit.** Mesa's EGL runs its **software** platform:
+> ```
+> [1763276.706] {mesa egl swrast display queue}  -> wl_display#1.get_registry(new id wl_registry#24)
+> [1763279.983] {mesa egl swrast display queue} wl_registry#24.global(7, "zwp_linux_dmabuf_v1", 3)
+> [1763279.967] {mesa egl swrast display queue}  -> wl_registry#24.bind(4, "wl_shm", 1, new id [unknown]#26)
+> [1763279.992] {mesa egl swrast display queue}  -> wl_registry#24.bind(10, "wp_presentation", 1, new id [unknown]#27)
+> ```
+> Every other global it wants gets a `bind` on the next line. **`zwp_linux_dmabuf_v1` is announced at version 3 and never bound** — which is also why no session log for this game ever carries our `dmabuf  formats: …` line, while a working Vulkan session does (21:42:43.563, Half-Life 2). The swrast queue is the *first* Mesa queue in the trace: the platform was chosen before the registry was even walked.
+>
+> The GL surface itself is set up correctly — this is not a placement or a subsurface bug:
+> ```
+> -> wl_compositor#4.create_surface(new id wl_surface#45)
+> -> wl_subcompositor#5.get_subsurface(new id wl_subsurface#55, wl_surface#45, wl_surface#34)
+> -> wl_subsurface#55.set_position(3, 29)     -> wp_viewport#47.set_destination(1280, 720)
+> {mesa egl swrast display queue} -> wl_shm_pool#38.create_buffer(new id wl_buffer#39, 0, 1280, 720, 5120, 0)
+> {mesa egl surface queue} -> wl_surface#45.attach(wl_buffer#39, 0, 0) / damage_buffer / commit
+> ```
+> A full-size ARGB8888 buffer on a subsurface at 3,29 of a window placed at -3,-29 — i.e. exactly 0,0 on the 1280x720 desktop.
+>
+> **4. The buffer is empty.** Mesa's shm pools are `rw-s` mappings of `…/.wayland-rt/mesa-shared-*` in the compositor process. Dumped both live, 3 686 400 B each (1280×720×4):
+> ```
+> == 7722af4000: 3686400 bytes, 0 non-zero bytes (0.00%)   px 00000000 × 921600
+> == 77267e0000: 3686400 bytes, 0 non-zero bytes (0.00%)   px 00000000 × 921600
+> ```
+> The compositor uploads and blits them faithfully (`take_shm` → `vkCmdBlitImage`, no blending anywhere), which is why the window is black rather than absent, and why there is no dmabuf ⇒ `0 GPU frames` ⇒ `banner_on_game_surface` never fires ⇒ **no HUD**.
+>
+> **5. Why the software path cannot draw.** The Proton layer's gallium build contains only `zink`, `kopper` and `swrast` — `strings libgallium-26.3.0-devel.so` has no `llvmpipe`. There is no software rasteriser for the shm path to fall back to, so nothing ever writes those pages.
+>
+> **6. The AIO Graphics Test was never a control.** The premise "AIO's OpenGL path works at ~230 fps on this compositor, so GL through Zink is fine" does not hold. Traced with `WAYLAND_DEBUG=1` and switched to its OpenGL backend via the compositor's `test-input` FIFO, AIO's queues are:
+> ```
+> 117809 {mesa vk display queue}      58859 {mesa vk surface 24 swapchain 1 queue}
+>    552 {mesa formats query}           276 {mesa image count query}
+> ```
+> **Zero `{mesa egl …}` queues.** AIO presents every backend — OpenGL included — through a Vulkan swapchain, and the compositor keeps reporting `17516 GPU frames / 1 window redraw` while the GL cube spins at 260 fps. It never exercises winewayland's GL window path at all. The same claim is written into the Wine side as justification (`dlls/winewayland.drv/waylanddrv_main.c`: *"the AIO Graphics Test runs OpenGL at ~230 fps"*). **Wizardry is the first real native-GL window on this compositor, and that path has never worked.**
+
+> **Root cause.** Ours, in the compositor, and it is a protocol gap rather than a rendering bug. We advertise `zwp_linux_dmabuf_v1` at **version 3** and no `wl_drm`. Turnip's Vulkan WSI is happy with v3's `format`/`modifier` events, so every Vulkan/DXVK game works. Mesa's **EGL** Wayland platform is not: without dmabuf **feedback** (v4) it will not bind the interface, so it takes its `wl_shm` software path — which on this Mesa build has no rasteriser behind it and leaves every buffer zero-filled.
+
+> **Confirmed against Mesa's source** (`26.3.0-devel`, byte-identical to Debian's `26.2.2-2`), which makes the chain exact and corrects one guess of mine — EGL takes the **DRM** path first, not swrast:
+> - `platform_wayland.c` `registry_handle_global_drm()` binds our v3 global happily (`... && version >= 3`), **but** `dri2_initialize_wayland_drm_extensions()` only asks for feedback `if (zwp_linux_dmabuf_v1_get_version(...) >= ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION)` i.e. **4**. `fd_render_gpu` is set *only* from that feedback's `main_device` or from `wl_drm`; we advertise neither, so it stays `-1` and the function hits `if (dri2_dpy->wl_drm_name == 0) return false;`.
+> - `eglapi.c` then retries with `disp->Options.Zink = EGL_FALSE; disp->Options.ForceSoftware = EGL_TRUE;` → `dri2_initialize_wayland_swrast()` → `driver_name = strdup(disp->Options.Zink ? "zink" : "swrast")` — **Zink has just been cleared**, so it is `"swrast"` → `dri2_detect_swrast_kopper()` sets `kopper = false`, and the screen comes up `DRI_SCREEN_SWRAST` with `screen_fd = -1`. That is the wl_shm path we watched produce zeroes.
+> - The Vulkan side is untouched by any of this: `wsi_common_wayland.c` binds at `version >= 3`, which is why v3 was enough for every Vulkan game and hid the gap.
+>
+> Two things I tried on the device first, both rejected by evidence rather than by argument:
+> - `MESA_LOADER_DRIVER_OVERRIDE=zink` alone — no change (`0 GPU frames`, `293 window redraws`, black). Expected in hindsight: **winewayland already sets it** (`waylanddrv_main.c` `use_bundled_drivers()`), along with `VK_ICD_FILENAMES` pointing at the Wayland Turnip.
+> - `LIBGL_ALWAYS_SOFTWARE=1` (the documented way to keep `Options.Zink` alive into the swrast path and get `kopper = true` with `screen_fd = -1`) — this **does** move the code path, but the game then dies at startup with its own box, `Unable to create game window. / No matching GL pixel format available`: the kopper-without-a-device config set does not contain the visual the game asks for. Not a fix, and it confirms the path selection is exactly where the fault is.
+
+> **Fix, part one** (`app/src/main/cpp/waylandcomp/`, app-side, no `.wcp` change — necessary but, as the device showed, not sufficient on its own):
+> - `protocols/linux-dmabuf-v1.xml` replaced with upstream (version 6, adds `zwp_linux_dmabuf_feedback_v1`); `generated/linux-dmabuf-v1-{server-protocol.h,client-protocol.h,protocol.c}` regenerated with the same `wayland-scanner 1.24.0` the tree already used.
+> - `src/compositor.c`: the global goes out at **version 4**; `get_default_feedback` / `get_surface_feedback` implemented. `dmabuf_build_feedback()` writes the advertised format/modifier pairs into a sealed `memfd` format table once, alongside the `dev_t` of the one DRM render node this platform has. Each feedback object gets `format_table` → `main_device` → one tranche (`tranche_target_device`, all indices, `flags 0`) → `tranche_done` → `done`. Clients binding versions 1-3 keep the old `format`/`modifier` events untouched; from version 4 those events are not sent, as the protocol requires.
+
+> **On the device the fix is correct but NOT sufficient — the remaining half is in the `.wcp`.** CI run `34801324990` green at `dcecc8a4`, pubg APK `15f83464…`, installed and sha-verified on the Pocket FIT.
+> - The compositor half works and is proven: `23:33:35.108  dmabuf  feedback ready: 8 format/modifier pairs, main device 226:128`, and Turnip's Vulkan WSI now takes it — `-> wl_registry#37.bind(7, "zwp_linux_dmabuf_v1", 4, …)` then `get_default_feedback`, answered with `format_table(fd 90, 128)` (8 × 16 B), `main_device(array[8])`, `tranche_target_device(array[8])`, `tranche_formats(array[16])`, `tranche_flags(0)`, `tranche_done()`, `done()`.
+> - **Wizardry is still black.** Mesa's EGL never reaches the code that consumes it, because **our own Mesa is patched not to**. `banners-turnip-wayland/build_wayland.sh` (`apply_wayland_patches`) re-adds the shortcut upstream deleted in 25.2.0:
+> ```python
+> old = "   if (disp->Options.ForceSoftware)\n      return dri2_initialize_wayland_swrast(disp);…"
+> new = "   if (disp->Options.ForceSoftware || disp->Options.Zink)\n      return dri2_initialize_wayland_swrast(disp);…"
+> #  "No DRM device here: with Zink forced, EGL takes its software-window (kopper) path, which
+> #   then renders on the GPU through Zink's own Vulkan WSI."
+> ```
+> With `MESA_LOADER_DRIVER_OVERRIDE=zink` (set by winewayland itself) `Options.Zink` is true, so EGL goes straight to `dri2_initialize_wayland_swrast()` — whose registry handler (`registry_handle_global_swrast`) has **no `zwp_linux_dmabuf_v1` branch at all**, at any version. The trace after the fix shows exactly that: the global is now announced as `version 4` and Mesa still binds only `wl_shm` and `wp_presentation`.
+> - **And the intended kopper path is not actually engaging.** The trace shows Mesa running `dri2_initialize_wayland_swrast()` **twice** (`wl_registry#24` then `#25`) — the `eglapi.c` ladder: the first attempt with `driver_name = "zink"` fails, and the retry sets `Options.Zink = EGL_FALSE; Options.ForceSoftware = EGL_TRUE`, so the second attempt takes `driver_name = "swrast"` → `kopper = false` → a software screen with **no rasteriser in this build** (`-Dgallium-drivers=zink -Dllvm=disabled`). Confirmed on the device: `LIBGL_KOPPER_DISABLE=1` changes **nothing** (same black frame, same `0 GPU frames | 294 window redraws`), which it could not do if kopper were the path in use.
+> - So the `build_wayland.sh` comment describes a design that has never run. The Wine-side comment that backs it (`dlls/winewayland.drv/waylanddrv_main.c`: *"the AIO Graphics Test runs OpenGL at ~230 fps"*) rests on the AIO test, which presents every backend through a Vulkan swapchain and never touches this path — both comments should be corrected.
+>
+> **What the `.wcp` needs** (flagged, not done — a Wine/Mesa layer change is a bigger deal than an app change): drop that one `|| disp->Options.Zink` patch so EGL takes `dri2_initialize_wayland_drm()`, which binds `zwp_linux_dmabuf_v1` at `MIN2(version, 4)`, reads `main_device` out of the feedback this build now sends, opens the render node, and then sets `driver_name = "zink"` with `kopper = true`. The client-side requirement is satisfied on this device: `/dev/dri/renderD128` is `crw-rw-rw- … 226, 128` and opens as the app uid (`su u0_a249 -c 'exec 3</dev/dri/renderD128'` → `OPEN_OK`), which is why the feedback advertises it.
+
+> **Regression set on the same build — all green** (the version bump touches a global every client binds):
+> - **Half-Life 2, zero-copy on**: `is presenting GPU frames through Wayland: 1280x720, format XB24, linear (zero-copy)` → `zero-copy: presenting "HALF-LIFE 2 - Direct3D 9" (hl2.exe) without a copy`, steady `600 GPU frames | 0 window redraws | 600 zero-copy frames` per 10 s, HUD `D3D9 · DXVK 60.0 fps · 16.7 ms · Wayland`, screenshot in-game. Unchanged from before the bump.
+> - **AIO Graphics Test API sweep**: all eight backends driven through the compositor's `test-input` FIFO — Vulkan, OpenGL, D3D12, D3D11, D3D10, D3D9, D3D8, DirectDraw — each rendering, GPU-frame count moving per backend (`10709`, `2820`, `14984`, `6602`, `2815`, `2473` …), ending on DirectDraw at 232 fps. No black frame, no crash.
+> - **Screen effect on the layer path**: HL2 with `casEnabled=1, casSharpness=80` → `effects  scaling=None, CAS on 80%`, `chain ready: 13 passes (…) on Adreno (TM) 750`, game still presenting GPU frames, and the chain's result going out on the display layer (`600 GPU frames | 0 zero-copy frames | 613 layer frames`, 60 fps) exactly as that path is designed to behave.
+> - **Clients on versions 1-3 are untouched, verified rather than assumed.** A small `wayland-client` probe built for the device binds the global at a version of its choosing against the live compositor:
+> ```
+> bind 3 → global advertised at version 4; binding at 3
+>          format AR24 / modifier AR24 0x0…0, 0x0500000000000001, 0x00ffffffffffffff   (× AR24, XR24, AB24, XB24)
+>          RESULT bind_version=3 format_events=4 modifier_events=12
+> bind 4 → RESULT bind_version=4 format_events=0 modifier_events=0
+> ```
+> i.e. a v3 client still gets the identical four formats and twelve modifiers (LINEAR, QCOM_COMPRESSED, INVALID) it got before, and a v4 client gets none of them and uses feedback instead.
+
+
+## 2026-09-13 (later) — 🌊🖥️ **Wayland VRR: the refresh-rate vote now rides the surface that presents, plus a frame-rate hint on the zero-copy game layer** (`feat/wayland-vrr` `60c61b55`)
+> **The premise I was given did not hold, and the honest version is below.** The brief said `applyVrr()` returns early on Wayland because `xServerView == null`. It is not null: `setupUI()` builds an `XServerView` and `rootView.addView(xServerView)` runs in a Wayland session too (the compositor's SurfaceView is overlaid on top of it). So `applyVrr` never early-returned, `applyWindowPreferredRefreshRate()` and the drawer's `displayTargetHz` were already running, and on the Pocket FIT **refresh-rate matching on Wayland was already moving the panel**. Measured on the installed pre-release 4 (`abbe1028…`) before touching anything, container 7 + Half-Life 2 + Wayland, all foregrounded:
+> - 20:11:32 Auto + 60 cap → `refreshRate=60.000004`, `setFrameRate=(uid, frameRate)={10249, 60.00 Hz}`
+> - 20:13:31 30 cap, no frame gen → panel `60.000004`, vote `{10249, 30.00 Hz}` (30 is not a panel mode; SurfaceFlinger runs 60 and gives the uid a 30 Hz divisor override — correct)
+> - 20:15:22 LSFG Native x2 armed on a 30 cap → panel `60.000004`, vote `{10249, 60.00 Hz}` (the `cap x multiplier` pick), compositor log `LSFG Native x2 armed … generating: LSFG Native x2 at 1280x720`
+> - 20:16:30 zero-copy on, 30 cap → panel `60.000004`, vote `{10249, 30.00 Hz}`
+> - 20:18:10 cap off → panel `144.00002`, vote `{10249, 144.00 Hz}`
+>
+> **The real defect, and it is provable.** In a Wayland session the vote was issued on the X server view's surface — a layer that never presents one frame. `dumpsys SurfaceFlinger --latency` on the two BLAST SurfaceViews of the session, taken while the game ran at the 30 cap:
+> ```
+> === #56437 (X server view) ===      === #56440 (Wayland compositor) ===
+> 16666666                            16666666
+> 0	0	0                       82193481874947	82193505450884	82193483638436
+> 0	0	0                       82193515097447	82193538780155	82193516897134
+> 0	0	0                       82193548557082	82193572109217	82193550416405
+> ```
+> All-zero rows for the whole 128-row history on the layer that carries the vote; real timestamps ~33.3 ms apart on the layer that carries the game. It works today only because AOSP's `LayerHistory::isLayerActive()` keeps a **visible** layer with a valid `setFrameRate` vote in the active set whatever its buffer history — an accident we were relying on, not a design. And the zero-copy game layer (`banner_wayland_game`, an `ASurfaceControl` the game's own buffers go onto, bypassing every app surface) carried **no vote at all**.
+>
+> **What changed.** `applyVrr()` now only decides the rate; the new `routeVrrVote()` decides where it goes — X11 → `xServerView.setDisplayFrameRate()` exactly as before, Wayland → the compositor's SurfaceView via `Surface.setFrameRate` with the same API-30/31 guards and the same `CHANGE_FRAME_RATE_ALWAYS` strategy `XServerView` uses, remembered and re-asserted in the Wayland `surfaceCreated`. The early return and both `setDisplayFrameRate(0f)` clear sites (onStop, the FG-reset background half) are backend-agnostic now. On the native side `sc_layer.c` dlsyms `ASurfaceTransaction_setFrameRateWithChangeStrategy` (API 31, preferred) and `ASurfaceTransaction_setFrameRate` (API 30) next to the other transaction entry points, both optional, and applies the same rate and compatibility on the game layer when the SurfaceControl is created and on every later change — exposed as `WaylandCompositor.nativeSetLayerFrameRate()`, set from the app thread, applied on the compositor thread's next transaction so no transaction is ever built off-thread. One `layer` line per change, never per frame.
+>
+> **Proved on the fixed build** (CI run `34791664379` green at `60c61b55`, pubg APK `e13d5b21…`, installed and sha-verified on the Pocket FIT). Container 7, Half-Life 2, Wayland, `Proton-11.0-2.1-arm64ec-6`:
+> - **(a)+(e) Auto + 60 cap with zero-copy ON** → panel `refreshRate=60.000004`, vote `{10249, 60.00 Hz}`, and the layer hint applied at creation: `20:20:49.631  layer  display frame-rate vote on the game layer: 60.00 Hz` one line before `SurfaceControl "banner_wayland_game" created` / `zero-copy: presenting "HALF-LIFE 2 - Direct3D 9" (hl2.exe) without a copy`. This is the case the surface vote cannot describe — the game's frames are on the layer.
+> - **(b) cap off** → panel `144.00002`, vote `{10249, 144.00 Hz}`, `20:21:17.999  layer  display frame-rate vote on the game layer cleared (panel runs free)`.
+> - **(c) manual lock 90, Auto off, cap still 60** → panel `refreshRate=90.0`, vote `{10249, 90.00 Hz}`, `20:23:22.241  layer  display frame-rate vote on the game layer: 90.00 Hz`. The lock is independent of the cap, as designed.
+> - **(d) LSFG Native x2 on a 30 cap** → panel `60.000004`, vote `{10249, 60.00 Hz}`, drawer reads `30 real → 60 shown (2x)`. Note the compositor deliberately **pauses zero-copy under frame gen** (`framegen  zero-copy paused: frame generation needs the compositor pass`), so (d) and (e) cannot be true in the same instant — (e) is proved without frame gen, above.
+> - **(f) X11 regression** — same container, `displayBackend=x11`, Auto + 60 cap: one BLAST SurfaceView (no compositor surface), panel `60.000004`, vote `{10249, 60.00 Hz}`, HUD `D3D9 · DXVK … 60.0 fps · 16.7 ms · X11`. Unchanged.
+> - Full vote-change trail from one session, one line per change, none per frame: `60.00 Hz` → `cleared` → `60.00 Hz` → `30.00 Hz`.
+>
+> **Not proved.** Power draw: the device sat on the charger at 100 %, so `/sys/class/power_supply/battery/current_now` reads charge current (6408) and cannot show the panel saving — no A/B worth quoting. No other GPU or Android version was touched, so "the symbol is absent on older Android" is a code path, not a device result. The user's original report (panel pinned at 144 under LSFG) did **not** reproduce here; the most likely explanation is configuration — container 7 saves `matchRefreshRate=0`, and a shortcut that carries its own `matchRefreshRate` extra makes the in-game Auto toggle inert because `resolvedMatchRefreshRate()` prefers the shortcut extra over the container value the toggle writes. That is a separate pre-existing per-game-override quirk, untouched here and worth a look.
+>
+> **Device state left behind:** the Pocket FIT now runs `e13d5b21…` (this branch), **not** pre-release 4. Container 7's `frameGenMultiplier` (4) and `manualRefreshRate` (0) were restored after the drawer drove them; the test shortcut and the staged APK are deleted and the user's five Desktop shortcuts are untouched. Branch is not merged and nothing was released.
+
+## 2026-09-13 (later) — ⏸️ **Superset v8: step 1 closed out, pausing until tomorrow**
+> - The seven post-merge parent builds all came back green under their new per-layer workflow names, so every layer branch now builds through the hardened pipeline end to end. Shipped layers are unchanged: all seven are still the v7 Wine XP builds; no v8 exists yet.
+> - Resume point: step 2, the two device A/Bs on the Pocket FIT (Rockstar Launcher / Social Club UI, and TF2 + Brawlhalla launch livelock — 11.0-2 vs GE 11.0-6). Then step 3 targeted fixes, then the Option A base decision (Valve bleeding-edge at GE-Proton 11-6's pin).
+> - Housekeeping still open: the `staging/<parent>/harden` branches are identical to the parents and left in place; versionCode goes 7 → 8 at the v8 cut.
+
+## 2026-09-13 — ✅✅ **v8 step 1 MERGED: all 7 Proton layer parents now build with the hardened pipeline; output proven identical to v7; CI workflows cleaned up**
+> - Proof the new pipeline changes nothing shipped: a server-side comparison (one-off `verify/` branch, nothing downloaded to the device) put each v7 release wcp next to its hardened build. All 8: identical file lists and sizes, identical profile.json and prefix pack, every unix `.so` plus the loader and wineserver byte-identical, and every code/data section of every Windows DLL/EXE identical (`.text`, `.data`, `.rodata`, `.reloc`, `.rsrc`, `.pdata`, the arm64ec thunk tables). The only differing bytes are the PE header build stamp and the linker's per-build CodeView GUID inside `.rdata`. Same code, same data, different clock.
+> - Round 4 (after the workflow cleanup commit) green on all 7; user "go" → parents fast-forwarded to their `staging/<parent>/harden` tips (10.0 `5da239e98aa`, 10.34-GE `b784101b0f6`, 11.0 `0c990d26645`, 11.0-2 `777342a9618`, 11.3-GE `e4ce93c380d`, 11.5-GE `471652aa953`, 11.6-GE `d4e97500091`). Each parent = v7 + 5 commits, none touching Wine source, Android patches or GE patches. Post-merge artifact-only runs fired under the new per-layer workflow names. Parents still stamp versionCode 7; the v8 cut bumps to 8.
+> - Cleanup on the user's yes: 226 stored runs deleted from the retired shared workflow, both publish workflows, the July steam-targets one, the comparison one, and the parked Proton 9 / Wine 10.6 / Wine 11.16 / winealsa experiments (their branches stay); `publish-p11-consolidated.yml` and `build-ffmpeg-android.yml` removed from the parents (kept in history); one-off branches `publish/v7-xp` and `verify/v7-vs-harden` deleted. The Actions page now lists exactly the seven layer workflows by name.
+> - Two facts learned that change nothing shipped: Wine-10 layers ship the loader as a real file in `bin/` (Wine-11 uses a symlink); the x86_64 "sdk35" leg has always compiled against the android28 target with 16 KB alignment (the android35 override never reached the compiler), now stated honestly in the script.
+> - Decisions recorded: layers stay on their own 7 branches; the future base move is Option A (Valve bleeding-edge at GE-Proton 11-6's pin `00e63989`), decided only after steps 2–3. No Proton exists on Wine 11.17 (dev series); a vanilla 11.17 layer would be a separate line off the parked `wine_11.16` branch.
+> - Next: step 2 device A/Bs on the Pocket FIT — Rockstar Launcher, and TF2/Brawlhalla launches, 11.0-2 vs GE 11.0-6.
+
+## 2026-09-13 — ✅ **v8 step 1 DONE in CI: build-script hardening green on all 7 Proton layer branches (not merged yet)**
+> - Three CI rounds. Round 1 and 2 failures were all in the new verifier, never in a layer: (1) `wine-preloader` (and x86_64's `wine64-preloader`) is a static custom-linked binary that has shipped 4 KB-aligned in every 16 KB build, so the alignment check now exempts it; (2) Wine-10 ships the loader binary itself in `bin/` instead of Wine-11's symlink, both accepted now; (3) the x86_64 "sdk35" leg has always compiled against the android28 NDK target because the android35 override ran after the compiler paths were bound — the ELF note proved api28 — so the dead line is removed and every leg is checked for api28 + 16 KB alignment. Shipped binaries do not change.
+> - Naming fixed on the user's ask: each branch now has its own workflow file (`build-ge-proton-11.0-6.yml`, `build-proton-10.0-4.yml`, …) with `run-name` naming the layer and ref, so the Actions list shows seven real workflows instead of every run reading "11.0-1" (GitHub labels runs from the default branch's copy of a shared file path). Staging branches renamed `aio-eanet/harden-*` → `staging/<parent>/harden`; old ones deleted.
+> - Round 3 (all green 03:49Z): 10.0-4 `34735168733`, GE 10.0-34 `34735168851`, 11.0-1 `34735168918`, 11.0-2 (3 legs) `34735168964`, GE 11.0-3 `34735168954`, GE 11.0-5 `34735168763`, GE 11.0-6 `34735168844`. Every verifier line passed on every branch (XP desktop both arches, DirectAudio 1.3.2 set, RtlIsEcCode guard, font cap, esync, EA gateway, xinput retry, GE strings, wcp archive contents).
+> - Next: user go to fast-forward the 7 parents to their staging tips → step 2 device A/Bs (Rockstar Launcher + TF2/Brawlhalla, 11.0-2 vs GE 11.0-6) → step 3 fixes → then decide the bleeding-edge base move.
+
+## 2026-09-12 (late) — 🛠️ **v8 superset step 1 STARTED: build-script hardening on all 7 Proton layer branches (CI in flight)**
+> - User decisions: the 7 layers **stay on their own branches** (no 7→3 unification); "go start the build script hardening". Staging = `aio-eanet/harden-<parent>` off each parent's v7 tip; parents untouched; versionCode left at 7 for these artifact-only runs (bump to 8 at the v8 cut).
+> - What every branch now does: the Wine-11 scripts fail hard (`set -eo pipefail`, configure/make/install exit on error — the Wine-10 scripts already did); a missing or non-applying Android patch stops the build instead of being "SKIPPED" green; the android_sysvshm build failure is fatal; the four old source tokens became a 20–21-row MARKERS table (one token per shipped feature, DirectAudio now checked for the 1.3.2 mic marker instead of the stale 1.3.1 one); the GE tier applies with one registered marker per GE patch and refuses unregistered patch files.
+> - New `build-scripts/verify-layer.py` runs in CI after install and before packaging: tree shape, 16 KB alignment on every unix .so, Android API level in the ELF note, the compiled feature strings (esync, fast-yield, address-space cap, EA gateway, xinput retry, clipboard, XP desktop, DirectAudio set, GE strings), the RtlIsEcCode guard bytes in ntdll.dll, the font cap via win32u.so's .bss. Tested against the old v2 GE wcp: passes what v2 has, fails exactly the 13 features v2 predates.
+> - Workflows: prefixPack.txz pinned to GameNative/bionic-prefix-files `6286ac45` (their last commit, 2026-05-07) + sha256 check; a "Verify wcp archives" step checks the packaged tar and that its profile.json is byte-identical to the generated one.
+> - 7 CI runs fired on push (head SHAs verified): 10.0 `34733163425`, 10.34-GE `34733163335`, 11.0 `34733163134`, 11.0-2 `34733163276`, 11.3-GE `34733163111`, 11.5-GE `34733163474`, 11.6-GE `34733163079`. Next: green → local re-verify of one wcp → user go to fast-forward the parents → step 2 device A/Bs.
+
+## 2026-09-12 — 🧭 **CHECKPOINT (device reboot): "ultimate superset" Proton layers — research done, nothing built**
+> - User ask: make the ultimate superset of the Proton layers — more performance, compatibility and functionality, improving all of them together — plus "what is Proton Experimental's latest update". Three read-only research passes (our 7 layers; upstream Valve / GE / Wine; GameNative / WinNative / GameHub / Ludashi + our known-issue backlog). Full reports and 153 evidence files saved on the device at `/home/claude-user/superset-research/` (README = roadmap + where to resume).
+> - Key findings: the 7 layers are 3 Wine sources (11.0-1 stock + GE 11.3/11.5/11.6 share one tree; 10.0 == 10.34-GE; 11.0-2 is newer). "GE" = Valve 11.0-1 + 9–10 GE game-fix patches only. The Wine-11 build scripts can ship a broken layer while CI shows green (failed patches skipped, only 4 markers checked) and pull prefixPack unpinned from GameNative. fsync is compiled out by our patches and also blocked by Android's app seccomp (futex_waitv, every release through Android 17) — the only sync upgrade is GameNative's userspace ntsync. Valve now ships an official ARM64 Proton built like ours; Experimental is 302 Wine commits past our 11.0-2, and the GE layers still carry the old arm64ec suspend (a likely cause of the Rockstar Social Club freeze).
+> - Proton Experimental's latest (2026-09-11): STEINS;GATE RE:BOOT voices, EA App splash, Borderlands 4 console window, 15 Proton-11 regressions (GTA III intros, Lords of the Fallen, C&C Generals, RaceRoom), controllers in Far Cry 4 / DA:I / Avatar / KCD2, 13 newly playable, Wine Mono 11.2.1; bleeding-edge (09-12) adds Wine Mono 11.3.0.
+> - Proposed: v8 = harden the build scripts + unify 7 → 3 → 1 shared patch queue + GE onto the 11.0-2 base + Valve's ARM64EC/FEX fixes + small fixes (FitGirl/DODI installers, rpcrt4 services / CEF launchers, clipboard, CJK locale, fonts, inotify); v9 = userspace ntsync, ffmpeg video, riskier items. Two device A/Bs gate the base move (Rockstar Launcher and the TF2/Brawlhalla launch livelock, 11.0-2 vs GE 11.0-6). Next layers versionCode = 8.
+> - Waiting on the user's pick. Also today: 3.1.1 released, v7 XP layers promoted, PR #512 merged (entries below).
+
+## 2026-09-12 — ✅🪟 **PROMOTED: v7 Wine XP layers → stable / Latest + in-app catalog default**
+> - User go ("can we move them to stable / latest release and update bannerlator catalog with them" + "merge to their home/parent branches"). The 7 parent branches were already fast-forwarded on 09-11; GitHub compare shows each one identical to its v7 source, so nothing to merge.
+> - Delivery copies: `winlator-contents` release `bionic-layers-20260911-xp` ("Bionic layers v7 — Wine XP desktop"), published server-side by a one-off workflow on branch `publish/v7-xp` that downloads the 8 files from the proton-wine release and checks each against the verified sha256 before publishing. Latest there; names and sizes identical to proton-wine; all 8 URLs HTTP 200.
+> - Catalog: `winlator-contents` `contents.json` commit `39f9c6a` — 8 Proton rows `(v6)` → `(v7)`, verCode 6 → 7, links → the new release, versionName unchanged (24+/24−). Containers on a v6 layer are now offered **Update layer → v7**.
+> - proton-wine `build-bionic-layers-20260911-xp`: pre-release → stable + Latest; both release pages carry the same updated text (current release, in-place update, built from the parent branches).
+> - Bannerlator 3.1.1 release page: new section "📦 New compatibility layers — versionCode 7: the Wine XP desktop", a line in the lead paragraph, credit + Microsoft trademark line; same edit in `docs/releases/3.1.1.md`. The in-app update line (update.json) is unchanged.
+> - Device status (as stated in the notes): GE-Proton 11.0-6 v7 device-tested, including a fresh container; the other six layers verified inside each file, not booted.
+
+## 2026-09-12 — ✅🌊 **Wayland checkpoint re-cut on merged main** (`feat/wayland-runtime` `beebf354`)
+> - Merged main `2d17c427` (the LSFG Native single-build and PR #512 work) into the Wayland branch: clean, no Wayland files touched. APK run 34716084926 installed and verified on the device (graphics test presents, 143.8 frames/s on screen, ~2,000 fps game).
+> - Share kit in Download/Wayland is now: this APK, the Proton wcp from proton-wine `3a2cc355` (Termux Turnip, OpenGL gated behind BANNER_WAYLAND_GL=1, verified 16:03), and the combined Turnip zip for X11.
+> - Tried and reverted on the Proton side: our own Linux-style Turnip from the Banners-Turnip `wayland` branch (creates a device, crashes in vkCreateSwapchainKHR) and the combined Android+Wayland driver (not loadable by the container's Vulkan loader). Both noted in android/wayland-deps/TURNIP.md.
+> - Open from user testing: a shortcut launch shows the desktop/taskbar around the game (X11 hides explorer's windows for shortcuts; the compositor doesn't yet), and DiRT Rally 2.0 stalls on its splash (D3D11 device created, no swapchain, no frames).
+
+## 2026-09-12 — ✅🌊 **Wayland checkpoint: "functioning Wayland"** (`feat/wayland-runtime` `1fef8b08`, proton-wine `feat/winewayland-desktop-11.0-2`)
+> - A real Windows desktop renders on the embedded compositor (wallpaper, taskbar, Start menu, file manager, 1280×720), with the desktop protocol `banner_desktop_v1` placing and stacking windows across Wine processes.
+> - DXVK Direct3D 9/10/11 and Vulkan draw at full speed: `wp_presentation` feedback lets Mesa's driver run unthrottled (1,900–2,300 fps in the graphics test, the same as X11; D3D9 went from 3 fps to ~2,100). The compositor draws once per screen refresh from the activity's Choreographer ticks (143.7 frames/s measured on the 144 Hz panel).
+> - The in-game drawer's FPS limiter works on Wayland by pacing buffer releases, like the X11 IdleNotify pacer. Confirmed by the user with the drawer toggle.
+> - Controller buttons, on-screen controls, mouse and touch reach the game (X server input sink → compositor); the Fusion HUD shows live FPS and an X11/Wayland label in all five sizes; the per-game display-backend choice is honoured from every launch path.
+> - Colours fixed (dmabuf fourcc → VkFormat), title bars on Vulkan/DirectX windows (new `pClipClientSurfaces` driver callback, GDI driver version 109), readable per-session logs in Download/Wayland-logs.
+> - Share kit in Download/Wayland: the pubg APK, the Wayland Proton wcp (installs as Proton-11.0-2-arm64ec-90), and a combined Android+Wayland Turnip zip for X11 testing. Insane 2 plays (119 fps in a race).
+> - Not yet: OpenGL/WineD3D. Our Zink build initialises on the compositor (Wine reports GL 4.6 on "zink Vulkan 1.4 (Turnip Adreno 750)"), but with WINE_USE_EGL set win32u probes the GPU at every process start and the probe in the desktop process deadlocks other processes opening a display DC, so every launch hangs. Gated behind BANNER_WAYLAND_GL=1 until the probe is moved. Also open: D3D12/D3D8/DDraw checks, clipboard, mouse-look/cursor lock, first-launch desktop size after a Proton re-extract, layered-window alpha.
+
+## 2026-09-12 — 🔀🌊 **Wayland branch caught up to main** (`feat/wayland-runtime` ← main `d62ce447`)
+> - User go ("catch the branch up to main first"). The branch was parked on 2026-07-19 and had fallen 1,952 commits behind. Main was merged in (not rebased), so the 41 pushed Wayland commits keep their hashes.
+> - 7 files conflicted. Main had switched `AndroidManifest.xml`, `XServerDisplayActivity.java` and `GuestProgramLauncherComponent.java` to LF line endings, which made each one a whole-file conflict; they were re-merged with line endings normalized. What remained were spots where both sides added code in the same place, and both were kept.
+> - The per-game Display backend dropdown now uses the editor's controller-aware `DpDrop`, and it has a place in the D-pad order. Under Wayland the hidden renderer options also drop out of the D-pad order.
+> - Check: the merged tree differs from main by exactly the branch's 42 files, and `XServerDisplayActivity` by exactly the branch's +304/−6 lines.
+> - Known gap (not fixed here): Big Picture, the file manager's "run exe" and the container exe runner don't pass `wayland_mode` yet. Only the Shortcuts list and the container Run button do.
+> - Not built yet; CI is next.
+
+## 2026-07-18 — 🌊 WAYLAND RUNTIME PROJECT — spike PROVEN + winewayland wcp building + app branch scaffolded
+
+> **New experimental PARALLEL display runtime: run/launch games through Wine's `winewayland.drv` → our own embedded Wayland compositor (native, Vulkan), instead of the X11 path (pure-Java X11 server + `libwinlator.so`). X11 runtime stays default + UNTOUCHED. Full detail: [[project_bannerlator_wayland_runtime]].**
+>
+> **Why:** explicit-sync frame pacing (`wp_linux_drm_syncobj`) the X11/Java server can't express + dmabuf zero-copy + Wine upstream invests in winewayland while winex11 is legacy-maintenance. NOT a replacement — a separate flavor.
+>
+> **✅ SPIKE DEVICE-PROVEN (Adreno 750 / Turnip)** — repo `/home/claude-user/bannerlator-wayland` (local, 3 commits). M1: minimal libwayland-server compositor + client, xdg-shell handshake + wl_shm commit observed. **M2 (make-or-break, RISK #1 RETIRED):** Turnip's Vulkan WSI exported real zero-copy dmabufs to our EXTERNAL compositor (640×480 XR24/LINEAR, fd 1.2MB, 30/30 frames presented) — the SAME Mesa WSI path winewayland.drv drives for DXVK/VKD3D games. **Import:** compositor imported that dmabuf into its own Turnip VkImage. Full GPU path closed both directions WITHOUT a Wine build. ⚠️ Build from PRoot shell not the bridge (Termux clang ECHILD under Magisk daemon).
+>
+> **① winewayland P11 arm64ec wcp — ✅ BUILT + VERIFIED.** Branch `The412Banner/proton-wine:feat/winewayland` (off `proton_11.0`, pushed). `--without-wayland`→`--with-wayland` + `WAYLAND_CLIENT/_EGL/XKBCOMMON/XKBREGISTRY` flags (same pattern as other deps, bypass pkg-config prefix); vendored bionic aarch64 wayland/xkb libs+headers in `android/wayland-deps/` (from this device's Termux, reproducible); `libwayland-bin` for host wayland-scanner; strip+ccache unchanged; 9 driver protocol XMLs all in-tree. **Run `29643622174` SUCCESS** — wcp `proton-11.0-1-arm64ec.wcp` (93MB) contains `lib/wine/aarch64-unix/winewayland.so` (NEEDED libwayland-client/-egl/xkbcommon/xkbregistry ✓) + `winewayland.drv` (arm64ec+i386 PE), winex11 still present. 4 runtime libs bundled in wcp `lib/`.
+>
+> **② bannerlator app branch — SCAFFOLDED + native lib builds in-app, ✅ APK GREEN.** Branch `feat/wayland-runtime` (off `main`, pushed, tip `88e2626e`). Proven compositor sources → `app/src/main/cpp/waylandcomp/` (+ pre-gen protocol glue + vendored libwayland-server). CMake target `bannerwayland` = `libbannerwayland.so` (compile-verified; exports `banner_wayland_run`); `main()`→`banner_wayland_run()` + JNI `waylandcomp_jni.c` + `WaylandCompositor.java`; jniLibs libwayland-server/ffi/android-support. **APK build run `29644447065` GREEN (3 flavors, real NDK r29)** — native lib integrates. **REMAINING M4 (both deps now green → fully testable):** `WaylandDisplayActivity` (SurfaceView) + JNI ANativeWindow→Vulkan swapchain + blit imported VkImage to window + input + launch wiring (per-prefix `Drivers\Graphics=winewayland`, point container at #1's wcp) + `ImageFsInstaller.installWaylandLibs()`.
+>
+> **M4 IN PROGRESS (2026-07-18):** per-container + per-game **Display backend X11/Wayland toggle** (greys Renderer group incl Show-FPS; Turnip/DXVK/VKD3D stay live — they're used & compatible under Wayland). Native **`vk_present`** render backend (ANativeWindow swapchain + blit imported dmabuf) + **WaylandDisplayActivity** + launch routing — all built + APK-green + artifact-verified. **DEVICE-DRIVEN via root bridge:** routing→Activity→`libbannerwayland` load→compositor thread→socket `wayland-0`→spike `client_vk` presented **30/30 frames to the in-app compositor**. ❌ ONE BUG found: `present: vkCreateDevice failed` — compositor uses the app's **system Adreno driver** (no drm_format_modifier/dmabuf import), not **Turnip** → black screen. **FIX (deferred to user-home): load Turnip via app adrenotools in WaylandDisplayActivity before compositor Vulkan init; harden vk_present ext-query.** Then wire the Wine guest launch. M4 APK `Bannerlator-ludashi-wayland-m4.apk` md5 `ccfe72…` installed; Container-1=wayland.
+>
+> **Status:** GPU-path risk retired; winewayland wcp BUILT+verified; app foundation+toggle+routing+render-backend BUILT & device-proven in-app. Remaining M4: compositor Turnip driver-load (the black-screen fix) → then Wine guest launch. Nothing merged; X11 untouched.
+## 2026-09-12 — ✅🏁 **RELEASED 3.1.1 (Latest, versionCode 85)** — [release page](https://github.com/The412Banner/Bannerlator/releases/tag/3.1.1)
+> - Cut commit `91b320ef` ("release: 3.1.1 (versionCode 85)") on top of the docs merge; tag 3.1.1 → `91b320ef` (verified, == the built commit). release.yml run 34716667257: notes, 3 builds, release — all green. Published 2026-09-12 20:29 UTC.
+> - Page: house layout from `docs/releases/3.1.1.md` + 6-item change list since 3.1.0, collapsed Proton 9 + Credits, no TODOs. `update.json` (latest): versionCode 85, versionName 3.1.1, the update-summary line, 3 APK mappings.
+> - What shipped: XMB view for the Games tab; LSFG Native capture resolution + Vulkan 1.1 compat (clintOnSky, #512, experimental, off by default); LSFG Native single shader build on arm; L1/R1 in the per-game settings pop-up; Steam Controller USB cable tested (TAR); LSFG guide section on LSFG Native vs lsfg-vk. README updated (What's New 3.1.1, features, clintOnSky credit).
+> - Staged `/sdcard/Download/Bannerlator-3.1.1-pubg.apk` sha `c5d219c1…` (manifest `com.tencent.ig` vc 85 / 3.1.1).
+> - Still untested on a device: the XMB r5 fixes, #512 on the Pocket FIT, the single-build fix.
+
+## 2026-09-12 — 🧭 **CHECKPOINT: cutting 3.1.1 stable** (`release/3.1.1`)
+> - User go ("let's cut a 3.1.1 release from main then"). Release = main as of `2d17c427` (app == `dbc67819`, main build run 34706013493 green on all 3 flavors) + README + `docs/releases/3.1.1.md`, then versionCode 84 → 85, versionName 3.1.0 → 3.1.1, dispatched through release.yml (house-layout body, change list since 3.1.0).
+> - Notes: XMB view (tested on the Pocket FIT; the r5 follow-up fixes untested), LSFG Native capture resolution + Vulkan 1.1 compat from clintOnSky (#512, experimental, off by default; tested on his Adreno 710 only), LSFG Native single shader build on arm (untested on device), L1/R1 in the per-game settings pop-up, Steam Controller USB cable tested (TAR). Local `release_notes.py 3.1.1` check: layout OK, 6 changes since 3.1.0.
+
+## 2026-09-12 — ✅🎞️ **MERGED to main: LSFG Native builds its chain once when frame gen arms** (`fix/lsfg-native-arm-single-build`, `--no-ff`)
+> - User go ("merge it to main and build artifacts only from it"), merged before a device test. App code identical to the CI-green r1 (`8f480cd3`, run 34705008903); the branch only added PROGRESS_LOG entries on top. No versionCode change.
+> - Main now carries PR #512 + this fix; build-artifacts dispatched on main (not a release): run 34706013493, label `main-lsfg-arm-once`, headSha verified == merge `dbc67819`. ✅ CI-green, all 3 flavors. Staged `/sdcard/Download/Bannerlator-main-lsfg-arm-once-pubg.apk` sha `b14da8ba…`. Not device-proven yet.
+
+## 2026-09-12 — 🧭 **CHECKPOINT: LSFG Native builds its chain once when frame gen arms (fix in CI)** (`fix/lsfg-native-arm-single-build`)
+> - Bug (found by clintOnSky on #512, verified on main): the LSFG branch of `renderFrame` applied the user's config only if the engine already existed, and ran before `ensureLsfgEngine()` created it. A fresh engine was built at the default flow scale (1.00), then rebuilt one frame later at the user's scale. Each build recompiles all 25 pipelines: ~2.4 s on our Adreno 750 / Turnip, ~4 s on a stock driver, with the game frozen meanwhile. With a capture resolution below the panel it hit on nearly every arm.
+> - Fix: configure after ensure, the same order the win-fg branch already uses (`VulkanRendererContext.cpp`, one file). Nothing reads the config while disarmed, so a change made then waits for the next armed frame.
+> - Commit `8f480cd3`, CI run 34705008903 (headSha verified), release label `1.0-lsfg-arm-once-r1`. ✅ CI-green, all 3 flavors. Staged `/sdcard/Download/Bannerlator-1.0-lsfg-arm-once-r1-pubg.apk` sha `d28e8b7f…`. Not merged; not device-proven. Proof on device: one `chain built at …` line per arm (was two) with capture = Game or 720p and flow scale below 1.0.
+
+## 2026-09-12 — ✅🎞️ **MERGED to main: PR #512 (clintOnSky) — LSFG Native capture resolution + Vulkan 1.1 driver compat (experimental)** (`--no-ff`, merge `22f7d121`)
+> - User go ("let's merge it to main"). Two commits: `28ae0197` (the feature) + `ea93c2e3` (fixes for all 15 points of our review `5178315591`; re-reviewed, all addressed, nothing new to fix). CI-green on `ea93c2e3` (run 34653579121, all 3 flavors).
+> - What lands, behind `FeatureFlags.LSFG_NATIVE_EXPERIMENTS_ENABLED` (on; defaults = 3.1.0 behaviour): per-container **Capture resolution** (Panel / Game / a height) — the LSFG chain and the post-effect chain run on a smaller composite ring, blitted up (LINEAR when the format supports it); **LSFG on Vulkan 1.1 drivers (compat)** — lowers the cached SPIR-V 1.6 to 1.4/1.5 for a stock driver offering spirv_1_4 + float_controls + vulkan_memory_model, only in sessions that run LSFG Native. The frame-gen "couldn't start" notice now also covers a chain build rejected after the engine came up (both engines).
+> - Untouched: VRR/Auto screen fit, over-limit warning + "Set Max FPS", FPS limiter locks, present mode (no diff lines). Merge file list = the PR's 22 files; the only non-PR delta is main's XMB one-word `graphicsProbeMutex` private→internal in `ContainerDetailScreen.kt`.
+> - Device status: contributor's Adreno 710 only; not yet run on the Pocket FIT. Known cosmetic leftover: the container editor still offers heights the renderer clamps (no drawer chip highlighted then).
+> - Next: fix the arm-time chain double build the contributor found (LSFG config applied before the engine exists → first build at flow 1.00, rebuilt next frame; ~4 s per build on the stock driver).
+
+## 2026-09-11 — ✅🔧 **MERGED to main: XMB r5 fixes** (`feat/games-xmb-view`, `--no-ff`)
+> - User go ("yes merge it to main"). Lands the three fixes from the device test: text rows open with the cursor at the end, no stale "✓ Saved", Game Details / Properties open on safe rows.
+> - Code identical to r5 (CI-green run 34668206430, commit `3ea48319`). No versionCode change.
+
+## 2026-09-11 — ✅🎮 **MERGED to main: the Games tab XMB view** (`feat/games-xmb-view`, `--no-ff`)
+> - User go after the r4 test ("focus works now, merge it to main for now and we will test it more later").
+> - What lands: the 4th Games-tab layout **XMB** (games across, the game's options down; see-through top bar; landscape hides the status and nav bars) with every game option built into nested XMB columns — Settings (all five sections + driver / DX config, Performance, Player slots, audio), Game Details, Properties, Clone, Remove, logs, community configs, scrape cover, Copy to Drive C, save backup/restore, change executable. Per-game settings editor also gets L1/R1 section switching in the pop-up (List/Grid views).
+> - Code identical to r4 (CI-green run 34658836305, commit `189f8a63`); main only added a PROGRESS_LOG entry since the branch point. No versionCode change. Device status: r1–r4 tested by the user; broader testing to follow.
+## 2026-09-11 — 🔬🎞️ **GameHub frame-gen teardown (firmware 1.4.2 → 1.4.9) and how it compares with bionic-fg / win-fg**
+> - GameHub 1.4.8 deleted its old LSFG-derived engine (`libGameScopeVK.so`) and shipped a new learned engine, "GSFG", in `libGameScopeV2.so`. 1.4.8 was 2× only. 1.4.9 retrained it about 3–4× smaller, with 2–6× and a startup auto-tuner. GSFG is not an LSFG copy or derivative.
+> - Measured against our engines (shader-level sha1):
+>   - bionic-fg: 64 of its 70 unique shaders are byte-identical to GameHub's old engine; 0 frame-gen shaders are shared with GSFG.
+>   - win-fg (`libwin_fg.so` `00e3806f`, 10 classical, weight-free shaders): shares 0 with either engine.
+>   - Our IFNet-lite experiment is the closest in kind, but 6–30× bigger and about 50× more compute.
+> - Clean-room: GSFG's recovered design must not feed into win-fg.
+> - Report: https://claude.ai/code/artifact/d6e39eb3-5555-496a-8fda-835168b8517f · `/sdcard/Download/gsfg-teardown-report.html`. Static analysis only, not device-tested.
+
+## 2026-09-11 — 🧭 **CHECKPOINT: v7 pre-release out; XP for the other layers discussed**
+> - State: [`build-bionic-layers-20260911-xp`](https://github.com/The412Banner/proton-wine/releases/tag/build-bionic-layers-20260911-xp) is a pre-release (v6 stays Latest and the catalog default); all seven parent branches carry the XP work. Promotion (Latest + catalog + app release-notes news) waits on testers and will be published server-side, not from the phone.
+> - Other catalog/app layers (not rebuilt by us): the XP controls style (`winexp.msstyles`) can be repacked into any of them and preset for new containers; our XP `explorer.exe` could only be swapped into layers of the same Wine version after a check that every function it needs exists there, then a boot test; the XP title bars cannot be added without source (they live in the build-locked `win32u.so`). Hand-editing compiled layers was ruled out. Proton 9.0 can get the full XP desktop by a source port (its source is in the fork). Waiting on which layers the user wants.
+> - Open app issue: new containers default to a FEX nightly (2608+229) that is not installed, so they close on first launch.
+## 2026-09-11 — ✅🧪 **XMB device test (driven over the root bridge) — passes; three small fixes → r5** (`feat/games-xmb-view`)
+> - Tested r4 (= main `1204b8dc` app code) on the Pocket FIT with Brawlhalla, portrait and landscape (landscape forced with `wm fixed-to-user-rotation` since the app follows the sensor; restored after). Passed: bars hidden in landscape only; values shown are the game's real ones; Render scale and "hide on-screen controls" change in place with ◀▶ and the shortcut file gets / loses the key exactly; the choices panel and B-cancel; L1/R1 wrap between sections; a text row writes on A and **focus stays in the XMB afterwards**; Up to the top bar and **Down back into the XMB**; Game Details, Logs (run picker, file menu, scrollable tail), Properties, Remove (opens on Cancel), Win Components, Env Vars, Advanced, Driver configuration, DX wrapper configuration, Community configs (live list) and the Change-executable folder browser all open with real data, no crash. Brawlhalla's shortcut file was byte-identical to its snapshot afterwards.
+> - Found + fixed in r5: editing a row that already has text put the cursor at the START (Backspace did nothing) → cursor now starts at the end; a stale "✓ Saved" flashed whenever a menu opened after an earlier save → only a fresh save flashes; Game Details opened on "Unlink from Steam" and Properties on "Reset properties" → they now open on the name / play count.
+> - ✅ r5 CI-green (run 34668206430, commit `3ea48319`). Staged `/sdcard/Download/Bannerlator-1.0-xmb-view-r5-pubg.apk` sha `a236742a…`. On the branch only; main still has r4 until merged.
+
+## 2026-09-11 — 🧭 **CHECKPOINT: device test of the merged XMB view (driven over the root bridge)**
+> - Build under test: r4 = main `1204b8dc` app tree (pubg `com.tencent.ig`, sha `72531f10…`). Plan: games-bar navigation; Settings → General (change a value with ◀▶, confirm the shortcut file changed, revert); L1/R1 sections; Controller toggle (confirm + revert); a text row (keyboard, focus stays on the row, confirm + clear); Up to the top bar and Down back; Game Details / Properties / View logs / Remove (opens on Cancel). Read-only on app files; every change is made and reverted through the UI.
+
+## 2026-09-11 — 🧭 **CHECKPOINT: XMB r4 — controller focus lost after the keyboard (fix in CI)** (`feat/games-xmb-view`)
+> - r3 device test (user screenshot): after any text row's keyboard closed, D-pad focus landed on the top-bar buttons (Steam friends) and Down never came back to the XMB.
+> - Two causes: the "hand focus back to the XMB" hook after editing was never wired (`XmbNavState.refocus` stayed a no-op), and since r2 the XMB's focus target extended up behind the see-through top bar — D-pad focus search skips a target that overlaps the button you're on, so Down found nothing.
+> - Fix: refocus wired to the XMB root after commit/cancel; the focus target now starts below the top bar (keys still handled by the outer box); every tap target inside the XMB (covers, rows, choices, strips, breadcrumb) is non-focusable so focus can't be stranded on a row that scrolls away.
+> - ✅ CI-green (run 34658836305, commit `189f8a63`). Staged `/sdcard/Download/Bannerlator-1.0-xmb-view-r4-pubg.apk` sha `72531f10…`. Not device-proven yet.
+
+## 2026-09-11 — 🧭 **CHECKPOINT: XMB r3 — a game's settings and tools built INTO the XMB (all three phases), CI in flight** (`feat/games-xmb-view`)
+> - User asks after the r2 test: the per-game settings pop-up was still hard with a controller and had no hints → "build the menu into the XMB itself… and the rest of the options… so it's all fluid"; then "build all three and give me a finished APK", plus hide the status bar too.
+> - Picking an option under a game now opens further XMB columns instead of pop-ups: a breadcrumb (game › Settings › General), an icon strip per level behind you, the chosen row held at a fixed height while the list runs past it, a choices column for dropdowns, inline keyboard for text, toggles in place, ◀▶ to change values, L1/R1 between sections, B / swipe right / Back to go up. Changes save as you go ("✓ Saved"); confirmations are their own column and open on Cancel.
+> - Phase 1: Settings → General (all rows incl. per-game audio presets/fine-tune, microphone, icon picker via an XMB folder browser) and Controller (input, player slots, motion aim); Game Details (incl. Steam search + fill), Properties, Clone to container, Remove. Phase 2: Win Components (+ recommended), Env Vars, Advanced (Box64/FEXCore versions + presets + preset editor, CPU cores, startup services, sharpness, ReShade), Driver configuration, DX wrapper configuration (DXVK/VEGAS/WineD3D, version downloads), Performance, Player slots. Phase 3: View logs (scrollable panel), Community configs (browse/apply/upload), Scrape cover, Copy to Drive C, Back up / Restore saves, Change executable (folder browser). Still leave the XMB: Cloud Saves, Add to home screen, Export, Manage wrappers.
+> - Landscape XMB hides the status bar as well as the nav buttons. List/Grid views still use the old pop-ups.
+> - Files: new `XmbModel.kt`, `XmbMenuHost.kt`, `XmbGameSettings.kt`, `XmbSettingsPhase2*.kt` (6), `XmbGameTools.kt`, `XmbLogsMenu.kt`, `XmbCommunityMenu.kt`; `ShortcutsXmbView.kt`, `ShortcutsScreen.kt` (hook-up + FAB hidden while a menu is open); one-word private→internal changes in `LogViewerScreen.kt`, `ContainerDetailScreen.kt`, `ShortcutsScreen.kt`. ✅ CI-green on the first build, all 3 flavors (run 34657454182, commit `b44e3764`). Staged `/sdcard/Download/Bannerlator-1.0-xmb-view-r3-pubg.apk` sha `39a64a30…`. Not device-proven yet.
+
+## 2026-09-11 — 🧭 **CHECKPOINT: XMB r2 — controller + chrome polish from the first device test** (`feat/games-xmb-view`)
+> - User device test of r1 in landscape: "everything looks beautiful". Three asks, all in r2:
+> - **Per-game settings: L1/R1 switch sections** (General / Win Components / Env Vars / Advanced / Controller) from anywhere in the editor, wrapping around, both orientations. The landscape rail was only reachable at the very end of the D-pad order, then Left/Right. After a switch the D-pad cursor lands on the new section's first control.
+> - **See-through top bar in XMB:** the Games / Steam pill / buttons band is transparent and the XMB backdrop runs up behind it (a faint shade keeps it readable); the layout below the bar is unchanged. Games tab + XMB only, and not while the update banner shows; every other screen and view keeps the normal bar.
+> - **Landscape XMB hides the Android nav buttons** (an edge swipe brings them back briefly). They come back in portrait, in the other views and on other tabs, and are re-hidden when returning from a game.
+> - ✅ CI-green on all 3 flavors (run 34649651575, commit `63e00dd2`). Staged `/sdcard/Download/Bannerlator-1.0-xmb-view-r2-pubg.apk` sha `3065540a…`. Not device-proven yet.
+
+## 2026-09-11 — 🧭 **CHECKPOINT: Games tab XMB view built, CI in flight** (`feat/games-xmb-view` off main `cebde01e`)
+> - New 4th Games-tab layout, **XMB** (PS3 cross media bar): the view button now cycles List → Grid → Compact → XMB. Games run left/right along a bar with the focused one enlarged at the cross; the column under it is that game's ⋮ menu with **Play** on top and **Remove** moved to the bottom. Top bar, sort, select mode and the + button are unchanged.
+> - Portrait and landscape are the same code: every size comes from the screen box, so rotating just re-measures. Touch: swipe (with fling), tap a cover to focus it, tap the focused cover to launch, swipe or tap the options. Controller: D-pad/stick left-right = games, up-down = options, A = select, B = back to Play, L1/R1 = jump 5; Up on Play hands focus to the top bar. A/B hints only show when a controller is connected.
+> - The info pane reuses the list card's store badges, spec chips and Game Details (genres, year, metacritic, description) plus playtime. Background: an accent-tinted animated wave plus the focused cover, blurred (Android 12+).
+> - Files: new `ui/screens/ShortcutsXmbView.kt`; `ShortcutsViewModel.kt` (enum gains `XMB`, appended so saved view prefs stay valid); `ShortcutsScreen.kt` (view-button icon, XMB branch, the options list reusing the existing handlers). No versionCode change.
+> - ✅ CI-green on all 3 flavors (run 34646721511, commit `16c292d2`). Staged `/sdcard/Download/Bannerlator-1.0-xmb-view-r1-pubg.apk` sha `efd9fb9b…`. Not device-proven yet.
+
+## 2026-09-11 — 🍾 **Layers v7 pre-release: the Wine XP desktop in all seven layers** ([`build-bionic-layers-20260911-xp`](https://github.com/The412Banner/proton-wine/releases/tag/build-bionic-layers-20260911-xp))
+> - Every Proton / GE-Proton layer (GE 11.0-6 / 11.0-5 / 11.0-3 / 10.0-34, Proton 11.0-1 / 11.0-2 / 10.0-4, plus the 11.0-2 x86_64 build) is its v6 build plus the Wine XP desktop, as versionCode 7. The Wine 10 layers needed a small port. All eight packages were checked for the version stamp, unchanged layer names and the XP pieces compiled in, then published server-side from their CI runs (byte-identical to the checked files).
+> - A brand-new container comes up in the full XP desktop in Blue (XP title bars now on by default); device-proven on GE 11.0-6 with a container created in the app.
+> - Pre-release only: v6 stays Latest and the in-app catalog default until testers confirm it. All seven parent branches were fast-forwarded to the v7 sources.
+
+## 2026-09-11 — 🧭 **CHECKPOINT: layers v7 (v6 + the Wine XP desktop) in flight for all 7** (proton-wine `aio-eanet/xp-<parent>` staging branches)
+> - User go: every layer becomes v6 + all XP work as versionCode 7, published like v6 and merged to the parent branches; a brand-new container gets the whole Wine XP desktop in Blue (XP title bars now on by default too).
+> - The 5 Wine 11 layers take the XP series cleanly and are building (runs 34629988483, 34630031659, 34630044726, 34630056346, 34630060475). The 2 Wine 10 layers need a port (older explorer, no split v6 comctl32, different GPU-window handling).
+
+## 2026-09-11 — ✅🔌 **Start menu "Turn Off" really ends the container** (proton-wine `aio-eanet/xp-controls` `59a707401ac`, CI 34626910674)
+> - Device-proven in container 8: Turn Off → Yes returns to the app's Games screen within seconds with no Wine processes left, and the registry is saved on the way out (settings kept). Before, the app's background `winhandler.exe` kept an empty desktop running forever.
+> - Staged `/sdcard/Download/GE-proton-11.0-6-arm64ec-xp-controls.wcp` sha `d10172a2…`.
+
+## 2026-09-11 — 🧭 **CHECKPOINT: start menu "Turn Off" never ended the container — root-caused, fix in CI** (proton-wine `aio-eanet/xp-controls` `59a707401ac`, CI 34626910674)
+> - Reproduced on device: Turn Off → Yes closed File Manager but left an empty desktop running. Wine's `ExitWindows()` only asks programs that own windows to close; the app's background helper `winhandler.exe` has none, so it kept the Wine desktop (and the app's session) alive. Pre-existing Wine behaviour, the stock start menu does the same.
+> - Fix: the start menu now runs `wineboot --end-session --force --kill --shutdown`: windowed programs still get the normal end-session messages (and can still cancel, e.g. "save changes?"), then everything left is stopped, desktop last, so the session ends and the app returns to its screen.
+
+## 2026-09-11 — ✅🌊🌿 **Navy and moss (dark Blue and Olive Green) + Wordpad icon device-proven** (proton-wine `aio-eanet/xp-controls` `a318a1ff477`, CI 34624854833)
+> - In the app's dark theme every XP colour scheme now has a dark twin: Blue → navy, Olive Green → moss, Silver → graphite. Title bars (active and inactive), frames, taskbar and task buttons, start menu, All Programs cascades and the Display Properties preview all follow; switching schemes in Display Properties changes them live. Device-checked with the dark control artwork in the user's container.
+> - Wordpad's start menu entry has its icon: `write.exe` (what the app's Wordpad shortcut points at) now carries the Wordpad icon, as on Windows. Installed programs already showed their own icons.
+> - Staged `/sdcard/Download/GE-proton-11.0-6-arm64ec-xp-controls.wcp` sha `6da1d183…`. Container left on dark + Silver.
+
+## 2026-09-11 — 🧭 **CHECKPOINT: navy + moss dark twins, Wordpad icon — CI in flight** (proton-wine `aio-eanet/xp-controls` `a318a1ff477`, CI 34624854833)
+> - Blue and Olive Green now get dark twins in the app's dark theme, like Silver's graphite: **navy** and **moss** title bars and frames (win32u `0d5d6b88306`), taskbars, start menus and cascades, and the Display Properties preview (explorer `7fdb0448255`; the preview window body now uses the button-face colour). Palettes are ordered light Blue/Olive/Silver then dark navy/moss/graphite, so dark = scheme + 3. The XP control artwork already had BlueDark/OliveDark.
+> - Wordpad's start menu shortcut showed a blank icon because the app's shortcut targets `C:\windows\system32\write.exe`, Wine's launcher with no icon. `write.exe` now carries the Wordpad icon like on Windows (`a318a1ff477`). Installed programs are unaffected: their shortcuts already show their own icons (Pale Moon proves it).
+> - Pale Moon: `browser.tabs.drawInTitlebar=false` written to its profile `user.js` so it uses the XP title bar (its own Windows 10-style bar is dark-on-dark here because Wine reports DWM composition on but stubs `DwmExtendFrameIntoClientArea`). User then said to drop Pale Moon.
+
+## 2026-09-11 — ✅🖤 **Silver goes graphite in dark mode** (proton-wine `aio-eanet/xp-controls` `60b599c901b`, CI 34619805498)
+> - With the app's dark theme, the Silver scheme now turns graphite everywhere it was still bright: window title bars and frames (win32u), the taskbar and its buttons, the start menu and All Programs cascades, and the Display Properties preview. Light titles and text, the green start button and red close button kept. Blue and Olive keep their colours.
+> - Device-proven in the user's dark + Silver container together with the dark control artwork. Staged `/sdcard/Download/GE-proton-11.0-6-arm64ec-xp-controls.wcp` sha `77c762ee…`.
+
+## 2026-09-11 — ✅🌑 **XP controls: dark mode, Silver, toolbars/status bars/rebars device-proven** (proton-wine `aio-eanet/xp-controls` `4c64baf0eef`, CI 34617530378)
+> - Dark mode now has its own XP artwork (XP never had one): dark buttons, tabs, headers and check boxes with light text, dark scroll bars and tracks, keeping the scheme accents and orange hover rings. Explorer picks the dark variant automatically when the app is in its dark theme. Light mode is unchanged.
+> - Readability fixes: tab labels (the selected one vanished), labels on tab pages (drawn black on dark), and group titles (dark variants use light titles). The Wine fixes are in uxtheme (`dialog.c` text colour) and comctl32 (`tab.c` uses the theme text colour); both also help Wine's own Light theme in dark mode.
+> - New parts: toolbar buttons with translucent faces that suit both modes, separators, split-button arrows, status bar separators and grip, rebar grippers and chevrons.
+> - Staged `/sdcard/Download/GE-proton-11.0-6-arm64ec-xp-controls.wcp` sha `e553647f…` (theme 2 MB, 230 bitmaps from `genimages.py`). Container-8 left in light mode, Blue, XP controls on.
+
+## 2026-09-11 — ✅🎨 **XP-styled buttons and controls device-proven** (proton-wine `aio-eanet/xp-controls` `35007f51ef1`, CI 34612146587)
+> - Wine Configuration and Display Properties draw with the XP theme: tabs with the orange top, rounded buttons with the default ring, green check marks, blue gel scroll bars and combo buttons, spin buttons, list headers, the green-tipped slider, blue group titles. Wine lists it as "Wine XP / Default (blue)".
+> - Live switching works: unticking "XP style buttons and controls" and pressing Apply turns the open dialog back to Wine's Light theme immediately; ticking it again with Olive Green turns the taskbar, the window frames and the controls olive in one go.
+> - Fixed on the way: tab pages were covered in black stripes (uxtheme draws a default bordered fill when a theme has no tab body part); the theme now leaves tab pages to the dialog colour, which also keeps them right in dark mode.
+> - Staged `/sdcard/Download/GE-proton-11.0-6-arm64ec-xp-controls.wcp` sha `b6686d2f…` (test layer, versionCode 9). Keep-state stays `aio-eanet/xp-taskbar` `390b251b805`. Not checked yet: the app's dark theme, Silver, and 32-bit programs' controls.
+
+## 2026-09-11 — 🎨🪟 **XP-styled buttons and controls built, awaiting device test** (proton-wine `aio-eanet/xp-controls` `d25e877f3eb`, CI 34610710964)
+> - New Wine visual style `winexp.msstyles` (Blue / Olive Green / Silver): XP push buttons with the orange hover and blue default rings, green check marks and radio dots, blue gel scroll bars, combo buttons, spin buttons, orange-topped tabs, chunked green progress bars, trackbar thumbs, headers and tree glyphs. 105 bitmaps plus the resource script, generated by `genimages.py` in the module.
+> - Paint-only like the rest of the XP work: the theme carries no system metrics, and explorer never "applies" it (that would overwrite the app's light/dark colours and sizes such as the scroll bar width). Explorer only points Wine's theme settings at it when the XP style is on, keeps the previous theme (Wine's Light) to restore for the classic style, and tells every window to reload.
+> - uxtheme now notices a theme change made in the registry by another process and reloads on its next OpenThemeData, so the switch reaches running programs live. New Display Properties check box "XP style buttons and controls" (on by default).
+> - Keep-state unchanged: `aio-eanet/xp-taskbar` `390b251b805` / `GE-proton-11.0-6-arm64ec-xp-titlebars.wcp`.
+
+## 2026-09-11 — ✅🪟 **Game window title bars fixed, device-proven** (proton-wine `aio-eanet/xp-taskbar` `390b251b805`, CI 34605682766)
+> - Game Controller Tester (32-bit, VKD3D) opens with a full XP title bar on its first paint: gradient, icon, title, rounded buttons. AIO Graphics Test (DXVK) gets the XP frame and buttons; its title is empty on purpose, since the app draws its own title inside the window. Inactive XP titles are readable.
+> - With XP frames switched off, the same game window gets the normal Wine title bar in the app's theme colours instead of black or white, so the plain Wine title bars were fixed too.
+> - Last piece: a window that switches to Vulkan/OpenGL output after its first paint now gets its frame repainted (`update_window_state`). Staged `/sdcard/Download/GE-proton-11.0-6-arm64ec-xp-titlebars.wcp` sha `3c9bfa9a…`; the earlier checkpoint wcp is untouched.
+
+## 2026-09-11 — 🎯🪟 **Blank title bars on game windows: cause found, fix building** (proton-wine `aio-eanet/xp-taskbar` `de58ddace7c`, CI 34604357716)
+> - Windows that draw through Vulkan or OpenGL (every DXVK/VKD3D/GL game) get no Wine-side surface, so Wine sends their frame to the app's X server one drawing request at a time. That X server fills rectangles with the background colour instead of the fill colour, skips line segments and has no RENDER extension, so the frame came out white and the caption blank. Plain Wine frames on game windows were affected the same way; this predates the XP work.
+> - Fix: for those windows, draw the frame into a bitmap and copy it over as an image, which this X server handles correctly. The XP caption buttons are always drawn in a bitmap too, so hover and press repaints work as well. The faint text on inactive XP title bars is now white with a shadow (dark grey on Silver).
+> - Follow-up for the app, not done: the Java X server's `PolyFillRectangle` should use the foreground colour, and `PolySegment`/`PolyRectangle`/clip rectangles are not implemented.
+
+## 2026-09-11 — 🔬🪟 **XP title bars unreadable in some programs: investigating** (proton-wine `aio-eanet/xp-debug` `1a7f9b391ba`, diagnostic only)
+> - User report 08:41: the file manager's inactive XP title text is too faint, and in the Game Controller Tester and AIO Graphics Test the title bar is blank (white, or black with only the button outlines).
+> - Reproduced on Container-8. The broken windows are 32-bit programs that draw through Vulkan (DXVK/VKD3D). In AIO the XP button outlines do draw, so the XP code runs there, but the filled areas never show. On the stock layer (Sep 7) a DXVK window had a normal, readable Wine title bar.
+> - Diagnostic build (CI 34602652462) logs each title bar paint and reads the pixels back, to tell a drawing failure from a display failure. Controls work is paused until this is fixed.
+
+## 2026-09-11 — 🛟🪟 **CHECKPOINT before XP-styled controls** (proton-wine `aio-eanet/xp-taskbar` `9d9f36596cc`)
+> - Keep-state if the next stage is dropped: branch `aio-eanet/xp-taskbar` @ `9d9f36596cc` (left untouched), backup ref `refs/backup/20260911/xp-taskbar-pre-controls`, staged `/sdcard/Download/GE-proton-11.0-6-arm64ec-xp-taskbar.wcp` sha `d520eb18a48608d0…` (versionCode 9). All of it device-proven; the light/dark wallpaper was confirmed by the user's screenshots, and a close check of the emblem edges found no seam (≤2/255).
+> - Taller XP title bars: skipped by the user. The XP work stays paint-only, so nothing a game can measure (window sizes, client areas, system metrics) changes.
+> - Next: XP-styled controls (buttons, check boxes, scroll bars, menus) on a new branch `aio-eanet/xp-controls`, staged under a different wcp name.
+
+## 2026-09-11 — ✅🪟 **XP window frames, new Wine logo and light/dark Wine XP wallpaper, device-proven** (proton-wine `aio-eanet/xp-taskbar` `9d9f36596cc`)
+> - **XP window frames** in `dlls/win32u/defwnd.c`, opt-in from Display Properties ("XP style title bars and window frames", off by default): Luna caption gradient, bold title with shadow, rounded caption buttons (red close), blue / olive green / silver frames following the color scheme. Paint-only, the frame and caption sizes are the usual metrics so window and client sizes don't change. Setting read at most once a second; explorer repaints every frame 1.2 s after Apply. Device: file manager frame switched to Silver and to Blue live.
+> - **New Wine logo** (user's `WINE-logo.svg`) on the start button and the start menu tile.
+> - **Wine XP desktop background** from the user's `wine-xp-light.jpg` / `wine-xp-dark.jpg`: emblem stored as 300x300 bitmaps, bands rebuilt at the desktop size (fits any aspect ratio), light or dark picked from the theme's window color, only replaces the app's default wallpaper. Device: light and dark both shown on Container-8 (theme flipped and restored).
+> - Staged `/sdcard/Download/GE-proton-11.0-6-arm64ec-xp-taskbar.wcp` sha `d520eb18…` (versionCode 9). Wallpaper side request: `/sdcard/Download/desktop_wallpaper*.png`.
+
+## 2026-09-11 — ✅🪟 **XP shell: tray icons, live XP↔Classic switch proven; desktop-disabled-after-dialog bug fixed** (proton-wine `aio-eanet/xp-taskbar` `b5ca9e1156e`)
+> - Proven on Container-8: Task Manager's tray icon sits next to the clock; Display Properties switches XP → Classic and back without a restart; the chosen style survives a restart.
+> - Bug found while testing: after Display Properties closed, the desktop ignored the mouse (no right-click menu, no double-click on desktop icons). The dialog was owned by the desktop window; Wine disables the owner when a modal dialog opens, but a window parented to the desktop gets no owner, so EndDialog never re-enabled it. Fixed by creating the dialog without an owner (CI `34593092062`), verified on the device.
+> - Staged `/sdcard/Download/GE-proton-11.0-6-arm64ec-xp-taskbar.wcp` sha `76fdae36…` (versionCode 9). Test-only touchscreen preference reverted.
+
+## 2026-09-11 — ✅🪟 **XP start menu, All Programs cascade and desktop Display Properties device-proven; V6 merged into all 7 layer parents**
+> - proton-wine `aio-eanet/xp-taskbar` tip `003ee5adcd9` (CI `34590929309`): Wine glass logo on the start button; XP start menu (user tile + name, pinned File Manager / Command Prompt, Start Menu shortcuts with their target icons, All Programs, My Documents / Pictures / Music / Computer, Control Panel, Task Manager, Wine Configuration, Run, Turn Off Computer); All Programs drawn as XP cascading menus (Wine's owner-draw menus box the submenu arrow in system colors, so custom popups); desktop right-click → Refresh / Display Properties (XP or classic, Blue / Olive Green / Silver, taskbar size, lock, clock, live preview). All device-tested on Container-8 with the user.
+> - V6 xinput fix fast-forwarded into every parent branch (proton_11.6-GE `349547afa45`, 11.5-GE `10a0c55dd5e`, 11.3-GE `a2989497d55`, 11.0 `ac81a5255df`, 11.0-2 `217ce2f1e83`, 10.34-GE `af34ea7adf1`, 10.0 `a7309bbc730`); the XP branch sits directly on proton_11.6-GE.
+> - Staged `/sdcard/Download/GE-proton-11.0-6-arm64ec-xp-taskbar.wcp` (versionCode 9, sha `42a5bb2b…`).
+
+## 2026-09-11 — ✅🪟 **XP taskbar device-proven on the Pocket FIT; paused before the Wine-logo start icon + XP start menu**
+> - Container-8 (`Proton-11.0-6-arm64ec-9`): Luna bar, green start (pressed while the menu is open), task button with the exe icon + live active/inactive sync, clock matching device time (EDT) and ticking, drag to 2 and 3 rows (clock shows time/weekday/date), right-click Taskbar Size / Task Manager / Lock the Taskbar all working.
+> - First "closed immediately" launch = container defaulted to a FEX build that is not installed (`FEX-2608+229-Nightly-abec31472`) → no `libarm64ecfex.dll` in system32 → x64 winhandler/wfm died (`c0000135`). Switched Container-8 to `FEXCore-2609-stable-unix-0`. App bug: the launcher stamps an uninstalled FEX as "applied" (`GuestProgramLauncherComponent` extraData gate) and never retries.
+> - Start icon shows a blank window: Wine's `IDI_WINLOGO` is a generic window icon. Next (user ask): embed the Wine glass logo + XP-style start menu. Not started — user paused (losing Wi-Fi).
+
+## 2026-09-11 — 🪟 **XP (Luna) taskbar + clock + double-row drag, built into Wine explorer (v6 GE 11.0-6)** (proton-wine branch `aio-eanet/xp-taskbar`)
+> User: rebuild parts of Wine so the desktop looks like XP; XP first, taskbar + clock first, hand over a working wcp, test on the device over root.
+> - **Where:** `programs/explorer/systray.c` (the Shell_TrayWnd taskbar). Start menu (`startmenu.c`) and window frames (`dlls/win32u/defwnd.c`, uxtheme has no title-bar theming) are later phases.
+> - **Built:** Luna bar/notify gradients, green rounded start button (Wine logo, no MS flag), rounded task buttons with the exe's icon, clock (time; time/weekday/date at 2+ rows) + long-date tooltip, drag the bar to 1-3 rows, right-click menu (Taskbar Size / Task Manager / Lock the Taskbar), WinEvent-driven live buttons. `HKCU\Software\Wine\Explorer\Taskbar` Style/Rows/Locked; `Style=classic` or `WINE_TASKBAR_STYLE=classic` = stock taskbar.
+> - Commits `57cdec651c9` + `264a5b5680a` (test identity versionCode 9 → installs as `11.0-6-arm64ec-9`, wcp `GE-proton-11.0-6-arm64ec-xp-taskbar.wcp`). CI run `34582670587` in progress. Not device-tested yet.
+
+## 2026-09-11 — 📄 **Release pages: collapsed Proton 9 + Credits now enforced** (merge `b25498c8`)
+> - Merged `ci/release-notes-collapsible`. A stable cut now requires "Where to get Proton 9" and "Credits" as collapsed tap-to-expand sections (as on the live 3.1.0 page); the old `##` heading form fails the release check. `scripts/new_release_notes.py` writes the collapsed form for the next release, and `docs/releases/3.1.0.md` matches the live page.
+> - Checked on the merged tree (3.1.0 passes; heading form rejected; a 3.1.1 starter comes out collapsed and is refused until its placeholders are filled) and in CI: release-notes dry run 34552283208 ✅ on `b25498c8`. The push only triggered the Pages deploy. The branch is merged but not deleted.
+
+## 2026-09-11 — 🧹 **USB cable in the 3.1.0 notes; merged branches deleted (with backups)**
+> - 3.1.0 notes now say the Steam Controller is tested over Bluetooth **and a USB cable**; the wireless puck is still untested. Updated on the live release page, `docs/releases/3.1.0.md` and the README (`7f44c20f`). `update.json` unchanged.
+> - GitHub: **97 merged branches deleted** (87 fully in main + 10 whose content is all on main), each first backed up to `refs/backup/20260911/heads/<branch>` and deleted with a lease on its checked SHA. 72 remain: main, 67 unmerged, and 4 whose commits were copied to main but whose content still differs from it (`feat/bake-aio-2.0.0`, `feat/container-layer-update`, `feat/steam-cloud-saves`, `fix/rust-depot-autoresume`).
+> - Local: **85 merged branches deleted** (backed up to `refs/backup/20260911/local/<branch>`), 43 clean worktrees on them removed. Kept: 3 merged branches whose worktrees hold work (`bl-wt-steam-vac` has 43 uncommitted files, `bannerlators-parity` has a scratchpad of .db files, `bl-combo` sits in another session's scratch folder). 89 local branches remain. Lists in `~/branch-cleanup-20260911/`.
+> - Restore any branch: `git fetch origin refs/backup/20260911/heads/<b>:refs/heads/<b>` (or `…/local/<b>`).
+
+## 2026-09-11 — ✅ **Steam Controller over USB cable verified** (tester TAR, user-relayed); branch census
+> - The USB cable path works: tester-verified on the 3.1.0 build. The wireless puck is still untested. The live 3.1.0 notes still say USB is untested (update offered).
+> - Branch census vs main (nothing deleted; hiatus rule): 168 GitHub branches besides main. 87 fully merged, 14 merged as copied commits (same patches on main), 67 not merged (incl. `test` from June, 1,092 commits ahead, and the parked `feat/ea-storefront`, `fix/ama-package-name`, `feat/steam-lobby-invites`, `ci/release-notes-collapsible`). Local: 173 branches, 79 fully merged. GitHub Pages serves from main `/docs` (no gh-pages branch).
+
+## 2026-09-11 — 🧭 **Checkpoint: 3.1.0 shipped; open items**
+> - **Shipped in 3.1.0** (Latest, versionCode 84, tag → `a9659fe3`): Steam Controller support (SDL3, opt-in; TAR-tested over Bluetooth), frame-gen screen fit / over-limit warning / Auto opt-out / can't-run notice / help, SGSR HQ, per-game texture filtering, screen size by panel aspect, the 3.1.0 LSFG Native guide, and README + `docs/releases/3.0.9.md` / `3.1.0.md`.
+> - **Release tooling on main:** `release.yml` builds the page from `docs/releases/<number>.md` in the house layout plus an automatic "Every change since <previous>" list, checked before the build (`30bb6466`); dry-run `release-notes-check.yml` (manual, or push `notes-check/<number>`); `scripts/new_release_notes.py` starts the next notes file.
+> - **Open, for the user:** (1) merge `ci/release-notes-collapsible` (`4a0aa927`, tested) so future pages collapse "Where to get Proton 9" and "Credits" like the hand-edited 3.1.0 page; until then the check expects plain headings. (2) `fix/ama-package-name` (AMA bot: wrong package name, leaked marker; workflow-only, never merged). (3) Which of the "untested" 3.1.0 items the user covered ("it all works I tested it").
+> - **Still untested:** Steam Controller over USB cable / puck; the frame-gen can't-run message on a driver without Vulkan 1.3; screen size on 4:3 / 16:10 panels. Not built: Steam Controller gyro, left-trackpad scroll/D-pad, Steam button as Guide.
+> - **Fork check:** clintOnSky/Bannerlator has nothing to pull (PR #96 closed 07-24; its fixes landed individually or were declined).
+> - Kept per the hiatus rule: branches `feat/steam-controller-sdl`, `ci/release-notes-from-docs`, `release/3.1.0-readme`, `notes-check/3.1.0`; worktrees `bl-steamctrl`, `bl-relnotes`, `bl-rel310`, `bl-merge-main`.
+
+## 2026-09-11 — 🏁 **3.1.0 RELEASED** (Latest, versionCode 84, tag `3.1.0` → `a9659fe3`, run 34548941959)
+> - Cut via `bl-release-prep/cut-3.1.0.sh` on the user's go: merged the LSFG guide (`b56c7723`) and README/docs (`aeb65978`), bumped to 84 / 3.1.0, dispatched. All green: notes, 3 builds, release. Verified: tag == pushed commit, not a pre-release, 3 APKs + update.json, `releases/latest` update.json = 84 / 3.1.0, 3.1.0 marked Latest. Guide page live ("Written for Bannerlator 3.1.0").
+> - First release whose page the workflow wrote itself: `docs/releases/3.1.0.md` in the house layout + an 11-item "Every change since 3.0.9" list; the in-app line came from the update-summary comment. The live page matched the dry run.
+> - Then hand-edited on the user's call: "Where to get Proton 9" and "Credits" are collapsed tap-to-expand sections (only those two wraps changed). Enforcing that in the workflow is parked on `ci/release-notes-collapsible` (`4a0aa927`, tested, not merged).
+> - Staged `/sdcard/Download/Bannerlator-3.1.0-pubg.apk` sha256 `3e12c460…a38f`.
+
+## 2026-09-10 — 📝 **Release pages in the house layout, enforced by the workflow (merged `30bb6466`)**; cutting 3.1.0 with it
+> - User rule: every stable release description uses the same layout as previous releases and lists all new work since the prior release, hard-coded into the workflow. `release.yml` now builds the page from `docs/releases/<number>.md` in a first job (fails fast, before the build) and appends every change merged since the previous stable. A stable cut refuses a missing notes file, missing standard sections, the wrong "since", or leftover TODO(notes). The in-app update line comes from an update-summary comment. Scripts: `scripts/release_notes.py`, `scripts/new_release_notes.py`. Dry-run workflow `release-notes-check.yml`; dry run 34548746453 ✅ (layout OK, 11 changes since 3.0.9).
+> - 3.1.0 cut starting now via `bl-release-prep/cut-3.1.0.sh` (merges the LSFG guide `b56c7723` and README/docs `aeb65978`, bumps to versionCode 84 / 3.1.0, dispatches, verifies the page). Fallback if the page comes out wrong: `gh release edit` with the notes file.
+
+## 2026-09-10 — 🚀 **3.1.0 release PREPPED (not cut)** — waiting for the user's go
+> - Notes `bl-release-prep/notes-3.1.0.md` (3.0.9 house style, guide callout, TAR credited for Steam Controller testing, honest tested/untested callouts). README + release docs on branch `release/3.1.0-readme` (`fdbc5697`): What's New 3.1.0, and 3.0.9 (never added before) + 3.0.8 under Earlier. The FG section no longer claims Auto refresh is locked off. New Full Features bullets; SDL3 + TAR credits; `docs/releases/3.1.0.md` + the missing `3.0.9.md`.
+> - Cut script `bl-release-prep/cut-3.1.0.sh`, rehearsed without pushing (the rehearsal caught a locale-sort bug in its own file check, now fixed): merges the LSFG guide (`b56c7723`) and README branch with file-list checks, refuses if app/ differs from the CI-green merge `c2acbbd1`, bumps to versionCode 84 / 3.1.0, dispatches release.yml with explicit tag + title, applies the full notes via `gh release edit`, and verifies tag / assets / update.json.
+> - Staged the post-merge main build `/sdcard/Download/Bannerlator-main-c2acbbd1-pubg.apk` sha256 `ad3a11ad…4b51`.
+
+## 2026-09-10 — ✅ **Steam Controller support MERGED to main** (merge `c2acbbd1` = `feat/steam-controller-sdl` @ `31ede2c4`, main CI run 34546109943)
+> - User: "all works, merge it to main". The community tester confirmed r6 on a 2026 Steam Controller over Bluetooth: in-game play, profile bindings, extra buttons (L4/L5/R4/R5 + "…"), trackpad mouse Right / Left / Both, and the settings Test/Bind dialog (18 inputs). User-relayed; no logs seen here.
+> - Checked before push: 20 files, all feature files; identical stat with `--ignore-cr-at-eol` (no line-ending churn); the merged tree is byte-identical to the tested r6 build (excluding PROGRESS_LOG). Main CI run 34546109943 ✅ standard/ludashi/pubg, headSha `c2acbbd1` verified.
+> - Opt-in: Input Controls → Device → Steam Controller (off = SDL never loaded). Revert just this: `git revert -m 1 c2acbbd1`. Not released yet; goes in the next cut after 3.0.9.
+> - Still untested: USB cable / puck. Not done: gyro, left-trackpad scroll/D-pad, Steam button as XInput guide. Branch, worktree and backup kept.
+
+## 2026-09-10 — 🎮 **Steam Controller r6: trackpad mouse Right / Left / Both / Off (CI ✅ green + staged); line-ending cleanup** (branch `feat/steam-controller-sdl` head `31ede2c4`, CI run 34544484648, label `steamctrl-r6`, NOT merged)
+> - Tester ask: make the left trackpad useful, either instead of the right one or both at once. "Right trackpad moves the mouse" becomes "Trackpad mouse": Right / Left / Both / Off (the old on/off seeds it). A mouse pad's click = left click; with Both, the left pad clicks right. Includes r5's 18-input controller test (r5 34543635744 cancelled, superseded).
+> - Pre-merge audit caught line-ending damage: a scripted edit had flipped all-CRLF `WinHandler.java` to LF (fixed by amend + force-push with lease), and an earlier edit had normalised mixed-EOL `InputControlsView.java` to all-CRLF (in r3–r5; restored to main's bytes in no-code commit `31ede2c4`). Branch vs main is now 1,593+/51− with no whole-file churn.
+> - CI r6 34544484648 ✅ standard/ludashi/pubg, headSha `31ede2c4` verified. Staged `/sdcard/Download/Bannerlator-steamctrl-r6-pubg.apk` sha256 `1153856795d6…744b` (download and staged copy match). The tester gets `Bannerlator-steamctrl-r6-standard`. NOT device-tested.
+
+## 2026-09-10 — 🎮 **Steam Controller r4: settings Test dialog ✅ for the tester; r5 counts the "…" button (CI running)** (branch `feat/steam-controller-sdl` head `3d243e48`, CI run 34543635744, label `steamctrl-r5`, NOT merged)
+> - Tester on r4 (screenshot): Input Controls → Test shows "Steam Controller" with Steam art, registers inputs (LB/L1), Identify enabled. His ask: "xx/18 instead of xx/17".
+> - r5: the test snapshot gets a `quickAccess` flag (default off, so existing callers are unchanged), fed from SDL in both the settings dialog and the in-game Players test. A detected Steam Controller counts 18 inputs with "…" lit on the Steam art; other pads still count 17.
+
+## 2026-09-10 — 🎮 **Steam Controller r3 ✅ for the tester; r4 adds the "…" button: CI ✅ green + staged** (branch `feat/steam-controller-sdl` head `d03f6b16`, CI run 34541852626, label `steamctrl-r4`, NOT merged)
+> - Tester on r3 (user-relayed): "Rebind: Works. Back 4 customisation: works" (controller buttons and keyboard keys like 'A' show up in-game). His settings Test-dialog result was cut off in the screenshot. A video shows a game on an external monitor with the pad.
+> - His ask: the "…" (Quick Access) button between the trackpads. r4 makes it the 5th extra button (same targets: nothing / gamepad button / mouse click / any key); the section is now "Extra buttons". The bridge already read it (SDL MISC1).
+> - CI r4 34541852626 ✅ standard/ludashi/pubg, headSha `d03f6b16` verified. Staged `/sdcard/Download/Bannerlator-steamctrl-r4-pubg.apk` sha256 `759c527b1bf8…f461` (download and staged copy match). The tester gets `Bannerlator-steamctrl-r4-standard`. NOT device-tested.
+
+## 2026-09-10 — ⏸️ **CHECKPOINT: Steam Controller r3 CI green + staged; paused until tonight** (branch `feat/steam-controller-sdl` head `6d3b2a73`, rebased on main `f1ed20e4`, NOT merged)
+> - CI r3 34518065712 ✅ standard/ludashi/pubg, headSha `6d3b2a73` verified. Staged `/sdcard/Download/Bannerlator-steamctrl-r3-pubg.apk` sha256 `02f546b6d507…5dd0` (download and staged copy match; `libSDL3.so` + `libsteamctrl.so` present; dex has the Back buttons UI).
+> - r3 = back buttons (L4/L5/R4/R5 → gamepad button / mouse click / key), Default / Any Controller bindings for the Steam Controller (the tester's "Space on a button did nothing"), and SDL in the settings Test/Bind dialog (his 0/17 screenshot). NOT device-tested.
+> - Resume: send the tester `Bannerlator-steamctrl-r3-standard` (run 34518065712), with notes: bindings live under Default / Any Controller; after any binding use "Fill rest → native Xbox"; try the USB puck / cable once. Merge to main on his OK.
+> - The "everything on main since 3.0.9" list was handed over in chat for the next release notes (8 feature merges + LSFG guide; Steam Controller not merged yet).
+
+## 2026-09-10 — 🎮 **Steam Controller r3: back buttons + bindings + settings Test dialog (CI running)** (branch `feat/steam-controller-sdl` REBASED onto main `f1ed20e4`, head `6d3b2a73`, CI run 34518065712, label `steamctrl-r3`)
+> - Tester asks: "the bind part is the only broken thing" (Space bound to a button did nothing) and the Input Controls Test dialog never saw the controller (0/17 verified). Plus remappable back buttons.
+> - Back buttons (Input Controls → Device → Steam Controller): L4/L5/R4/R5 → nothing / gamepad button / mouse click / any key, in every game.
+> - Bindings: Steam Controllers now use the profile's Default / Any Controller bindings through the same `processControllerMappings` path as an Android pad, via a per-pad view that is never saved. WinHandler routes Steam Controller ids without a profile lookup.
+> - Settings Test/Bind dialog: SDL runs while it is open, so the controller verifies inputs with Steam art and rumbles on Identify.
+> - Rebased so the branch carries main's SGSR HQ / texture filtering / screen-size work (old r2 tip kept as local `backup/steamctrl-r2-7961c4bd`). NOT device-tested yet.
+
+## 2026-09-10 — ✅ **Steam Controller r2 WORKS for the community tester** (2026 model over Bluetooth, branch `feat/steam-controller-sdl` `7961c4bd`, NOT merged)
+> - User-relayed: "everything is working for the user perfectly fine". First real-pad proof of the SDL3 backend. No logs seen here.
+> - Tester's next ask: customize the 4 back buttons. The bridge already reads them (L4/L5/R4/R5 bits); nothing maps them yet. Proposed: a "Back buttons" mapping in the Steam Controller settings.
+
+## 2026-09-10 — ✅ **Steam Controller r2: CI green + pubg staged** (branch `feat/steam-controller-sdl`, head `7961c4bd`, CI run 34510309898)
+> - CI ✅ standard/ludashi/pubg, headSha `7961c4bd` verified. Staged `/sdcard/Download/Bannerlator-steamctrl-r2-pubg.apk` sha256 `7c3a53b2acff…acbc` (download and staged copy match).
+> - Checked inside the APK: `lib/arm64-v8a/libSDL3.so` 2.38 MB (stripped), `libsteamctrl.so` NEEDED `libSDL3.so` and exports all 6 `SteamControllerBackend` JNI functions (NDK r29; prefab accepted SDL's r28c build). Dex has `org.libsdl.app.{SDL,HIDDeviceManager,HIDDeviceBLESteamController}`, `SteamControllerBackend` and the setting strings. Manifest has BLUETOOTH, BLUETOOTH_CONNECT, bluetooth_le, usb.host (none required).
+> - NOT device-tested. Community tester (paired over BLE) gets the standard flavor. Local check: setting off = unchanged; on = SDL starts, other pads unaffected.
+
+## 2026-09-10 — 📦 **Main build staged (artifacts only)** (main `3ece26e8`, CI run 34508073321)
+> - User: "just build the main as artifacts only for right now". The post-merge artifacts build of main was already green, and main's app/ is unchanged since `3ece26e8` (newer main commits are PROGRESS_LOG only, from this and other sessions), so its artifact is current main. No new run.
+> - Staged `/sdcard/Download/Bannerlator-main-gfx3-pubg.apk` sha256 `84ab7412290e…` (download and staged copy match; the first download hit a connection reset, retry OK). Checked: 4/4 help strings, "SGSR HQ" label. No release; vc83.
+> - DiRT perf A/B recorder stopped (user postponed the drive test; it captured 0 frames). Re-arm when the user wants to test.
+
+## 2026-09-10 — 🎮 **Steam Controller support via SDL3 (opt-in): built, CI running** (branch `feat/steam-controller-sdl` off main `885ed124`, head `7961c4bd`, CI run 34510309898, label `steamctrl-r2`; r1 34509905239 cancelled, superseded by r2's poll-thread name/path fetch)
+> - Why: a community user's 2026 Steam Controller (BLE, PID 0x1303) is a keyboard + mouse to Android ("lizard mode"), so no XInput slot. A third-party SDL tester app reads it fine through SDL's own BLE GATT path (its "Serial 12345" is SDL's hardcoded BLE serial).
+> - What: the official SDL 3.4.16 Android AAR, vendored unmodified in `vendor/maven` (sha256 `03710fc7…e61c`), plus a JNI bridge `libsteamctrl.so` linked through prefab. Only the HIDAPI Steam drivers are enabled, and SDL opens a HID device only when an enabled driver claims it, so no other pad is touched. SDL pads enter WinHandler as synthetic deviceIds with `sdl:<path>` descriptors (pins, On-screen Yield/Share, Players list, toast, Reset Input, rumble via SDL). Android's Valve 0x28DE devices are swallowed while SDL owns a pad. Right trackpad moves the mouse (sub-toggle).
+> - Setting: Input Controls → Device → Steam Controller (OFF by default; off = SDL never loaded). Bluetooth permission is asked by the setting, never in-game (USB-only without it).
+> - ⏳ CI running, headSha verified. NOT device-tested. To check: APK contains `libSDL3.so` + `libsteamctrl.so`. On-device (no Steam Controller here): off = unchanged; on = SDL comes up, no crash, normal pads unaffected. Real-pad proof needs the community user.
+
+## 2026-09-10 — 📘 **LSFG Native guide: 3.1.0 version prepared, held for the release** (branch `docs/lsfg-guide-3.1.0`, commit `b56c7723` — NOT merged)
+> - The live guide (Pages, `main:/docs`) describes 3.0.9. The user asked for it to be updated when 3.1.0 ships, and ready before then. **Merge `docs/lsfg-guide-3.1.0` at the 3.1.0 release**, not before. It touches only `docs/lsfg-native-guide.html`, so the merge is clean.
+> - Changes: Auto (match FPS) described as switched on during frame gen with a per-game opt-out (was "locked off"); setup steps 2/3/6; the "Too few" example; cheat-sheet intro; the in-menu warning / fit suggestion / can't-run notice; two new quick fixes; footer 3.1.0. The checker gains an Auto switch that picks the exact or closest-above speed and suggests exact fits.
+> - Preview: `/sdcard/Download/LSFG-Native-Made-Simple-3.1.0-preview.html`. The release-time checklist is in memory (`project_bannerlator_310_release_prep`).
+
+## 2026-09-10 — ✅ **Main CI green after the graphics merge** (main `3ece26e8`, CI run 34508073321)
+> - ludashi / pubg / standard all green, headSha `3ece26e8` verified. Main builds as merged: SGSR HQ, texture filtering and screen size by panel aspect, each with its "?" help. No release cut; vc83 unchanged.
+> - DiRT perf A/B recorder still armed (since 13:18:57, 30-min window), waiting for the user's 2-minute drive.
+
+## 2026-09-10 — 🅿️ **PARKED: even frame pacing via `VK_GOOGLE_display_timing`** (research only — nothing built)
+> The user asked what the extension is and whether it's worth the latency, then parked it. Recorded so it can be picked up cold.
+> - **The problem:** LSFG Native / Win-FG Native present each real frame's burst on consecutive vblanks, which is uneven on non-exact fits (30×2 on 120 Hz shows 1,3, not 2,2). That is why the screen fit never picks a multiple.
+> - **The extension:** `vkGetRefreshCycleDurationGOOGLE` (refresh period), `VkPresentTimesInfoGOOGLE` (per-present "not before" `desiredPresentTime`, ns, SurfaceFlinger holds the buffer) and `vkGetPastPresentationTimingGOOGLE` (real on-glass times). Swappy (Android Frame Pacing) uses it for Vulkan. Successor: `VK_EXT_present_timing`.
+> - **Evidence:** the renderer has zero uses of display_timing / present_wait / present_timing. adrenotools loads `/system/lib64/libvulkan.so`, so the WSI + this extension come from Android's loader whichever Renderer Driver is picked. The loader offers it when `service.sf.present_timestamp=1`; the **Pocket FIT reports 1** (Android 14). Strong evidence, not proof → confirm at runtime.
+> - **Latency:** the real frame is delayed by (m−1)·(I/m − 1) refreshes → **0 on exact fits** (already even), ≈2 ms at 50×2@120, ≈4 ms at 30×4@144, ≈6 ms at 30×3@120, ≈8 ms at 30×2@120. Frame gen itself adds ~1 base frame (33 ms at 30 fps).
+> - **Plan when resumed:** (1) probe + enable, log timings, show the REAL on-screen fps (no latency cost); (2) spacing via `desiredPresentTime` on the vblank grid only for non-exact fits, drift-corrected from past timings, +1–2 swapchain images; (3) an "Even pacing" toggle. If it lands, the never-a-multiple rule can relax.
+
+## 2026-09-10 — 🔀 **MERGED to main: SGSR HQ + texture filtering + screen size by panel aspect (all with "?" help)** (merge commits `9c20bd42` SGSR HQ, `050ead70` texture filtering, `3ece26e8` screen size, on top of `766fa09c`)
+> - User go ("merge it to main"). Each feature merged from its own branch with its own merge commit, so any one can be reverted alone: `git revert -m 1 9c20bd42` (SGSR HQ + Scaling mode help), `git revert -m 1 050ead70` (texture filtering + help), `git revert -m 1 3ece26e8` (screen size default + 1280x960 + help). `combined/gfx-upgrades` stays a test-only branch.
+> - Verified before push: 18 files, all belonging to the three features (no PROGRESS_LOG/foreign files); **merged `app/` is byte-identical to combined r2 `161f24ff`** (CI 34504842018 green, staged sha `2e66abf9…`); versionCode untouched (vc83). Main CI 34508073321 (headSha `3ece26e8` verified) running.
+> - Device status: SGSR HQ ✅ (DiRT, stable 20 min, subtle gain); texture filtering ✅ (DXVK logged `samplerAnisotropy = 16` / `samplerLodBias = -0.58`, far-ground detail +41%); "?" help screens CI-built, **not yet seen on device**; screen-size default **not device-tested** (the Pocket FIT is 16:9, so it keeps 1280x720; no 4:3/16:10 device available). Texture options default to Game default, so nothing changes for users who don't turn them on.
+> - Open: perf A/B on DiRT (user saw brief slow-motion dips in fast driving with AF16 + Auto) — recorder armed, run A pending. Next release notes: SGSR HQ (Qualcomm snapdragon-gsr), texture filtering, screen size default (same idea as GameNative #1730).
+
+## 2026-09-10 — 📦 **Combined r2 (with "?" help) staged; perf A/B armed** (`combined/gfx-upgrades` `161f24ff`, CI 34504842018)
+> - Staged `/sdcard/Download/Bannerlator-gfx3-r2-pubg.apk` sha256 `2e66abf9a853…` (download and staged copy match). `resources.arsc` has all four help strings (names and text).
+> - User report while on r1: brief random slow-motion + FPS dips during fast driving in DiRT; asks whether AF16/texture sharpness cause it. Perf A/B recorder (SF frame times + GPU busy/clock/temp/throttle + game CPU + disk reads; 2 min from first frame, then Termux pull-back) re-armed for run A (AF16 + Auto + SGSR HQ); run B = both texture options at Game default.
+
+## 2026-09-10 — ✅ **Texture filtering DEVICE-PROVEN (DiRT Showdown, combined r1 `9978e2f7…`)** + "?" help build r2 dispatched
+> - Installed sha `9978e2f7…` VERIFIED == staged gfx3-r1. The user set DiRT's shortcut DX Wrapper Config → Anisotropic 16x + Texture sharpness Auto; shortcut `dxwrapperConfig` has `anisotropy=16,lodBias=auto`, `scalingMode=8`.
+> - **DXVK confirms** (game `wine_debug.log`, 12:49:34 launch): `Found config env: d3d9.samplerAnisotropy = 16; d3d11.samplerAnisotropy = 16; d3d9.samplerLodBias = -0.58; d3d11.samplerLodBias = -0.58; dxvk.enableStarProfile = Auto; vegas.enableUpscaler = Auto`, each key parsed. Auto resolved -0.58 from SGSR HQ (mode 8), 1280x720 → 1920x1080. The previous session's log (12:48) had only the two stock keys, so the A/B is clean. (The app-side `Texture filtering:` logcat line had already rotated out of the buffer.)
+> - Screens 12:49:29 (default) vs 12:50:46 (16x + -0.58); same horizon, slightly different camera. Ground edge energy by distance: far +41%, mid +30/+52%, near +1/+11%. That distance-graded gain is anisotropic filtering's signature. Visibly the far concrete goes from smeared to grainy to the horizon; 60 fps both (capped), GPU 76%→84% (one sample). Image for the user: `/sdcard/Download/dirt-texture-before-after.png`.
+> - "?" help (user ask): `help_scaling_mode` (drawer Scaling mode/filter headers, `ScalingModeHeader`), `help_anisotropic_filtering` + `help_texture_sharpness` (DXVK sheet rows; caption trimmed), `help_screen_size` (container + shortcut Screen Size). Commits `c61e22ea` / `33e7d975` / `81224bd1` on their branches; combined `161f24ff` re-merged clean (verified: single-branch files identical, 4 strings present, strings.xml parses, 1112 strings, no dups). CI 34504842018 (headSha `161f24ff` verified) → `Bannerlator-gfx3-r2-pubg`.
+
+## 2026-09-10 — 📦 **Combined gfx build r1 staged** (`combined/gfx-upgrades` `a9853720`, CI 34502407175)
+> - Staged `/sdcard/Download/Bannerlator-gfx3-r1-pubg.apk` sha256 `9978e2f7b7a4…` (download and staged copy match; 1306 entries).
+> - Checked inside the APK: SGSR HQ SPIR-V in `libvulkan_renderer.so`; dex has "SGSR HQ", the GL edge-direction shader, "TEXTURE FILTERING", "Anisotropic filtering", "Auto (match scaling mode)", `d3d11.samplerLodBias = `, the `Texture filtering: [` log marker and `1280x960`; `resources.arsc` has the "1280x960 (4:3)" list entry.
+> - NOT device-proven for texture filtering / screen size. Test plan: DiRT Showdown → DX Wrapper Config → Anisotropic 16x + Texture sharpness Auto (with SGSR HQ) → logcat `Texture filtering: [...]` + visual; new container → default size 1280x720 on the 16:9 Pocket FIT, 1280x960 pickable.
+
+## 2026-09-10 — ✅ **Combined gfx build r1 CI green** (branch `combined/gfx-upgrades`, head `a9853720`, CI run 34502407175)
+> - CI ✅ ludashi/standard/pubg, headSha `a9853720` verified. Artifact `Bannerlator-gfx3-r1-pubg` (504 MB) downloading for staging (the SGSR-only r1 download was deleted from the scratchpad; that APK stays staged on the device).
+
+## 2026-09-10 — ✅ **SGSR HQ r1 device session closed** (DiRT Showdown)
+> - Watcher final: one session 12:11:43 → 12:31:39 (~20 min), **one pid throughout** (no crash across 5 mode switches), shortcut `scalingMode=8` saved at exit. Relaunch-persistence step skipped (the user moved to the combined build); the stored value is correct and `resolveScalingMode` accepts 0-8, but a relaunch was not observed.
+> - Verdict: SGSR HQ is DEVICE-PROVEN to run on the Vulkan path (Adreno 750) with no instability; the visual gain is real but subtle (see the zoom comparison entry). GL path and cost under an uncapped load are still untested.
+
+## 2026-09-10 — 🧩 **Combined test build: SGSR HQ + texture filtering + screen size** (branch `combined/gfx-upgrades` off main `a7c3a9f9`, head `a9853720`, CI run 34502407175)
+> - User ask: one build with all three. Three `--no-ff` merges (`d7ff0007` SGSR HQ, `e1c9d5ec` texture filtering, `a9853720` screen size), all clean (git auto-merged `XServerDisplayActivity.java`, the only file two branches touch).
+> - Verified before push: combined-vs-main file list == union of the three branches (17 files, +856/-41). 16 files byte-identical to their own branch; the shared file carries both changes (`m <= 8` clamp + 3 `autoTextureLodBias` refs). Only PROGRESS_LOG commits had landed on main since the branch bases.
+> - Test-only branch; each feature still merges to main from its own branch. The separate texfilter-r1 / screensize-r1 artifacts won't be staged (superseded by this build). Artifact `Bannerlator-gfx3-r1-pubg`.
+> - ⏳ CI running (headSha `a9853720` verified). NOT device-proven. SGSR HQ r1 test: session 1 still open, relaunch check pending.
+
+## 2026-09-10 — 🔍 **SGSR HQ device evidence (DiRT Showdown, r1 `2fdcd1ae…`)**
+> - Watcher (shortcut `scalingMode` + `showdown.exe`): 6→3→0→**8**→3→**8** while the game ran, one pid throughout (no crash across 5 switches). Mode 8 is written and read like the other modes.
+> - User screenshots 12:14:04 (SGSR) / 12:14:26 (SGSR HQ), same static scene: both 60.0 fps (capped); HUD GPU 77% vs 81% (single sample, clouds animate, so not a cost measurement).
+> - Crops of static objects (ImageMagick, 2% fuzz): 19% of car pixels, 18% of the excavator crop and 5% of the pipe crop differ, so mode 8 ran its own shader on the device (identical output would mean neither upscaler engaged). Laplacian stddev (edge energy) is 1–4% lower on HQ in all 5 regions (excavator 345.8→333.5, banner 498.7→480.8, Monster 544.9→541.8, pipe 217.1→206.7, windows 266.7→259.6). At 3x the HQ diagonals/curves (excavator arm, pipe rim) show fewer stair-steps, and lettering is about the same. Subtle at normal viewing distance.
+> - Zoom comparison saved for the user: `/sdcard/Download/sgsr-vs-sgsrhq-zoom.png`. Relaunch-persistence step still pending.
+
+## 2026-09-10 — ✅ **Texture filtering r1 + screen size r1 CI green; SGSR HQ on device** (branches `feat/texture-filtering` `035d7165`, `feat/screen-size-by-aspect` `2136efc8`)
+> - CI 34499009543 (texture filtering) ✅ all three flavors, headSha `035d7165` verified, ~9.5 min. CI 34499354338 (screen size) ✅ all three flavors, headSha `2136efc8` verified, ~11.5 min. Artifacts `Bannerlator-texfilter-r1-pubg`, `Bannerlator-screensize-r1-pubg` (504 MB each); download held until the SGSR HQ test ends (same device, keeps FPS readings clean).
+> - SGSR HQ r1 installed by the user: installed sha `2fdcd1ae…` VERIFIED == staged. Test game DiRT Showdown (xuser-3, 1280x720 on the 1920x1080 panel, Vulkan; was on Sharpen). Watcher on `showdown.exe` + the shortcut's `scalingMode`; session 1 started 12:11:43.
+
+## 2026-09-10 — ✅ **SGSR HQ r1 green + staged** (branch `feat/sgsr-quality-mode`, commit `7e71cb8f`, CI run 34498197469)
+> - CI ✅ all three flavors, headSha `7e71cb8f` verified. Staged `/sdcard/Download/Bannerlator-sgsr-hq-r1-pubg.apk` sha256 `2fdcd1aed20c…` (download and staged copy match; 1306 entries).
+> - Checked inside the APK: `libvulkan_renderer.so` contains the exact SPIR-V of both `sgsr_quality_frag.h` (new) and `sgsr_frag.h`; the dex has the "SGSR HQ" label and the GL edge-direction shader text (`classes3.dex`).
+> - NOT device-proven. Installs as `com.tencent.ig`.
+
+## 2026-09-10 — 📐 **New containers default to a screen size that fits the panel** (branch `feat/screen-size-by-aspect` off main `0db2ed3a`, worktree `bl-gfx-upgrades`, commit `2136efc8`, CI run 34499354338)
+> Item 3 of 3 from the upstream graphics survey (same idea as GameNative #1730, 960p for the Retroid Pocket Nova).
+> - `Container.DEFAULT_SCREEN_SIZE` was 1280x720 on every device, so 4:3 and 16:10 screens were letterboxed from the first launch. New `Container.defaultScreenSizeFor(context)` (DisplayManager DEFAULT_DISPLAY real metrics, long/short ratio): **16:9 and wider → 1280x720 (unchanged, phones)**, 16:10 and 3:2 → 1280x800, 4:3 and squarer → 1280x960. Cuts halfway between the buckets (1.467, 1.689).
+> - `screen_size_entries` gains **1280x960 (4:3)** (no 4:3 option above 1024x768 before). `arrays.xml` is CRLF — preserved (365/365), parses.
+> - Only the new-container default (`ContainerDetailViewModel` seed when no saved defaults profile) and the invalid-custom-size fallback change. A saved new-container defaults profile still wins; existing containers and shortcuts untouched.
+> - Mapping checked off-device (javac on the real method): 13/13 panels (1920x1080, 2400x1080, portrait metrics, 2560x1440 → 720; 1280x960 Nova, 1240x1080 RP Classic/DMG, 2208x1840 fold inner → 960; 2560x1600, 1920x1200, 960x640, 2000x1200 → 800; no display → 720).
+> - Also: **SGSR HQ r1 CI 34498197469 ✅ green** (all three flavors, headSha `7e71cb8f` verified, ~9.5 min); pubg artifact downloading for staging.
+> - ⏳ CI running; NOT device-proven. Test: on the Pocket FIT (16:9) a new container must still say 1280x720; the new 1280x960 entry must be pickable.
+
+## 2026-09-10 — 🧵 **Per-game texture filtering (anisotropic filtering + texture sharpness)** (branch `feat/texture-filtering` off main `5a4d6d53`, worktree `bl-gfx-upgrades`, commit `035d7165`, CI run 34499009543)
+> Item 2 of 3 from the upstream graphics survey (StevenMXZ's VkGHL layer does this at the Vulkan layer; we do it in the DXVK config we already generate).
+> - DXVK/VEGAS config sheet (shared by container + game shortcut) gains **TEXTURE FILTERING**: *Anisotropic filtering* Game default/2x/4x/8x/16x → `d3d9/d3d11.samplerAnisotropy`; *Texture sharpness* Game default/Auto/-0.25/-0.5/-0.75/-1.0 → `d3d9/d3d11.samplerLodBias` (added to the game's own bias).
+> - **Auto** = log2(render / output) for the spatial scaling mode the game **starts** with (3/4/5/7, and 8 SGSR HQ once that merges), aspect-fit vs the real panel (`getRealMetrics`), clamped ≥ -2. AMD FSR 1 guidance: 720p on 1080p → -0.58. 0 when not upscaling or supersampling. DXVK reads it at device creation, so a drawer mode change applies next launch.
+> - Stored as `dxwrapperConfig` keys `anisotropy` / `lodBias` → a shortcut overrides the container, and community-config export carries them. Emitted via `DXVK_CONFIG`: appended to the stock options, or **alone** when a custom DXVK config file is selected (DXVK applies DXVK_CONFIG per key over the file). Nothing emitted at Game default. `Locale.US` formatting. Release-visible logcat marker: `Texture filtering: [...]` (tag DXVKConfigDialog). Import summary lists the two keys.
+> - Logic checked off-device: the real `autoLodBias`/`textureFilteringOptions` compiled standalone with `javac`, 16/16 cases pass (720p→1080p -0.58, 2400x1080 panel -0.58, same res 0, supersampled 0, portrait panel, clamp -2, German locale keeps `.`).
+> - ⏳ CI running; NOT device-proven. Test: a DX11 game with a slanted floor → 16x AF vs default; SGSR/FSR + Auto → look for the `Texture filtering:` line, then compare texture detail.
+
+## 2026-09-10 — 🔍 **"SGSR HQ" scaling mode** (branch `feat/sgsr-quality-mode` off main `6aed4f4c`, worktree `bl-gfx-upgrades`, commit `7e71cb8f`, CI run 34498197469)
+> Item 1 of 3 from the upstream graphics survey (SGSR HQ, texture filtering control, screen size by panel aspect), each on its own branch off main.
+> - New scaling mode **8 "SGSR HQ"**, placed next to SGSR in the drawer picker, on **both** the Vulkan compositor and the GL EffectComposer. Port of Qualcomm's `sgsr1_shader_mobile_edge_direction.frag` (SnapdragonGameStudios/snapdragon-gsr): same single pass / inputs / Sharpness slider as SGSR; Lanczos weights stretched along the local edge direction + the reference's retuned contrast term `(10.14185/sum)^2`. Qualcomm: "minimal cost increase". No motion vectors.
+> - Vulkan: new `sgsr_quality.frag` + generated `sgsr_quality_frag.h` (glslangValidator, `spirv-val` clean), `sgsrQualityPipeline`, reuses `SgsrPushConstants` + fit-rect path; `setUpscaler` clamps 0-8. `UPMODE_DOWNSCALE`=10 so no collision.
+> - GL: `SGSREffect(boolean quality)`; both GL variants compile as GLSL ES 3.00 and the **mode-3 GL shader text is byte-identical** to main (checked). `EffectComposer` case 8. `EffectComposer.java` is CRLF — preserved (532/532).
+> - Mode 3 SGSR untouched on both paths. Mode ints are persisted per game (`scalingMode` extra, carried by community-config export), so 8 is appended rather than renumbering; `resolveScalingMode` accepts 0-8, older builds fall back to Linear on 8.
+> - Picker: 3 rows × 3 chips (None/Linear/Nearest · SGSR/SGSR HQ/FSR · FSR (Fit)/Sharpen/NIS). Sharpness slider shows for 3..8.
+> - ⏳ CI running; NOT device-proven. Test: a game at 1280x720 on a higher-res panel → drawer Scaling mode → SGSR vs SGSR HQ A/B (diagonal edges, text); check fps cost on both renderers.
+
+## 2026-09-10 — 🔀 **MERGED to main: Frame Generation help + Present Mode note** (branch `fix/fg-help-text`)
+> - `help_frame_generation` (Win-FG Native / LSFG Native, requirements, setup) and the `help_fps_limiter` note: built and staged as r1 (`e12e78be`, sha `bdbc21a4…`). The user confirmed on device that the new "?" text shows in Brawlhalla's per-game settings.
+> - Added before merge: `renderer_present_mode_fg_note` (`42af374f`) said only LSFG Native forces FIFO and "the other engines leave your choice alone". `effectivePresentMode` forces FIFO for any `nativeFrameGenEngine()` while armed, so it now names both. String-only; strings.xml validated (parses, no bare apostrophes); main CI builds it.
+
+## 2026-09-10 — 📝 **Frame Generation "?" help brought up to date** (branch `fix/fg-help-text` off main `a82f13c7`, commit `e12e78be`, CI run 34493738619)
+> - The user's screenshot (DiRT Showdown per-game settings): the "?" next to Frame Generation still described **bionic-fg** and **lsfg-vk** and said "AI-generated". The dropdown has been Off / Win-FG Native / LSFG Native since lsfg-vk left the list on 2026-09-05.
+> - `help_frame_generation` (shared by ContainerDetailScreen and ShortcutsScreen) now covers: the two real engines (Win-FG Native: built in, 2×; LSFG Native: own Lossless.dll, 2×/3×/4×); requirements (Vulkan renderer; a Vulkan 1.3 Renderer Driver for LSFG Native, Turnip on older Adreno; the side menu names anything missing); setup (a holdable Max FPS, Max FPS × multiplier fitting the screen, the warning + fix, Auto (match FPS) on while it runs); starts Off each launch.
+> - `help_fps_limiter`: "Frame Generation loads the same limiter" (true of the old layer) → the limiter is switched on automatically while LSFG Native / Win-FG Native runs.
+> - Not done: a link to the guide. `HelpDialog` renders only bold/italic, and Compose BOM 2024.02 has no `LinkAnnotation`, so a URL would be dead text.
+> - ✅ **CI 34493738619 green**, headSha `e12e78be` verified. Staged `Bannerlator-fg-help-r1-pubg.apk` sha256 `bdbc21a481e1…` (download and staged copy match). Main CI 34493506689 (`a82f13c7`) also ✅ green. Awaiting the user's look, then merge.
+
+## 2026-09-10 — 🔀 **MERGED to main: Auto on for frame gen (per-game opt-out) + the "can't run here" notice** (merge commits `7cfde0a0` auto-Auto, `4b2320ae` notice, on top of `be94d171`)
+> - Separate merge commits, so either can be reverted alone (`git revert -m 1 4b2320ae` removes only the notice). The merged app/ is byte-identical to the device-tested build `4cd5ea9c` (installed sha `88befdb2…`). versionCode untouched (vc83).
+> - Tested: Auto turns on at frame-gen start and the opt-out sticks per game shortcut (Pocket FIT). The notice stays quiet on a working 1.3 driver. The notice's failure path is untested on a <1.3 driver (the A710 reporter).
+> - Next: the Frame Generation "?" help in container/shortcut settings still describes bionic-fg / lsfg-vk → fixing on its own branch.
+
+## 2026-09-10 — ⚠️🎞️ **Native frame gen no longer fails silently** (branch `feat/fg-unavailable-notice`, stacked on `feat/fg-auto-refresh-optout`; code commit `4cd5ea9c`, CI run 34484942005)
+> Community report (Adreno 710): LSFG Native did nothing. The Renderer Driver was the stock "System" driver (Vulkan 1.1) and the chain needs 1.3; switching Renderer Driver to Turnip fixed it. Their ask: an error, or frame gen disabled until a supporting driver is picked.
+> - **Found in code:** `VulkanRenderer.isLsfgNativeSupported()` / `getLsfgCapsReason()` existed with **zero callers**. String `frame_generation_lsfg_native_unsupported` was unused. `ensureLsfgEngine` gives up after one try with only a logcat line. Lossless.dll cache failures were log-only (`prepareLsfgNative`). The drawer kept offering 2×/3×/4×.
+> - **Native:** `frameGenProblem()` → -1 unknown (caps reason still "not probed"), 0 fine, 1 `fgCapsOk()` false for the selected engine (LSFG: Vulkan 1.3 + features; Win-FG: storage-capable swapchain format only), 2 the engine tried and failed. JNI `nativeFrameGenProblem`; Java `getFrameGenProblem()` + `FG_PROBLEM_*`.
+> - **Activity:** `nativeFgProblemReason()` → plain reason + fix (DLL status via `LsfgNative.explain`, non-Vulkan renderer, driver gate → "…needs Vulkan 1.3… set Renderer Driver to a Turnip driver, then relaunch the game", start failure). Checked at launch after LSFG/Win-FG prep (10 tries × 1.5 s while the renderer comes up); one toast per session; the drawer shows the reason + a `Driver check:` line (the caps verdict). While armed, the stats poll catches failure → back to Off + notice. A multiplier tap that races the notice is refused with the toast.
+> - **Drawer:** reason under Frame Generation, multiplier buttons greyed (`FgMultiplierButtons(enabled=)`). The container hint for LSFG Native names the Vulkan 1.3 Renderer Driver requirement.
+> - Also staged: the auto-Auto r1 APK `Bannerlator-fg-autooptout-r1-pubg.apk` sha256 `70aea83cc54e…` (the first background download stalled 14 min and was killed; re-downloaded in the foreground).
+> - ✅ **CI 34484942005 green, all three flavors**, headSha `4cd5ea9c` verified == pushed. Staged `Bannerlator-fg-unavail-r1-pubg.apk` sha256 `88befdb2f1f5…` (download and staged copy match). This build also contains the auto-Auto opt-out (stacked). NOT device-proven. The Pocket FIT's driver supports 1.3, so the failure path needs the reporter's A710 (or any driver below 1.3).
+> - ✅ **DEVICE-TESTED 2026-09-10 (Pocket FIT), user report + log:** installed sha `88befdb2…` VERIFIED == staged. **Auto turned on by itself** when frame gen started, and the **opt-out stuck** for the game. Logcat: `native-fg auto off (remembered for this game)` 11:01:49 → `native-fg auto on (remembered for this game)` 11:01:58. No `.container` contains `fgAutoRefreshOptOut` (the container was untouched); the final state is on, so the shortcut extra is removed. No `native frame gen unavailable` lines, so no false notice on a working 1.3 driver. The failure path itself is still untested (it needs a <1.3 Renderer Driver, e.g. the reporter's A710).
+
+## 2026-09-10 — 🖥️🔁 **Frame gen switches Auto (match FPS) on by itself, with a per-game opt-out** (branch `feat/fg-auto-refresh-optout` off main `be94d171`, code commit `e7c03345`, CI run 34482280355)
+> User ask: turn Auto on automatically when frame gen starts, let the user opt out, and have the **game shortcut** remember the opt-out rather than the container, so new games made from that container don't inherit it.
+> - **On start** (LSFG Native or Win-FG Native starts generating): Auto is switched on for the session regardless of the saved setting — unless this game opted out, or the display has a single rate. When that changes the setting, the drawer says so: "Auto was turned on for frame generation … Turn it off if you prefer; this game will remember."
+> - **Opt-out:** turning Auto off while frame gen runs writes shortcut extra `fgAutoRefreshOptOut=1` (never the container); turning it back on removes it. No shortcut (launched from the container) → session only. With the opt-out set, the drawer says "Auto is off for this game while frame generation runs. Turn it on to fit the screen…".
+> - **On stop:** Auto returns to the saved container/shortcut setting, like the FPS limiter.
+> - Mechanics: `applyNativeFgLocks` sets `nativeFgAutoOn` and restores on release; `autoRefreshActive()` (the session value while the locks are held, the saved setting otherwise) feeds `applyVrr` + `nativeFgDisplayRate`; `onMatchRefreshChange` routes to the opt-out while frame gen runs.
+> - ⏳ CI running; NOT device-proven. Test: turn off Auto on a container → start LSFG Native → Auto flips on + note → turn it off → stop/start FG (or relaunch the game) → stays off for that game; a different game from the same container still flips on.
+
+## 2026-09-10 — 🔀 **MERGED to main: frame-gen over-limit warning + screen fit** (merge commits `02330d9f` warning, `f8036a56` screen fit, on top of `9c3143a7`)
+> - Both branches merged with separate merge commits, so either can be reverted alone (`git revert -m 1 f8036a56` removes only the screen fit). The merged app code is byte-identical to the device-proven build `2c57b3f8` (`git diff 2c57b3f8 HEAD -- app/` is empty). versionCode untouched (vc83).
+> - Device proof: the Pocket FIT run below (7 screenshots, installed sha `0cd13a06…` == staged).
+> - Follow-ups: update the public guide (`docs/lsfg-native-guide.html` says Auto is locked off during LSFG Native) when this ships in a release, and put it in the next release notes. Proposed next: turn Auto on automatically when frame gen starts, with a user opt-out.
+
+## 2026-09-10 — 🖥️🎞️ **Frame gen: the screen now fits itself to Max FPS × multiplier** (branch `feat/fg-vrr-match`, stacked on `feat/fg-over-limit-warning`; code commit `2c57b3f8`, CI run 34478284133)
+> The user's idea: instead of the panel sitting at its top rate while LSFG Native / Win-FG Native generate, let **Auto (match FPS)** fit the screen to the numbers the user picked — with rules that hold on any device.
+> - **Auto (match FPS) is no longer locked off under native frame gen.** With it on (the default), `applyVrr` asks for a rate from the display's own list at the current resolution: **exactly** cap × mult if it has it (30 × 2 → 60 Hz), else the **closest rate above** (50 × 2 = 100 → 120 Hz) — never below, which would overrun the panel. Nothing at or above (80 × 2 on 144) → no vote, panel stays at max, the warning shows.
+> - **Never a multiple.** Both engines present each real frame's burst on back-to-back refreshes (`FIFO still spaces them onto consecutive vblanks`), so 30 × 2 on 120 Hz is a 1,3 pattern. Only an exact fit is even.
+> - **Switches only on user action** (cap, multiplier, frame gen on/off, Auto/manual refresh change) — never follows the live frame rate, so one blink per change at most.
+> - **Slack for exact fits:** when cap × mult equals the display rate, the game is paced **0.3% under the cap** (new fractional `PresentExtension.setFrameRateLimit(float)`; the slider stays whole). Reason: game timer vs display clock drift (a 59.94 Hz panel is short of 30 × 2), and the limiter lets a late frame be followed by an early one (`nextIdleNs += frameNs` when < 1 frame behind). At an exact fit either queues a frame that never drains. Worst case with slack: one repeated refresh every few seconds. Also covers exact fits at max refresh (36 × 4 = 144) that the 3.0.6 notes called "tight". Logged as `fps limit N paced at X`.
+> - **Display rates at the current resolution only**, exact (`XServerView.getSupportedRefreshRatesPrecise`); the manual slider and the VRR-capable check use the same list now.
+> - **Drawer:** fit advice replaces the plain warning. Over the display → over-limit warning, checked against the **real** display rate if the device holds it below what was asked for (2.5 s debounce), plus a note naming battery saver / vendor refresh tools. Under it with Auto on → "Screen set to 120 Hz, the closest speed above 50 × 2 = 100…" plus a one-tap exact fit ("Set Max FPS to 45 → 90 Hz", the lower cap first). The Auto hint reads "with frame generation running, the display follows Max FPS × multiplier."
+> - Engines checked: the LSFG pacer uses the refresh value only for telemetry in fixed-multiplier mode (`target_rate` 0); Win-FG uses none. So lowering the panel doesn't change generation. The engine log's `refresh=` still reports the panel max.
+> - ⚠️ Changes default behavior for everyone with Auto on (the default). LSFG Native is proven only on Adreno 750 → device-test on the Pocket FIT (60/90/120/144) and ideally a 60/120 phone before merge. The guide + release notes say "Auto (match FPS) off while it runs" → update both at merge.
+> - ✅ **CI 34478284133 green, all three flavors**, headSha `2c57b3f8` verified == pushed. Staged `Bannerlator-fg-vrr-r1-pubg.apk` to `/sdcard/Download/`, sha256 `0cd13a06fdcc…` (download and staged copy match). This build includes the over-limit warning from the base branch. NOT device-proven.
+> - ✅✅ **DEVICE-PROVEN 2026-09-10** (AYANEO Pocket FIT / Adreno 750, DiRT Showdown D3D11·DXVK, LSFG Native, container "P11-2 Arm"). The installed APK sha `0cd13a06…` VERIFIED == staged. The display has 4 modes, all at 1080×1920 (144/120/90/60), so the resolution filter drops nothing. 7 user screenshots, 09:05–09:08:
+>   - **50 × 2** → Rate **120 Hz**; the drawer shows "Screen set to 120 Hz, the closest speed above…" + [Set Max FPS to 45 → 90 Hz] "or 60 → 120 Hz if the game holds it". HUD 50.0 → 100.0.
+>   - **30 × 2** → **60 Hz** (not 120), no advice, HUD **29.9** → 59.9 — the slack is visible (expected 60.000004 × 0.997 / 2 = 29.91).
+>   - **45 × 2** → **90 Hz**, HUD **44.8** → 89.7 (slack).
+>   - **36 × 4** → **144 Hz**, HUD **35.7** → 143.0 (slack).
+>   - **60 × 4** → stays **144**, red warning [Set Max FPS to 36] "or pick 2×", HUD 60.0 → 143.9 (the panel is the ceiling). Non-exact caps show whole numbers (50.0, 60.0), so the slack only applies to exact fits.
+>   - **Auto off** → the display went to the container's saved **manual lock of 120 Hz** (`.container` written 09:07:40: `matchRefreshRate 0`, `manualRefreshRate 120`; window `preferredRefreshRate=120.0`). The warning re-computed for 120: [Set Max FPS to 30] "or pick 2×". Correct behavior; my test table's "back to 144" assumed the manual lock was Off.
+>   - 🔎 Live proof of the over-limit harm: at 60 × 4 on 120 Hz the drawer readout said **"30 real → 120 shown"** while the game's HUD said **60 real** → half the game's real frames never reached the screen.
+> - Not exercised: a device that refuses to switch (the `held` note), a 60/120-only phone, Win-FG Native. Cosmetic, pre-existing: the greyed manual slider thumb stays on the saved manual rate while Auto drives the display (the Rate readout is correct). The user's "P11-2 Arm" container is now saved with Auto OFF.
+
+## 2026-09-10 — 🎞️⚠️ **Frame gen: warn when Max FPS × multiplier is more than the screen can show, and fix the Max FPS hint** (branch `feat/fg-over-limit-warning` off main `9c3143a7`, code commit `a6cdc8e0`)
+> Came from community confusion: people push the base past what the panel can show and wonder why it got worse. The public guide (`docs/lsfg-native-guide.html`, live on Pages) explains it; this puts the answer in the menu where the mistake happens.
+> - **The Max FPS hint was wrong.** It said "Caps on-screen FPS. Works with any frame-gen engine or none." With LSFG Native or Win-FG Native generating, the limiter caps the game's *real* frames and the screen gets cap × multiplier; with lsfg-vk multiplying, the limiter is not applied at all (`lsfgGovernsFps`). The hint now picks the right sentence for the engine that's running and fills in the numbers ("…so you'll see up to 48 × 3 = 144").
+> - **New over-limit warning** while LSFG Native or Win-FG Native is generating and cap × multiplier > the display's refresh rate: "⚠ 60 × 4 = 240: more than your 144 Hz screen can show…" plus a one-tap **Set Max FPS to N** (N = Hz ÷ multiplier). For LSFG Native it also suggests a lower multiplier that fits; Win-FG Native is fixed at 2× so it only offers the cap. Shown under Max FPS (live while dragging) and under the multiplier buttons.
+> - **Which Hz:** the rate the activity asks the display for — the manual lock if set, otherwise the panel's top mode — published from `applyWindowPreferredRefreshRate` into new `XServerDrawerState.displayTargetHz`. That is the cadence native FG presents at under FIFO.
+> - Also: the "Locked on while LSFG Native is generating" note now says Win-FG Native when that's the engine running (the lock always covered both).
+> - Not changed: the default cap of 30 when none is set (still under-fills a 144 Hz panel) and the pacer itself. App-side UI only; no native changes.
+> - ✅ **CI 34472999340 green, all three flavors**, headSha `4984e1f4` verified == pushed. Staged `Bannerlator-fg-overlimit-r1-pubg.apk` to `/sdcard/Download/`, sha256 `2d96d893acae…` (download and staged copy match). versionCode untouched (vc83).
+> - ⏭️ **Device check:** LSFG Native 4× with Max FPS 60 on the 144 Hz Pocket FIT → red warning under Max FPS and under the multiplier buttons, with "Set Max FPS to 36 / or pick 2×". Tap it → the warning clears and the hint reads "…36 × 4 = 144". Win-FG Native with Max FPS 90 → the warning, no "or pick". NOT device-proven yet; merge only after the user OKs it.
+> - 📘 Same day: the guide link was added as a callout above "What's New" in the release notes of 3.0.6, 3.0.7, 3.0.8 and 3.0.9 (every release since LSFG Native landed).
+
+## 2026-09-09 — 🎞️🛠️ **LSFG Native: a freeze that could still strand a semaphore, and a ghost on every start** (branch `fix/lsfg-native-freeze-stale-history` off main `8bb3c0bf`, CI run 34381133472)
+> Both came out of a read-through of the whole native LSFG path rather than a bug report, so neither is device-proven — they are reasoned from the code and from what earlier device runs already taught us about these two failure modes.
+> - **The freeze we fixed in r3 could still happen through two doors.** When a frame plans to present N images it acquires all of them up front, and each acquire signals an image-available semaphore. Any early return between the acquire loop and the submit leaves those signals pending with nothing left to wait on them; reusing such a semaphore is invalid, Adreno answers `VK_ERROR_OUT_OF_DATE_KHR`, and the renderer drops into the swapchain-recreate loop that never presents again — audio and rumble carry on, the picture is dead. Every early return on that stretch sets `fbResized`, which is what runs `recreateSyncObjects()` and destroys the pending signals along with the semaphores. Two did not: the invalid-acquired-image-index guard, and the in-flight image fence timing out after 2 s. Both now do. The stretch between acquire and submit was re-scanned afterwards — these were the only two left.
+> - **The first generated frame after any gap was built from a stale picture.** The chain's input ring is two images deep and `Engine::process` seeds it only while it is actually generating — a deliberate fix from the r5 run, where an unconditional full-resolution copy every frame was costing real frame rate for nothing. The cost of that gate is that the moment generation stops, the other slot keeps whatever it held then. Generation stops more often than it sounds: at every arm, and on any pacer discontinuity, which is any hitch longer than 250 ms. So the next frame to generate interpolated between the current frame and one from an arbitrary moment earlier — a warp or ghost burst, on **every single start**, which is exactly when a user is deciding whether frame gen looks right.
+> - **The engine now knows which frame its ring holds.** If the two slots would not be consecutive it spends one frame filling the ring and generates nothing, then resumes with genuine N-1/N history. One frame, once, per resume — and the copy it performs is the one that frame would have done anyway had generation already been running. The warm-up streak is untouched, so nothing else shifts. Priming is logged, rate-limited: a silent gate on this exact path cost two device runs before.
+> - **CI 34381133472 green, all three flavors**, headSha `9a3a117c` verified == pushed. Staged `Bannerlator-lsfg-fgfix-r1-pubg.apk` sha256 `e6ee61ac…`, verified byte-identical on the device, and the shipped `libvulkan_renderer.so` content-checked to actually carry the new code. `versionCode` still FROZEN at 82.
+> - ✅✅ **DEVICE-PROVEN 2026-09-09** (AYANEO Pocket FIT / Adreno 750, installed sha verified == staged, full unfiltered logcat). The ghost fix behaves exactly as designed: `priming the input ring` appears **once**, at the moment generation starts, and never again. The freeze fix is clean and not implicated in anything: **zero** fence-timeout or bad-index lines, and no runaway display-chain rebuilds. Generation itself is healthy — 44-46 real to **84 fps presented** at 2x, ~4 ms of GPU per generated frame.
+> - 🐞 **And the log caught a third bug, the one the user actually felt.** Enabling frame generation froze the game for about five seconds. Cause: the 25-shader chain was built **twice** — `chain built ... flow 1920x1080 scale 1.00 (guest 0x0)` at 16:49:51.400, then `chain built ... flow 1344x756 scale 0.70 (guest 1280x720)` at 16:49:53.769, ~2.4 s apiece. The engine was asked to `prepare()` inside the same if-condition that only *later* told it how large the guest renders, so the first build assumed a guest the size of the whole composite (the most expensive pyramid available) and the next frame threw all 25 pipelines away and rebuilt at the correct 0.70 scale. Both calls were already in that block; only the order was wrong. Fixed in `3c683449`, and **device-confirmed on the rebuild**: one build, correct scale immediately, **toggle cost 4.78 s → 2.25 s** (`17:15:07.551` armed, `17:15:09.805` built). What remains is the single unavoidable pipeline build. User: "feels good."
+> - 🔎 **Unexpected, worth following up:** the shader modules loaded as `variant=spirv-fp32` — precompiled SPIR-V straight out of the DLL, not DXBC translated on device. The design notes record the opposite (measured at the time: no downloadable Lossless Scaling build shipped the SPIR-V blobs, so the translator was non-optional). This user's DLL ships them. The translator stays — other people's files still need it — but the assumption is no longer universally true.
+> - ⏭️ **To prove it on hardware:** DiRT Showdown capped to 30, LSFG Native at 3× or 4×, and watch the moment frame gen is switched on — the ghost/warp burst should be gone. `logcat` should show one `priming the input ring` line per arm and no more. The freeze fix cannot be provoked on demand; it is insurance, and its two log lines say when it fired.
+> - 📋 The same read-through produced a ranked backlog that is **not** built: the DLL's higher-quality shader chain is never loaded (we only ever use the performance one, with no switch), the adaptive "fill the panel" pacing is fully implemented and never turned on, the locked FPS cap defaults to 30 instead of panel ÷ multiplier, and Win-FG Native — the engine that needs no purchased DLL — is built and CI-green on its own branch but was never device-tested or merged.
+
+
+## 2026-09-09 — 💾 **Save backups now carry the emulator's account id** (branch `feat/save-backup-emu-id` off main `366ff1ce`, CI run 34349693937)
+> Found by a user restore that "wasn't applying": the God of War save was in the container, byte-identical to the backup (md5 `0ffca462ac65` in the zip and on disk), and the game still offered only New Game. A cracked game's Steam emulator invents an account id and keeps it **in the prefix**; God of War names its save folder after that id and stamps the owning id INTO the save — uint32 LE at offset `0x20`, verified against all six folders on the device, where the dword matches the folder name every time — then refuses a save whose embedded id differs from the running one. Every emulator here rolls a **fresh random id when its file is missing**, which is what a rebuilt prefix looks like. That prefix had been rebuilt on 09-07, FLT rolled `76561199620875946`, and the game read an empty folder next to a perfect save. A scoped save backup was therefore only half a backup — and that is how one of the user's saves (`247303192`) became permanently unrecoverable.
+> - **One choke point, four surfaces.** Every backup path funnels into `GameSaveBackup.backupToFile`: the container ⋮ scope picker, the game ⋮ menu, the Save Manager's Custom tab, and `CustomSaveVault.snapshot` — the auto-backup on game exit, the one that runs unattended. Unscoped (`roots == null`) already swept identity by walking the whole profile; only the SCOPED paths missed it, which is all four per-game ones. So the fix is one line in the walk, not four screens.
+> - **New `EmuAccountIdentity`** names the stores, their id filenames and the order they are read in: FLT (`AppData/Roaming/FLT/steam_id.txt`) and Goldberg/gbe_fork (`AppData/Roaming/GSE Saves/settings`). Both confirmed present in live containers rather than assumed. Goldberg is scoped to `settings/` deliberately — the `GSE Saves` parent holds other games' save data and achievements, which a per-game backup has no business copying.
+> - **Restore decides for itself only when the answer is not a judgement call**: no id in the prefix (the rebuilt case that strands saves) or an id that already matches → apply, silently. A prefix running a *different* id is the one case nobody can decide for the user, because the id is prefix-**global**: taking the backup's fixes this game and simultaneously orphans every other cracked game's saves in the same container. That, and only that, raises the new `EmuAccountConflictDialog`, which shows both account ids and the save folder each one names. Identity entries are staged to `cacheDir` during the unzip rather than written straight out, because the id can arrive in a later zip entry than the file that needs it, and a conflict has to outlive the stream.
+> - 🐞 **A latent crash, pre-existing.** `SaveLocator` scans `AppData/Roaming` at depth 1–2, so a picked game root can nest an identity root, and the picker already allows two roots to overlap. A repeated name makes `ZipOutputStream` throw `duplicate entry` — a crashed backup, not merely a bad one. Entry names are now deduped, closing the overlap hazard the confirm dialog previously only warned about. Identity files are also counted apart from save files, so an account id alone can never turn "nothing to back up" into a hollow success.
+> - 🐞 **A second bug, mine, caught in self-review before CI finished.** `applyEmuIdentity` copied the backup's identity over the prefix but left the prefix's own id files in place. These emulators accept the id under several filenames and read them in a fixed order, so a leftover outranking what the backup supplies keeps winning: the dialog would report the account as switched while the game carried on under the old one — exactly the silent failure the feature exists to prevent. Only shadowing files are deleted now; lower-priority ones and the settings sharing Goldberg's `configs.user.ini` (language, ip_country) are never collateral.
+> - ✅✅ **DEVICE-PROVEN, all four cases, driven over the root bridge** (installed APK's sha256 verified == the staged build first; container `p11-6 GE v6` confirmed as `xuser-6` before restoring into it). **(1) The backup carries the id, A/B against a control from the same device**: the old build's 07:21 backup holds 6 × `game.sav` and nothing else; the new build's 09:51 backup holds the same six **plus `AppData/Roaming/FLT/steam_id.txt` = `76561198404161158`**. **(2) No id in the prefix → applied silently, no dialog** — the file came back with the right value, owner 10249, mode 0600 and context `…:c249,c256,c512,c768` (the app writes it as itself, so the chown/chcon dance a root fix needs doesn't arise), staging cleaned up after. **(3) A conflicting id raises the dialog with the right numbers** — *In this backup* `76561198404161158` (save folder `443895430`), *In this container now* `76561199620875946` (save folder `1660610218`), both SteamID64→folder derivations correct on screen. **(4) Both buttons proven, not just the happy one**: "Keep current" left the prefix id untouched, "Use backup's account" switched it. Prefix returned to baseline afterwards (save md5 `977a14bec7f20879eb327e51eca6dccb`, all six folders, id `76561198404161158`).
+> - 🐞 Known cosmetic leftover: discarding a conflict deletes the staged `…/FLT` but leaves `AppData/Roaming` behind — two empty dirs, 14 KB, in `cacheDir`, swept by the next restore. No save data involved.
+> - ⏭️ Not closed: God of War was not launched after the test, so "the save appears in Load Game" still rests on this morning's manual run under the same id and the same save md5. One launch closes it end to end.
+
+
+## 2026-09-08 — 🧭 **CHECKPOINT — session close. main `6d6c8898`, two features merged and device-proven**
+> Main build **34285033003 GREEN** (all 3 flavors, artifacts only) → staged `Bannerlator-main-presets-pubg.apk` sha `47b16b0d…`. `versionCode` still FROZEN at 82.
+> - **Merged today, newest first:** `6d6c8898` scoped preset editing (Container + shortcut preset editor rows, edits scoped to where you make them, ✎ CUSTOM badge) · `3bfcf374` move an installed Steam game between internal storage and the SD card. Revert either with `git revert -m 1 <sha>`.
+> - **Both proven on hardware, not just compiled.** Storage move: CS:S internal→SD launched **secure/VAC** through SteamLite from the card and rendered; Brawlhalla did internal→SD→internal **byte-perfect** and came back with its `Exec=` line byte-identical; five moves, drive map never changed. Scoped presets: inheritance, isolation from siblings and container, persistence across backing out, and the edited value reaching the **live process** (`FASTNAN` 1→0, everything else unchanged, game running).
+> - **Four bugs found by testing, not review:** `size_bytes` overwritten with the on-disk total (caught across three DB snapshots); Import sitting lower than its five neighbours (an `IconButton`'s 48dp touch target vs a bare `Icon`); a scoped edit reaching only memory while the badge claimed it was saved; and my own unproven claim that Verify re-downloads everything — corrected in this log to an open question.
+> - 🔎 **Housekeeping:** 6.5 GB of `wine_debug.log` cleared (39→45 GB free) after finding one Brawlhalla session had written 1.5 GB — 99 % of it a single repeated `RtlInitializeExtendedContext2` trace line. It scales with how many exceptions a title throws, so Source games log 1-7 MB while Brawlhalla and the Denuvo titles log gigabytes. Same setting, thousandfold difference. A known-good `Lossless.dll` was backed up to `Downloads/BL-fg-dll/` ahead of the announced Lossless Scaling algorithm rewrite (our LSFG Native reads its shaders out of that file).
+> - ⏭️ **Open, none blocking:** (1) does Verify really re-download everything on an old install, or only rewrite files — settle it by verifying intact Brawlhalla on a fast connection and watching actual transfer; (2) no cap on log size — one session can write a gigabyte; (3) community configs export presets **by name**, so a shared config silently loses a customisation — part of the wider pass over what config export records before the next stable.
+
+
+## 2026-09-08 — 🎛️ **Preset editing in Container & game-shortcut settings, scoped to where you edit** (branch `feat/scoped-preset-editing`, CI run 34282194369)
+> App Settings has had the six preset actions since `4e105be8`; the Container and shortcut screens only offered a dropdown, so changing a preset meant backing all the way out. Both screens now carry the full row — **add · edit · duplicate · delete · export · import** — with labels under the icons, since those screens are busier than Settings and are reached while configuring one specific game.
+> - **Where you edit decides who owns the change.** App Settings edits the shared preset (unchanged); Edit Container stores on that container; a game's settings store on that game. At launch it resolves game → container → shared. This is the same three tiers the app ALREADY used for *which* preset is selected (`XServerDisplayActivity:6616`, `ContainerDetailViewModel:678`) — extended from which preset is picked to what is inside it. Because a game screen can only write to that game, no "this is global, careful" warning is needed anywhere.
+> - **Per-scope values live on their owner** — the container's JSON, the shortcut's `.desktop` Extra Data — never a preference keyed by id, which would outlive the thing it describes and let a recycled id inherit a stranger's values. Stored as `presetId|VARS` so switching preset doesn't silently apply the previous one's edits, and `localEffective()` returns null when nothing is customised, so an untouched setup takes exactly the old path.
+> - **A ✎ CUSTOM badge** marks a preset carrying local values; without it a customised preset is indistinguishable from a stock one. Reset at any level drops the local copy and follows the level above.
+> - The editor's existing rule — values matching what you'd inherit clear the local copy rather than storing a duplicate — generalised to all three tiers, and it now states which scope an edit will land in. Scoped values are applied at launch **after** `EaSupport.clampPresetForEa`, deliberately: otherwise an Extreme customisation would re-apply `FEX_SMCCHECKS=none` on top of the clamp that exists to stop exactly that.
+> - 🐞 **Two bugs found on device and fixed.** Import sat lower than its five neighbours because it wrapped `ImportSourceIconButton` — an `IconButton`, carrying Material's 48dp minimum touch target — so its icon centred in a taller box and its label clipped to "mport"; all six now share one composable. And a scoped edit only reached memory: Save showed the badge while nothing hit disk, and backing out lost it silently. The editor is a modal with its OWN Save button, so Save must commit — `writeLocal`/`clearLocal` now persist on the spot.
+> - ✅ **DEVICE-PROVEN end to end** (driven over the root bridge, user state backed up and md5-verified restored). Badge, per-scope wording and Reset offered correctly; **inheritance** — a game with no copy of its own showed the container's value; **isolation** — a game edit left the container at `CALLRET=1` and a sibling game with no copy at all; **persistence** — value survived backing out without the screen's OK; and **the launch**: baseline `BOX64_DYNAREC_FASTNAN=1` from the live process, then after a UI edit `FASTNAN=0` with every other variable unchanged, game running at 408 MB resident.
+> - ⏭️ Owed before the next stable: community configs export presets **by name**, so a shared config would silently lose a customisation — part of the wider pass over what config export records.
+
+
+## 2026-09-08 — 📦 **Move an installed Steam game between internal storage and the SD card** (branch `feat/move-game-storage` off main `8f4cff74`, CI run 34225201748)
+> The SD option only existed at download time; a game already on disk could not change sides without a full re-download. New gear-menu action on the Steam detail page moves it **either way** — "Move to SD card" / "Move to internal storage", whichever side it isn't on — keeping everything that hangs off the install location.
+> - **What actually points at the folder** is only two things: the `steam_games.install_dir` column and each shortcut's `Exec=` line. `SteamCloudSavePaths.resolveContainer` resolves a game's container by matching one against the other, so they have to move together or cloud saves break (the class of bug `595f1c89` fixed for SD downloads). `MoveGameStorage` rewrites both, or neither.
+> - **Untouched by construction**: achievements (`AppData/Roaming/GSE Saves/<appId>/achievements.json`), prefix saves and Steam remote storage all live in the container prefix, not the game folder. **Travelling with the copy**: game files, DLC, the Goldberg-swapped `steam_api*.dll` + its `.bak`, the `.bl_depot` journal and `.bannerlator_build` marker (update/verify still work with no re-download), and any save written beside the exe. **Re-derived at launch**: SteamLite re-stages its `steamapps\common` symlink every launch and already re-points a moved target (`RealSteamLauncher.java:271`); `GoldbergPatcher.analyze()` re-reads the folder and caches no paths.
+> - **Safety contract**: copy → verify (file count + total bytes, not a hash — re-reading tens of GB over FUSE would double an already slow move) → repoint every shortcut in every container → update the DB → *only then* delete the source. Each shortcut's previous `Exec=` line is restored and the destination dropped if any step fails, so a failed move is a no-op rather than a broken game. Cancel is offered during the copy only; once the pointers are being rewritten it commits.
+> - `CopyGameToDriveC.setShortcutExe` gained an optional imagefs root (+ private `winPathFor`): a move BACK to internal must write `Z:\steam_games\…`, the container's fixed drive, per the rule `StarLaunchBridge.java:352-361` uses when first writing a Steam shortcut — otherwise `resolveWindowsPath` sees an app-private path that is not a storage volume and burns a fresh drive letter per game. Existing callers pass nothing and are unchanged. `SteamForegroundService` now also stays up for a move in flight (no download row behind it).
+> - Confirm sheet states size, free space, that saves/cloud saves/achievements are kept and how many shortcuts get updated, and warns on the two real risks: the card is FUSE-backed so a streaming-heavy game can stall, and an **EA title** may demand a re-activation after an install-path change (spending a scarce activation).
+> - ✅ **DEVICE-PROVEN BOTH DIRECTIONS 2026-09-08, then MERGED.** Counter-Strike: Source internal→SD (3,174 files exact) launched **secure/VAC** through SteamLite from the card — the `steamapps\common` symlink re-pointed itself on launch as designed — rendered 1280x720@144 and wrote its config back to the card; a Verify-integrity on the SD-resident install worked too. Brawlhalla did the full round trip internal→SD→internal **byte-perfect** (7,646 files / 1,552,614,379 B each way), came back with its `Exec=` line byte-identical to the original `Z:\steam_games\…`, launched secure and played **online**. Across five moves the container drive map never changed (`D:` `E:` `F:`) — an existing volume mapping is reused, never a fresh letter — and the app-side achievement cache was untouched (65 rows / 1 unlocked, before and after).
+> - Two fixes landed after that first pass and were re-proven on device: verify now compares **per file** (path→size) instead of totals, and `size_bytes` keeps the row's manifest value instead of being overwritten with the folder-walk total — caught in the act across three DB snapshots (1,520,730,194 → 1,552,614,379 → corrected), then confirmed fixed (r3 wrote 1,520,730,194).
+> - Unrelated finds during testing, both owed their own fix: **a Verify on CS:S rewrote ~4.89 GB to repair a ~1 GB gap — cause UNPROVEN** (a fresh mtime shows a file was written, not transferred; `clearDepotResumeState` documents the opposite intent, keeping good files. Network bytes were never measured. To settle: Verify intact Brawlhalla, 7,646 files / 1,552,614,379 B, and watch actual transfer), and the **wine-debug `+seh` log storm** (one Brawlhalla session wrote 1.5 GB; 99 % of it a single repeated `RtlInitializeExtendedContext2` trace line — it scales with how many exceptions a title throws, so Source games log 1-7 MB while Brawlhalla/Denuvo titles log gigabytes). 6.5 GB of logs cleared; the app-side per-class size cap is still unbuilt.
+
+
+## 2026-09-07 — 🎨 **Screen Effect "Looks" — one-tap presets in the in-game drawer** (branch `feat/screen-effect-looks` off main `c0dd2ee5`)
+> A row of named chips heading the Graphics tab's **Screen Effects** section on BOTH renderer paths, driven by one shared table (`ui/ScreenEffectLooks.kt`): Off · Game Clarity · Vivid · Cinematic · Competitive · Adaptive Sharpen · Filmic · Arcade · Retro CRT · Upscale Sharp · Pixel Clean · Anime Edge. One tap fans out to every applier the values belong to — the screen-effects callback, the sharpening callback (`pushSgsrUpdate` on GL / `onCasApply` on Vulkan), `onDebandApply`, and the scaling picker only for the two Looks that name a mode — and moves the sliders/toggles with it. Nothing new is rendered; a Look is just named values for controls the compositor already has.
+> - **Custom fallback**: the selection is seeded by matching the live values, so a session launched with effects already on shows `Custom` instead of claiming `Off`. Moving any control the active Look OWNS clears it; HDR and the upscaler's own Sharpness (owned by no Look) deliberately do not.
+> - **Saturation** — the one missing knob — added to BOTH paths so Vivid/Arcade grade identically: `color.frag` push-constant APPENDED at the end (`ColorPushConstants` 28→32 B, existing offsets unmoved; `color_frag.h` regenerated with `glslangValidator -V --vn color_code`), `setColorGrade`/`nativeSetColorGrade`/`VulkanRenderer.setScreenEffects` widened, and `ColorEffect.java` given the same luma-preserving Rec.709 mix in the same chain position (after contrast, before gamma). Slider 0–200 %, 100 = neutral; every new arg defaults neutral. The "skip Color when neutral" test now also requires saturation == 100.
+> - Persistence unchanged: session-live like its neighbours; the `screen_effect_profiles` on-disk format is untouched. Layout: the drawer is a fixed 380 dp shell (~290 dp content) in both orientations, so the reused `ToggleChipGrid` (3/row, `IntrinsicSize.Min`) wraps the same portrait and landscape.
+> - Doc: `docs/SCREEN_EFFECT_LOOKS.md`. ⏳ CI-only compile; NOT device-tested, NOT merged.
+
+## 2026-09-07 — ✅ **EA setup legacy-shortcut fix MERGED** (`fix/ea-setup-legacy-shortcut` `7d103812`, CI run 34084437433) — NFS Heat "couldn't locate the game's install folder"
+> `EaSupport.resolveSteamAppId`: shortcuts written before the `steamAppId` tag existed are matched against the installed-games DB (same folder, then folder name) or the folder's `steam_appid.txt`, and the id is stamped back onto the shortcut. `ShortcutsScreen` EA setup now derives the install dir the same way the dialog gate does and reports which of exe/app id failed. Additive; the EA-on-Steam desktop flow is untouched.
+
+## 2026-09-07 — ✅ **Store download speed tier MERGED `64bf48a2`** + day summary (all four 09-07 features on main)
+> `StoreDownloadTier` (pref `store_dl_speed_tier`, Log Manager row "Store download speed", Slow/Medium/Fast/Blazing = 6/16/32/96 in flight, default Fast) feeds the Rust Epic/GOG/Amazon engines; Java fallbacks unchanged. Device: Blazing on Quake II RTX (1.2 GB) 22.4 s vs Fast 21.1 s — GOG's CDN is the limit (~50 MB/s per host), so Fast stays default; Java took ~80 s on the same title.
+> - On main today, each a single revertable merge: `efebe90a` Rust store engines · `1987972a` Contents hub Official repo + save-only · `63af72ab` Media tab (4 stores) · `64bf48a2` speed tier. Verification build `main-all-20260907` run 34145256632.
+> - Open before a release: cancel/resume on the Rust store paths; device pass on the Contents hub and the Steam/Epic/Amazon Media tabs (Amazon needs a library refresh first).
+
+## 2026-09-07 — ✅ **Rust store download engines MERGED to main `efebe90a`** (revert `git revert -m 1 efebe90a`) — Epic / GOG / Amazon on the shared adaptive fetch core
+> Merge of `feat/rust-dl-all` (29 files, engine work only, file list verified). Device-proven vs the Java managers on the same titles: GOG 4.5 s → 2.2 s, Epic 11.4 s → 4.3 s, Amazon 68 s → 48 s. Flags `use_rust_{epic,gog,amazon}_engine` default ON in Log Manager; Java paths untouched as fallback. Docs: `docs/RUST_STORE_ENGINES.md`, `docs/RUST_{EPIC,GOG,AMAZON}_PARITY.md`. Next off main: Contents hub Official repo + save-only (`feat/contents-official-saveonly`), store Media tab (`feat/store-media-tab`, `-amazon-epic`).
+## 2026-09-07 — 🖼️🎬 **Store "Media" tab — shared UI + Steam + GOG** (branch `feat/store-media-tab` off main `efebe90a`; Amazon + Epic on `feat/store-media-tab-amazon-epic`)
+> One shared tab for the four store detail pages and the catalog page: trailer posters + screenshot strip, a full-screen swipe/zoom `ScreenshotViewer` (pager, pinch/pan/double-tap, survives rotation) and one video handoff. `store/download/StoreMediaTab.kt` = the contract (`MediaImage`, `MediaVideo.Direct/YouTube`, `StoreMedia`, `MediaTab`); `store/MediaPlayback.kt` = `openVideo` (direct mp4/webm → new `MediaVideoActivity`: VideoView + MediaController, 16:9 in both orientations, `configChanges` so rotation keeps the stream; YouTube → `StoreWebActivity` with the new `allowAutoplay` extra + embed fullscreen support) and `openExternal`; `store/StoreMediaCache.kt` = per `store:id` memory + prefs cache with 7 d / 6 h / 2 min (hit / empty / 429-miss) TTLs.
+> - **Steam**: `SteamStoreSearch.fetchMedia(appId, cc)` on `appdetails?filters=screenshots,movies` — non-empty / `EMPTY` (`success:false`, `"data": []`) / `null` (429, transport) kept distinct so a rate limit is never cached as "no media"; mp4 480 default, https forced (cleartext is depot-hosts-only). `SteamGameDetailActivity`: `DetailTab.MEDIA` appended, strip filtered while empty, count badge, loader beside the achievements one. Diff localized (+51 lines).
+> - **GOG**: `GogStoreCatalog.product()` expands `videos`; `ProductDetail.media` (thumb `ggvgm`, full `ggvgm_2x`, YouTube trailers "Trailer N"). `GogGameDetailActivity`: conditional 4th tab + badge. `StoreCatalogDetailActivity` "Screenshots" → "Media" via the shared tab.
+> - Tests: `SteamMediaParseTest`, `GogMediaParseTest`, `StoreMediaCacheCodecTest` (pure parsers, JVM). Doc: `docs/STORE_MEDIA_TAB.md`. ⏳ CI-only compile; not device-tested; no merge.
+
+## 2026-09-07 — 🦀🚀 **Rust store engines round 1: ceilings raised + GOG stream mode + Epic CDN fix — DEVICE-PROVEN** (`feat/rust-dl-all` `98f33e45`, run 34114651527, staged `Bannerlator-rustdl-all-r4-pubg.apk` sha `377907de…`)
+> Rust paths now take their window from `DownloadSpeedConfig(DEFAULT_TIER)` (32) with `per_host_cap = max(6, ceil(32/hosts))`; Java fallbacks keep their old counts. GOG gen2 chunks moved to the core's stream mode (streaming inflate + streaming MD5s) after a device sampler showed the 24 MiB whole-body budget starving the window (`in_flight=1 budget_stalls=24`). Core: `fetch-error` lines (first 12 per run) and 4xx client rejections demote the host without shrinking the shared window — which exposed Epic's real bug: CDN base URLs from the Java JSON scan kept `\/` escapes, so fastly answered 404 and cloudfront 403 on every chunk (fixed in `store_dl/epic`). Amazon: single log writer.
+> - Same three titles, same device/WiFi: **GOG** Gunslugs 3 86 MB — Java 4.5 s → Rust 2.2 s · **Epic** Alone With You 298 MB — Java 11.4 s → Rust 4.3 s (581 Mbps avg, 777 peak) · **Amazon** Dread Templar 4.2 GB — Java 68.4 s → Rust 48.4 s (695 avg, 890 peak; PSS ≈ 157 MB). Install/exe/library behaviour unchanged on all three.
+
+## 2026-09-07 — 🦀⬇️ **Rust download engines for Epic / GOG / Amazon — built overnight, integration APK staged** (branches `feat/rust-dl-core` + `feat/rust-dl-{epic,gog,amazon}` off main `426a071b`, integration `feat/rust-dl-all` `cf6a76a6`)
+> Goal: give the three non-Steam stores the Steam engine's adaptive-window fetch pipe with strict 1:1 download behaviour. Rust replaces ONLY the byte-fetch loop inside each Java manager; manifest/plan/auth, registry + notification feeds, cancel semantics, on-disk resume state, and every post-install step (shortcuts, install-state, cloud saves, redists) stay on the existing Java code. Flags `use_rust_{epic,gog,amazon}_engine` (default ON, Log Manager toggles beside the Steam one; read per download).
+> - **Core** `fetch_core.rs` (COPY of the Steam window/scheduler/budget logic, tunables shared with `depot_writer.rs`, Steam path zero-diff) + stream mode (`on_chunk`/`on_finish`, bounded by the byte budget) + per-request headers + `md5_small.rs` (no new crates). Recon/parity docs: `docs/RUST_STORE_ENGINES.md`, `docs/RUST_{EPIC,GOG,AMAZON}_PARITY.md` (rule | Java line | Rust status tables).
+> - **Epic** `store_dl/epic/*`: ChunksV4 parser 1:1, replaces the 8-thread `.chunks/<GUID>` cache pool only (assembly stays Java); plan cross-checked vs Java before any fetch, any mismatch → Java pool. **GOG** `store_dl/gog/*`: all four Java loops (gen2 base/DLC/deps, gen1 ranges via stream mode) on one adapter; secure-link refresh stays Java; N = `gog_dl_threads`/clamp(cores×2,6,16). **Amazon** `store_dl/amazon/*`: whole files, stream mode 8-wide, SHA-256 per piece, `.tmp`→rename as Java.
+> - CI: core runs 34093976550/34094649948, epic 34095747753 (287 host tests), gog 34095883849 (278), amazon 34095878885 (273), integration `rustdl-all-r1` run 34096759094 GREEN standard/pubg/ludashi. Staged `/sdcard/Download/Bannerlator-rustdl-all-r1-pubg.apk`. ✅ **DEVICE-PROVEN 2026-09-07 03:53-04:05** (pubg `1889e5fb…` installed): GOG Gunslugs 3 (86 MB/552 files) Rust 10.2 s (Java baseline ~4.5 s — slower on tiny files, morning item); Epic Alone With You (298 MB/324 chunks) Rust 12.4 s @ 24 MB/s vs Java 11.4 s @ 27.6 MB/s (equal, both capped at 8); Amazon Dread Templar (4.2 GB/355 files, stream mode) Rust 71.5 s avg 470 Mbps peak 579 vs Java 68.4 s (equal). Behaviour identical on all three: install dir, exe pick, library row, uninstall, resume state. Proof grammar: `logcat -s BL_EPIC_DL BL_GOG_DL BL_AMAZON_DL` → `engine=rust` + `fetch-window` + `summary` lines; `[rust]` lines mirrored into `bh_<store>_debug.txt`.
+
+## 2026-09-07 — ✅ **AMA bot rewrite PROVEN on test issue #480** (`71675836`), + concurrency bug fixed (`c57e335d`)
+> First live run had the right shape but called a main-only fix "in 3.0.7"; the workflow now fetches the release tag and hands the bot the files changed since it, and the prompt forbids "fixed in <release>" for those. Second run: accurate, ~200 words, plain language, verified refs. Also found+fixed: issues created WITH a label fired opened+labeled a second apart and the shared concurrency group cancelled the real run (silent no-answer) → group keyed per event, queue instead of cancel. #480 closed.
+
+## 2026-09-06 — 🤖 **AMA bot answer-quality rewrite** (`4fac5c3f`, main) — shorter plain-language replies, never "I fixed it"
+> `.opencode/agent/ama-agent.md` rewritten (layman voice, 80-200 words, no tables/code dumps, ≤3 refs in a trailing `Checked:` line, verified-only claims, maintainer's-call wording, routing rules: per-game → community, Mali → board, VEGAS → isygold). `ama-answer.yml`: reply extracted after a `<<<ANSWER>>>` marker (narration-strip fallback), current versionName injected into the question. YAML + awk logic verified locally; ⏳ awaiting the next real issue to prove on.
+
+## 2026-09-06 — 🗂️ **Issue-tracker triage: 28 → 6 open** (+ #471 VEGAS forensics, + binder mixed-mode finding)
+> Closed with short replies: game-specific → community (#477 #407 #465 #464 #467 #424 #425 #415 #478), Mali → report board (#453), VEGAS → isygold + Mali link (#471), chatter/no-info (#472 #434 #435 #459 #470 #427 #479), fixed (#410 → dc8e5fb6; #431 + #475 → `00ef3a07`, user-confirmed).
+> - **#471 device forensics (root bridge, pubg build):** VEGAS 1.11.1 Sarek install SUCCEEDED (`contents/VEGAS/vegas-1.11.1-60383b1-1783652018/` complete 22:25:28); the sheet has no Installed marker so a re-tap 11 s later re-downloaded, re-extracted, and hit `ERROR_EXIST` → generic "Install failed". Package itself verified good (same layout as 1.11.2). UX fix (installed checkmark + "already installed" wording) NOT built. Screenshots parked at `docs/issue-attachments/471/` (`d7db7f93`).
+> - **Controller binder (Discord report):** binding ANY physical button flips the pad to remapped mode; unbound buttons are NOT native and go silent (`WinHandler.sendGamepadState` ~:1188 writes `remappedState` only). Shipped workaround = orange banner "Fill → native" (`VisualControllerBinder.kt` ~:190). User: wait, no engine change.
+> - Still open: #469 #426 #451 #446 #452 #433.
+
+## 2026-09-06 — ✅ **#431 + #475 MERGED to main `00ef3a07`** (revert `git revert -m 1 00ef3a07`) — user-confirmed on device, both issues replied + closed
+> Build `fix-431-475-r1` (run `34070719965`, sha `73ea0694…`) tested by the user: Relative Mouse survives relaunch per game; file-manager grid rows level. Merge file list verified = `XServerDisplayActivity.java`, `FileManagerScreen.kt`, `PROGRESS_LOG.md` only. Next release notes: credit **@sandzmi5** (#431) and **@Devaspe** (#475).
+
+## 2026-09-06 — 🖱️🗂️ **Issue fixes: #431 Relative Mouse persisted per game · #475 file-manager card view uniform tile height** (branch `fix/relative-mouse-persist-card-height` off 3.0.7 main)
+> Triage session: closed #410 (fix `dc8e5fb6` already shipped in 3.0.5+, asked retest on 3.0.7), closed 8 game-specific reports with a community pointer, #453 pointed at the Mali report board. First two app-side fixes picked from what remained.
+> - **#431 (@sandzmi5):** `XServerDisplayActivity` — drawer `onRelativeMouseMovement` now persists extra `relativeMouse` to the shortcut (or the container when not shortcut-launched), mirroring the Present Mode / FPS-limiter owner rule; a seed block right after `xServer = new XServer(...)` reads it back (container → shortcut override), applies to the X server and echoes to `XServerDrawerState`. Disable Mouse stays session-only.
+> - **#475 (@Devaspe):** `FileManagerScreen.kt` `FileGridTile` name text `minLines = 2` so every card is the same height.
+> - Commit `37949e6b` → CI run `34070719965` (`fix-431-475-r1`, headSha verified) GREEN standard/pubg/ludashi. Staged `/sdcard/Download/Bannerlator-fix-431-475-r1-pubg.apk` sha `73ea0694…`. Awaiting device test.
+
+## 2026-09-05 — 🎮📥 **Input Controls: ICP import flow — icon direction fix, Compose import chooser, per-profile layout preview** (branch `feat/icp-import-compose-preview` off `main` `ef7a8a17`, worktree `/home/claude-user/bannerlators-icp`)
+> User (3 screenshots): import/export arrows read backwards; the import source pop-up was a raw `android.app.AlertDialog.Builder` list (not our outlined Compose dialog); the Download Profiles list needed a "view example" per row like the On-Screen tab's preview. HTML mock (`/sdcard/Download/icp-import-preview.html`) approved, then implemented on a fresh branch.
+> - **Icons (`InputControlsScreen.kt` overflow menu):** Import ICP / ICpx → `FileDownload` (into the app, arrow down); Export ICpx + Export legacy ICP → `FileUpload` (out of the app, arrow up).
+> - **Import chooser:** new `showImportChooser` state → `OutlinedAlertDialog` with three `ImportSourceRow`s (accent icon + title + muted hint) separated by `MenuItemDivider()` (thin outline-grey line, per the menu-style rule), body `verticalScroll` so landscape never collides with the Cancel bar. Open File → in-app `InAppFilePicker` (primary), Pick via system → SAF `OpenDocument`, Download File → the existing Download Profiles dialog. Legacy builder removed.
+> - **View example:** each Download Profiles row gets a trailing eye `IconButton` → `previewItem`; a stacked `OutlinedAlertDialog` fetches the community `.icp` via `HttpUtils.download` (cached in `previewCache` per file name), builds a **file-less** profile with new `ControlsProfile.createPreview(context, json)` and draws it through `LayoutPreviewFrame` — the same read-only `InputControlsView` thumbnail the On-Screen tab uses (extracted from `OnScreenLayoutPreview`; tap-to-edit is now optional). Close / **Select** (ticks the row's checkbox). Loading spinner + "Unable to download file" fallback.
+> - **`ControlsProfile.java`:** `previewData` + `readProfileJSON()` — every disk read (`loadElements`, `ensureGroupsLoaded`, `loadControllers`, `hasElementsOnDisk`) now goes through one helper that returns the in-memory document for previews, the atomic file otherwise; `save()` refuses on a preview; legacy negative icon ids normalised like the importer does. On-disk profiles behave exactly as before (same file, same parser).
+> - ✅ Commit `6e64ecab` → CI run `33988506457` (`icp-import-r1`) GREEN on standard/pubg/ludashi. Staged `/sdcard/Download/Bannerlator-icp-import-r1-pubg.apk` sha256 `36fa8bd1…a8a8a` (1306 entries verified). ⚠️ NOT device-run. Next: user installs → check all three screens (portrait + landscape).
+
+## 2026-09-05 — 🎮🔑 **EA-on-Steam: GameHub first-run of NFS Payback captured live — the mechanism is the real Steam client, not an installscript engine**
+> User launched Payback in GameHub (fresh EA state) while a logcat + 2 s process poller recorded (`/data/local/tmp/ea-capture`, copies in `lsfg-native-stage/ea_*.txt`). Sequence: new Proton-11-arm64ec container → **wine-mono 10.1.0 MSI installed first** → genuine `steam.exe --username --token` + steamservice → **`SteamService.exe /installscript …\runasadmin.vdf 1262580`** (Steam itself) → `EAappInstaller.exe EAX_LAUNCH_CLIENT=0 IGNORE_INSTALLED=1` → EA MSI with **managed .NET custom actions** (`juno-custom-actions!JunoCustomActions.*` via rundll32 — the reason our Aug attempt died at `0x8007065b` without mono) → vcredists (Steamworks Shared 228980 + EA's) → `Link2EA.exe link2ea://launchgame/1262580?platform=steam` → `EADesktop.exe -ls=BackgroundService -silent --disable-gpu …` (UI software-rendered, so no OpenGL wall) → `EASteamProxy.exe` → game; title screen reached; ⚠️ user CORRECTION: EA Desktop showed a manual email/password sign-in window first (CEF UI software-rendered under `--disable-gpu`) — the "You're signed in" toast followed that login. FEX global TSO=0, no EA AppConfig needed.
+> - **For Bannerlator:** EA = our SteamLite launch path (`RealSteamLauncher` stages client + `appmanifest` StateFlags 4 + `--applaunch`) in a P11 container WITH wine-mono, plus Steamworks Shared (228980) download/manifest which we don't do today. Our installScript executor (`f9048bab`, Ubisoft P1) is for non-client launches only. ⏭️ test on device: Payback via our Steam store → SteamLite launch in xuser-3.
+
+## 2026-09-05 — ✅ 568 follow-ups on main: `be13c44b` (fast-forward after CI `33980365701` green on all three flavours); staged `Bannerlator-lsfg-native-568-main-r1-pubg.apk` sha `485c9937…`. vc frozen 80. NOT device-run on main yet.
+
+## 2026-09-05 — 🔁 **568 follow-ups cherry-picked onto main (post-3.0.6)** — branch `feat/lsfg-native-568-main`, artifacts build, fast-forward to main on green
+> User: "cherry-pick the 568 branch onto main and rebuild as artifacts only." Picked `5ea7c318` (present-per-generation · chain GPU ms readout · shader cache at import) + `a8566465` (process() every frame · refresh ceiling from the panel's top mode) onto `e0f54620`. One conflict, `SettingsScreen.kt` DLL section wording (568 said "lsfg-vk / LSFG Native", the retirement says "LSFG Native") — resolved to the retired two-engine wording plus 568's shader-status line. Renderer/JNI/activity applied clean. vc stays FROZEN 80 (post-stable, artifacts only).
+
+## 2026-09-05 — 📱 3.0.6 notes + README: LSFG Native device-support note (Adreno A7xx+ and some Dimensity, per community testing)
+> Release body re-applied via `gh release edit`; `docs/releases/3.0.6.md` and README frame-gen bullet updated.
+
+## 2026-09-05 — 🏁 **3.0.6 STABLE = Latest, tag on `dfe3782e`** (vc80; run `33978119820`; 3 APKs + update.json)
+> ✅ VERIFIED: tag `3.0.6` == built commit `dfe3782e` (no drift — main frozen through the publish job), isDraft=false, isPrerelease=false, `releases/latest` → 3.0.6, `update.json` vc80 / vn 3.0.6 + one-liner notes ending "Full notes below.", 3 flavour APKs (~530 MB each). Rich notes applied post-cut via `gh release edit 3.0.6 --notes-file` (3.0.5 house style + **"How to use LSFG Native"** section with per-panel cap×multiplier table + **"Where to get Proton 9"** restored + credits: Eden Team / camillelavey, WinNative, PancakeTAS, doitsujin, THS) — live body checked: has_howto / has_proton9 / has_credits all true. `docs/releases/3.0.6.md` == body, pushed after publish (`ec5b2419`).
+
+## 2026-09-05 — 🏁 **3.0.6 STABLE CUT — version bump vc79→80** (LSFG Native · lsfg-vk retired · GOG/Epic/Amazon storefronts)
+> Cut from `main` on top of `e8fbc4c4`. This commit = bump + README (version line, frame-gen section for two engines, credits: **Eden Team / camillelavey** + **WinNative** for LSFG Native, DXVK `dxbc`, lsfg-vk rows marked retired) + THIRD-PARTY-LICENSES rows (DXVK dxbc Zlib, Eden GPL-3.0) + `docs/releases/3.0.6.md` (= release body). Dispatch `release.yml --ref main` next; rich notes applied post-cut via `gh release edit 3.0.6 --notes-file /home/claude-user/bl-release-prep/notes-3.0.6.md`; update.json `notes` = one-liner. ⛔ nothing else to main until the publish job finishes (tag-repoint hazard).
+
+## 2026-09-05 — ✅ **lsfg-vk retired from the engine list — MERGED to main `059c57d3`** (revert `git revert -m 1 059c57d3`)
+> `feat/retire-lsfg-vk` (`2ec0187a`) merged --no-ff after CI `retire-lsfg-vk-r1` green on all three flavours. Two engines remain: win-fg, LSFG Native. Legacy "lsfg" container/shortcut values resolve to "lsfg-native". lsfg-vk code parked in place; plumbing work parked on `feat/lsfg-vk-plumbing` @ `008a92a6`. Main build `main-lsfg-native-only` run `33948700463` → staging. Gotcha hit: the merge watcher's `git checkout -B main` failed ("main is already used by worktree bl-wt-main") and its unconditional `echo MERGED` misled the follow-on builder → merged via detached HEAD + `push HEAD:main`; misled run 33948666252 cancelled.
+
+## 2026-09-05 — 🅿️ **lsfg-vk RETIRED from the engine list; plumbing branch PARKED** (user: "native seems like the best way to go")
+> After r5 proved lsfg-vk's frames CAN reach the panel (30→90 delivered=presented), the user chose LSFG Native as the one path and asked to park lsfg-vk. **Parked:** `feat/lsfg-vk-plumbing` @ `008a92a6` (r7 staged `0f0beefb…`, never device-run: pacer telemetry, HUD hysteresis, auto-enable default off) — everything learned is in the branch + [[project_bannerlator_lsfg_vk_plumbing_native_way]]. **Retired (this branch `feat/retire-lsfg-vk` off main `96a8f08a`):** "lsfg" removed from both engine dropdowns (container editor + per-game), legacy "lsfg" values resolve to "lsfg-native" in `Container.getFrameGenEngine()` and `resolvedFrameGenEngine()`, Settings section/glossary/README reworded to two engines. lsfg-vk code paths (launch env, conf.toml, drawer perf toggle, layer asset) remain in place, unreachable.
+
+## 2026-09-05 — ✅ **Amazon store parity MERGED to `main` → `d12e0387`** (USER-CONFIRMED on device: "works")
+> Merge commit on the user's instruction; revert with `git revert -m 1 d12e0387`. 15 files, +1,296/−210 — file list scanned before push, exactly the expected set. Old main `49feedec` had not moved. CI-green (`33944416886`) and device-confirmed on the staged `amazon-parity-r1` pubg APK (sha `d9ca5187…`). All four stores now share the Store / Library / Profile shell (Steam also has Friends) and the Steam-style detail scaffold; Games-tab badges cover STEAM / EPIC / EOS / GOG / AMAZON / CUSTOM.
+
+## 2026-09-05 — 🟠 **Amazon Games brought to store parity + AMAZON shortcut badge + poster covers** (branch `feat/store-parity-amazon` off `main` `49feedec`, worktree `/home/claude-user/bannerlators-amazon`)
+> Same shape as the GOG/Epic flip: `AmazonMainActivity` rewritten as a Store / Library / Profile host over `StoreSectionHost`; `AmazonGameDetailScreen` re-mounted on `StoreDetailScaffold` (Details · DLC tabs, gear = Cancel / Set .exe / Check updates / Update now / Uninstall; handlers unchanged). New `AmazonLibraryRepo` mirrors the games screen's sync (entitlements → `amazon_dlcs_` → update check → same cache) and **backfills a SteamGridDB 600x900 poster per title into `amazon_vcover_<pid>`** (40 per pass, misses recorded) because Amazon only publishes a square icon + wide background. `AmazonUserData` tries `api.amazon.com/user/profile` (fail-soft — the Games token may lack the scope).
+> - **Store tab is honest:** Amazon has NO third-party catalog; Prime Gaming claims are web-only. The tab is a Prime Gaming card (Claim / Browse → `StoreWebActivity` on gaming.amazon.com; closing re-syncs entitlements) + rails cut from the user's own entitlements (Ready to install · Updates available · Installed) + search.
+> - **Shortcuts:** `StarLaunchBridge.addToLauncher(activity, name, exe, cover, storeSource, preferSgdbCover)` — new store-tagged overload; core `writeShortcutAsync` gains `storeSource` (stamped as `storeSource=` when no Steam appId / Epic meta claims it) and `preferSgdbCover` (SGDB poster FIRST, store URL as fallback). Amazon call sites (games list ×2, detail ×2) now pass `"amazon", true` → new Amazon shortcuts get a proper 2:3 poster like Steam/GOG/custom and an explicit tag. GOG helper's plain overloads now stamp `"gog"` too (badge no longer path-only).
+> - **Games tab:** `ShortcutBadgeOverlay` gains `showAmazon` (both call sites — list row + grid tile); `AmazonBadge` = Amazon-orange `#E47911` pill "AMAZON"; `isAmazonShortcut` = `storeSource==amazon` OR exec path under the `Amazon/` install root (`imagefs/Amazon/<title>` → `Z:\Amazon\…`, regex `(^|[\\/])Amazon[\\/]`) so pre-existing untagged Amazon shortcuts badge too; `isCustomOriginShortcut` excludes it (no more CUSTOM on Amazon games). `LaunchMethodSheet.GameSource` gains AMAZON (Raw-only, own subline/description).
+> - ✅ Commit `e45712aa` → CI run `33944416886` (`amazon-parity-r1`) pubg GREEN first try. Staged `/sdcard/Download/Bannerlator-amazon-parity-r1-pubg.apk` sha256 `d9ca5187…15b33` (1306 entries verified); the superseded store-parity r2 APK removed from Downloads. ⚠️ NOT device-proven. Existing Amazon shortcuts keep their old square-icon art until re-added (art is written once at shortcut creation).
+
+## 2026-09-04 — ✅ **Store parity MERGED to `main` → `0c0ed04c`** (GOG + Epic store-first + shared Steam-style detail scaffold)
+> Merge commit on the user's instruction; revert with `git revert -m 1 0c0ed04c`. 24 files, +5,939/−808 — file list scanned before push, exactly the expected set (22 new/changed store files + manifest + this log). Old main `d7d0f7bb` had not moved. CI-green on the branch (r1 `f6a8b0e5` all three flavors, r2 `dcba2b3d` pubg); ✅ **DEVICE-CONFIRMED by the user after the merge ("it works, I tested it")** on the staged r2 pubg APK (sha `d759129d…`). Per-surface detail (GOG vs Epic, claim WebView, rotation) not itemised by the user. Steam code and every download / cloud-sync path untouched (verified by diff).
+
+## 2026-09-04 — 🛒🛒 **GOG + Epic go STORE-FIRST, and every non-Steam detail page moves onto the Steam layout** (branch `feat/store-parity-gog-epic` off `origin/main` `d7d0f7bb`, worktree `/home/claude-user/bannerlators-storeparity`)
+> The Steam section's store-first shell (Store / Library / Friends / Profile, top tabs in portrait, a 96dp rail in landscape) is now the shape of ALL three sections, and the Steam game-detail layout (hero → name → one primary button + ⚙ gear → pill tabs) is the shape of every detail page. Steam's own code is untouched on purpose — everything here is a re-cut over shared, store-agnostic pieces so a Steam regression is impossible from this branch.
+> - **Shared:** `StoreCatalogUi.kt` (a `CatalogItem` model with PRE-FORMATTED prices + the rail card / result row / hero / 2:3 library tile / action button / search field), `StoreSectionHost.kt` (the generic tab-or-rail host), `download/StoreDetailScaffold.kt` (the Steam detail scaffold: primary button with the read-only two-layer download fill, gear dropdown on the app's outlined menu card, pill tab strip), `StoreWebActivity.kt` (in-app WebView sharing the app cookie jar — GOG and Epic have NO add-to-library API for third parties, a free claim is their web checkout, so "Get for free" / "View on …" land there; finishing bumps a tick that re-syncs the library), `StoreCatalogDetailActivity.kt` (detail page for a title you DON'T own: description + screenshots + price + the web action, both stores), `StoreNet.kt`.
+> - **GOG:** `GogStoreCatalog` hits the PUBLIC `catalog.gog.com/v1/catalog` (verified live: trending / `desc:releaseDate` / `discounted=eq:true` / `price=between:0,0` / `query=like:`; products carry `coverHorizontal`/`coverVertical`, `price.final`/`base`/`discount` pre-formatted, `operatingSystems`, `storeLink`) + `api.gog.com/products/{id}?expand=description,screenshots` for detail; rails mirrored to disk for instant/offline paint. `GogLibraryRepo` mirrors the games screen's owned-id-diff sync (same cache, same DLC buffer, same per-id prefs, SGDB cover + gamesdb vertical cover) so the Library tab fills itself on first open. `GogUserData` reads `userData.json` in full (avatar, Galaxy id, owned/wishlist counts, and the embedded **friends roster** — no presence, and the tab says so). Host = `GogMainActivity` rewritten; the full `GogGamesActivity` stays one tap away (list view, in-list installs).
+> - **Epic:** `EpicStoreCatalog` uses `store.epicgames.com/graphql` with a browser UA (verified live — `graphql.epicgames.com` is GONE/404, `www.epicgames.com/graphql` is a captcha wall; `searchStore` with `onSale` / `freeGame` / `releaseDate` / keywords, `catalogOffer` for detail, `items{id}` for ownership matching against the library's catalogItemIds, namespace as fallback) + the existing `freeGamesPromotions` feed for "Free This Week". `EpicLibraryRepo` mirrors the games screen's sync (identical cache incl. cloud-save prefs + `epic_dlcs_` map). `EpicUserData` = account service + friends summary + bulk display-name resolve (fail-soft; roster only). Host = `EpicMainActivity` rewritten.
+> - **Detail re-mounts:** `GogGameDetailActivity` / `EpicGameDetailActivity` screens rebuilt on the scaffold — Details (chips + description + Updates + Prerequisites) · DLC (count badge on the tab) · Cloud saves; gear = Cancel download / Set .exe / Copy to Downloads / Check for updates / Verify-repair / Install prerequisites / Uninstall. All handlers unchanged, only the layout moved; the Activities' call sites are byte-identical.
+> - **Manifest:** `GogMainActivity` / `EpicMainActivity` get `sensor` + `configChanges` + `singleTop` + `adjustResize` (rotation recomposes instead of restarting, like Steam); `StoreWebActivity` + `StoreCatalogDetailActivity` registered.
+> - ⚠️ **Not compile-verified locally** (no toolchain — CI is the compiler). ⚠️ NOT device-proven. Unverified-without-a-token: GOG `userData.json` `friends[]`/`avatar` shape, Epic friends-summary + bulk-account endpoints (both fail-soft → notice, never a crash). vc untouched (79).
+> - ✅ Commit `f6a8b0e5` → CI run `33940483471` (`store-parity-r1`, headSha verified) — **pubg + standard GREEN on the first build** (ludashi still finishing its informational Rust step at staging time). Staged `/sdcard/Download/Bannerlator-store-parity-r1-pubg.apk` sha256 `2b6889fa…4bdec` (529,862,243 B, 1306 zip entries verified).
+> - **r2 (user decision):** Friends tabs DROPPED on GOG and Epic — both rosters are real (Galaxy friends / Epic launcher friends) but empty for almost everyone; the count + a short avatar/name row stay on Profile. Hosts are now three tabs: Store / Library / Profile. Steam keeps its Friends tab.
+> - ✅ r2 commit `dcba2b3d` → CI run `33941770783` pubg GREEN. Staged `/sdcard/Download/Bannerlator-store-parity-r2-pubg.apk` sha256 `d759129d…32cc8` (529,853,136 B, 1306 entries verified); r1 APK removed from Downloads.
+> - ⏭️ user test: GOG/Epic Store tabs, search, free-claim WebView, Library sync, Friends/Profile, detail pages (owned + catalog), rotation.
+## 2026-09-04 — 🐞 **568-r1 DEVICE RUN: "running bad" = engine never warmed (my regression) → r2**
+> Installed sha verified `b3833e1d…`. DiRT, cap 30, LSFG Native 2×. Log: `pace gen=1 … guest=30.0 … cold` on every telemetry line and `presented=29.9 fps` = guest rate → **zero generated frames all session**. Cause: the r1 `recordCmdBuf` tail called `process()` only when a generation was planned; `process()` is where the engine counts frames (`frameCount_`) and warms (`kRequiredFrames`), so it stayed cold and `plan()` returned 0 forever. r11 called it every frame. Fix: `recordFrameGenProcess()` unconditional on the composite path.
+> - Also seen: `refresh=60.0` fed to the pacer on a 144 Hz panel (`Display.getRefreshRate()` under a frame-rate override; `dumpsys display` shows mode 1 = 144 active). `HeadroomLimit()` uses it → at 4× would clamp to 2×. Fix: `currentDisplayRefreshHz()` = max(panel highest mode, getRefreshRate()).
+> - Added `lsfg-native: chain X ms per generated frame` log every 120 samples so the cost lands in logcat next to the pace lines.
+> - No errors from the per-generation submit path itself (no EndCommandBuffer/acquire/fence lines), but it has NOT generated a frame yet either — r2 is its first real test.
+
+## 2026-09-04 — 🎞️ **LSFG Native follow-ups 5/6/8 built** (branch `feat/lsfg-native-568` off main `d7d0f7bb`)
+> User picked three of eight proposed improvements (win-fg native port dropped for now at `feat/winfg-native-compositor` `c5527592`, r2 staged, never device-run).
+> - **(8) Present per generation** — one command buffer per pending present (`cmdSlot(k)`, `cmdBufs` = 2×4); slot 0 carries composite + shared chain + gen 0, later gens and the real frame each get their own submit+present. Fence on the last submit (ordered after all prior submissions); empty fence-carrying submit on early exit; per-buffer memory barrier for cross-buffer ordering. Non-FG path is byte-for-byte the old single submit.
+> - **(6) Chain GPU cost** — timestamp query pair per frame slot around process→last generateInto (end at COMPUTE_SHADER, before the copy), read after the slot's fence wait, smoothed; stat [5]; drawer readout appends "x.x ms/frame GPU".
+> - **(5) Shader cache at import** — Settings builds the cache after Detect/Import and on open if stale ("Preparing shaders for LSFG Native…" → "Shaders ready"); Remove deletes it; section relabelled for both engines.
+> - ⏭️ CI `lsfg-native-568-r1` → stage pubg → device: DiRT capped 30/36, 4×: confirm 118/144 still reached (item 8 is the risky one — the renderFrame restructure), readout shows ms/frame, Settings shows the shader status. Compiles: unverified until CI.
+## 2026-09-04 — 🦆🎞️ **Win-FG Native: win-fg ported onto the LSFG compositor seam** (branch `feat/winfg-native-compositor`, off main `d7d0f7bb`)
+> The compositor slot that LSFG Native is device-proven on takes a second engine: win-fg, our own MIT chain (10 compute shaders, embedded SPIR-V, needs no Lossless.dll). New `cpp/winlator/winfg/` = chain copied unmodified (`framegen.cpp`, `record_impl.inc`, `embedded_shaders.hpp`) + `winfg_vkd` dispatch shim (36 entry points off the renderer's VkTable) + `winfg_engine` adapter with the same prepare/plan/process/generateInto contract as `lsfg::Engine` (own 2-slot sampled input ring, alpha 0.35 at 2×, evenly spaced at 3×/4×, gmSlot rotated per source frame — safe with 2 frames in flight / 3 slots).
+> - Renderer: `setFrameGenEngine(0|1)` + `setWinFgTuning(model,preset)`; plan/record/stats branch on the kind; win-fg gate = storage-on-swapchain-format only (`fgCapsOk()`); renderer now measures source rate too (win-fg has no engine-side rate). JNI + `VulkanRenderer.java` pending-replay for both.
+> - App: engine key `bionic` unchanged; on Vulkan it is native (`winFgNativeSession`, decided from launch config; guest layer only when training capture is on) — no WIN_FG_ENABLE, no conf.toml, no layer reset. Live toggle → `applyWinFgNative`. `nativeFrameGenEngine()` now drives FIFO-while-multiplying, limiter/VRR locks, VRR suppression and the base→shown HUD for both native engines. Badge/labels "Win-FG Native".
+> - ⏭️ CI `winfg-native-r1` → stage pubg → device: DiRT Showdown capped 30, Win-FG Native 2× (expect ~30→60), then 4× vs the LSFG Native 118 baseline. Compiles: unverified until CI. Nothing device-run.
+
+## 2026-09-04 — ✅ **LSFG Native MERGED to `main` → `c2389ef4`** (on 3.0.5 `26831fc2`, vc 79)
+> Merge commit; revert with `git revert -m 1 c2389ef4`. 113 files, +35,174/−70 (25k of it the vendored DXVK `dxbc` translator). File list scanned before push — nothing outside the expected areas. Branch rebased onto main first (34 commits, zero conflicts), then README and plan docs brought up to date (`cd9aa601`).
+> - Merged on the user's reaffirmed instruction after one flag: the r10-onward lock path — limiter locked on, VRR locked off, launch-off, and the stuck-FIFO fix — has **no device log evidence yet**. The r10 log's buffer was cleared mid-run (no `locks ON/OFF` lines) and the APK installed at that moment was vc79/3.0.4, i.e. none of the staged builds. Everything else on the branch is device-proven.
+> - ⏭️ First thing next session: one run on r11 (or a main build) — arm, confirm Limit FPS and Auto refresh grey out, disarm, confirm they restore — and grep the log for `locks ON` / `locks OFF`.
+
+## 2026-09-04 — 🎉 **LSFG Native DEVICE-PROVEN: 30 fps in, 118 fps at the panel** — plus a HUD honesty pass (r8 `23efff40`)
+> DiRT Showdown (D3D9/DXVK), AYANEO Pocket FIT / Adreno 750, pubg flavour, installed sha verified each run.
+> - **The result.** Guest locked at **30.0–30.1 fps**; measured at the swapchain **89.8 fps at 3×** and **119.8 fps at 4×** — within 0.4% of theoretical. Independently confirmed by the **AYANEO system overlay** (89 and 118), which is separate code from our instrumentation and agrees to about 1%. The user confirms it feels smoother, which is the half no log can answer.
+> - **It is not stealing from the game**: the guest held 30.0 throughout, and the device ran **GPU 79% at 67 °C while generating three frames for every real one** — cooler than the same device was earlier in the day while generating *nothing*, which is how large the shared-chain bug was.
+> - **What unblocked it was disabling the governor**, at the user's decision. Every earlier build had it silently refusing to generate.
+> - **The right test case matters.** DiRT Showdown has a hard 30 fps cap (33.3 ms) and is exactly what frame generation exists for. DiRT Rally 2.0 at ~98 fps is not: nothing to add, and only about one generation of panel headroom. Chasing the feature on the wrong title cost several runs.
+> - **HUD honesty pass.** Every in-app HUD is ticked from `onUpdateWindowContentDirect` — once per GUEST frame — so it counts what the game draws and is structurally blind to frames added after it. It read 30 while the panel showed 118. DXVK's overlay has the same blind spot for the same reason; neither is broken, but a user looking at our own HUD would reasonably conclude frame generation was not working, and only a system-level overlay could tell them otherwise.
+> - All five styles now show **`30→118`**: classic, horizontal, fusion (all five layouts — one change, because they route through `fpsText()`), gamehub and gamenative. Pill and minimal shrink the number to 55% while carrying two figures, since 30sp/34sp was sized for one and would otherwise stretch the pill across the screen.
+> - **The rule is symmetric, which is what makes it useful for win-fg.** win-fg is the mirror case: it generates *inside* the guest, so the counter already includes its frames and its failure is frames being *dropped* before the panel — HUD 70, display 35. The arrow now appears when the present rate differs from the counter by more than 10% in **either** direction, so a loss is visible too. That was previously undetectable from inside the app, and is exactly what the paused win-fg branch is chasing.
+> - AVG and the 1% / 0.1% / 0.01% lows deliberately stay on the guest rate in every style: they are stutter measures, and interpolated frames are evenly spaced by construction, so counting them would fake perfection and hide genuine hitching.
+> - ⏭️ Open: the panel clamp (never binds at 30 fps base, so may not matter); merge to main; whether to keep the governor behind its flag or remove it.
+
+## 2026-09-04 — 🦆🎞️ **LSFG Native: six device runs, nine bugs — chain fix lands, governor disabled by request → r7 `730f31a8` (PAUSED)**
+> Continues the entry below. Six on-device runs on DiRT Rally 2.0 (AYANEO Pocket FIT / Adreno 750). Branch `feat/lsfg-native-compositor`, vc frozen 78.
+> - **🔑 The root cause of everything: the shared chain ran while generating nothing.** `Engine::process` gated `DispatchShared` on `warm_` rather than `generations > 0`. The shared chain is 24 of the 25 shaders — the whole flow pyramid — and only `generate` runs per generated frame, so with the governor granting zero we paid almost the full cost of frame generation, every frame, for no frames at all. It was self-sustaining: the chain collapsed the source rate, the governor read the collapse and refused, and refusing did nothing to stop the chain. That is also why lowering DiRT's own settings had not moved the GPU off 100% — the load was ours.
+> - **📊 Honest attribution, after the user corrected an overclaim of mine.** I reported the guest going 38 → 98 fps as the chain fix. Wrong: r3 (original settings) ~38, r5 (user's LOWER settings, chain still running) ~69–76, r6 (same settings, chain fixed) ~88–98. The settings change did the heavy lifting; **the fix is worth about +25%**. I compared across a settings change without noticing.
+> - **🐞 Crash on the flow-scale slider** — mine, introduced by the forced-FIFO change: `applyLsfgNative` → `applyEffectivePresentMode` wrote the drawer StateFlow even when unchanged → recomposition → the FG controls re-fired their callback → back into `applyLsfgNative`. Caught going round four times in four milliseconds. Early-return when the mode is unchanged.
+> - **🐞 The thermal gate could never recover.** `cap()` runs ~40×/s and the SEVERE branch did an unconditional `accepted_--` (zero in three frames) plus an unconditional `enterBackoff()`, which reset the backoff clock every call — so it returned zero without ever measuring and had no path back to measuring. Now one decay per second, backoff only on an actual decay.
+> - **🐞 The governor was measuring the guest rate, not the panel rate.** `LsfgPacer` samples its "loop rate" once per SOURCE frame, so it equalled the guest rate by construction and carried no evidence a generated frame was ever presented — the accept test compared a number against a smaller version of itself and could never say yes, on any hardware. The renderer now counts actual presents over a half-second window; the readout uses the same number, so "real → shown" finally reports something real.
+> - **🐞 `setGuestExtent` was never called** — the flow pyramid was built at full composite resolution regardless (`flow 1920x1080 scale 1.00 (guest 0x0)`), the most expensive setting available, as a silent default.
+> - **🐞 The chain's input ring was seeded every frame unconditionally** — a full-resolution copy, ~1.7 GB/s at 100 fps, while producing nothing. Now gated on whether history is actually wanted, resuming during Baseline so the ring is full before a probe.
+> - **🔇 THREE silent decision paths shipped in one feature** (acquire OUT_OF_DATE; the in-game toggle; both governor refusals). Each cost a device run to diagnose. Standing lesson: instrument every early return before shipping a device build.
+> - **⚙️ Governor now OFF by default, at the user's decision** — "my own device throttling works just fine". The multiplier is what was requested, clamped only by panel headroom; the probe/backoff code stays behind a flag as the right answer for a device without good native throttling. On the request to "raise the temp thresholds to 115": there is no temperature in it — Android reports a coarse status, not degrees — so the equivalent was done, block raised to CRITICAL and stop-growth to SEVERE. A handheld under 3D load sits at SEVERE routinely, so the old thresholds refused on a correctly-behaving device.
+> - **📏 No 100 fps cap exists.** No limiter was set; presented matched guest because nothing was generated. The panel clamp binds only above ~45 fps base: 30 → 120 at 4× is unclamped, which is the case that matters. Above 144 Hz nothing is displayable anyway — FIFO blocks and back-pressures the guest, MAILBOX discards. Removing the clamp entirely was offered and is undecided.
+> - ⏭️ **DiRT has stopped being a useful test case**: it now runs ~98 fps, so frame generation has little to add and only ~1 generation of panel headroom. The real test needs a genuinely ~30 fps title. r7 is the first build where 4× actually means 4×.
+
+## 2026-09-04 — 🔴🦆 **LSFG Native r1 device run FROZE — 3 bugs + 3 integration faults, all fixed → r3 `2c1f9495`**
+> First on-device run of the native compositor LSFG engine (DiRT Rally 2.0, AYANEO Pocket FIT / Adreno 750, pubg `com.tencent.ig`). Installed APK sha256 verified == staged (`183953ec…`) before any debugging. Log archived `/sdcard/lsfg-native-test-r1.log`.
+> - **✅ The hard parts work.** Probe passed: `lsfg-native: supported (device Vulkan 1.3.128, fmt 37) (features enabled=1, storage-on-fmt=1)`. The 25 shaders came out of the user's own `Lossless.dll`, the chain built, the engine reported ready, and the game ran armed for 3.5 minutes.
+> - **🐞 THE FREEZE = a swapchain-recreate loop, not a crash.** 279 `swapchain created` lines; the screen froze while audio and controller rumble continued, because the guest is a separate process and was perfectly healthy — only presentation stalled. It began at the FIRST frame-gen toggle (14:52:59 disarm) and never recovered, looping even while DISARMED at a normal imgCount=5 — so not the image count. **Cause:** toggling sets `fbResized` while a frame is in flight; that frame had already acquired an image, signalling its `imgAvailSems[]`, then returned early — leaving the semaphore **signalled with nothing left to wait on it**. Reusing it in the next `AcquireNextImageKHR` is invalid and Adreno answers `OUT_OF_DATE`, which sets `fbResized` again. **Fix:** `recreateSyncObjects()` rebuilds every semaphore with the swapchain. ⚠️ The failure was **completely silent** — the acquire `OUT_OF_DATE` path logged nothing, which is why this needed a log dump rather than being obvious on the device. Now logged (rate-limited).
+> - **🐞 IT NEVER GENERATED A SINGLE FRAME.** `gen=0` on every pacer line, at 2× as well as 4× — the composite path's cost was being paid for zero benefit. **Cause:** `setLsfgCachePath()` threw the engine away and was called on *every* multiplier change, discarding the chain, the pacer's rate history and the governor's accepted level each time; the governor restarted at zero and never survived long enough to finish a probe (zero `LsfgGovernor` lines in 3.5 min). `ProbeGovernor::configure()` had the same fault — raising 2×→4× reset what it had learned, so asking for more frames would have given fewer. Both now keep their state. Visible in the log as `max=` alternating 1↔3 and `refresh=` 0↔144.
+> - **🐞 Latent:** composite targets were destroyed without a `DeviceWaitIdle` when the ring resized (use-after-free on any multiplier change); the swapchain asked for `minImageCount + 7` = 11 images where the design said cap at 8; a zero refresh-rate reading clobbered the last good value.
+> - **⚙️ INTEGRATION AUDIT** (user asked whether the compositor, limiter and in-game toggles had actually been accounted for — they had not, fully). Three more faults, one of which would have wasted the entire next test:
+>   - **🔑 PRESENT MODE.** The multi-present design assumes **FIFO**: real + generated frames are queued together and FIFO scans them out on consecutive vblanks. The r1 log shows `chosen=1` — **MAILBOX**, the container's setting, because the native path deliberately skipped `applyEffectivePresentMode()`. Under MAILBOX the presentation engine keeps only the NEWEST queued image per vblank, so the batch collapses to the real frame and **every generated frame is discarded at the very last step** — the exact "frames never reach the panel" failure win-fg has, relocated. Now forces FIFO while generating and restores the user's choice when off. ⛔ lsfg-vk needs MAILBOX for the opposite reason; the two must never be unified.
+>   - **FPS LIMITER.** `lsfgGovernsFps()` made the limiter step aside for BOTH LSFG engines. Correct for lsfg-vk (it lives in the guest and paces it); wrong for native, which never touches the guest — it silently dropped the user's FPS cap, ran the guest uncapped and hotter, and increased GPU contention, which is precisely what makes the governor reject its probes. The native shape is **cap the REAL frames and generate between them**. "Who paces the guest" and "what reaches the panel" are now separate: `frameGenMultipliesDisplay()` keeps VRR voting cap×mult for both engines.
+>   - `renderer_present_mode_fg_note` still claimed frame generation forces Mailbox — already stale for the other engines and the opposite of the truth for this one.
+> - **✅ Verified NOT conflicting with the old lsfg-vk implementation:** its Vulkan layer is gated behind `ENABLE_LSFG`, which the native path never sets, so the layer and any stale `conf.toml` stay inert; the vsync clock is never started; the FG presentation reset is skipped; the multiplier buttons offer the correct 2×/3×/4×. Shared by design: `isLsfgAutoEnable` (why the game launches already multiplying), multiplier and flow scale.
+> - 📍 r1 `8d7dc879` → `c1f2061f` (freeze + stall) → **`2c1f9495`** (integration). CI **33909829752** = r3. r2 (`33908955265`) cancelled unstaged: it fixed the freeze but MAILBOX would still have thrown the generated frames away.
+
+## 2026-09-04 — 🦆🎞️ **Native compositor LSFG BUILT END-TO-END — branch `feat/lsfg-native-compositor` off clean `main` `3b8f9663`**
+> Moves Lossless Scaling frame generation out of the in-container `lsfg-vk` layer and into our own Vulkan compositor. A **THIRD** engine (`lsfg-native`, "LSFG Native"; the fourth entry in the dropdown, after Off) — `lsfg-vk` stays, because the native path only exists on the Vulkan compositor and the GL/ASR/direct-scanout paths still need the in-container layer. Plan: `docs/lsfg-native-compositor-plan.md`. **Built, CI-green, NOT device-proven.**
+> - **Why it exists.** With `lsfg-vk` the extra frames are made inside the guest and then have to travel out through Wine → DRI3/Present → our X server → the compositor. Every workaround we carry (`MAILBOX` override, `maybeTriggerFgReset`'s pause/teardown/Resume, the `vsync.txt` clock, the `conf.toml` rewrite) exists only to shepherd them across that boundary. The precondition to delete all of it was already true here: the guest's finished frame is a `VkImage` in **our** device before anything is presented (`VulkanRendererContext.cpp:809 importAHBToWinTex`). All four are deliberately **bypassed** (not deleted — they still serve `"lsfg"`) when the native engine is selected.
+> - **P0 device gate.** The renderer had always created its device with `pEnabledFeatures=nullptr` and no pNext chain, so every optional feature was off. Now chains `vulkanMemoryModel` (+DeviceScope when offered), `shaderStorageImageWriteWithoutFormat` and `shaderStorageImageExtendedFormats` — **only** when every gate passes, else `vkCreateDevice` is called exactly as before, with a retry-without-chain fallback if a driver rejects it. Swapchain format probed for storage/sampled/colour-attachment/blit. Verdict + reason reach the app via `nativeLsfgSupported`/`nativeLsfgCapsReason`.
+> - **P1/P1b `Lossless.dll`.** PE resource walk (mmap **read-only**, never loaded or executed) for RCDATA ids 255, 256 and 280–302 = 25 modules; SPIR-V cached via temp-file+rename, keyed on size + FNV-1a hash. **The DXBC translator is not optional** — WinNative measured and retracted their own "3.2.2 ships SPIR-V" premise: public buildId 19655272 is the newest on any branch, `linux_testing` byte-identical on depot 993091, zero SPIR-V magic words across the whole 311 MB install, all 202 RCDATA entries DXBC. So DXVK's `dxbc` subset (zlib, 58 files) is vendored under `cpp/thirdparty/dxbc`. Binding renumber differs per producer and must never be merged: **encounter order** for DXVK output, **set/binding sort** for the precompiled blobs.
+> - **P2 composite ring.** The swapchain is `COLOR_ATTACHMENT` only and Android rarely offers storage on a swapchain format, so while armed the final pass draws into a composite image we own (`COLOR_ATTACHMENT|SAMPLED|STORAGE|TRANSFER_SRC|TRANSFER_DST`) carrying the **swapchain's** format — which is what keeps every existing pipeline render-pass compatible, so none had to be rebuilt — and a copy moves it across. `TRANSFER_DST` swapchain usage and the deeper image queue are requested **only while armed**, so a normal session never trades away framebuffer compression for a flag it never uses. 🔑 The acquire wait stage gains `TRANSFER` on the composite path: the first access to the acquired image becomes a transfer write, and TRANSFER precedes COLOR_ATTACHMENT_OUTPUT, so waiting only on the latter would let the copy run before the presentation engine released the image.
+> - **P3 the chain.** The renderer had **zero** compute — every pipeline was a graphics pipeline drawing a fullscreen triangle. Added `CmdDispatch`/`CreateComputePipelines`/`UnmapMemory` and ported mipmaps→alpha→beta→gamma→delta→generate (~2.3k lines, GPL-3.0 headers preserved, credited to Camille LaVey / Eden by way of WinNative). Ports kept near-verbatim on purpose: they are the hardest part to review by eye. The one structural difference is dispatch — upstream calls a file-scope global, we resolve per-context because an adrenotools driver shares no global symbols — bridged by `lsfg_vkd` (34 entry points; 31 already existed).
+> - **P4 multi-present.** Sync objects are now indexed **per present**, not per composite; fences stay per frame slot because all the presents of one source frame come from a single submit. All images are acquired up front, one command buffer records the real frame and every generated frame, one submit waits on all acquire semaphores and signals one per present, and the presents are queued together — under FIFO the driver then shows them on consecutive vblanks, so the pacing falls out of the present mode with no sleeps. Generated frames go out FIRST and the real frame last, since interpolation produces frames belonging between N−1 and N. 🔑 The decision to composite off-swapchain is made **before** the acquire loop, so the number of images acquired and the recording that fills them can never disagree — made the other way round, a composite that failed to arm after the plan was chosen would present undefined images (I wrote that bug, then hoisted the block).
+> - **P5 governor.** The ported pacer says how many frames fit in the panel's budget; on a handheld that is not enough, because the chain competes with the game for one GPU. `lsfg_governor` (ours) starts at 0 generations, probes one more, and keeps it only if output improved **≥1.15×** AND the real rate held **≥0.70×** baseline; a failed probe reverts and backs off 5/15/30/60 s. Thermals via dlsym'd `AThermal_*` (degrades to "no signal", never "hot"): SEVERE gives a generation back, MODERATE stops probing.
+> - **P6 app + cursor + readout.** New engine entry in the container editor, per-game override, spec chips and glossary; `LsfgNative.java` builds the cache off the main thread with player-facing errors. **Cursor is excluded from the composite and drawn into every presented image** through a load-op pass — LSFG warps whatever it is handed, so a composited cursor smears across the generated frames. Live drawer readout **"30 real → 60 shown (2×)"** because the multiplier is a *ceiling to earn*: "4× selected, 2× running" is correct behaviour and looks like a bug without it.
+> - **Build history.** CI `33900560281` P0 ✅ · `33901586969` P1/P1b/P2 ✅ · `33902486649` ❌ (inline `Engine()` ctor forced the exception-cleanup path for pimpl'd members at every `make_unique` site) · `33903772333` ✅ P3–P6 · `33904600473` = final. ⚠️ `gh run view --json status` reported `in_progress` long after a run had **failed** — check `jobs[].conclusion`, never the top-level status.
+> - **Bug caught by self-review, not by the compiler:** the engine was configured once at creation with whatever multiplier was set then, so later changes never reached the pacer and it kept capping at the build-time level; worse, `setFrameGenTuning` ran *before* `setFrameGenArmed` stored the new value. Tuning is now published through atomics and applied on the render thread, which also removed a plain data race on the pacer config between the UI and render threads.
+> - ⏭️ **Device test.** versionCode FROZEN 78. Needs an imported `Lossless.dll`, the **Vulkan** renderer, and a device passing the probe (Vulkan 1.3 + the three features + a storage-capable swapchain format) — the reason is logged and surfaced if not. First launch pauses to translate 25 DXBC shaders on device; that is cached afterwards.
+
+## 2026-09-03 — 📥⚡ **B2b-r4: the in-flight byte budget stops being the throttle — branch `feat/b2b-async-fetch`, on top of `85728c57`**
+> The r3 device run (Borderlands 2 `49520`, Blazing, 1 Gbps) was the win we wanted — **537 Mbps / 64 MB/s sustained, up from a ~24–44 Mbps baseline (~15–18×)** — and it worked *exactly* as designed: `init window=8 (max=42)` → `grow:slow-start` 8→16→32→42 in six seconds → `hold:ceiling` → one real `shrink:5xx` with its 3 s cooldown → `grow:probe` recovery, all 7 CDN hosts pulling. **And in doing so it moved the bottleneck, precisely where the r3 diagnostics were pointed:** `window=42 in_flight=23..28 budget_stalls=102..176 host_stalls=0`. The window had granted 42 slots; the fixed 24 MiB byte budget admitted ~24 of them (~1 MiB per raw chunk) and refused the rest, hundreds of times per probe. `host_stalls=0` is the other half of the answer — the per-host cap, the CDN filter, `max_servers` and `cell_id` are all **not** binding (we ask for 20 servers, Steam's cell 80 returns 7, our filter drops none), so **only the budget was left**.
+> - 🔑 **The fix is not a bigger constant, it is a budget derived from the window it has to feed.** `inflight_budget_bytes(effective_ceiling)` = `clamp(ceiling × 1 MiB × 1.5, 24 MiB, 96 MiB)`, sized from the **same** `win_max` `window_bounds()` already computes (tier ∧ distinct-hosts × per-host-cap ∧ hard cap). A budget that refuses a slot the window has already decided is safe isn't a memory guard — it's a throttle wearing a guard's uniform. Sizing it off the ceiling makes the two agree by construction, so this cannot silently drift back into binding when a tier or the host cap changes.
+> - **Floor 24 MiB = the exact pre-r4 value**, so no depot ever gets *less* buffered memory than it had before. **Hard cap 96 MiB is the OOM guard (the #408 class)** and stays a hard bound: 4× the old budget, still small against an installer's heap, and only reachable by a Blazing depot whose CDN pool can support a 64+ window. Per tier on the real 7-host pool (host ceiling 42): **Slow 6 → 24 MiB (floor)**, **Medium 16 → 24 MiB (floor, exactly)**, **Fast 32 → 48 MiB**, **Blazing 42 → 63 MiB**. Low tiers get **zero** extra memory pressure — that's the floor doing its job, not a coincidence.
+> - **Why 1.5× and not 2×:** a slot's bytes are held from DISPATCH to WRITE-COMPLETE, so at any instant some slots hold a fetched-but-unwritten chunk and others hold a reservation for a fetch still on the wire. 1.5× covers that overlap and the occasional above-nominal chunk without doubling the bound. Kept as an integer rational (3/2) so there is no float in the memory-bound arithmetic.
+> - **Everything structural is untouched:** the **≥1-chunk always-admit** deadlock guard (`budget_admits(0, …)` — a chunk larger than the whole budget still gets through when nothing is queued) is now asserted at *every* budget the scaler can produce; reserve-at-dispatch / release-on-write-complete accounting and the RAW-bytes basis are unchanged; `budget_stalls` is still counted and logged, which is how the **next** device run proves this landed (expect ~0). The init line now carries `budget=63MiB` alongside `max=42`, so a future stall spike is attributable without guessing.
+> - ⚠️ **No Rust toolchain in this environment — `cargo test` did not run locally.** CI's `bl-steam-client host unit tests` step executes them (it is still `continue-on-error: true`, so read its log, don't trust the green tick alone). Four new tests: budget scales with the ceiling at all four tiers, monotonic and never smaller than its own window's chunks; floor/hard-cap boundaries incl. `usize::MAX`; the ≥1-chunk guard at every producible budget; and the r3 failure itself as an assertion — at ceiling 42 the old budget admits 24, the scaled one admits ≥42. Fetch-layer only: no `DownloadQueue.kt`, no WifiLock, no B2a write path, no denied-depot/completion-row/auto-resume changes, `max_servers`/CDN filter/`cell_id`/per-host cap all as-is. **Not device-tested** (explicitly out of scope this round). vc FROZEN 78.
+
+## 2026-09-03 — 💥 **CRASH FIX: duplicate rail key took the app down; plus a NUL byte in a source file — on `feat/profile-cache-orientation`**
+> Device crash opening the Steam store: `java.lang.IllegalArgumentException: Key "311210" was already used. If you are using LazyColumn/Row please make sure you provide a unique key for each item.` — `featuredcategories` listed Call of Duty (311210) twice inside one category, `railItems` keys its `LazyRow` by bare `it.appId` (`SteamStoreTab.kt:341`), and Compose threw during measure. ⚠️ **This was already on `main`** — the store-rail files are identical between main and this branch, so the bug shipped with the storefront and was purely data-dependent; forcing landscape only made the user hit it.
+> - **Root cause was a PARTIAL fix that read as a complete one.** The author *knew* about duplicate risk — `.distinctBy { it.appId }` already existed on the free-games merge (`:180`) and at `:306` — but the shared category parser `itemsOf()`, which feeds `newReleases` and `specials`, had none. Fixed at `itemsOf()` (`:645`) so **every** category is covered at one place and a future rail cannot reintroduce it.
+> - **A literal NUL byte (0x00) sat inside a Kotlin string literal** at `:228`, used as a search-cache-key separator: `"$cc<NUL>${term…}"`. It compiled fine — CI never complained — but it made `file` report the source as `data` and caused **git, grep and diff to treat the whole file as binary**, silently returning nothing. That is exactly why the first several searches during this investigation came back empty. Replaced with the `\u0000` escape: identical string value, text-safe source. File now reports `Unicode text, UTF-8`.
+> - 🔑 **Process lesson — my verification was backward-looking.** Every round I checked the same four things (balanced block comments, `focusGroup` import, frozen versionCode, no `cpp/`), i.e. precisely the failures that had already bitten us. Both defects here were trivially findable and neither was on that list — `file` over the changed sources would have caught the NUL in one command. **Two checks added going forward:** (1) every changed `.kt`/`.java`/`.xml` must report as *text*, (2) audit `items(..., key = ...)` call sites for keys that can collide. Noted for the audit: `AmazonGamesActivity`, `EpicGamesActivity`, `GogGamesActivity` and `EpicFreeGamesActivity` also key lazy lists by bare ids — same class of exposure, not touched here, not currently crashing.
+
+## 2026-09-03 — ⚡🧭 **Profile stale-while-revalidate + Steam honours the app orientation setting — branch `feat/profile-cache-orientation`, off main `6cc4325e`**
+> User: Profile takes ages to load and the avatar arrives very late. 🔑 **The cache already existed and worked — the UI discarded it.** `SteamFriendsStore` has kept a 5-min `profileCache` (`:192-194`, checked first at `:1508`) whose own KDoc claims "re-opening the screen is instant", but `SteamProfileTab.kt:126-127` held state in `remember(steamId)`, which is composition-scoped — leaving the tab wiped it, so every return re-rendered blank+spinner before asking a question it already knew the answer to. Past the TTL it compounds: `ensureLoggedIn(8_000L)` (`:1514`) can block **8 s** before the six-round-trip aggregate even starts, and the avatar sits behind all of it because its URL comes from persona data.
+> - **Hoisted out of composition** — `SteamFriendsStore.selfProfile`/`selfProfileLoading` StateFlows (following the existing `self` precedent). `loading = refreshing && profile == null`, so a spinner appears ONLY on a genuine first-ever load; anything cached paints immediately and revalidates silently. A failed refresh **keeps the stale profile** rather than blanking it.
+> - **Disk-persisted** via new `SteamSelfProfileCache`. Deliberately `SharedPreferences` keyed `p_<steamId64>` rather than `SteamLibraryArt`'s `filesDir` file, because `steam_chat_history` (`h_<steamId>`) is the closer **per-account** precedent — which is exactly what the privacy rule needs. Decoding **reuses `BlPlayerProfile.parseFavoriteBadgeJson`/`parseEquippedJson`** by writing the engine's own key names, so there's one decoder that can't drift from a second.
+> - **Avatar fixed at the source:** identity card now branches live persona → **cached `avatarUrl`** → empty, so on a cold start the image starts downloading on the first frame instead of waiting for the whole aggregate.
+> - 🔒 **Privacy:** records are addressable only by their own steamId, so account B cannot read account A's. `reset()` additionally clears the in-memory `_selfProfile`/account/timestamp — the StateFlow the tab is actively collecting must be emptied *now*, not merely become unreadable — plus a post-fetch re-check so an account switch completing mid-flight can't publish the previous account's data. ⚠️ **Sign-out does NOT delete the file** (matching chat history, so signing back in paints instantly); `clearFor`/`clearAll` exist but are unwired — one line in `reset()` if we'd rather wipe.
+> - **Orientation:** `AppOrientation.apply(this)` added to all six Steam activities (`SteamMain`/`Login`/`Games`/`GameDetail`/`SaveManager`/`Friends`), matching `MainActivity:170`. `XServerDisplayActivity` untouched — the running game owns its own orientation. **Manifest `fullSensor` → `sensor` on those six**, because `AppOrientation.AUTO` maps to `SCREEN_ORIENTATION_SENSOR` and `MainActivity`'s manifest already says `sensor`: leaving `fullSensor` meant every AUTO user hit a real orientation transition on every Steam screen launch. Side effect: reverse-portrait no longer allowed there in AUTO — now consistent with the rest of the app rather than a Steam-only quirk. Forcing PORTRAIT correctly hides the landscape rail; **no exception added** — that's the setting working, and it's why both layouts exist.
+> - ⚠️ Unverified without a device: the actual first-paint speed-up (look for `painted from the on-disk mirror — revalidating in the background` on a cold start); equipped items persist only the fields the tab draws, so a restored profile is display-complete but not field-complete until the background refresh lands; applied in `onCreate` only (matching `MainActivity`), so changing the preference while a Steam activity sits on the back stack won't re-orient that instance until it's recreated. vc FROZEN 78.
+
+## 2026-09-03 — 🎮🎬 **Library type chips: All / Games / Demos (Games default) — branch `feat/library-type-filter`, off main `a4596be8`**
+> Demos were already arriving and being thrown away: the engine parses `common.type` from appinfo (`library_store.rs:201`) through to `SteamGame.type`, and `SteamLibraryTab.kt:119` hard-filtered `type == "game" || LIBRARY_ALLOWLIST`. So this relaxes a filter rather than adding plumbing. **Games is the default**, so nothing changes for anyone who ignores the chips.
+> - 🔑 **The trap: `ownedAppIds` was derived from the FILTERED list.** The Store tab uses that set for its Download / Add-to-Library / Not-owned decision, so the moment a chip narrowed the library, ownership narrowed too — picking Demos would have told the Store tab you own nothing but demos. It wouldn't crash, just render wrong buttons. Now `load()` keeps the full launchable set in `state.games`, the chip narrows a separate `shown` list, and `ownedAppIds` still builds from the unfiltered one — with the reason written at both the field and the construction site so it can't be quietly re-coupled. **Bonus fix:** demos reach `ownedAppIds` for the first time, so an owned demo in a Store rail stops mislabelling itself "Not owned".
+> - **Semantics:** Games = `type == "game"` ∪ `LIBRARY_ALLOWLIST` (that bypass is deliberate — `SteamRepository.java:1917`); Demos = `type == "demo"`; All = Games ∪ Demos ONLY — `dlc`/`config`/`tool`/`music`/`video` never surface, they'd be noise.
+> - ⚠️ **Correction to the brief: `libraryViewMode` is NOT persisted** — it's a composition-only `remember` that resets each launch, so "persist it the same way" would have persisted nothing. The chip uses `SteamPrefs.get/setLibraryTypeFilter` in the existing `steam_prefs` store instead, read by BOTH the storefront tab and standalone `SteamGamesActivity` so it's consistent wherever the library opens. (`libraryViewMode` left alone — same treatment is one line, but it's a behaviour change nobody asked for.)
+> - `PresenceFilterChip` promoted out of the Friends tab into `SteamStorefrontUi` as `StoreFilterChip` — one implementation, three call sites, identical accent fill and `steamFocusRing` so D-pad focus matches. Tab badge counts what's *visible* rather than the total. Two distinct empty states: genuinely-empty library (offers Refresh) vs chip-matches-nothing (offers **Show all**, so you can't get stuck behind your own filter).
+> - ⚠️ Unverified: **whether this account actually has demos.** If the count is 0 the Demos chip shows its empty state, indistinguishable from a wiring failure — so `load()` now logs `N game(s), M demo(s)`, which settles it in one line. Also unmeasured: chip row width beside the 96dp landscape rail, and whether demo capsules resolve (no special handling, but demos are likelier to fall through to the placeholder). vc FROZEN 78.
+
+## 2026-09-03 — 🖼️✅ **Consume the PICS artwork, wire the detail page, name the failure — branch `feat/steam-storefront-home`, on top of `ece0d779`**
+> Device split from the `storefront-art` build: **appdetails 12 rescued, SteamGridDB 21, still-blank 35.** SGDB earned its keep — it rescued app **480 (Spacewar)**, which has NO store page at all (`appdetails success=false`), correcting an earlier claim that it could never resolve. But **Beat of Rebellion (3908260) logged "no capsule art" while a direct `filters=basic` fetch returns a valid `header_image` that HTTP 200s** — Steam has it, we didn't get it. That is what these three changes address.
+> - **PICS art is finally CONSUMED — the previous commit was inert.** Nothing in Kotlin read the `art` object the engine emits. New `SteamLibraryArt.kt` parses `owned_apps[].art` into a typed `AppArt` (empty strings → **null**, never a fabricated URL) and slots in as capsule candidate #2 — but since Library items pass no `apiUrl`, PICS is effectively **candidate #1 for every owned game: no network call, no rate limit, no region dependency.** Two things beyond the brief, both right: the snapshot only exists while logged on but the grid must render offline, so the map is **mirrored to `filesDir/steam_app_art.json`** and restored on first use (no `SteamDatabase` schema churn); and it reloads on `LibrarySynced:` **on a worker** (a JSON walk over every owned app), keeping the existing cache rather than clearing it when logged off. `library_capsule` (portrait 600x900) now backs **shortcut cover art** in both the Library tab and the detail page — the app's first real portrait source, replacing a constructed `library_600x900.jpg`.
+> - **The detail page was never wired — and had a real bug.** It built its own URL via `loadHeaderImage()` → `BitmapFactory`, and its `else` branch rendered a **`CircularProgressIndicator` that span forever** when that URL 404'd — precisely the failure mode this chain exists to prevent. Now uses `StoreCapsule`, so it gets PICS → constructed → appdetails → SGDB → placeholder. `StoreCapsule` gained `aspectRatio: Float?` so the fixed-height 180dp hero passes `null` and fills its band instead of fighting 92:43. Dead plumbing removed entirely (`headerBitmap` state, its parameter, the argument, `loadHeaderImage()`, four orphaned imports). `SteamLibraryArt.init` runs in `onCreate` since this page can be entered cold.
+> - **The log can now name the failure.** Everything printed "had no capsule art" whether Steam refused, rate-limited or genuinely had none. New `httpGetDetailed` → `HttpOutcome` (`Ok`/`HttpError`/`Transport`/`EmptyBody`), with `httpGet` delegating so there is still **one** HTTP implementation, yields six distinct miss reasons: `RATE_LIMITED` (429), `HTTP_ERROR`, `TRANSPORT`, `NOT_IN_REGION` (`success:false`), `NO_HEADER_IMAGE`, `ABSENT_FROM_RESPONSE`. Batch lines now read `appdetails: batch of 8 id(s) (cc=GB) in 340ms — 5 with header_image; misses: NOT_IN_REGION=2, NO_HEADER_IMAGE=1` — **the `cc=` is what will settle 3908260**, since the direct fetch that succeeded was US. A 429 now says explicitly that those apps may well have art. Cache tightened: only *transient* misses (429/HTTP/transport) keep the 2-min TTL; `NOT_IN_REGION`/`NO_HEADER_IMAGE` are real answers and get the full 6 h.
+> - **Why batches were firing as `1 id(s)`:** the 180 ms debounce was far too short — a card only reaches that rung after up to four sequential 404s with independent latency, so siblings arrive hundreds of ms apart. Raised to **900 ms**, batch size logged so it stays measurable. Coalescing can't be perfect (cards failing seconds apart legitimately land in different batches), but PICS should remove most of the Library's demand for that rung anyway.
+> - ⚠️ Unverified without a device: whether the remaining 35 are **owned or store-only** — PICS covers owned apps ONLY, so expect the Library near-100% and the store rails to improve much less; the disk mirror's size for a large library (written once per sync, not hot, unmeasured); whether `cc=` changes the `success:false` rate vs the US fetch (exactly what the new logging answers); and the detail hero at `aspectRatio = null` in its 180 dp band. vc FROZEN 78, `cpp/` untouched.
+
+## 2026-09-03 — 🎨📇 **PICS appinfo artwork in the library snapshot — branch `feat/steam-storefront-home`, on top of `cbfdaa2d`**
+> 🔑 **The diagnosis that motivated this was HALF wrong, and testing it settled the real cause.** The claim was "we guess `header.jpg`, Steam reads a manifest". Live checks across 27 apps — **including every Half-Life entry** — showed Steam's CDN serves `/apps/<appid>/header.jpg` as a **stable alias** even where the published path is hash-prefixed (CS2 `730` publishes `162664aa…/header.jpg` and the bare alias still 200s). So for established titles the guess works fine and PICS changes nothing. But pulling the **actual failing appIds out of the device log** (`480 3513350 3517910 3564740 3908260 4128260 4162040 4200560 4465480 4508340 5077080`) and fetching each one's published `header_image` returned **HTTP 200 for all eight testable ones, every URL hash-prefixed** — e.g. `.../apps/3513350/c85fc0782fba…/header.jpg`, and `4162040` isn't even called header.jpg (`header_alt_assets_0.jpg`). **So the alias exists for older/Valve apps and NOT for recent ones**; both readings were true of different populations. Net: the `appdetails` rung in `cbfdaa2d` is now *proven* to fix these, and PICS delivers the same paths for owned games with no network call. (`480` is Spacewar, Valve's SDK test app — `appdetails success=false`, no store page, correctly a placeholder forever.)
+> - **Schema established from evidence, not guessed** — the same rule that paid off on the protobuf field numbers. Two independent sources agreed and then every asserted URL was fetched: GameSir's `libsteamkit_core.so` embeds fully-qualified diagnostic paths (literally `appinfo.common.library_assets_full.library_capsule.image.english`, `…header_image.english`, `…small_capsule.english`, plus both CDN bases), and real PICS appinfo for 27 apps confirmed the shapes and values.
+> - **Two traps a guess would have walked into**, both now covered by tests: compact `common.library_assets` values are **language availability** (`"en"`, `"en,zh-xc"`) and NOT filenames — only `library_assets_full` carries paths; and Dota 2's portrait capsule is `library_capsule.jpg`, **not** `library_600x900.jpg`. A third: `clienticon` is `.ico`, not `.jpg` (found when the `.jpg` form 404'd).
+> - **URL construction, both verified by fetch:** store assets are app-root-relative, optionally with a content-hash directory → `…/store_item_assets/steam/apps/{appid}/{value}`; hash-valued fields → `…/steamcommunity/public/images/apps/{appid}/{hash}.{ext}`.
+> - **Snapshot gains an `art` object per owned app** — `header` (the 92:43 capsule; 460/215 *is* 92:43 exactly), `small_capsule`, `library_capsule`/`_2x`, `library_header`, `library_hero`, `library_logo`, `icon`, `client_icon`, `logo`, `store_asset_mtime`, `logo_position`. Absent slots are `""`, never a guessed URL. `art.header` drops straight into `StoreCapsule(apiUrl = …)` as static candidate #1 with no other change.
+> - **What it actually buys:** the **Library grid**, which had no `apiUrl` at all and nothing but constructed guesses, now carries authoritative URLs — removing the rate-limited `appdetails` round-trip AND the SteamGridDB rung for every owned title. It also delivers **portrait 600x900, hero, and logo + logo_position**, art the app has no source for today. It does NOT help store/search items, which aren't in the owned-apps snapshot.
+> - **Security:** these strings come off the wire and go into URLs, so hostile input is rejected — `../`, absolute paths, `https://` injection, `?`/`#`, backslashes — anything that could escape the app's asset directory or change origin is dropped. 10 tests encode the real published values for Half-Life, Half-Life 2, Dota 2 and CS2 plus those rejections.
+> - ⚠️ **No Rust toolchain here — `cargo check`/`cargo test` did not run; not claiming it compiles.** CI runs only `cargo build`, so these 10 tests (like the ~19 before them) need a host `cargo test` to ever execute. Not device-proven. Also noted for follow-up: the app's first candidate host `shared.cloudflare.steamstatic.com` returns **301** — worth confirming the image loader follows redirects. vc FROZEN 78, `java/` untouched (concurrent UI work owns it).
+
+## 2026-09-03 — 🖼️🔗 **`appdetails.header_image` as a capsule rung before SteamGridDB — branch `feat/steam-storefront-home`, on top of `9b5be55f`**
+> Steam's official `appdetails` response carries **`header_image`**, the canonical current capsule URL — and `SteamStoreSearch` has been calling that endpoint for names/metadata all along while throwing the art field away. It matters more than it sounds because `capsuleCandidates(appId, apiUrl)` showed **Library items pass no `apiUrl` at all**: owned games only ever got constructed guesses, since they don't come from `featuredcategories`. So the entire Library tab had no authoritative URL for anything. Chain is now: API-provided URL → constructed cloudflare/fastly/legacy → **appdetails** → SteamGridDB → placeholder.
+> - **The two network rungs are an ordered list, not hand-rolled branches** — `CAPSULE_RESOLVERS` names each resolver, `StoreCapsule` walks statics then the list then the placeholder, and a resolved URL that fails to *decode* advances to the next resolver rather than dropping to the placeholder. Adding or reordering a rung is a one-line edit.
+> - **PICS was designed for, not against.** PICS art arrives with the library snapshot so it needs no round-trip — it becomes `apiUrl`, i.e. static candidate #1 ahead of every guess, which already works today. The `apiUrl` param is documented as "the URL Steam gave us" rather than anything named after `featuredcategories`, so nobody narrows it later.
+> - ⚠️ **`appdetails` is rate-limited ~200/5min per IP — far tighter than SGDB — so this is a coalescing batcher, not a per-card request.** Callers join a pending set on a `CompletableDeferred`; a 180 ms debounce collapses a whole rail's misses into one call; batches cap at 10 ids and are spaced 1.5 s. **Transport failure and "no art" are cached differently**: a 429/timeout/5xx isn't evidence an app lacks art so it gets 2 minutes (enough to stop a stampede, short enough to recover), a parsed "no `header_image`" gets 6 h, a hit 24 h. Every waiter is completed on every path including abort — a stranded deferred would hang that card's chain forever. **Batch-shape self-heal:** if a multi-id response returns nothing parseable, those ids retry individually at the same pacing, so an unexpected API shape degrades to *slower*, never *broken*.
+> - **Measurement:** `sgdbOutcome` generalised to `artOutcome(appId, source, msg)`, still one line per appId, so a single run gives the split directly — `grep -c "RESCUED by appdetails"` vs `"RESCUED by SteamGridDB"` vs `"NO capsule art"`. Per-batch line too: `appdetails: 10 id(s) in 340ms — 7 with header_image, 3 without`.
+> - ⚠️ Unverified without a device: whether **`filters=basic` batches correctly** (the widely-attested batch filter is `price_overview`; `basic` is less so — hence the self-heal, and the failure warn says so plainly); response size, since `basic` carries `detailed_description`/`about_the_game` HTML blobs, which is why the cap is 10 and not 50 (if `filters=header_image` is honoured it would cut the payload dramatically — worth one device test); and the 1.5 s/180 ms figures are chosen against the documented ceiling, not measured against real 429s. Whether `header_image` is even present for the specific 21 placeholders is exactly what the log will answer — **if this rescues only a handful that is evidence FOR the PICS follow-up, not against this rung.** vc FROZEN 78, `cpp/` untouched (concurrent engine work owns it).
+
+## 2026-09-03 — ✨ **Storefront polish: stale copy, duplicate level tile, Profile column balance — branch `feat/steam-storefront-home`, on top of `a77a1af1`**
+> Third device pass (APK `cf45b108`). **Everything from the previous two rounds is confirmed on hardware:** landscape rail correct with its word label, Friends triple-split gone, "Message" no longer wrapping, friend profile single-column inside the pane, Profile rebalanced, and the badge tile omitting itself exactly as designed (`showcased badge present (badgeId=1, level=22) but appId=0 — no resolvable art, tile omitted`). Friend profiles are genuinely rich when the account is public — Level 13 / 40 games / 26,739 hours / recently-played art / Join. **SteamGridDB measured: 4 rescued, 21 still placeholder** — modest exactly as predicted (these are the newest, most obscure indies, the population community art covers worst), but it only ever fires on titles Steam already failed, so it costs nothing on the ~95% that resolve normally. Kept, and `sgdbOutcome` keeps the ratio measurable as coverage improves.
+> - **Stale empty-pane copy.** "Pick a friend to see their profile" still described the pre-tap-to-chat behaviour. Now "Pick a friend to start chatting", plus a muted second line teaching the long-press affordance — which is otherwise undiscoverable. Swept for siblings: the only other profile-first wording lives in `SteamFriendsActivity.kt` (~122, ~168) describing `SteamFriendsRoot`, the **standalone** screen, which genuinely still opens profiles from its own long-press menu — accurate there, so left alone.
+> - **Duplicate level, and an orphan tile that read as an error.** A limited/private friend showed a "★ Level 0" hero chip AND a lone "0 LEVEL" tile in an otherwise-empty OVERVIEW row. 🔑 **That zero is real data, not a default** — the log distinguishes the two on the same line (`level=0 … ownedGameCount=absent … gamesPublic=false`), and `FriendProfile.level` stays nullable precisely so absent and zero remain distinguishable. So nothing is hidden or em-dashed; the fix is that the row stopped saying it twice. Dropped `level` from `OverviewGrid` — the hero chip is now the single canonical level display. OVERVIEW carries games + hours only, so a public friend keeps a full meaningful row and a private one hits the pre-existing `stats.isEmpty()` early return and skips the section entirely. No orphan tile, no sparse row.
+> - **Own-Profile left column still ran ~a third empty** once the showcase hid itself (`appId=0`, no resolvable art — which is exactly what exposed the gap). `StatTiles` gained a `columns` parameter and re-flows the same four tiles via `chunked()`, padding a short final row with weighted spacers so tiles keep their width; portrait keeps the 1×4 strip, the landscape left column uses 2×2. A small `ProfileStat` data class makes the tiles data rather than four hand-rolled call sites, which is what allows re-flowing without duplicating them per layout. Budget at 821×390dp: ~332 of 390 (was ~264), and ~422 with the showcase present, where the column already scrolled — so it holds both with and without badges.
+> - ⚠️ Unverified without a device: the 332/390dp figure is arithmetic from component heights, and the status chips may take one row or two depending on font scale (±~34dp); 2×2 tile legibility at ~180dp per tile (values are short, `Achiev.` is the tightest label); and whether the two-line empty-pane copy wraps at ~68% pane width. Guardrails re-verified: 0 unbalanced block comments, 0 `focusGroup` imports from `ui.focus`. vc FROZEN 78, `cpp/` untouched.
+
+## 2026-09-03 — 🖼️🗃️ **SteamGridDB as a last-resort capsule source — branch `feat/steam-storefront-home`, on top of `7356d71c`**
+> Device run showed **36 apps where all 3–4 Steam CDN candidates 404'd** and fell to the gamepad placeholder — recent/obscure indie titles that publish no capsule art. SGDB was already integrated for the Big Picture wall and GOG covers, so this extends that rather than adding an integration: `StarLaunchBridge` gained `sgdbFetchCapsuleBySteamAppId(ctx, appId)` next to the existing portrait `sgdbFetchCoverBySteamAppId`, querying `grids/steam/<appId>?dimensions=460x215,920x430&types=static&nsfw=false&limit=1`. **460x215 is Steam's own header size and exactly 92:43** — the existing call sites fetch `600x900` PORTRAIT, which stretched into a capsule slot would look worse than the placeholder. Lookup is **by Steam appId, not fuzzy name autocomplete** (which is what the GOG path uses), so wrong-game hits aren't possible. `httpGet` split into a bearer-taking form with the old one delegating, keeping exactly ONE SGDB HTTP path and ONE key constant.
+> - **Strictly last resort, and structurally so.** `capsuleCandidates` is unchanged and unreordered — Steam's four candidates still run first. SGDB *can't* be a list entry because its URL isn't knowable without a round-trip, so `StoreCapsule` runs it as a separate phase entered only once `attempt >= candidates.size`. An app whose Steam art resolves never touches SGDB — **zero added latency in the common case** — and the KDoc says so, so nobody "tidies" it by folding SGDB into the list. Three phases with the placeholder always underneath: Steam → SGDB → placeholder; a failed SGDB decode nulls out and the placeholder stands. No spinner is ever introduced.
+> - **Negative caching is the point.** `SteamStoreCatalog.sgdbCapsule()` reuses the catalog's `Cached<T>` idiom with a deliberately nullable value — **null IS the miss entry**. Hits 24h, misses 6h (shorter: SGDB is community-contributed and art gets added later). Without this the 36 misses would re-hit SGDB on every scroll and recomposition.
+> - **Log restructured so an artless app costs exactly one warn**, not two: the "all Steam candidates failed" line dropped to debug, and the terminal verdict moved to a throttled `sgdbOutcome(appId, rescued, msg)` — info on rescue, warn on miss. Grepping `RESCUED by SteamGridDB` against the known 36 measures the real hit rate rather than guessing at it.
+> - 🔑 **FINDING — the user's SGDB API-key setting is WRITE-ONLY.** `enable_custom_api_key` / `custom_api_key` are offered and saved by BOTH `SettingsFragment.java` and `ui/screens/SettingsScreen.kt`, with a Help button linking to SGDB's API preferences page — but **grep finds no reader anywhere**. Both existing call sites use the bundled key unconditionally, so **a user who enters their own key today gets no effect at all.** The new `sgdbKey(Context)` is the first reader (user key when enabled and non-blank, bundled otherwise). The two older call sites were deliberately NOT re-routed — that's a separate decision. Related: the bundled key is hardcoded in two files in a public repo (pre-existing; no third copy added, never logged). Routing all three through the user key would make the existing setting functional and cut reliance on the exposed bundled key — `GogGamesActivity` already has a Context, `StarLaunchBridge.sgdbFetchCover`/`sgdbFetchGridsJson` would need one threaded in.
+> - ⚠️ **Expectation, stated honestly:** these 36 are exactly the population SGDB covers *least* well, since community coverage correlates with popularity. **Partial rescue is the realistic outcome, not 36/36.** Unverified without a device: whether those dimensions return anything for these specific apps; whether `types=static&nsfw=false` over-filters; and the user-key path, which nobody has ever exercised (a malformed stored value falls back to the bundled key via try/catch, but that's unproven). One known race: two rails first-loading the same appId can each fire a request before the cache warms — idempotent and rare, no per-appId mutex. vc FROZEN 78.
+
+## 2026-09-03 — 👥🗂️ **Friends: tap opens the CHAT (profile via long-press), + landscape pane fixes — branch `feat/steam-storefront-home`, on top of `a3a4c483`**
+> Second device pass (APK `770871b4`). **The five earlier fixes are all confirmed working on hardware:** the landscape rail is correct (proper left rail, content beside it, labels fitting 96dp), `freeGames(US): OK in 303ms — 30 free title(s)` merged the free rail from 1 → **31**, the capsule chain tries 3–4 hosts before the placeholder (the 36 remaining misses each log "all N candidates failed" — those titles genuinely publish no art), the badge tile hides itself instead of drawing an empty box, and the log flood is throttled. No crashes.
+> - **Tap = chat, long-press = profile** (user's call: messaging is what a friends list is *for*). `FriendRow` already routed tap→`onOpenChat` and long-press→the actions menu, so the roster needed no change — both tab handlers were simply landing on the profile. Replaced the `chatting: Boolean` with an explicit `FriendPane { CHAT, PROFILE }` so the pane can only ever hold two states, never a third column. Backing out of the profile returns to that friend's **chat** rather than clearing the selection, and the profile's back arrow *and* its Message button both route there, so the profile can't strand you away from the conversation; backing out of the chat leaves the detail. `openProfile` calls `closeChat()` so unread counting resumes for a chat that's no longer visible. Split nudged 0.30/0.70 → 0.32/0.68 (names + presence text were tight).
+> - **Friends landscape was a visible triple-split.** The right pane rendered the profile, which then **re-split itself**, stranding a "Loading profile…" spinner in its own sub-column behind a divider. Root cause: `FriendProfileScreen` derived its layout from the *device* orientation while living inside a ~68% pane. Added `forceSingleColumn` (`landscape = !forceSingleColumn && orientation == LANDSCAPE && screenWidthDp >= 600`); the KDoc now states the general rule — **decide from the space you were given, never from the device**. Audited the file's other orientation reads: `ChatScreen` doesn't split, and `AddFriendDialog` is full-screen so its device read is correct. Also fixed the **"Message" button wrapping to "Messag / e"** (`ActionLabel` with `maxLines = 1, softWrap = false`, tighter content padding) and centred the spinner (`heightIn(min = 220.dp)` + `Arrangement.Center`).
+> - **Profile landscape was half-empty** — identity + chips on the left, then ~600dp of nothing. Moved the stat tiles and badges rail into the left column (identity + chips + tiles + showcase), leaving Recently Played to own the right at full height with a `VerticalDivider`; split 0.40/0.60 → 0.46/0.54. `RecentlyPlayedList` gained `fillsPane` so its loading/empty states fill and centre rather than collapsing to a blank half-screen, with empty copy that commits to neither "private" nor "owns nothing" — indistinguishable over the wire.
+> - **Rail status dot was unreadable** — a bare colour dot. Now dot + a one-word state ("Online"/"Connecting"/"Elsewhere"/"Offline"/"Paused"/"Signed out") with the full sentence kept in `contentDescription`; the middle ground between the bare dot and the worded pill that forced the 96dp wrap.
+> - **Doc drift caught at commit:** `SteamFriendsTab`'s class KDoc still described the *old* profile-first behaviour (profile fills the right, Message swaps to chat) — the inline comments had been updated but the header hadn't. Rewritten to match, since docs contradicting the code mislead the next reader.
+> - Guardrails: both prior CI killers re-verified independently before commit (0 unbalanced block comments across changed files, 0 `focusGroup` imports from `ui.focus`). vc FROZEN 78, `cpp/` untouched. ⚠️ Unverified without a device: whether the status words fit one line at 96dp under the 0.9 font scale (they ellipsize, so cosmetic); the exact Profile column fill when the badges rail is hidden; and that PROFILE → CHAT → cleared is two back presses in landscape, which is deliberate but worth feeling on hardware.
+
+## 2026-09-03 — 🛒🔧 **Storefront: five device-proven fixes (landscape rail, capsule art, free rail, badge tile, log flood) — branch `feat/steam-storefront-home`, on top of `ba16c606`**
+> First on-device run of the storefront (APK `a568ad90`, CI `33756704589`). **What already works, proven on hardware:** free-license add (library 112 → 113, repeat tap correctly says "already in your library"), the player-profile aggregate (`level=12 favoriteBadge=present gamesPublic=true ownedGameCount=71 recentlyPlayed=12`), Friends (`roster=28`, grouped by presence), the live store fetch (`featuredcategories OK in 425ms — 29 new, 1 free, 10 specials`), and the user's custom **orange accent flowing through every surface** — no hardcoded colour leaked. Zero crashes across the session. Two protocol unknowns also settled: `ClientFSGetFriendsSteamLevels` **does** answer for the signed-in user, and `CMsgClientFriendProfileInfo` (5330) **does not** — `profileInfo` comes back blank/absent for your own SteamID, which is Steam's behaviour, not a defect, and the independent-section rendering already degrades correctly.
+> - **Landscape rail ate the entire screen.** Device log confirmed the right branch and no exception — `layout: LANDSCAPE/rail (821x390dp, width=Medium)` — yet the rail rendered full-width and centred with the content pane invisible. Root cause: M3 `NavigationRail` sizes itself `widthIn(min = 80.dp)` (a **minimum**, not a fixed width) and `HorizontalDivider` defaults to `fillMaxWidth()`; as the unweighted child of a `Row` the rail is measured against the FULL 821dp, so the divider inflated it and `weight(1f)` got exactly zero. Nothing read wrong in the source — the divider spanning edge-to-edge in a screenshot is what gave it away. Replaced with a `Column` at an exact `RAIL_WIDTH = 96.dp` so no `fillMaxWidth()` descendant can ever inflate it again, divider explicitly width-bounded, content keeps `weight(1f)`. For the 390dp height the rail now `verticalScroll`s and the six stacked actions collapse to Refresh + Downloads + a `RailOverflow` menu (~288dp → ~144dp); the worded status pill becomes a compact dot with a `contentDescription` (it would have wrapped to three lines at 96dp). Portrait is untouched.
+> - **Capsule art 404s on new titles.** ~20 failures, every one a high app id (3–5M = recent releases): we constructed URLs against `cdn.akamai.steamstatic.com`, Steam's legacy host, which still serves old titles and not new ones. Now a candidate chain — **Steam's own URL from the API** → `shared.cloudflare` → `shared.fastly` → legacy last — walked on each `onError` before the placeholder. `StoreItem.artUrl` reads `header_image`/`large_capsule_image`/`small_capsule_image`/`capsule_image` from `featuredcategories`, and derives header art from `tiny_image`'s own host for `storesearch`. ⚠️ `SteamStoreSearch.coverUrl`/`headerUrl` semantics deliberately **unchanged** — `GameFolderScanner`/`ShortcutsScreen` share them; the chain lives only in the storefront layer.
+> - **"Top Free Games" had exactly one entry** — not a parsing bug: the API genuinely returned `1 free`. Added `freeGames(cc)` over `store/search/results?maxprice=free&category1=998` (appId recovered from the `logo` URL, which search results carry instead of an explicit id), cached per-cc on the same 30-min TTL, merged/de-duped with the old harvest as fallback. `MIN_FREE_RAIL = 4` — below that the rail **hides itself rather than shipping a one-item stub**.
+> - **Showcased badge drew an empty box** (`favoriteBadge=present`, no icon URL in the payload and no RPC to resolve one). `BadgeTile` now walks candidates and **removes itself** when all fail; `appId > 0` falls back to the game's capsule labelled "Game badge", `appId == 0` (Years of Service, sale badges) is omitted and logged. Also fixed a real misreading: the tile said "Level 22" beside an account chip saying 12 — badge level vs account level — now worded "Badge level N" with the chip carrying `contentDescription = "Steam account level N"`.
+> - **Capsule warnings flooded logcat** hard enough to EVICT the layout and license lines needed to diagnose the landscape bug. `artFailed` now warns once per appId per session (`ConcurrentHashMap`-backed) and drops repeats to debug; a candidate miss with fallbacks remaining is debug-only. First-failure visibility — which is what identified the CDN-host bug — is preserved.
+> - **Regression guards for the two CI killers.** A lexer-aware scanner (skipping `//`, `"…"`, `"""…"""` rather than a naive grep) over all store `.kt` files: no nested or unterminated block comments. All `focusGroup` imports verified as `androidx.compose.foundation`. Both re-checked independently before commit. Note `SteamLibraryTab.kt:560`'s `bin/*.exe` sits inside a `//` line comment and is harmless — line comments cannot open a block comment.
+> - **⚠️ Unverified without a device:** `NavigationRailItem` used outside a `NavigationRail` (no receiver scope, so it should hold, but it's new to this codebase); Coil's error→retry recomposition actually re-firing rather than serving a cached failure; the undocumented `store/search/results?json=1` shape (degrades to the harvest, then to a hidden rail — worst case the rail vanishes, the tab never breaks); and whether 96dp fits "Library (12)" at the app's font scale. vc stays FROZEN at 78.
+
+## 2026-09-03 — 🛒🏠 **Steam goes STORE-FIRST: storefront home + Friends/Profile tabs + landscape rail, plus profile natives and RequestFreeLicense — branch `feat/steam-storefront-home`, off `origin/main` `55721760`**
+> The Steam section no longer opens on the bare library. `SteamMainActivity` keeps its login gate but **is** the storefront now: a **Store** home (hero + What's New / Top Free / Latest Deals from `featuredcategories`, plus catalog search promoted out of the internal-only `SteamStoreSearch`), with the owned library moved behind a **Library** tab and new **Friends** and **Profile** tabs. Free/F2P titles can be added to the account **in-app** and become downloadable without leaving the app. Landscape uses a **NavigationRail** instead of top tabs and every tab reflows to earn the width. ⚠️ **NOT compile-verified and NOT device-tested** — see the caveats bullet. vc stays **FROZEN at 78**. `depot_writer.rs`/`cdn_client.rs` untouched (owned by the concurrent B2b work).
+> - **Engine — five profile natives + free license** (`cpp/bl-steam-client/rust/`). New `nativeGetPlayerProfile` (one-call aggregate, self OR friend; every section fails independently to `null` so a partly-private profile still renders), `nativeGetSteamLevels`, `nativeGetEquippedProfileItems`, `nativeGetFavoriteBadge`, `nativeGetRecentlyPlayedGames`, plus `nativeRequestFreeLicense(handle, appIds: IntArray)`. 🔑 **Protocol facts verified against the bundled JavaSteam protobufs, not guessed** — free license is **EMsg 5572/5573**; its request field is `repeated uint32 appids = **2**, not 1` (the obvious guess encodes an empty request that silently grants nothing); its response `eresult = 1 [default = 2]`, so an **absent eresult means Fail, never success**. Steam level comes from **`CMsgClientFSGetFriendsSteamLevels` (7528/7529)**, which takes arbitrary accountids and so covers self + friends in one round trip — `IPlayerService/GetBadges#1` and `GetSteamLevel#1` were NOT implemented because no verifiable protobuf exists for them anywhere (not in JavaSteam, not in GameHub's shipped engine), which is also why **badge collection and XP are not delivered** — only the showcased badge via `Player.GetFavoriteBadge#1`. Equipped decoration uses the field-verified `Player.GetProfileItemsEquipped#1` rather than `LoyaltyRewards.GetEquippedProfileItems#1` (real method string, unobtainable field numbers). Recently-played is **derived** from the existing `GetOwnedGames` (`playtime_2weeks` f3 / `rtime_last_played` f11) — no redundant call. ~19 new unit tests added, which **CI will never run** (`_build.yml` does `cargo build` only).
+> - **A grant is a PACKAGE, not an app.** Rust polls the CM's pushed license list (150 ms, 8 s cap) and reports `libraryUpdated`, firing the existing `BlLibraryObserver.onLibraryChanged()`; but `ingest_license_list` records packages, and the package→appIds hop is PICS. So `SteamFreeLicense` **kicks `repo.syncLibrary()` on `granted`** and logs at error if that fails to start — without it the title is licensed and permanently invisible. `no_response`/`bad_response` map to connection copy, never "paid title"; no invented EResult→message table (`EResult.from(n)` names it when recognised). `NotSupported` is gone.
+> - **Tab host + layout.** `SteamStorefrontHost` holds one `rememberSteamLibrary()` feeding both the Library grid and the Store's "do I own this?" set, so a granted license lights up in both at once. `rememberStorefrontLayout()` resolves Material's real width breakpoint (`wide = landscape && width != Compact`) — the same bar `FriendProfileScreen` already used, now named — and each tab splits Portrait/Landscape per that precedent: Store = hero + free-games column | rails; Profile = identity/status | stats/badges/recent; Friends = roster | selected friend's profile (chat swaps in on Message); Library = `GridCells.Adaptive`. Manifest gained `configChanges` so rotation keeps tab/search/scroll, and `singleTop` so login returns to the same instance. `SteamGamesActivity` gutted to a thin host (−724) with its grid/uninstall/launch **moved**, not duplicated; deep links and `SteamGameDetailActivity` preserved, plus a new `EXTRA_TAB`.
+> - **Controller-first focus.** The rail is one focus group with `focusProperties { right = contentFocus }` so RIGHT enters content in a single press, with return left to default 2D search so no pane can trap focus; every list/grid/rail is a `focusGroup()` (RIGHT = next card, DOWN = its action, LEFT = back to rail), 32 accent focus rings, and `NotOwned` stays focusable-but-disabled so traversal never skips a card.
+> - **Theme-clean.** Everything reads `MaterialTheme.colorScheme`/`LocalAccentDim` (cards `surfaceContainer`, buttons-on-cards `surfaceContainerHigh`, borders `outline`, indicators/level chip/focus ring `primary`). The only literals in new code are `Color.Transparent` and `Color.Black`/`White` on the hero scrim (existing grid-tile precedent); the four `Color(0xFF…)` in the Library tab are pre-existing metacritic semantics moved verbatim. Three new named tokens sit next to `DangerRed` — `StoreDiscountInk`/`StoreDiscountBg`/`StoreFreeGreen` — because a discount chip that turns pink when the user picks a pink accent stops reading as "on sale". New dep `material3-window-size-class` off the existing compose BOM.
+> - **Diagnosable by design.** Six tags (`SteamUI.Host|Store|Library|Friends|Profile|License`), 59 statements, all through `SteamLogRedactor.redact()` with SteamIDs logged as last-5 so lines correlate without identifying; nothing fires per frame. Filter: `adb logcat -v time | grep -F 'SteamUI.'`. Store-catalog failures (HTTP status, timeout, malformed JSON, which URL) are logged loudly because `featuredcategories`/`storesearch`/`appdetails` are **undocumented endpoints** that can change without notice — they degrade gracefully and must never hard-fail the screen.
+> - **⚠️ Caveats — nothing here is proven.** No Rust toolchain on this box, so `cargo check`/`cargo test` never ran; a green CI proves only that it compiles. Highest-risk line is the `material3-window-size-class` resolution — if CI can't resolve it the fix is confined to `rememberStorefrontLayout()` (swap to `screenWidthDp >= 600`); `Icons.Filled.Storefront`/`VideoLibrary` are also unverified against the artifact. **Needs device proof:** whether `ClientFSGetFriendsSteamLevels` answers for non-friends; whether `CMsgClientFriendProfileInfo` (5330) answers for the caller's own SteamID; which EResult a paid unowned app returns; whether the post-grant license push lands inside the 8 s window; the Store rails against live endpoints in a non-US region; free-license end-to-end incl. the PICS crawl; D-pad traversal and the rail on the AYANEO's real metrics.
+
+## 2026-09-03 — 🧹📥 **Completed downloads left a stale `steam_downloads` row → phantom "downloading" — branch `feat/rust-download-java-parity`, on top of `cfabfecd`**
+> Device-confirmed 2026-09-03 (Hades): on a successful completion the app marks the GAME installed (`steam_games.is_installed=1` + `.bannerlator_build` marker) but never cleared the `steam_downloads` row, so the UI kept showing a stale "downloading" state. Worst case seen: a retry with everything already on disk finished with **zero** progress events → the row stayed at its initial `status='downloading', bytes_downloaded=0` → the detail page showed "downloading 0%" even though `is_installed=1` (Hades: installed, 11 GB on disk, marker present, UI stuck; re-opening even re-ran an instant complete cycle). Pre-existing row-lifecycle gap (also seen on Stumble Guys) exposed badly by the zero-work case. Pure state/UI reconciliation — no touch to download/verify/install behavior, files, the engine, `DownloadSpeedConfig`, the queue, or native code. NOT device-tested (user drives the device).
+> - **Fix 1 — clear the row on SUCCESS, both engines.** After `db.markInstalled(...)` in the terminal-success block of BOTH engines — Rust `BlDepotInstaller.kt` (the `=== Download complete ===` block) and JavaSteam `SteamDepotDownloader.kt` (its per-depot-verify PASS block) — added `db.deleteDownload(appId)`. The download is done; the game lives in `steam_games` (`is_installed=1`) and is represented by the INSTALLED `DownloadRegistry` entry + the Download Manager's Library section (which reads the registry, NOT a `steam_downloads` row), so the row is pure stale state. Verified the `DownloadComplete:` listeners (detail page, `SteamGameUpdater`) don't read the row, `getActiveDownloads` has no callers, and queue advancement uses `DownloadQueue.onActiveTerminal` (not the DB row) — nothing depends on a lingering completed row. Only cleared on SUCCESS: paused → `finishPaused`/`markDownloadPaused` (row kept), failed → `emitFailed`/`markDownloadFailed` (row kept), cancelled → `finishCancelled`/`deleteDownload` (row removed on purpose) — all unchanged, so **Resume/retry stays intact**.
+> - **Fix 2 — installed-first reconciliation in `SteamGameDetailActivity.loadGame()`.** Added a guard BEFORE the WifiLock "no live worker → PAUSED" flip: if a `steam_downloads` row exists AND the game `is_installed==true` AND **no worker is live** (`!SteamDepotDownloader.isDownloading && !DownloadQueue.isQueued`), delete the row and keep the Installed state `refreshUI()` already painted, then `return`. Ordering matters — this runs first so a genuinely-installed game shows **Installed**, while the PAUSED reconciliation still runs for the NOT-installed (genuinely interrupted) case. The liveness check is what protects a real in-place update/verify of an installed game (`SteamGameUpdater` runs `installApp` with `is_installed` staying 1 and holds a live worker + row): that falls through to the live `DL_DOWNLOADING` branch instead of being wiped. This makes the currently-stuck Hades resolve to Installed on next open with **no re-download**.
+> - **Guardrails honoured:** additive only (27 insertions, 0 deletions across 3 files); A/B/Q/B2a/WifiLock/denied-depot code untouched; DownloadManager Downloading-vs-Library split (registry-driven) unaffected. Files: `store/BlDepotInstaller.kt`, `store/SteamDepotDownloader.kt`, `store/SteamGameDetailActivity.kt`. Other worktree `/home/claude-user/bannerlators` (`feat/app-steam`) untouched.
+
+## 2026-09-02 — ❓ **Download-speed picker "?" help — branch `feat/rust-download-java-parity`, on top of `06179f74`**
+> Pure UI/help addition to the Slow/Medium/Fast/Blazing picker (`DownloadSpeedPickerDialog` in `store/SteamGameDetailActivity.kt`). Reuses the shared `HelpDialog` (centered, scrollable Compose dialog taking a string-res id) exactly like the container editor / renderer settings — no new dialog style. Added a general "?" in the header AND a per-tier "?" beside every option, in **both** layouts (landscape wide two-column header + tier rows, portrait `OutlinedAlertDialog` title + radio rows). One shared `helpRes` state + `HelpDialog(it)` rendered once before the landscape/portrait branch; a local `tierHelpRes(tier)` maps the tier value to its string. Each "?" is a standard `IconButton { Icon(Icons.Default.Help, 18.dp) }` with its own onClick, so tapping it opens help without selecting the row.
+> - **Copy** lives in 5 new string resources (CDATA + `<b>`/`<br />`, matching the existing help-string convention): `help_download_speed` (general) + `help_download_speed_{slow,medium,fast,blazing}`. Wording is tuned to CURRENT build behavior — no "adaptive"/"auto-tunes"/"gigabit" language (that's the future B2b change).
+> - **Guardrails honoured:** no touch to the download engine, `DownloadSpeedConfig` values, `SteamDepotDownloader`, `BlDepotInstaller`, `DownloadQueue`, or native code. A/B/Q/B2a/WifiLock untouched. Files: `store/SteamGameDetailActivity.kt` (imports + wiring), `res/values/strings.xml` (5 help strings). NOT device-tested (user drives the device).
+
+## 2026-09-02 — 📶🔒 **Steam download stall on background = missing WifiLock — branch `feat/rust-download-java-parity`, on top of `dedf624a`**
+> Device-confirmed 2026-09-02 (matches a 2026-08-24 diagnosis): Steam downloads STALL when the app is backgrounded — process ALIVE (`State: S`), `SteamForegroundService` foreground (dataSync, types=1), the download `PARTIAL_WAKE_LOCK` held, CM session logged on, yet download RX + disk writes drop to **0** (Hades froze at 3%/401 MB, never resumed). ROOT CAUSE: the downloader held a CPU wakelock but **no `WifiManager.WifiLock`**, so once the app left the foreground WiFi power-save throttled the bulk CDN transfer to nothing (the tiny CM heartbeat still slipped through → session survived). NOT a B2a regression (that's native code); this is the app's power/network-lock handling. NOT device-tested (user drives the device).
+> - **Primary fix — ref-counted WifiLock covering BOTH engines** (`SteamDepotDownloader.kt`). The shared, ref-counted download wakelock is managed by `acquireDownloadWakelock(ctx)` / `releaseDownloadWakelock()`, which BOTH engines already call in lockstep (JavaSteam `runInstall` acquire/finally; Rust `BlDepotInstaller.run` acquire/finally). Added a `WifiManager.WifiLock` (`WIFI_MODE_FULL_HIGH_PERF`, `setReferenceCounted(true)`) acquired/released **in those same two methods** so it rides the EXACT same acquire points and every terminal release (complete/pause/cancel/fail/crash) — one place, both engines. WifiManager comes from `ctx.applicationContext` (no Activity leak). Each lock wrapped in its own try so a failure of one never skips the other. Logs `WIFILOCK: acquired/released` mirroring the existing `WAKELOCK:` line. No new manifest permission (WifiLock needs none; `ACCESS_WIFI_STATE` already declared).
+> - **FGS verified (no change):** Steam downloads are covered by `SteamForegroundService` (manifest `foregroundServiceType="dataSync"`, `START_STICKY`, kept up for the whole CM-connected session incl. the download) — the forensics already showed it foreground with dataSync during the stall, so the FGS was never the problem. `DownloadForegroundService` (also dataSync) is for non-Steam stores only (Steam doesn't route through `StoreDownloadHooks`). Left intact.
+> - **Hardening — a network stall must not DELETE the download.** Traced the "row deleted, worker gone, no terminal log, didn't resume" symptom. `BlDepotInstaller.finishCancelled` (the only `deleteDownload` in the engine) is already correctly gated on the app-side `cancelled` flag; a genuine network error goes `else → fail() → markDownloadFailed` (row kept, not deleted), and `DownloadQueue.onActiveTerminal` never deletes. The actual deletion was **`SteamGameDetailActivity.loadGame()`'s stale-row cleanup**: a `downloading` (or `queued`) DB row whose live worker is gone (process killed mid-stall then restarted — hence no terminal log) was `deleteDownload`'d, discarding resumable partial progress. Fixed: both stale branches now **flip the row to PAUSED (preserving bytes + install dir)** and render the resumable Paused UI, so on foreground the user gets a working Resume (`resumeApp`, DB-only path already supported) instead of a vanished download. Minimal; A/B/Q/B2a native/queue code untouched.
+> - Files: `store/SteamDepotDownloader.kt` (import + `acquire/releaseDownloadWakelock`), `store/SteamGameDetailActivity.kt` (stale `downloading`/`queued` cleanup → mark PAUSED). Other worktree `/home/claude-user/bannerlators` (`feat/app-steam`) untouched.
+
+## 2026-09-02 — 📥🧵 **Managed one-at-a-time download QUEUE (both engines) — branch `feat/rust-download-java-parity`, on top of `f3f42cad`**
+> Replaces the cancelled "make Steam downloads concurrent" idea. A single download already saturates the link (engine's parallel fetch pool), so concurrency buys no throughput and only adds CM/disk/thread contention → user chose a **managed visible queue** instead: strictly one active download, the rest QUEUED and auto-advancing. NOT device-tested (user drives the device); native `libblsteam.so` and A/B download internals untouched.
+> - **New coordinator `store/DownloadQueue.kt`** at the engine-agnostic layer. `installApp`/`resumeApp` → `buildControl` now funnel BOTH engines through `DownloadQueue.enqueue()` BEFORE the Rust-vs-JavaSteam choice (new `SteamDepotDownloader.startEngine(Request)` does the actual dispatch when an item reaches the front). One `synchronized(lock)`; the slot is claimed atomically so an enqueue racing a terminal starts **exactly one** runner (no double-start / lost wakeup); the engine start runs OUTSIDE the lock. `enqueue` returns a **facade `DownloadControl` synchronously** even while queued: cancel→remove from queue (delete `steam_downloads` row + registry entry, no files), pause→hold out of line (mark PAUSED; resume re-enqueues); once active it delegates to the real engine control (a `pendingActiveAction` covers the tiny pre-registration window). De-dupe via `isDownloading` + new `isQueued`.
+> - **Rust engine `BlDepotInstaller`:** removed the `Semaphore(1)` busy-park + "Waiting to download…" FGS loop (queue owns one-at-a-time now) — **queued items hold NO worker thread**. Auto-advance hooked at the 4 TRUE terminals (INSTALLED via complete path, FAILED via shared `emitFailed`, CANCELLED/PAUSED via `finishCancelled`/`finishPaused`) → `DownloadQueue.onActiveTerminal(appId)`; session-recovery + short-depot auto-resume (A) re-enter the SAME active download and never advance. JavaSteam path hooked at its matching terminals. A's short-depot auto-resume and B's decoupled fetch/process pipeline **untouched**.
+> - **DB:** new `SteamDatabase.markDownloadQueued()` (status-only flip preserving bytes/dir for a re-enqueued resume); fresh queued items get a clean `queueDownload(...,"")` row. `DownloadEntry` gains transient `queuePosition`.
+> - **Download Manager UI:** new distinct **"Queued" section** (below Downloading, above Library) ordered by position, each card showing `#n` + **Start-next / ↑ Up** reorder (implemented, low-risk in-memory) + Cancel, matching the existing card idiom. Detail page: new `DownloadQueued:` event + `DL_QUEUED` load branch (isQueued liveness → stale-row cleanup) + queued-cancel path. **FGS** now reads "Downloading X — n% · N queued" (both engines append `DownloadQueue.fgsSuffix()`).
+> - **Optional rebuild-on-restart** (persisted QUEUED rows) NOT implemented — no existing auto-resume-on-restart infra (`getActiveDownloads` has no callers); queued items are session-scoped, stale `queued` DB rows self-clean on detail-page open. Clean seam left. Files: `DownloadQueue.kt` (new), `SteamDepotDownloader.kt`, `BlDepotInstaller.kt`, `SteamDatabase.java`, `download/DownloadModels.kt`, `DownloadManagerActivity.kt`, `SteamGameDetailActivity.kt`.
+
+## 2026-09-02 — 🟠✅ **In-game Friends presence merge + Rust depot auto-resume merged to main (`41ba2523`)**
+> Merge `--no-ff` of `fix/ingame-friends-and-depot` (`2cba79d2`) into `50273372`; parents `50273372`+`2cba79d2`; 5 files +262/−20. Revert = `git revert -m 1 41ba2523`. vc stays **frozen at 78** (no release cut). CI for the branch: run `33674054637` green (3 flavors); the two halves also built green alone (`33670886274`, `33672003758`).
+> - **Fix 1 — in-game drawer Friends tab showed EVERY friend Offline during a SteamLite game.** The relay roster from the in-container client was applied as truth: the app's 28 friends shrank to the relay's 19 and every unconfirmed state read as a confirmed Offline. Now the relay roster **merges by SteamID** into the retained roster; a relayed state applies **only when confirmed** (persona event, `k:1`, or any non-Offline read); an unconfirmed Offline keeps the app session's last-known presence marked **" · last known"**, or files the friend under the new `Presence.UNKNOWN` bucket. Bridge parses `k`/`rp` and accepts flat (p3c/p3d) **and** nested (p3/p3b) persona events; tab shows a "presence: N of M known" hint.
+> - **✅ DEVICE-PROVEN 2026-09-02 17:05** (CS:S, container 3, agent p3d, APK `3642051b`, vc78): session went `ONLINE → PAUSED_FOR_GAME`, drawer header read **"via in-game Steam"** (`Kind.AGENT_RELAY` — first time we ever reached this path), **28 friends kept** (In game 1 / Away 2 / Offline 25), every row correctly labelled *last known*, nobody falsely Offline.
+> - ⚠️ **Still open (agent-side, NOT this merge):** the in-container client receives **no presence stream from the CM** → "presence: 0 of 19 known". Agent p3d's premise is disproven on device — the client was already `EPersonaState=1` so `SteamFriends002::SetPersonaState(Online)` was a no-op (`1 -> 1`) and zero presence-bearing callbacks arrived in 20 s; `RequestUserInformation(sid,false)` sends nothing because all names are "already cached". Future options tracked in memory (`IClientFriends` via `IClientEngine`, à la GameHub; `RequestFriendRichPresence`; widening the callback flags).
+> - **Fix 2 — Dead Cells regressed on the Rust engine.** `BlDepotInstaller` never received the JavaSteam path's Layer-1 auto-resume (`3fab8dc2`): on `engine success + journal short` it set `completedNormally` and failed straight to the user, which also suppressed the session-recovery retry, so **nothing** retried. Ported with the same bounds (3 attempts, 2/5/10 s backoff, denied depots still fail fast, <1 MB no-forward-progress guard). **Code-verified parity; NOT re-tested against Dead Cells on device.** A full audit of the last month's JavaSteam download fixes found this was the **only** silently-missing one (12 fixes checked; the rest are shared-route or covered by the journal design).
+> - 🧹 Also on main this session: `50273372` DirectAudio stale comments (7 supported layers, bundled v1.3.2). Device housekeeping: removed Option B's stale `lsteamclient.dll` from container 3's prefix (moved to `.optionb_bak`) — it was crashing every Steam launch there — and removed a root-owned backup file I had left inside `imagefs/opt/steamlite/`, which made the launcher's package copy fail and silently drop every RealSteam launch to a plain one.
+
+## 2026-09-02 — 🏁✅ **Bannerlator 3.0.4 STABLE released — native Rust Steam engine on by default + SteamLite reliability**
+> Cut from `main`: version bump `55158abe` (vc **77→78**, vn 3.0.3→**3.0.4**) on top of `ab62a8e9`, `release.yml` run `33657944045` all-green (3 flavors + release job). ✅ VERIFIED: tag `3.0.4` == built commit `55158abe` (**NO drift** — main frozen through the publish job), isDraft=false, isPrerelease=false, `releases/latest`→3.0.4, `update.json` vc78 / vn 3.0.4 + all 3 flavor→APK mappings, 3 APKs (~528 MB each) + update.json attached. Rich notes (3.0.3 house style: logo+badges → `# Bannerlator 3.0.4` → tagline → SteamLite call-out w/ tested titles → `##` sections → ⚠️ Known issue → Credits → trademark) applied post-cut via `gh release edit 3.0.4 --notes-file` (`/home/claude-user/bl-release-prep/notes-3.0.4.md`); update.json `notes` = short user-facing summary.
+> - **Headline:** 🦀 native Rust Steam engine `libblsteam.so` ON by default (merge `05b282a5`; JavaSteam = Log Manager fallback, removal next release) · 🎮 SteamLite single-session doorman `91f643f8` + pre-flight slideshow + NAT row + VAC-aware policy + overlay-injection disable `99e9b1bd` + drawer Friends tab + agent channel + Update&Launch (`MIN_AGENT_VERSION=4`; hosted v5/p3b VERIFIED = the matching client) · 📦 GOG DLC batch extract `bece00b2` · ❓ "?" help · CI pr-check `00ba80ca`.
+> - **Device-proven on the RC (same app code) 2026-09-02:** CS:S secure LaunchApp on a VAC server + cloud + achievements; Stumble Guys Rust-engine depot UPDATE (60 s, 2.5 GB) + online; Brawlhalla online. NOT exercised: password+Guard sign-in, chat send, Java-fallback toggle, slideshow landscape.
+> - 🐞 **OPEN (shipped as Known issue):** x64 exes spawned directly by Steam's LaunchApp still crash with the overlay-injection signature (Stumble Guys pid 01f8 c0000005 @ agent-kernel32+0x62600) even with `EnableGameOverlay=0` + `OverlayAppEnable=0` present → p3b insecure fallback saves non-VAC titles; a 64-bit VAC title launched directly would go insecure. 32-bit-launcher titles (CS:S/TF2/L4D2) unaffected.
+> - **Staged release pubg:** `/sdcard/Download/Bannerlator-3.0.4-pubg.apk` sha256 `8c2455a158a3717cde4a252d6ee17efacbf4d026906c86aa3ea08a702c558d52` (canonical published binary). **vc now frozen at 78** for dev/nightly builds until the next cut. Option B (App Steam) remains PARKED on `feat/app-steam`, not in 3.0.4.
+
+## 2026-09-02 — 🧊 **Option B (App Steam) PARKED; main rebuilt (artifacts-only) as the 3.0.4 release candidate — NOT cut**
+> User: "park this for now and go back to main build for a 3.0.4 release" → clarified = **rebuild main + prep**, not cut. A premature vc77→78 bump (`c041d587`) + `release.yml` dispatch (`33654721162`) were **cancelled and reverted here** — run cancelled before the publish job, NO tag, NO release, NO update.json change; vc stays **frozen at 77** until the actual cut.
+> - **Release-candidate content on main** (app code = `27ee2dc7`): 🦀 native Rust Steam engine ON by default (`05b282a5`; JavaSteam = Log Manager fallback, removal next release), SteamLite single-session doorman `91f643f8` + pre-flight slideshow + NAT row + VAC policy + overlay-crash fix `99e9b1bd` + drawer Friends tab + agent channel + update card (`MIN_AGENT_VERSION=4`, v5 live), GOG DLC batch extract `bece00b2`, "?" help, pr-check CI `00ba80ca`.
+> - **Still to prove before the cut** (Rust engine): depot download/verify/update, password+Guard sign-in, chat send, flag-OFF (Java) smoke, slideshow landscape. Draft rich notes ready: `scratchpad/notes-3.0.4.md`.
+> - **🧊 PARKED — Option B / App Steam** (`feat/app-steam` @ `5079bf1a`, CI `33651447592`; proton-wine `feat/lsteamclient-11.0-2` @ `905a5d05` → layer `11.0-2-arm64ec-3`, wcp at `/sdcard/Download/proton-11.0-2-arm64ec-lsteamclient-vc3-sdk28.wcp`). Host login + Wine bridge device-proven; first real App Steam launch + CS:S VAC probe NOT run. NOT merged, NOT in 3.0.4.
+
+## 2026-09-01 — 🏁✅ **Bannerlator 3.0.3 STABLE released** — Controller Test/Bind overhaul + DirectAudio mic
+> Cut from `main`: version bump `a8217c8b` (vc **76→77**, vn 3.0.2→**3.0.3**), `release.yml` run `33491729056` all-green. ✅ VERIFIED: tag `3.0.3` == built commit `a8217c8b` (**NO drift** — bump pushed, main frozen through the publish job), isDraft=false, isPrerelease=false, `releases/latest`→3.0.3, `update.json` vc77 / vn 3.0.3 + all 3 flavor→APK mappings, 3 APKs + update.json attached. Full rich notes (3.0.2 house style: logo+badges → `# Bannerlator 3.0.3` → tagline → app-side/no-ImageFS → themed `##` sections → Credits → trademark) applied post-cut via `gh release edit 3.0.3 --notes-file` (`scratchpad/notes-3.0.3.md`); update.json `notes` = clean short user-facing summary.
+> - **Headline:** 🎮 Controller Test/Bind overhaul (OSC/physical profile-lane split + tabbed Input Controls: Profile bar + On-Screen·Controller·Assign·Device + content badges + per-pad battery/test-rumble + On-screen layout preview; merge `98902397`, revert `git revert -m 1 98902397`) · 🎙️ DirectAudio opt-in microphone. Plus 🔒 Steam cred-scrub `90ef895d` / 🗑 Cancel&delete `30c31842`, 🎞️ win-fg capture-shard `2b66cd41`, 🖥️ content-packs-only `af5fde84` / WIN Components landscape `c16eefc5` / grid tile-size `bc5b24e9`.
+> - **Staged release pubg:** `/storage/emulated/0/Download/Bannerlator-3.0.3-pubg.apk` sha256 `8cdcc31ff7bf98e7f5089cb6a5e9443c3b545e4c75ff16f98754ba61ecc0a090` (canonical published binary, `com.tencent.ig`). **vc now frozen at 77** for dev/nightly builds until the next cut. ⚠️ Controller overhaul CI-green + partially device-tested (layout preview `cad92a5d` least-exercised).
+
+## 2026-09-01 — 🔀✅ **Controller Test/Bind overhaul MERGED to main `98902397` (CI-green artifacts build); remaining-extras backlog logged**
+> Feature branch `feat/players-controller-test` (21 commits) merged to `main` with **zero conflicts**: OSC/physical profile-lane split + fixes (D-pad focus, live-edit auto-apply, delete-profile, unified `outlinedMenuCard` styling) + **tabbed Input Controls** (Profile bar + On-Screen · Controller · Assign · Device) + extras (content badges 🖐/🎮, per-pad battery + test-rumble) + **On-Screen live layout preview** (+ tap-to-edit) + in-game button rename → "Physical Controller Test / Bind". versionCode stays **76 / 3.0.2** — NO release cut, NO bump (bumps at next release). Artifacts-only main build run `33465157860` green (3 flavors); pubg `Bannerlator-main-ctrl-overhaul-pubg` id `9784729598`. Revert whole merge: `git revert -m 1 98902397`. ⚠️ CI-green NOT fully device-proven — layout preview `cad92a5d` least-tested (watch preview-vs-scroll + blank-overlay → Canvas fallback). `feat/players-controller-test` branch retained.
+> - **Remaining-extras backlog** (nothing built beyond the 3 phase-1 extras above): **FLAGSHIP = per-controller profile assignment (#345)** — the OSC/physical split is its prerequisite. Others: per-lane active markers · starter templates (FPS/RTS/Twin-stick/Emulator) · community-profile sharing (BannerHub) · On-Screen quick opacity/scale/timeout · per-pad stick deadzone/response-curve · turbo/autofire + combos on physical binds · auto-suggest profile on pad connect · visual P1–P4 slot map · global rumble-strength test.
+
+## 2026-08-31 (cont.) — 🎙️✅ **DirectAudio microphone SHIPPED — driver v1.3.2 released + app merged to main + all 7 layers covered**
+> **DEVICE-PROVEN end-to-end** (AYANEO Pocket FIT / Adreno 750): real mic capture through DirectAudio — a 48kHz mono recording (ffmpeg-verified genuine mic: real level −7.8dB peak, L−R side channel −91dB = mono duplicated to stereo, NOT output loopback) AND TF2's in-game Options→Voice **Microphone Test level meter responding to live mic** (video `screen-20260831-151133.mp4`). Full chain proven: phone mic → AAudio INPUT (VOICE_COMMUNICATION preset) → DirectAudio capture endpoint (opt-in `BANNER_AUDIO_DIRECT_MIC=1`) → WASAPI → guest recorder/game.
+> - **Driver `directaudio-v1.3.2` RELEASED** (The412Banner/directaudio, tag @ `2101085`, ff merge of `feat/mic-capture`): adds the WASAPI capture path (AAudio INPUT + capture ring + get/release_capture_buffer + endpoint), gated on `BANNER_AUDIO_DIRECT_MIC` (default off = byte-identical to v1.3.1 → zero regression). **8 assets** = wine11 + wine10 production (sdk28/35) + 4 wine-split diagnostics, each a complete 3-file set (strict superset of v1.3.1's 6).
+> - **App merged to `main`:** mic toggle (`feat/mic-toggle` → merge `b7b9d945`; detail entry below) + **bundled DirectAudio driver assets bumped v1.3.1→v1.3.2** (`e34a19ce`; all 12 binaries byte-identical to the released build, `version.txt`=1.3.2), so the launch-time overlay ships v1.3.2 to supported layers.
+> - **Layer coverage completed** (`d5ba4d37`, ff): added `11.0-6` to `DirectAudioSupport.SUPPORTED_BUILD_TOKENS` (11.0-6 GE ships DA → now selectable + mic-toggleable) and mapped `10.0-34`→`wine10` in `directAudioAssetDir` (was selectable but never injected). **All 7 supported layers now BOTH select DirectAudio AND auto-update the bundled driver: 10.0-4 / 10.0-34 (wine10), 11.0-1/11.0-2/11.0-3/11.0-5/11.0-6 (wine11).**
+> - **CI (all GREEN):** app-merge `33433143488`, layer-tokens `33436999287`, full-main artifacts `33438438587` (all 3 flavors; `Bannerlator-main-mic-v1.3.2-pubg`). Committed as The412Banner; versionCode NOT bumped.
+> - ⏭️ OPEN (non-blocking): device-verify **10.0-34** actually BINDS the wine10 (10.0-4-built) driver [Wine-10 point-release interchange assumed, untested — if it fails "No driver could be initialized" it needs its own build]; **11.0-6** DA+mic; real **2-player ONLINE voice** round-trip (capture proven; transmit is Valve's Steam-voice code). → memory `project_bannerlator_microphone_input_feature`.
+## 2026-08-31 (cont.) — 🎮🖼️ **Input Controls On-Screen tab: live read-only LAYOUT PREVIEW (the deferred thumbnail)**
+> Phase-2 extras went CI-green (run 33461520911, all 3 flavors, pubg artifact 9783469792). Now the previously-deferred layout thumbnail, confirmed cheap by hosting the app's own view.
+> - **What:** in the On-Screen tab, below "Edit Layout", when the selected profile HAS an overlay (`hasElementsOnDisk()`), render a live read-only preview of the touch layout in a game-aspect frame (rounded, 1dp outline, dark ground). Layout-less profile → one-line "No on-screen layout — tap Edit Layout to add one."; no profile → nothing.
+> - **How (reuse, no xServer):** `OnScreenLayoutPreview` hosts a real `com.winlator.star.widget.InputControlsView` via Compose `AndroidView` — `setEditMode(false)` (plain overlay, no grid/handles), `setShowTouchscreenControls(true)`, default GAMEHUB style + overlay opacity so it's pixel-honest vs in-game. Precedent = `ControlsEditorActivity` builds the view with NO `setXServer`; the `onDraw`/`ControlElement.draw` path is entirely xServer-free (all xServer refs are input/injection, null-guarded), verified before wiring.
+> - **GOTCHA handled:** elements materialize fractional positions against the HOSTING view's size, so the preview loads a FRESH throwaway `ControlsProfile` off disk (`InputControlsManager.loadProfile`) — laying it out against the small frame never mutates the pixel positions of the shared profile object. `setProfile` loads lazily in `onDraw` once measured; re-read on profile change AND on `ON_RESUME` (new `layoutRev`) so returning from the editor refreshes the preview.
+> - **Non-interactive + tap-to-edit BOTH:** the view is `isClickable/Focusable=false`; a transparent Compose tap-catcher `Box` sits ON TOP (`matchParentSize().clickable`) — it swallows taps (render stays static, nothing editable) and opens the editor (same action as Edit Layout). **Tap-to-edit LANDED.**
+> - Aspect = device long:short (clamped 1.3–2.4, 16:9 fallback). Fallback plan if the standalone view blanks/crashes on device: a Compose `Canvas` reading `ControlElement` getX/Y/type/shape/text — NOT built (real view tried first, per plan).
+> - versionCode FROZEN 76. Branch `feat/players-controller-test`. NOT merged. CI-green pending (`ctrl-onscreen-preview`); not device-proven. #345 files untouched.
+
+## 2026-08-31 (cont.) — 🎮✨ **Input Controls tabbed redesign — phase-2 extras (badges + per-pad battery/rumble)**
+> Restructure (phase 1) went CI-green (run 33460855020, all 3 flavors, pubg artifact 9783205484). Layered the cheap high-value extras on top.
+> - **Profile-bar content badges** — for the selected profile: **🖐 Layout** (accent chip) when its `.icp` holds on-screen elements, and **🎮 N binds** (green chip) = total physical bindings across its controllers. New Java peek `ControlsProfile.hasElementsOnDisk()` (reads the JSON once, counts the `elements` array without materializing `ControlElement`s — elements aren't loaded at rest). Bind total summed in `refreshControllers()` from the profile's loaded controllers (incl. the Default template), so it stays live with the `neverEqualPolicy()` hot-plug/resume refresh.
+> - **Per-connected-pad battery + test rumble** (Controller tab pad cards) — battery via `InputDevice.getBatteryState()` guarded `Build.VERSION.SDK_INT >= 29`, shown inline in the subtitle (`N Bindings · 🔋 x%`); a 🔧 buzz `IconButton` pulses the pad through its OWN `InputDevice` vibrator (`pulsePad()`, mirrors `MainActivity.settingsControllerIdentify` — `VibratorManager` independent motors API 31+ / single vibrator fallback). No WinHandler at rest. Only rendered when the pad reports a vibrator / present battery.
+> - **Deferred: layout thumbnail** (extra 3). No cheap render at rest — a preview needs the profile's `ControlElement`s materialized and laid out through an `InputControlsView` against a measured view (fractional coords); not worth reimplementing the overlay layout math here. Skipped by design.
+> - versionCode FROZEN 76. Branch `feat/players-controller-test`. NOT merged to main. CI-green pending (`ctrl-tabbed-extras`); not device-proven. #345 files untouched.
+
+## 2026-08-31 (cont.) — 🎮🗂️ **Settings → Input Controls TABBED redesign (Option A) — RESTRUCTURE landed (phase 1)**
+> Built the tabbed `InputControlsScreen` per the approved Option-A mock (`Downloads/bannerlator-input-controls-redesign.html`). Pure structural refactor — every existing sub-composable, dialog, callback and piece of logic preserved, just reorganized under a tab scaffold. No behavior reimplemented.
+> - **Pinned Profile bar** (accent avatar + selected-profile name) replaces the old "-- Select Profile --" dropdown + 4-icon toolbar. `▾` opens the profile picker `DropdownMenu` (unchanged items); `⋯` opens an overflow `DropdownMenu` folding **New / Rename / Duplicate / Delete** + a **Share / Transfer** group (**Import** ICP/ICpx via the same in-app/system/download flow, **Export .icpx**, **Export legacy .icp**). All create/rename/duplicate/delete/download dialogs kept verbatim. Legacy-export tooltip retired (its copy is now the menu label).
+> - **Segmented tab row** `On-Screen · Controller · Assign · Device` (new `InputControlsTabs`, reads like the in-game `TestBindToggle`: accent-filled active segment via `colorScheme.primary/onPrimary`, outlined pill). Selected tab in `rememberSaveable` (rotation-stable); each tab's content scrolls independently (`key(selectedTab)` resets scroll on switch); profile bar + tabs stay pinned.
+> - **Tab homes:** On-Screen = "Edit Layout" (the green `ControlsEditorActivity` button, relabeled). Controller = hero "Test and Bind Physical Controllers" card (→ `SettingsControllerTestDialog`) + Default/Any card + the verbatim per-pad loop (binding counts, copy-bindings menu, delete) with the `neverEqualPolicy()` + hot-plug/resume refresh intact. Assign = `GlobalPlayerSlotsSection()`. Device = `GyroscopeSection()`.
+> - **Extras** (badges, per-pad test-rumble + battery) queued for phase 2 after this restructure is CI-green. Layout thumbnail: deferred (no cheap render without an `InputControlsView`).
+> - versionCode FROZEN 76. Branch `feat/players-controller-test`. NOT merged to main. CI-green pending; not device-proven. #345 files untouched.
+
+## 2026-08-31 (cont.) — 🎮🧭 **In-game button renamed + Settings → Input Controls TABBED redesign (Option A) building**
+> Consistency rename: in-game side-menu button "Controller Test" → **"Physical Controller Test / Bind"** (`XServerDrawer.kt:3235`, subtitle updated) to match the Settings card "Test and Bind Physical Controllers".
+> - **Redesign chosen (user, build-first):** Settings `InputControlsScreen` → a **tabbed layout** (mock `Downloads/bannerlator-input-controls-redesign.html`, Option A): pinned **Profile bar** (active profile + content badges 🖐 Layout / 🎮 N binds + ⋯ overflow) → segmented tabs **On-Screen · Controller · Assign · Device**. Nothing lost — every current control maps to a tab (Profile CRUD + Import/Export ICP/ICpx/legacy → ⋯; Controls Editor → On-Screen "Edit Layout"; Test&Bind + Default/Any + per-pad binds → Controller; Player-Slots priority/hide-on-connect/per-device pins → Assign; Gyroscope → Device).
+> - **Phase-1 extras (ship with redesign):** content badges, per-lane active markers (which profile OSC vs physical runs), **test rumble + battery %** per connected pad (data already in the ControllerTest snapshot), layout thumbnail if feasible. **Flagship follow-up = per-controller profile assignment (#345)** — the OSC/physical split is its prerequisite.
+> - Delegated to android-app-engineer. **STAY on `feat/players-controller-test` until done + ready to merge** (user). versionCode FROZEN 76. 345 files untouched.
+
+## 2026-08-31 (cont.) — 🎮🎨 **Settings Input Controls: rename the test/bind card + unify all popup-menu styling on the shared `outlinedMenuCard()`**
+> Follow-ups from Settings → Input Controls: (1) the shared **Art selector** dropdown (Xbox 360/DualSense/…) had no outline/dividers; (2) rename the "External Controllers" entry card.
+> - **Menu styling unified** — switched every controller-test popup menu to the app's canonical `Modifier.outlinedMenuCard()` (surfaceContainer fill + 1dp outline, rounded 10) + `MenuItemDivider()` from `ui/screens/MenuStyle.kt` (the same helpers the Settings profile dropdown already used): the shared **Art selector** (`ControllerTestVisualizer.ArtSelector`), the in-game **profile** picker (`VisualControllerBinder`), and the in-game **Slot** picker (`ControllerTestDialog.SlotPicker`) — replacing the earlier inline `border`+`HorizontalDivider` so all menus read identically (the helper adds the background fill the inline border lacked). The in-game popup Surface keeps its 1dp outline.
+> - **Card renamed** — "Test & bind controller" → **"Test and Bind Physical Controllers"** (`InputControlsScreen.kt`), clarifying it's the physical-pad path (vs the OSC/touch profiles).
+> - Note: Settings binding uses the SAME shared `VisualControllerBinder`/`ControllerTestPanel` as in-game (same `.icp` store); profile create/rename/duplicate/delete on Settings is its dedicated +/✎/⧉/🗑 toolbar. The Settings binder stays EDIT-ONLY (no live-pad activation — no running game), so it passes `onSelectNone`/`onDeleteProfile` = null.
+> - versionCode FROZEN 76. Branch `feat/players-controller-test`. CI-green pending; not device-proven. 345 files untouched.
+
+## 2026-08-31 (cont.) — 🎮🎨 **Bind screen: add Delete profile + fix menu styling (outline + dividers)**
+> User asks: a Delete/Remove option beside Rename in the in-game Bind profile picker, and the dropdown menus + the popup panel had no outline and no divider lines between options.
+> - **Delete profile** — `VisualControllerBinder` gains an optional `onDeleteProfile` param → a red "Delete…" item after "Rename…" (only when a profile is selected; null on the at-rest Settings editors so they're unaffected). `ControllerTestDialog.InGameBindPanel` wires it to a confirm `AlertDialog` → `InputControlsManager.removeProfile(p)` + `profilesRev++`; if the deleted profile was the active physical lane, reverts the pad to native (`onPhysicalProfileChanged(-1)`) and refreshes the Touch list.
+> - **Styling** — the profile `DropdownMenu` (`VisualControllerBinder`), the Slot `DropdownMenu` (`ControllerTestDialog.SlotPicker`), and the popup `Surface` (`ControllerTestScaffold`) now carry a `border(1.dp, cs.outline, …)` outline; the two menus add `HorizontalDivider(cs.outline α0.4)` between items — so the panel edge and per-option separators are visible against the dark theme.
+> - versionCode FROZEN 76. Branch `feat/players-controller-test`. CI-green pending; not device-proven. 345 files untouched.
+
+## 2026-08-31 (cont.) — 🎮🐞 **Live in-game binding EDITS didn't apply until a manual "Reset Input" — fixed (auto re-apply on save)**
+> Device-found (after the D-pad focus fix below): editing a controller binding in the in-game Bind panel while its profile is the active physical lane didn't take effect until the user hit **Reset Input**. Cause: the Bind panel edits `selectedProfile` on its OWN `InputControlsManager` instance (`ControllerTestDialog.kt:372`) and saves to disk, while the live `physicalProfile` is a separate instance resolved off disk at activation (`XServerDisplayActivity.java:6918`); and `onSaved` was **empty** (`ControllerTestDialog.kt:410`), so nothing re-applied after a save. Reset Input worked only because `ds.onResetInput` calls `inputControlsView.reapplyPhysicalProfile()` (`:6905`), which re-applies the lane + clears stale held/tracked state.
+> - **Fix** (`ControllerTestDialog.kt`): `onSaved` now re-invokes `state.onPhysicalProfileChanged(selectedProfileId)` — which re-reads the just-saved profile fresh off disk and calls `setPhysicalProfile` (releasing tracked mappings + resetting state), so a live edit applies immediately with no manual Reset Input. A strict superset of the reset workaround. No-op when nothing is active (`selectedProfileId < 0`).
+> - versionCode FROZEN 76. Branch `feat/players-controller-test`. CI-green pending; not device-proven. 345 files untouched.
+
+## 2026-08-31 (cont.) — 🎮🐞 **Physical D-pad→keyboard binds didn't fire in the new physical lane — fixed (view must be VISIBLE + FOCUSED for motion), pattern ported from the device-proven #345 branch**
+> Device symptom (lanes build `b656c391`): with a physical profile active, a bound **face button** (A→key) worked but the **D-pad** (and sticks) didn't — unless the user also selected a Touch/OSC profile. Root cause, confirmed against `feat/controller-345-fa-spine` (where D-pad remap was device-proven): a 360 D-pad is an `AXIS_HAT_*` **MOTION** event and the framework **focus-routes** joystick motion, so it only reaches `InputControlsView.onGenericMotionEvent` when that view is **VISIBLE + FOCUSED**. KEY events (buttons) are dispatched directly (`dispatchKeyEvent` → `inputControlsView.onKeyEvent`, visibility-independent), so A worked. #345 activated the physical lane via `setShowTouchscreenControls(false) + showInputControls(p)` — the `showInputControls` call does `setVisibility(VISIBLE) + requestFocus()`. The lanes `setPhysicalProfile` set the `physicalProfile` ref but **skipped the visibility/focus**, so motion never arrived.
+> - **Fix** (`XServerDisplayActivity.setPhysicalProfile`): when a physical profile is active → `inputControlsView.setVisibility(View.VISIBLE) + requestFocus()`; when neither physical nor OSC profile is active → `GONE`. `showTouchscreenControls` is left untouched (Touch lane owns it) and `onDraw` stays gated on the OSC profile + `showTouchscreenControls`, so the physical-only view is visible+focused for motion delivery yet paints nothing and claims no slot. Keeps the two lanes independent.
+> - versionCode FROZEN 76. Branch `feat/players-controller-test`. CI-green pending; not device-proven. Grid/lanes work unchanged; 345 files still untouched.
+
+## 2026-08-31 (cont.) — 🎮🔀 **Independent OSC / physical profile lanes + two profile-list bugfixes**
+> Split the single active controls profile into TWO independent lanes so the on-screen controls and the physical pad can each run a DIFFERENT profile at once with no clobber. Touch tab = OSC lane (draws + virtual gamepad, keeps `InputControlsView.profile`); Players → Bind tab = PHYSICAL lane (remaps the real pad WITHOUT drawing the OSC, new `InputControlsView.physicalProfile`).
+> - **`widget/InputControlsView.java`**: new `physicalProfile` field + `getPhysicalProfile()/setPhysicalProfile()/reapplyPhysicalProfile()`. `setPhysicalProfile` neutralizes the outgoing physical controllers, swaps the ref, and re-pushes live state (null = raw Xbox passthrough). Repointed the 4 PHYSICAL read-sites (`onKeyEvent`, `onGenericMotionEvent`, `releaseAllInputs`) from `profile`→`physicalProfile`. CRITICAL: `setProfile(null)` (OSC hide / `-- Disabled --`) no longer clears the physical lane — it keeps remapping.
+> - **`winhandler/WinHandler.java`**: `sendGamepadState(ExternalController)` + `releaseAllControllerInputs()` now gate on `getPhysicalProfile()` (the no-arg OSC path + gyro fall-through stay `getProfile()`). New `refreshControllerStates()` re-pushes live pads through the new lane.
+> - **`XServerDisplayActivity.java`**: `setPhysicalProfile()` wrapper (view + persist new `"controllerProfile"` shortcut extra, mirror `physicalProfileId`); reads that extra at launch beside `controlsProfile`; `ds.onPhysicalProfileChanged` resolves the id via a FRESH `InputControlsManager` (off-disk, templates + just-created profiles both resolve) → passthrough on -1; `onResetInput` now re-applies the physical lane; `ds.onProfilesChanged` reloads + `pushInputProfileNames()` so the Touch dropdown is LIVE.
+> - **`ui/dialogs/ControllerTestDialog.kt`** (Bind panel): the picker now seeds from `physicalProfileId`, `onSelectProfile` ALSO fires `onPhysicalProfileChanged(id)`, a new `-- None (native Xbox) --` entry → passthrough, and create/rename fire `onProfilesChanged` (both pickers live). **`ui/controllertest/VisualControllerBinder.kt`**: optional `onSelectNone` param renders the None entry — left null by the at-rest Settings editors (stay edit-only, no regression). **`ui/XServerDialogState.kt`**: `physicalProfileId` + `onPhysicalProfileChanged` + `onProfilesChanged`.
+> - Two two active profiles don't double-claim a slot (OSC = `OSC_DEVICE_ID`, physical = real deviceId; verified separate). #345 files untouched; versionCode FROZEN at 76; branch `feat/players-controller-test`; NOT merged to main. **CI-green target only — NOT device-proven.**
+
+## 2026-08-31 (cont.) — 🎮📐 **Controller Test: landscape metrics → 2×2 grid so all four tiles fit (device-follow-up)**
+> Device screenshots showed the landscape split (pad LEFT / metrics RIGHT) worked, but the four StatTiles stacked as a 4-high column ran ~230dp — taller than the ~136dp pad — so the bottom two (Right stick, Triggers L·R) scrolled under the pinned footer. Portrait's 4-across strip was fine.
+> - **Fix** (`ui/controllertest/ControllerTestVisualizer.kt`, landscape branch only): render the four readouts as a **2×2 grid** — `readouts.chunked(2)` → two Rows of two `StatTile(weight 1f)` (odd-count-safe `Spacer(weight 1f)`) instead of a single 4-high `Column`. Block height drops to ~112dp ≤ the pad, so all four tiles show with NO scroll and the Identify/Done footer stays clear. Padding-shrink alone would've reclaimed only ~15dp.
+> - Weights nudged **pad 0.58→0.52 / metrics 0.42→0.48** so each cell fits `0.00, 0.00`; Row `verticalAlignment` Top→CenterVertically so the shorter grid centers against the pad. **Portrait untouched** (shared `StatTile`, still the full-width 4-across strip).
+> - Edit-only, +14/−4 one file. versionCode FROZEN at 76 (dev build). Branch `feat/players-controller-test`. **CI-green NOT device-proven** — awaits on-device confirm all four landscape tiles are visible. NOT on main; 345 EXCLUDED.
+
+## 2026-08-31 (cont.) — 🎮🎞️ **Controller Test: stick nubs GLOW on deflection + landscape pad-left/metrics-right; branch untangled from a parallel-session mic commit, then rebased onto main**
+> Two user-reported device issues on the visual Controller Test popup (`ui/controllertest/ControllerTestVisualizer.kt`), both fixed:
+> - **Sticks moved but didn't highlight** like the glowing buttons. `drawStickNub` now takes `(accent, clicked)` and ramps a glow with deflection past an ~8% deadzone (a stick-click pins it full): nub fill `lerp(#12161D → accent, 0.65×glow)` + the SAME halo (`accent α 0.30×glow`, r×1.5) + ring (`accent α glow`, stroke 2) the pressed buttons use. Call sites pass `"l3"/"r3" in pressedManifest` for the click. No-op on socket-less pads (SNES).
+> - **Landscape metrics cut off at the bottom.** `ControllerTestPanel` now splits side-by-side when `LocalConfiguration.orientation == LANDSCAPE`: pad LEFT (weight .58), the four metric StatTiles stacked in a column RIGHT (weight .42) — nothing overflows, pinned Identify/Done footer stays clear. Portrait unchanged (pad above a full-width readout strip). Readout values hoisted to a shared list.
+> - **🧵 Parallel-session bleed (resolved):** a separate DirectAudio session committed a mic opt-in (`199092c2`) ONTO this branch — the shared single working copy `/home/claude-user/bannerlators` has ONE checked-out branch at a time for all sessions. It didn't compile here (`container.getEnvVars()` returns String on the old base, but the mic code treats it as `EnvVars` @ `XServerDisplayActivity.java:3442`) → the first build FAILED all 3 flavors. Fix (user "drop mic commit"): surgery in an isolated detached worktree, cherry-picked ONLY the controller commit → clean `ed01a03f`, `--force-with-lease`. The correct mic version was already separate on `feat/mic-toggle`. LESSON: give each parallel feature its OWN `git worktree`.
+> - **🔁 Rebased onto current main** (`ad5b4dfe`→`d5ba4d37`, +7 commits: the mic opt-in was MERGED to main via `b7b9d945`/`c4ac05e9` + DirectAudio driver v1.3.2 / 11.0-6 layer + mali-report docs) → tip **`90a82864`**, **ZERO conflicts** (`XServerDisplayActivity.java` auto-merged main's mic code + the controller-test isolation; both verified present). Branch delta over main = only the 25 controller files — mic feature lives in the base now, not duplicated. So the branch is clean controller work ON TOP OF the merged mic feature, and no longer carries the compile break.
+> - versionCode FROZEN at 76 (dev build). Branch `feat/players-controller-test`. CI `workflow_dispatch` run `33438790453` = **✅ success (3 flavors)**; pubg artifact `9775565320` (`Bannerlator-ctrl-test-rebased-pubg`). User downloads manually from the Actions page (no device stage this round). **CI-green, NOT device-proven** — the two fixes await on-device confirmation. NOT on main; 345 EXCLUDED.
+
+## 2026-08-31 — 🎙️ **Microphone opt-in (app-side of DirectAudio mic capture): RECORD_AUDIO + per-container/shortcut toggle → BANNER_AUDIO_DIRECT_MIC=1**
+> App-side half of DirectAudio mic support (driver half is parallel, in the separate `directaudio` repo; it opens the AAudio INPUT stream when it sees `BANNER_AUDIO_DIRECT_MIC=1` in the launch env, read like the other `BANNER_AUDIO_DIRECT_*` knobs). The app NEVER opens AudioRecord/AAudio/MediaRecorder — it only grants the permission and sets the flag.
+> - **Manifest** (`app/src/main/AndroidManifest.xml`, shared by all 3 flavors): `RECORD_AUDIO` permission + `android.hardware.microphone` `required="false"` uses-feature.
+> - **Shared env helper** (`core/DirectAudioSupport.kt`): `MIC_ENV_KEY="BANNER_AUDIO_DIRECT_MIC"` + `isMicEnabledInEnv()` / `withMicEnabled()` (ON appends `=1`, OFF removes the key entirely — never `=0`). Single source of truth alongside the existing DirectAudio support-gate.
+> - **Per-container + per-shortcut "Microphone" toggle** (default OFF): added in BOTH editors (`ContainerDetailScreen.kt` after the audio-driver row; `ShortcutsScreen.kt` after the audio-driver row) — NOTE: this repo has no shared `GameSettings.kt`; the audio-driver selector is duplicated per screen, so the toggle is too. Greyed unless the scope's audio driver == `directaudio` (reuses `DirectAudioSupport`), keyed on the live env string so it can't capture-and-drift. Turning it ON requests `RECORD_AUDIO` via `rememberLauncherForActivityResult`; if denied, the flag is left unset + a Toast. ON/OFF just adds/removes `BANNER_AUDIO_DIRECT_MIC=1` in the scope's `envVarsStr` — the SAME per-scope env store the cog's `BANNER_AUDIO_DIRECT_*` keys use, which round-trips per container/shortcut and merges into the launch env.
+> - **Launch env path** (`XServerDisplayActivity.java`): the flag reaches the guest via the existing env merge — `container.getEnvVars()` (`:5541`) then `shortcut.getExtra("envVars")` (`:5632`) are `putAll`'d into `envVars`; `applyDirectAudioConfig(envVars)` (`:5738`, directaudio branch only) overwrites only PERF/ADAPTIVE/BF/MBF/MS/RUNTIME, so `_MIC` survives untouched to the guest. Plus a best-effort main-thread `RECORD_AUDIO` re-request in `onCreate` (after the directaudio support-fallback) when a mic-enabled DirectAudio game launches and the grant was revoked/imported (`directMicRequestedInEnv()`); never blocks the launch.
+> - versionCode NOT bumped (dev build). Branch `feat/mic-toggle` off origin/main `5d1d696d`. **→ MERGED to main + device-PROVEN + shipped as part of DirectAudio v1.3.2 — see the top 2026-08-31 (cont.) entry.**
+
+## 2026-08-30 (cont.) — 🎞️🗜️ **win-fg training capture: smaller shard files (1GB→256MB) + stale-comment/diag correction**
+> User: win-fg Kaggle capture files are all ~1GB each; wanted smaller before recording a 15-min clip. Root cause: layer shards output at `capShardMB` (default **1024 MiB**, `win-fg/src/config.hpp:145`); the app never set it. Fix (app-only, NO native rebuild — shipped `.so` already reads `capture_shard_mb`, verified: main + 3.0.2 `.so` are byte-identical and carry `wfgcap`/`capture_shard_mb` strings): `WinFgCapture` gains `DEFAULT_CAPTURE_SHARD_MB=256` + pref/getter + `ENV_CAPTURE_SHARD_MB`/`CONF_CAPTURE_SHARD_MB`; env stamped in `applyLaunchEnv`; `writeWinFgConfig` (`XServerDisplayActivity.java:2736`) writes `capture_shard_mb` into conf.toml beside width/height. User chose 256MB + split-only (no res/motion change → identical training quality). Also corrected the STALE `WinFgCapture` header comment ("bundled .so has NO capture" — false; it does).
+> ⚠️ **Separately diagnosed "nothing recorded on DiRT Showdown":** capture arms ONLY when the game's frame-gen engine == `bionic` (Win-FG) — `XServerDisplayActivity.java:5590` `fgOn`. Engine default is "off" (Container.java:450; values off|bionic|lsfg). DiRT Showdown was Off/LSFG → `WIN_FG_ENABLE` never set → no capture. Tell = the "recording to Download/win-fg" toast. Fix for user: set per-game FG engine to Win-FG + capture ON + relaunch. (User HAS captured before — the 1GB files — so pipeline works.)
+> Branch `feat/winfg-capture-shard-256` off main `bc5b24e9`. versionCode NOT bumped. **Compile-reasoned only — pending CI + device.**
+## 2026-08-30 (cont.) — 🚀📐 **Launch-method dialog landscape: fit-to-screen + scroll so the Launch button never clips**
+> Device screenshot (OnePlus 15 / A840, landscape): the Steam "Launch with" popup (SteamLite/Goldberg/Raw + Full details/Controller passthrough/Remember) cut off the **Launch** button at the bottom — no scroll. Root cause `LaunchMethodSheet.kt:343` landscape `Surface` = FIXED `.width(580).height(332)` with the right controls column pushing the footer to the bottom via `Spacer(weight(1f))`; content taller than 332dp overflows the fixed card → footer clipped. (Portrait already scrolls via `heightIn(620).verticalScroll`.) Fix: dialog size now capped to device bounds — `dialogW=min(580,screenWidthDp-24)`, `dialogH=min(332,screenHeightDp-24)` (LocalConfiguration) — and the right controls are wrapped in a `weight(1f).verticalScroll` region with the Launch/Cancel `FooterRow` pinned OUTSIDE the scroll → always visible, content scrolls when tall. Branch `fix/launch-menu-landscape-fit` off main `bc5b24e9`. versionCode NOT bumped. **Compile-reasoned only — pending CI + device.** (Pattern reusable for other landscape dialogs if more clip.)
+
+## 2026-08-30 (cont.) — 🖼️📐 **Games grid (GRID_COMPACT) landscape giant-tiles fix — constant tile size across rotation**
+> Device feedback (2 screenshots, tablet 1080×1920): in the big-poster grid view, rotating portrait→landscape kept a hardcoded 4 columns, so each aspect-locked cover ballooned to a giant tile (barely 1 row on screen). Root cause `ShortcutsScreen.kt:912` `GridCells.Fixed(4)` — orientation-blind. Fix: derive column count from the shortest screen edge — `compactCols = (screenWidthDp / (min(screenWidthDp,screenHeightDp)/4)).roundToInt().coerceAtLeast(4)` → portrait resolves to EXACTLY 4 (no regression), landscape flows to ~7 columns of the SAME tile width. `GRID` (Adaptive 120dp) + `LIST` untouched. Added `import kotlin.math.roundToInt`. Branch `fix/compact-grid-landscape-tile-size` off main `af5fde84`. versionCode NOT bumped. **Compile-reasoned only — pending CI + device.**
+
+## 2026-08-30 (cont.) — 🧩🗜️ **Component browse/download = content-packs only (drop bare .zip); GPU Drivers untouched — branch off main, CI test build**
+> User request: when browsing/downloading components (Contents hub AND container-settings "Download components"), show ONLY content packs across all repos/sources; leave GPU Drivers (turnip/adreno/qualcomm/mesa) exactly as-is. Chosen scope (asked): keep `.wcp/.tzst/.xz/.zst`, **drop bare `.zip`** for non-driver types.
+> - Single choke point: `RemoteSourceRepository` cache writer. New `keepPacksOnly(type, items)` + `isDriverType(type)`; `putToCache` now filters non-driver items whose artifact filename ends `.zip`. Added private `putRawToCache` (unfiltered) for GPU-driver buckets (also exempt inside the filter) and user-opted **release-tag "show all"** categories, so neither is touched. `fetchFromSource` returns the cached (filtered) list.
+> - Both entry points funnel through this repo (`ContentsHubViewModel.kt:175`, `ContentDownloadSheet.kt:175`) → one filter covers both. Rationale: a non-driver `.zip` can't install as a pack anyway (installer extracts XZ/ZSTD tar only, `ContentsInstaller.kt:285`), so this hides non-installable/driver-shaped noise, not working packs.
+> - Branch `feat/contents-packs-only-filter` off **main `c16eefc5`** (isolated worktree; the dirty `wincomp-main-build` checkout + its uncommitted CS2 log left untouched per user). versionCode NOT bumped (dev build). CI test build dispatched. **Compile-reasoned only — NOT CI-green, NOT device-proven.**
+
+## 2026-08-30 (cont.) — 🖥️➡️ **Community-repos control moved from rail footer → top header (landscape)**
+> Device feedback on the b83f5490 build: user wants the community-repos source filter in the top header next to "WIN Components", not in the rail footer. Done: new `HeaderSourceControl` (Hub icon + label + Switch + scrollable source chips) placed in the landscape header row; `RailSourceFooter` removed and the 5 source params dropped from `ComponentRail` → the whole rail is categories only, version list keeps full pane height. Landscape only; portrait `SourceToggleBox` unchanged. Verified: no dangling refs, braces balanced, no padding-overload gotcha. Rebuilding on `wincomp-main-build`.
+
+## 2026-08-30 (cont.) — 🐞✅➕ **CI red→fixed (padding gotcha) + Download-speed landscape dialog folded into the SAME APK**
+> First CI on `wincomp-main-build` (run 33304522422) FAILED — `Modifier.padding(horizontal = , top = )` has no matching overload (the known perf-dashboard gotcha); 3 sites in `ContentDownloadSheet.kt` (388/413/1179) fixed to explicit `start/end/top/bottom`. Per user, folded the **Steam Download-speed landscape dialog** into the same build (one combined pubg): `SteamGameDetailActivity.kt` `DownloadSpeedPickerDialog` now renders a WIDE two-column `Dialog`+`Surface` in landscape — 4 speed tiers w/ RAM-CPU meter (left), Log-debug + Install-to-SD options w/ inline ⚠️ warnings (right), Cancel/Download in a pinned bar that never clips — gated on `ORIENTATION_LANDSCAPE`; portrait `OutlinedAlertDialog` UNCHANGED; all state / `onDownload(tier,debugLog,installToSd)` / SD+debug conditionals preserved. Cosmetic note: landscape card fills ~94% height even when short (chose guaranteed no-clip over hug-content). Re-dispatching CI. NOT device-proven.
+
+## 2026-08-30 — 🖥️🧩✅ **WIN Components landscape: GPU Drivers wired + layout fixes; BUILT off main (`90ef895d`), CI pending**
+> Follow-up to the landscape two-pane picker (first commit `4454e473` on `feat/wincomponents-landscape-twopane`, CI-green, staged `…-landscape-pubg.apk` `88de789a…`). This build folds GPU Drivers + device-feedback layout fixes and is based off **latest main `90ef895d`** (branch `wincomp-main-build`; not advancing the shared `main` ref because `bannerlators-mainrel` worktree holds it — merge to main after device-proof).
+> - **GPU Drivers now a real rail category.** Agent extracted `ColumnScope.AdrenoDriverListPane(...)` out of `AdrenoDriverDownloadSheet` (one source of truth, one install path `AdrenotoolsManager.installDriver`); the landscape pane renders it when GPU Drivers is selected. `RailCat.type` is now nullable (GPU = `type=null`), `RAIL_TYPES = mapNotNull { it.type }` so GPU stays OUT of the content-profile `loadProfiles` path. Badge = `AdrenotoolsManager.enumarateInstalledDrivers().size`. Standalone sheet + its 3 callers (`AdrenoToolsScreen`/`ShortcutsScreen`/`BigPictureScreen`) behavior-preserved (unchanged 2-arg signature, `cardStyle=false` flat variant).
+> - **Landscape layout fixes (device feedback — right pane was starved to ~1 visible version row):** (1) community-repos `SourceToggleBox` moved OUT of the pane into a compact `RailSourceFooter` pinned at the rail bottom; (2) top header shrunk ~50–70% (subtitle dropped, `titleSmall`, tighter padding, 36dp folder button); (3) per-category pane header collapsed to one line; (4) bottom footer tightened. Net: right pane = thin header + full-height scrollable version list. **Portrait unchanged throughout.**
+> - Files: `ContentDownloadSheet.kt` + `adrenodownload/AdrenoDriverDownloadSheet.kt` (both untouched on main since branch base → clean). versionCode FROZEN 76. Compile-risk to watch: installed-badge heuristic (count always accurate, per-row best-effort); 48dp interactive floors cap header/footer shrink. **CI dispatch on `wincomp-main-build` + pubg staging in progress; NOT device-proven.** → memory `project_bannerlator_wincomponents_landscape_twopane`.
+
+## 2026-08-26 — 🎮🌐🔫 **Real Steam online-MP (VAC) recon + plan SAVED; labeling set MERGED + device-proven**
+> **Labeling set MERGED to main `e12e41a6` and DEVICE-PROVEN** — STEAM badge (HL2/Legacy, grid+list), CUSTOM teal badge (DiRT games + The Crew 2 via the untagged-manual inference), green `● Online` connection pill (top bar after "Games" + drawer header, tap-retry), auto-connect on launch. Now sits under the other session's win-fg-capture merge `4bf31d86` = current `origin/main`; CI build run `32959392899` (green) contains ALL of it. Verified win-fg feature was already merged (`cb4ba764`, shipped in 3.0.1) — only follow-on branches remain. Full detail → memory `project_bannerlator_steam_connection_ui`.
+>
+> **Then pivoted back to the ORIGINAL goal: a real Steam client + online multiplayer on VAC-secured servers (TF2/CS:S/L4D2).** 2 native-steam-engineer recon digs (GameNative/Proton/WinNative + GameHub SteamAgent). Findings + a test-first plan saved → memory `project_bannerlator_steam_vac_multiplayer_plan`; corrections folded into `project_bannerlator_steam_real_client_port`. TL;DR:
+> - **GameHub `SteamAgent.exe`** = headless `Steam.exe` stand-in that drives the REAL Valve DLLs inside Wine (private `IClientEngine v005`) + a loopback RPC socket → real Valve-signed auth tickets → VAC servers accept. ⛔ can't ship (GameSir proprietary DRM-packed binary + Valve copyrighted DLLs + a leaked dev JWT).
+> - **GameNative/WinNative** reach the same result legally (real bionic `libsteamclient.so` + Proton `lsteamclient` bridge + a bootstrap). **GN's bootstrap C source doesn't exist (binary-only blob); WinNative publishes GPL source → our reference.** Steam assets are DOWNLOADED (GN CDN), NOT baked into the Proton layer; the bridge build recipe IS open on our `proton-wine` `*_add_steam` branches.
+> - **KEY: the JavaSteam client Bannerlator already ships can itself mint the real VAC tickets** (`getAuthSessionTicketInternal`/`getEncryptedAppTicket`) → a possible LIGHTER path. **Phase 0 = a cheap on-device VAC-server smoke test (TF2/L4D2) BEFORE any heavy build.**
+> - Plan mimics SteamAgent's shape (agent + socket + launched-with-the-game) but sources Steam files legally (download from Valve / Linux `libsteamclient`). Ceiling: VAC-only Source titles, NEVER kernel anti-cheat (BattlEye/EAC/Vanguard). No code written; awaiting user's go on Phase 0.
+
+## 2026-08-26 — 🏷️➕ **CUSTOM origin badge for user-added games — built, part of the same branch**
+> Follows the checkpoint below (same branch `feat/steam-badge-connection`). User asked to "wrap up that labeling": games added via the **`+` button** or **File Manager → Add as shortcut** now get tagged `storeSource=custom` and wear a **CUSTOM** teal badge, mirroring STEAM/EPIC/GOG. Commit `2b04df99`.
+> - `ExeShortcutImporter.writeExeShortcut` stamps `storeSource=custom` — it's the SOLE writer for both manual paths (3 callers: FileManagerScreen + ShortcutsViewModel `importExe`/`importScannedGames`); no store install uses it, so store games are never mislabeled.
+> - `CustomBadge` (`#2A8C82` teal) + `showCustom` in `ShortcutBadgeOverlay` + `isCustomOriginShortcut` (custom unless a recognized store by tag or legacy `steam_games`/`gog_games` path). Existing untagged manual games (e.g. The Crew 2) are inferred as custom → badge without re-import. Both grid + list.
+> - ⏳ Rebuild + device-test (CUSTOM on The Crew 2 + a fresh `+`/File-Manager add) alongside the Steam features, then merge the whole labeling set.
+
+## 2026-08-26 — 🛒🏷️🟢🔖 **CHECKPOINT: Steam store badge + connection pill + auto-connect — built, CI/device PENDING**
+> **Where we are (resume here):** branch **`feat/steam-badge-connection`** off `origin/main` `bf58b509`, isolated worktree `/home/claude-user/bl-wt-steam-badge`. 2 commits: `302cf545` (badge) + `283348de` (pill+auto-connect). NOT pushed/built at this line; NOT merged.
+>
+> **What's built (3 user asks, 2026-08-26):**
+> - **A. STEAM store badge** on game tiles + list rows — new `SteamBadge` (dark-navy `#1B2838`) added to the existing `ShortcutBadgeOverlay` beside EPIC/EOS/GOG; both call sites pass `showSteam = isSteamOriginShortcut(shortcut)` (matches untagged legacy HL2/Legacy via `steam_games` path). *(Corrected a wrong first-pass "no existing tile badge" call — the overlay already existed.)*
+> - **B. Top-bar connection chip** — reusable `SteamConnectionPill()` (self-wired to `SteamRepository` status bus, gated `SteamPrefs.isLoggedIn`, tap→`reconnectNow()`) placed right after the "Games" title via a new `AppTopBar.titleTrailing` slot (Games route only). User chose Top-bar chip + this placement.
+> - **C. Drawer header pill** — same `SteamConnectionPill()` next to the account name in `DrawerAccountHeader`.
+> - **Auto-connect on launch** — `BannerlatorApp.onCreate` inits `SteamPrefs` (sync) + `SteamRepository.initialize` and `reconnectNow()` (off-thread) if ever signed in. User chose **Foreground-solid** (no persistent foreground service). Also cures the "not logged into Steam at game-launch screen" symptom.
+>
+> **NEXT:** push → `build-artifacts.yml` → stage **pubg** → device-test: STEAM badge on HL2/Legacy (grid+list); `● Online` chip after "Games"; drawer pill by username; green-on-launch auto-connect; tap-retry when offline. Then merge. Full detail: memory `project_bannerlator_steam_connection_ui`.
+
+## 2026-08-26 — 🛒🏆✅ **Steam achievement seeding + schema + Goldberg update + DB-init root-cause — MERGED to main `2de2bfc9`**
+> **Merged to `main` @ `2de2bfc9`** (no-ff, from `feat/gse-achievement-seeding` @ `1db18255`; revert `git revert -m 1 2de2bfc9`). Builds linearly on the first achievement merge `dd7f96ae`; 6 files +648/−53. This is the follow-up that made in-game achievements actually populate.
+>
+> **What landed:** (1) **Launch-time seed** — write the user's real earned achievements into the per-game GSE file (`…/GSE Saves/<appId>/achievements.json`, union-merge, atomic) *before* guest boot on the worker thread, so gbe_fork boots already knowing what's unlocked. (2) **gbe_fork schema generator** — write the achievement *definitions* (`steam_settings/achievements.json`, GN format: `name`/`displayName.english`/`description.english`/`hidden`/`icon`/`icon_gray`) beside the DLL, so Goldberg has a schema to read (missing schema was why it showed 0). (3) **Goldberg version-check/update** — `goldberg-v2` (gbe_fork `2026_08_23`) on the CDN, `.gbe_version` marker + `isOutdated()` so existing installs get an update prompt. (4) **THE ROOT CAUSE FIX** — `SteamDatabase` was only initialised by the *store* process; the *game-launch* process (`XServerDisplayActivity`) never called `SteamRepository.initialize`, so every DB read threw "SteamDatabase not initialised" and SILENTLY no-op'd both the achievement seed AND the Steam cloud auto-triggers. Now `SteamDatabase.getInstance(applicationContext)` is called in `onCreate` after container resolve.
+>
+> **DEVICE-PROVEN (HL2 appId 220):** logs show `seedGse(220): seeded 7 earned into GSE (30 total)` + `writeGbeAchievementSchema(220): wrote schema: 30 achievements` + `watching appId=220 (7 already earned)`. In-game grid now populates (7/29 — the 7th is the leftover fake test-unlock `HL2_BEAT_DONTTOUCHSAND`; honest count is 6, cleanable by re-opening the detail page / clearing the cache row).
+>
+> **⏭️ Next (queued):** **Steam/Epic/GOG store BADGE on game tiles + list rows** — NET-NEW: confirmed there is NO existing tile badge for any store (only `CommunityStoreBadge` in the community-config sheet); origin *detection* exists (`isSteamOriginShortcut`/`isGogShortcut`/`storeSource==epic`) but is only used to gate menus. Then: Steam auto-connect-on-launch + drawer login badge (same root cause as the DB-init — Steam only connects via the store today); verify the cloud auto-triggers now that the DB is inited; Steamless scoping. → memory `project_bannerlator_steam_achievements`.
+
+## 2026-08-25 — 🏆✅ **Steam achievements IN-GAME PILLS device-proven — feature validated + merged to main**
+> Follows the checkpoint below. **Merged to `main` @ `dd7f96ae`** (no-ff; revert `git revert -m 1 dd7f96ae`). The last unproven piece is now DEVICE-PROVEN on HL2 (appId 220) under Goldberg (Regular): the `AchievementWatcher` logged `watching appId=220 (0 already earned) under …/AppData/Roaming` (**Phase-0 GSE path confirmed** — gbe_fork created `GSE Saves/220/` at exactly the watched path), then a simulated real unlock — wrote `achievements.json` with `HL2_BEAT_DONTTOUCHSAND=earned`, correct owner `u0_a249` + SELinux ctx `c249…` via temp+mv — fired `BH_STEAM_ACHV: unlocked: HL2_BEAT_DONTTOUCHSAND (Keep Off the Sand!)`, and the **gold pill rendered over the live game surface** (icon + name + description, top-right beside the perf HUD, screenshot-confirmed). Whole chain proven: gbe_fork write → FileObserver re-armed down to `220/` → snapshot diff → `lookup` name+icon → pass-through-Dialog pill above the SurfaceView. Test artifact reverted (fake unlock deleted; sync-back was OFF so the real profile was untouched). **Optional-remaining:** naturally-triggered unlock (identical code path), 3-surface pause/resume sync, profile sync-back (default-OFF, bit-math still unproven). → memory `project_bannerlator_steam_achievements`.
+
+## 2026-08-25 — 🏆🛒🔖 **CHECKPOINT: Steam Achievements + Tabbed Detail Page + Auto-Cloud — UI device-proven, in-game pills pending**
+> **Where we are (resume here):** branch `feat/steam-achievements-cloud` @ `01b8186b` (rebased on main `cb4ba764`, clean, force-pushed), CI run `32915101803` GREEN (all 3 flavors). STAGED `/sdcard/Download/Bannerlator-steam-achv-tabs-pubg.apk` sha `d14be86f54de275b73fd984aadedaf4a593df0c070b123f38695f75f50775aab` (installed+verified on device). NOT merged.
+>
+> **What's built (two features on this branch):** (1) **Steam auto-cloud parity** — download-from-cloud on launch (newest-wins) + upload-to-cloud on exit, gated by `hasCloudSupport` + Save-Manager toggles; keeps local auto-collect. (2) **Steam achievements** — detail-page grid, in-game stacking gold pills + `AchievementWatcher` FileObserver, local icon cache, profile sync-back (**DEFAULT-OFF**, bit-math unproven). Plus a full **detail-page rework**: tabbed layout (Details/Achievements/DLC/Cloud saves), single state-driven primary button (Install → Downloading… N% → Add to shortcuts) with 2-layer fill + info line underneath, ⚙ gear dropdown for the rest, Goldberg as a gear popup, long-press achievement help dialog, theme/accent-driven, gear menu outlined + dividers. `steamUserStats` bound; `SteamAchievementStore` facade via `getUserStats`/`getExpandedAchievements`; DB v8→9 `steam_achievements`. javasteam already the joshuatam fork (exposes `storeUserStats`) — zero dep change.
+>
+> **DEVICE-PROVEN this session (HL2 appId 220):** download→install (~10 GB, flat memory/no OOM, completion-guard accepted ≥90% — no false-fail), download↔Download-Manager badge sync, tabbed page, real cached achievement icons (colour/greyscale/lock), theme accent (orange), gear menu outline+dividers, Goldberg greyed-until-installed, single 2-layer progress button + info line (thin bar removed), Goldberg gear popup (Download-Steam-Emulator button → mode picker Off/Regular/Experimental/ColdClient), no inline Goldberg section.
+>
+> **STILL UNPROVEN (resume here):** in-game achievement **PILLS** = the Phase-0 GSE unknown — does gbe_fork write `<container>/.wine/drive_c/users/xuser/AppData/Roaming/GSE Saves/220/achievements.json` where `AchievementWatcher` watches. To test: Goldberg popup → Regular/Experimental → Add to shortcuts → launch HL2 → unlock → watch `BH_STEAM_ACHV` + that GSE path. Also unproven: 3-surface pause/resume sync; profile sync-back (default-OFF). Verify installed sha `d14be86f…` first.
+>
+> Full detail: memory `project_bannerlator_steam_achievements` + `project_bannerlator_steam_autocloud_parity`. Design mockup `/sdcard/Download/Bannerlator-Achievements-Tab-Mockup.html`; spec artifact `claude.ai/code/artifact/87e38bc9-179e-48f7-82f9-52008bbce66f`.
+
+## 2026-08-25 — ⏸️🔖 **CHECKPOINT: LSFG black-frame flicker — paused for device test**
+> **Where we are (resume here):** branch `fix/lsfg-flicker-pacing` @ `6a63e35a`, CI `32795455567` GREEN (all 3 flavors),
+> STAGED `/sdcard/Download/Bannerlator-lsfg-fgreset-pubg.apk` sha `219fa4716886b0210a6d423d8d3a5817fad39f7f5faf0f3f2d4e299841b55f0d`.
+> NOT merged, NOT device-proven.
+>
+> **Root cause (DEVICE-PROVEN, live logcat 2026-08-24):** host-compositor frame OVER-QUEUE from unpaced
+> frame-gen — `SmoMoState::FrameIsLate: queued_frames>=2` ~55/s during flicker → ~14/s after bg/fg; the
+> lsfg-vk GENERATED frames present BLACK (real frames + host HUD fine). **Disproven on-device:** not a driver
+> cap (probe: fp16/memModel/robustness2/sync2 all present); not the AHB fn-ptr miss (AHB context creates fine)
+> → the earlier Wrapper→Turnip lead is dead.
+>
+> **What's on the branch (3 stacked changes):** (A) guest `experimental_present_mode` mailbox-when-generating
+> (`writeLsfgConfig`); (B) vsync clock `vsync.txt` via Choreographer (both VERIFIED live on-disk but did NOT
+> clear the flicker alone); mailbox-lock removal (host present mode user-selectable during FG, `8250c5e9`);
+> (C) FG-CHANGE FULL-RESET (`6a63e35a`) — selecting On/2×/3×/4× (lsfg only) → pause guest → REAL SurfaceView
+> teardown → on-screen Resume overlay → rebuild+resume (only a full surface teardown clears it; a plain
+> swapchain recreate does not).
+>
+> **NEXT (resume):** device-test `219fa471…` — install → set 2× → tap Resume → is the menu clean without
+> manual bg/fg? Also try Present Mode→FIFO with FG on. Optional objective proof: re-run the `scratchpad/lsfgcap/`
+> logcat capture during DiRT+2× and compare `FrameIsLate` vs the ~55/s baseline. Verify installed sha first.
+> Full detail: memory `project_bannerlator_lsfg_black_frame_flicker`.
+
+## 2026-08-24 — 🖥️🎞️ **Feature: frame-gen change → full presentation reset (LSFG black-frame flicker)**
+> Additive to the pacing fix (A+B) + mailbox-lock-removal already on `fix/lsfg-flicker-pacing`. Device
+> finding: with lsfg-vk generating, only a **background/foreground cycle** clears the black-frame
+> flicker — a plain swapchain recreate on the SAME surface (which the `conf.toml` rewrite already
+> triggers, ~0.8s in too) does **not**, because bg/fg does a **full Android SURFACE teardown + rebuild**
+> plus a **guest pause/resume**, which resets the host-compositor over-queue. So on an in-game frame-gen
+> change we now **deterministically replicate that cycle** and gate the resume behind a user tap.
+>
+> **Trigger + debounce** (`XServerDisplayActivity.onBionicFgConfigChange`, lsfg branch): after each
+> committed change, `maybeTriggerFgReset(mult>=2?mult:0)` fires the reset **only when the effective FG
+> level changes** (Off/On/2×/3×/4×) — flow-scale / performance-mode / model edits keep the level so they
+> never reset; `lastCommittedFgLevel` is baselined at launch (`lsfgLaunchMult`). A reset already up
+> swallows further changes (conf is still rewritten; the Resume rebuild picks up the newest conf).
+> **win-fg unaffected**: the drawer's soft `onFgResetPulse` is now gated to `engine == "bionic"`
+> (`XServerDrawer.kt` FgMultiplierButtons) so lsfg no longer double-fires it against the new full reset.
+>
+> **Pause + teardown** (`triggerFgPresentationReset`): mirrors the `onPause` background half —
+> `environment.onPause()` + `xServerView.onPause()` + `ProcessHelper.pauseAllWineProcesses()` (the same
+> SIGSTOP path backgrounding/manual-pause use) — then a **real surface teardown** via new
+> `XServerView.teardownSurface()` (game `SurfaceView` → `GONE` → `surfaceDestroyed` →
+> `VulkanRenderer.onSurfaceDestroyed`/`nativeDetachSurface`; the load-bearing difference vs a
+> swapchain-only recreate). Does NOT flip `isPaused` (own overlay state, so no collision with the
+> ReShade/manual pause box). No-op for GL (`canRecreateSurface()` false — GLSurfaceView owns its EGL).
+>
+> **Resume overlay**: new `XServerDialogState.fgResetPaused` + `onFgResetResume`, rendered by
+> `FgResetOverlay` (new file, modeled on `PauseBoxOverlay` — a top-level dimmed **modal Dialog window**
+> so it stacks above the game surface; back / tap-outside inert, Resume is the only exit). On Resume,
+> `resumeFromFgReset()` mirrors the `onResume` foreground half: `rebuildSurface()` (`SurfaceView` →
+> `VISIBLE` → `surfaceCreated` → `nativeReattachSurface` + swapchain recreate), resume guest (SIGCONT),
+> re-assert present mode + VRR. Robustness: a real foreground mid-reset auto-completes it in `onResume`
+> (surface visibility isn't auto-restored), and `onDestroy` clears the singleton overlay state.
+>
+> Files: `XServerDisplayActivity.java`, `widget/XServerView.java`, `ui/XServerDialogState.kt`,
+> `ui/XServerDialogHost.kt`, `ui/XServerDrawer.kt`, new `ui/overlays/FgResetOverlay.kt`. **No
+> versionCode bump.** Implementation-only — **NOT device-proven** (see risks: the surface rebuild is
+> async vs the immediate guest resume — same ordering as real bg/fg, renderer buffers until reattach).
+
+## 2026-08-24 — 🖥️🎞️ **Fix: LSFG (lsfg-vk) black-frame flicker — pace the layer (vsync clock + mailbox)**
+> Device-proven root cause (DiRT Rally 2.0 / Adreno 750 live logcat): with lsfg-vk frame-gen on, the
+> generated frames present **BLACK** because the guest layer **free-runs unpaced** and **over-queues the
+> host compositor** — Qualcomm's composer spams `SmoMoState::FrameIsLate: queued_frames >= 2` at ~55/s
+> during flicker (dropping ~4× to ~14/s right after a swapchain recreate), while frame-gen pushes
+> ~124fps with no pacing → the compositor queue backs up and dropped/stale generated frames reach the
+> glass black. NOT a driver-cap gap and NOT the AHB fn-ptr miss (both disproven on-device — all features
+> present, AHB context creates fine). **GameNative ships the byte-identical lsfg-vk `.so` yet does NOT
+> flicker because it PACES the layer** (publishes a vsync clock the layer phase-locks to) and runs the
+> guest layer in **mailbox**; we published neither and hardcoded fifo.
+>
+> **FIX A** (`XServerDisplayActivity.writeLsfgConfig`, ~:2665): guest `experimental_present_mode` fifo →
+> **mailbox while generating (multiplier≥2), fifo in passthrough** (GameNative parity). Mesa's FIFO
+> queue underneath the layer breaks the display cadence and feeds the host-compositor over-queue.
+> **FIX B** (the real fix): port GameNative's vsync clock — `startVsyncClock()`/`stopVsyncClock()` use
+> `Choreographer.postFrameCallback` to write `<home>/.config/lsfg-vk/vsync.txt`
+> (`vsync_ns=<frameTimeNanos>` + `period_ns=<1e9/refreshRate>`, refreshRate from the default display,
+> fallback 60) once a second, off the UI thread (single-thread daemon executor). Started at LSFG launch
+> (:4681, next to `writeLsfgConfig`) and on the in-game FG toggle-on (mult≥2); stopped on toggle-off and
+> in `onDestroy`. Our byte-identical `.so` already consumes vsync.txt → no native change. This gives the
+> layer a display grid to phase-lock to instead of free-running, killing the over-queue at the source.
+> **FIX C SKIPPED** (assessed, not implemented): a forced post-launch guest swapchain recreate is
+> redundant + risky here. A host swapchain recreate already fires ~0.8s in via `applyEffectivePresentMode`,
+> and for the common path (launch passthrough → user toggles FG on live) the toggle already re-touches
+> conf.toml → the layer returns `VK_ERROR_OUT_OF_DATE_KHR` → a clean guest recreate happens naturally.
+> Its only unique coverage (auto-enable-at-launch) is already addressed by FIX B's pacing, and a blind
+> timed re-touch would inject a deliberate extra black frame (and race the 0.8s host recreate + any
+> user toggle in that window). Root cause is over-queue-from-no-pacing → B fixes it directly; C only
+> resets symptoms.
+>
+> Surgical, one file (`app/src/main/java/com/winlator/star/XServerDisplayActivity.java`). **No
+> versionCode bump** (fix build). Branch `fix/lsfg-flicker-pacing` off `origin/main`. Risk: mailbox on a
+> surface that only supports fifo — but the device capture showed host `supportedPresentModes=[1,2]`
+> (mailbox+fifo), and the guest layer applies its own present mode. NOT yet built/device-proven.
+
+## 2026-08-24 — 📦🛒 **Vendor the JavaSteam fork in-repo (durability follow-up to #408)**
+> After the #408 OOM fix merged (`a586f73d`) with the dep pinned to the immutable timestamped snapshot
+> `io.github.joshuatam:javasteam(-depotdownloader):1.8.0.1-26-20260801.180149-1`, the artifact was still
+> **downloaded from Sonatype's snapshot repo on every clean build** — and snapshot repos may purge old
+> builds, which would break future builds (never ship bad bits, but fail to resolve). Fix = **vendor the
+> jars + full metadata in-repo** so the build never reaches Sonatype. Mirrored both artifacts' entire
+> `1.8.0.1-26-SNAPSHOT/` dirs **verbatim** (`.jar` + `.pom` + Gradle `.module` + `maven-metadata.xml` +
+> every `.md5/.sha1/.sha256/.sha512`) into `vendor/maven/` (javasteam.jar ~16 MB, depotdownloader ~218 KB).
+> `settings.gradle`: **removed** the sonatype-snapshots repo, **added** `maven { url = uri("${rootDir}/vendor/maven"); content { includeGroup 'io.github.joshuatam' } }`.
+> Transitive deps (ktor 3.2.2, okhttp 5.1.0, protobuf 4.31.1, okio, coroutines, kotlin-stdlib) still
+> resolve from mavenCentral (permanent). Removing sonatype means CI proves the vendored copy resolves
+> **offline** — a genuine independence test. Every mirrored file verified against its own checksum
+> sidecar before commit. Docs: `vendor/maven/README.md` (what/why + how-to-update). Branch
+> `feat/vendor-javasteam-jar` off main → CI must go green BEFORE merge (real resolution change). ⚠️ If
+> Gradle can't resolve the timestamped snapshot from the local file repo, fallback = re-coordinate to a
+> release-style path (rewrite pom/module versions). NOT a versionCode bump.
+
+## 2026-08-24 — 🐛🎮📳 **Crash: setting in-game vibration to 0 while rumbling (createOneShot amplitude 0)**
+> DiRT Showdown hard-crashed the instant the user dragged **vibration → 0** in the in-game side menu
+> **while the pad was actively rumbling**. Device-confirmed: logcat `FATAL EXCEPTION: pool-6-thread-1`
+> + `exit-reasons-…07-33-19.log` `JAVA_CRASH` at 07:33:18, on installed build sha `b4b17f2a` (the
+> wowbox64-dl build = `2732dcc3`/main). ROOT CAUSE: the in-game "vibration=0" sets
+> `vibrationIntensity=0` (NOT mode=Off), so `triggerVibration` still dispatches. `applyIntensity()`
+> returns **0** when intensity≤0, and `WinHandler.vibrateBlended` fed that 0 straight into
+> `VibrationEffect.createOneShot(duration, 0)` → `IllegalArgumentException: amplitude … between 1 and
+> 255` (uncaught, on the `winlator_vibration` listener thread → process death). The dual-motor path
+> already guards `amp > 0`; the single-motor blend (phone vibrator + single-motor pads) did not, and
+> the DEVICE path funnels through the same `vibrateBlended`. FIX (`WinHandler.java:899`): one guard at
+> the single funnel point — `int scaled = applyIntensity(amplitude); if (scaled <= 0) return;` — 0 =
+> silence, matching applyIntensity's documented "0 stays 0"; also skips the pre-O legacy `vibrate()`
+> so intensity 0 is truly silent. Built off `origin/main` in an **isolated worktree** (a foreign
+> session held unrelated `VulkanRendererContext` WIP on the checked-out branch — left untouched).
+> Branch `fix/vibration-amplitude-zero-crash`. Separately noted in the same exit-reasons log: an
+> unrelated **05:37 JAVA_CRASH = JavaSteam depot-download OOM** (okio/okhttp `downloadDepotChunk`) —
+> that's the `fix/steam-download-oom-408` disk-spooling work, not this.
+
+## 2026-08-24 — 🐛🎮 **Shortcut editor: WOWBox64 "download more" opened Box64 sheet (arm64ec)**
+> On an **arm64ec** container, the per-game shortcut editor's **Advanced** tab correctly labels the x86
+> layer **WOWBox64** (selector, version list, preset — `ShortcutsScreen.kt:5993-5996`, `:7549`), but the
+> gear/**download** button next to it opened **"Box64 Downloads"** listing plain Box64 builds
+> (`Box64-Hybrid-Bionic`, `Box64-0.4.4-Bionic`, …) — the wrong content type, so no WOWBox64 build was
+> installable from there. ROOT CAUSE: `ShortcutsScreen.kt:7383` hardcoded `CONTENT_TYPE_BOX64` regardless
+> of arch, while the **container** editor already arch-branches (`ContainerDetailScreen.kt:393-399`) — a
+> pure parity gap. FIX (mirror the container editor): download sheet now
+> `isArm64EC ? CONTENT_TYPE_WOWBOX64 : CONTENT_TYPE_BOX64` — `ContentDownloadSheet` derives both title
+> (`:291`) and listing (`:608`) from the type, so the sheet retitles **"WOWBox64 Downloads"** and lists
+> WOWBox64. Also fixed the gear-icon a11y `contentDescription` "Download Box64" → `"Download $emulatorLabel"`.
+> Diagnosed from user's two device screenshots (DiRT Rally 2.0, arm64ec). Branch
+> `fix/shortcut-wowbox64-download-sheet` off `origin/main`. CI-green + device-proof pending.
+## 2026-08-24 — 🛒💥 **Steam large-game download OOM (#408/#380) — swap to GameNative's disk-spooling JavaSteam fork**
+> Reporter Mr-Teal: **HITMAN WoA (87 GB)** OOM-crashes within ~1 min at **every** speed tier (small
+> games fine) — `java.lang.OutOfMemoryError` vs the 512 MB largeHeap. Root cause (confirmed from engine
+> source): the public `in.dragonbra:javasteam-depotdownloader:1.8.0` holds multi-MB chunk buffers **in
+> memory** the whole pipeline transit — the two `flatMapMerge` inter-stage channels default to
+> `Channel.BUFFERED = 64` (invisible to the `max*` knobs → ~128 MB of 1 MB buffers) plus
+> `VZipUtil.windowBufferPool`, an **8 MB per-Default-thread `ThreadLocal`** never released (~64 MB). So
+> heap peak scales with pipeline saturation, not game size → a long 87 GB download breaches the heap;
+> the speed knobs only change *how fast*, which is why it dies at every tier. App-side caps only DELAY it.
+> **Fix = adopt GameNative's fork** `io.github.joshuatam:javasteam(-depotdownloader):1.8.0.1-26-SNAPSHOT`
+> (`joshuatam/JavaSteam @ gamenative-latest`), whose depot-downloader was rewritten to **disk-spool
+> chunks** (per-chunk temp files under `.DepotDownloader/staging`, only a `fileId` rides the flow, buffer
+> freed immediately, temp deleted after write) → heap peak `O(maxDownloads+maxDecompress)`, **constant
+> regardless of game size**; the ThreadLocal 8 MB window is gone; and a new `skipLargeFileAllocation`
+> flag sidesteps a separate multi-GB per-file prealloc OOM HITMAN also hits. 4 files: `settings.gradle`
+> (+ sonatype-snapshots repo, same as GameNative), `app/build.gradle` (dep swap), `SteamDepotDownloader.kt`
+> (ctor rewrite → named args, drop `maxFileWrites`, `skipLargeFileAllocation=true`), `DownloadSpeedConfig.kt`
+> (drop dead `maxFileWrites`). Our whole Android layer (foreground service, notification, two-bar progress,
+> `IDownloadListener` callbacks, `add`/`finishAdding`/`getCompletion`/`close`, `AppItem`) is UNCHANGED — the
+> only compile break was the removed `maxFileWrites` ctor arg. Branch `fix/steam-download-oom-408` off
+> `main` (`aa1e25ea`) → CI build for Mr-Teal to device-test on HITMAN.
+> **✅ DEVICE-PROVEN (2026-08-24, reporter Mr-Teal, #408):** HITMAN WoA (87 GB) now downloads to
+> completion at the **blazing** tier — no OOM, speed good, both progress bars behave. Proven binary =
+> CI run `32710611783`, headSha `288c0be7` (== branch head, verified). (His follow-up "can't launch"
+> is #412 = Goldberg/no-steam-client, a separate closed issue — not this fix.)
+> **✅ PINNED (pre-merge):** dropped the mutable `-SNAPSHOT` for the exact timestamped snapshot
+> `1.8.0.1-26-20260801.180149-1` (buildNumber 1 — the only build in Sonatype's metadata, so it *is*
+> what the proven run resolved; pom+jar verified HTTP 200). Immutable → a re-published `-SNAPSHOT`
+> can't silently change our bits. Chose the timestamped Sonatype coord over a JitPack commit because
+> JitPack rebuilds from source (not guaranteed byte-identical to the proven artifact). ⚠️ Sonatype
+> may purge old snapshots eventually; if it does, mirror the JAR to our own maven or vendor the fork.
+
+## 2026-08-23 — 🏁🎉 **Bannerlator 3.0.0 — STABLE shipped (Latest)**
+> Cut the 3.0.0 stable: **vc74 / versionName "3.0.0"**. Built from `61fbb9e4` (the vc74 bump on top of
+> the vk-clamp #403 fix `2cdb5ca2`); `release.yml` run `32668286994`, `make_latest=true`,
+> `prerelease=false` → now `releases/latest`, so the in-app updater offers it to everyone on ≤vc73.
+> 3 flavor APKs (~524 MB each) + update.json (vc74). versionCode 74 clears both prereleases
+> (pre1 vc72, pre2 vc73) — verified against GitHub, not assumed.
+> ⚠️ **TAG QUIRK:** tag `3.0.0` → commit `e6547142` (a README-only docs commit pushed to `main`
+> *during* the build), NOT the built `61fbb9e4` — `action-gh-release` tagged main's tip at release-job
+> time, not `GITHUB_SHA`. Harmless (delta = README.md only; APKs built from `61fbb9e4` are the correct
+> vc74; update.json vc74). Lesson reconfirmed: **never push CODE to `main` while `release.yml` runs.**
+> Release body = curated "What's New since 2.9.9" in house style (`# What's New` umbrella + `## <emoji>`
+> sections, matched to pre1/pre2). **⚖️ Credits corrected at cut:** the draft wrongly claimed GameNative
+> "clean-room, no GPL code ships" — FALSE; GameNative (GPL-3.0) IS incorporated (present/scanout path,
+> FPS limiter, Proton xlat, Steam session-hardening) → the app is GPL-3.0; clean-room applies to
+> **win-fg** only. Added lsfg-vk (PancakeTAS) + lsfg-vk-android (FrankBarretta), Samsung Perf SDK,
+> PulseAudio/ALSA, DirectAudio (own repo, LGPL), JavaSteam, and the Winlator lineage — now matches
+> `THIRD-PARTY-LICENSES.md`. **Notes & known-limitations** section added: controllers **PARKED/unchanged
+> since 2.9.9** (didn't want #345 holding up 3.0), Big-Picture games wall **still rough**, and all
+> current **Proton layers already available via Contents / in-game catalog**. README on `main` updated
+> to 3.0.0/vc74 (`e6547142`). Controller branch `feat/controller-345-fa-spine` stays parked on origin,
+> untouched. Memory checkpointed (MEMORY.md stable pointer + release-history section renamed to tag).
+
+## 2026-08-23 — 🛒🐛 **Lossless Scaling ships STALE Lossless.dll — depot-dedup fix**
+> Diagnosed on device (pubg variant, 3.0.0-pre2): Bannerlator's Steam-store install of Lossless
+> Scaling (993090) landed a **5.18 MB** `Lossless.dll`, while GameNative's install of the SAME public
+> build landed **7.17 MB**. Δ = +1.99 MiB = exactly SteamDB build 19476814's "Modified Lossless.dll"
+> on depot 993091. ROOT CAUSE: 993090 ships two overlapping content depots (993091 maintained, 993092
+> stale twin); JavaSteam's DepotDownloader de-dupes files by path and the first-processed depot wins —
+> 993092 pre-empted 993091's newer DLL, so lsfg-vk ran an outdated frame-gen model. Our own
+> `SteamDepotDownloader` overlap comment even asserted "993091 ≈ 993092" (false for this file).
+> FIX (branch `fix/lossless-993090-stale-depot-dedup`, off main `a99705d4`): add
+> `STALE_DUPLICATE_DEPOTS` (appId→depots to drop) and fold it into the existing explicit-depot
+> selection so a public-branch download of 993090 excludes 993092 → pulls only 993091 (+redist),
+> matching GameNative. 993091 alone = complete 315 MB install.
+> CI-pending, NOT device-proven. VERIFY: download Lossless on device → `Lossless.dll` == 7,521,280 B.
+> NOTE: existing stale installs must uninstall + re-download (selection-time fix only). File:
+> `SteamDepotDownloader.kt`.
+
+## 2026-08-22 (follow-up 2) — 🛒☁️ **GOG auto-upload: double-fire guard + visible shutdown indicator**
+> Device re-test (overlay-fix build `17c6da8a`): freeze gone (only a small stutter), BUT (1) no upload
+> indicator showed on the "Shutting down…" screen, and (2) the debug log showed the GOG upload firing
+> TWICE (18:05:17 + :19), each stopping at "listCloudFiles parsed 13" with no completion line — the
+> confirming logcat summary had rotated out, so this session's upload couldn't be confirmed complete.
+> Two real bugs found + fixed:
+> - **Double-fire:** `exit()` has multiple callers (menu/onCancel, game-exit watcher @9010, installer
+>   watcher @9056, autoClose) and NO re-entry guard. Before the worker-thread move they serialized on
+>   main harmlessly; now a 2nd exit() spawns a 2nd upload worker whose restart can kill the 1st upload
+>   mid-flight. FIX: `private volatile boolean exiting` latch at the top of `exit()` (always main-thread).
+> - **Invisible indicator:** the shutdown screen is the `centered` PreloaderUi variant; `PreloaderOverlay`
+>   renders `hint` only in the non-centered launch layout, so `CenteredStatus` never drew it. FIX: pass
+>   `ui.hint` into `CenteredStatus(message, subMessage)` and render it as a dim bodyMedium line (1-line
+>   ellipsized) between the title and the indeterminate bar. Now "Backing up your saves…" → live
+>   "Uploading: <file>" shows during the (off-main, animating) upload.
+> CI-pending. Files: `XServerDisplayActivity.java` (guard), `ui/PreloaderOverlay.kt` (CenteredStatus).
+> RE-TEST: play ELDERBORN → exit → confirm ONE upload, visible "Uploading…" + moving bar, and capture
+> `BH_SAVE_SYNC` "Uploaded N" LIVE before it rotates.
+
+## 2026-08-22 (follow-up) — 🛒☁️ **GOG auto-upload: fix frozen "Shutting down…" screen**
+> ✅ auto-upload-on-exit DEVICE-PROVEN (ELDERBORN, "Uploaded 13 files"). But the ~11s upload FROZE the
+> "Shutting down…" overlay (progress bar stuck mid-animation) → user reported it looks hung, risks users
+> swiping the app off recents mid-upload. ROOT CAUSE: the whole exit runnable — teardown AND the blocking
+> `latch.await` save phase — ran on the MAIN thread, so the Compose preloader couldn't produce frames
+> (all its `runOnUiThread`/`closeOnUiThread` calls were queued behind the runnable and never ran until it
+> finished). FIX (`XServerDisplayActivity.exit()`): keep the short teardown on-main, then run the
+> save-backup phase on a WORKER thread (`BH-ExitSaveBackup`) so the main thread returns and the overlay
+> keeps animating; surface a live `hint()` ("Backing up your saves…", then the GOG upload's per-file
+> "Uploading: <file>" via its `onStatus`); finalize (close overlay + `restartApplication`) back on main in
+> a `finally`. Also REMOVED the now-harmful early `closeOnUiThread()` (in the new flow it would fire the
+> instant the worker starts and hide the overlay). New string `saving_on_exit`. Applies to Steam/custom
+> exits too (same path) but the visible win is the network-slow GOG case. NOT yet CI/device-proven.
+
+## 2026-08-22 (checkpoint) — 🛒☁️ **GOG cloud-save AUTO-UPLOAD on exit (gap #2-P2, auto-triggers)**
+> Picking up the deferred GOG GN-parity work. Highest-value remaining item = cloud-save **auto-triggers**
+> (Galaxy-parity: sync without manual taps). This lands the **auto-upload-on-exit** half — GOG-library
+> games push their saves to GOG cloud automatically the moment the game exits.
+>
+> **Design:** mirrors the already-shipped, device-proven Steam auto-collect-on-exit pattern. The exit
+> teardown (`XServerDisplayActivity.exit()`, before `restartApplication()`) already gates Steam-collect
+> and custom-vault backups by `save_manager_prefs` booleans (default true); GOG drops in the same way.
+> Additive + non-regressive: GOG games ALSO keep their existing local vault snapshot as an offline net.
+> **Safe by construction:** the transport's newest-wins (`GogCloudSaveManager.uploadSaves`) never
+> overwrites a newer cloud save, so an automatic push can't clobber progress from another device.
+>
+> **Files (3):**
+> - `store/GogCloudSavePaths.kt` — NEW `gameIdForExecPath(ctx, execPath)`: reverse-maps a running
+>   shortcut's `gog_games/<dir>` exec path back to its GOG gameId via the `gog_dir_<gameId>` prefs
+>   (untagged GOG shortcuts have no other link back to the store gameId). Offline pref scan.
+> - `XServerDisplayActivity.java` — NEW `isGogShortcut()` (path under `gog_games`) + NEW
+>   `autoUploadGogSavesBlocking()` (worker-thread resolve off-main via `resolveSaveDirectory` against the
+>   RUNNING container, then `uploadSaves`; 15s bounded latch before exit(0); skips cleanly on no-gameId /
+>   no-container / no-cloud-support / unplayed-dir-absent). Wired into the exit block, gated by new pref
+>   `auto_upload_gog_on_exit` (default true).
+> - `store/SteamSaveManagerActivity.kt` — new Save Manager toggle "GOG games: auto-upload to cloud on
+>   exit" (ToggleKind.GOG), with OFF-confirm + ON-info dialogs, matching the Steam/Custom toggles.
+>
+> **Clean-room:** GN GOG code is GPL-3.0 — reimplemented from GOG protocol/behavior + our own Steam/Epic
+> patterns. No versionCode bump (GOG feature convention). NOT yet CI/device-proven at time of commit.
+> **NEXT (paired follow-up, riskier — own test):** pre-launch DOWNLOAD (pull cloud → local before play).
+> Note: Steam does pre-launch restore at the detail-page launch button, NOT in the in-game activity;
+> generic GOG shortcut launches (library/Big Picture) bypass any detail page, so full launch-coverage
+> needs an in-activity onCreate gate (blocks guest exec on a bounded network pull) — deliberately deferred.
+
+## 2026-08-22 (checkpoint) — 🛒✅ **GOG GN-parity mega-push — MOST gaps CLOSED, main `e11fc162`**
+> Multi-day GOG storefront push, all merged to main and device-proven where testable.
+> **DONE (device-proven, on main):**
+> - **#1 File-integrity 3-layer MD5** + **#9 Verify/Repair** + **#6 secure-link refresh** + **#11 disk-guard** + **#12 OAuth-state** — reliability bundle (`86258436`).
+> - **#2 Cloud saves P1** — auto path-resolution (GOG remote-config `content.Windows.cloudStorage`), recursive sync, real newest-wins (per-file Last-Modified HEAD); byte-exact round-trip on ELDERBORN (`d0881705`+`5be993f3`).
+> - **#3 Redists P1** — VC++/.NET auto-install into container prefix via existing `ComponentExecInstaller`, prompt+button; proven VC++2017 into P11-2 (`d331a0ad`).
+> - **#5 DLC install P1** — per-DLC Install buttons + per-product secure link; `baseProductId` depot filter ALSO fixes latent multi-product base-install failure; proven XCOM 2 (baseDepots=30 skippedDlcDepots=27) (`660bbf7c`).
+> - **#8 Library behaviors (NO Room)** — incremental diff + 15-min throttle + prime/size-0 filter + **vertical cover art** (gamesdb.gog.com); posters render (`e11fc162`).
+> - **#10 Download-perf P1** — device-aware pool (cores×2 [6,16] + `gog_dl_threads`) + largest-file-first; proven ELDERBORN 16-thread (`e11fc162`).
+> - **Extras:** gen1/2 badge fix, GOG Save-Manager tab + Custom de-dup, game-card/list GOG badge, save-row cover art + tap-to-detail, `listCloudFiles` plaintext parse fix, readable-bar toasts (Save Manager + redist).
+> **Recon saved effort:** Room NOT set up in app → #8 done on prefs cache instead (Room parked); chunk-dedup ≤2.1% shared → SKIPPED; true-silent VC++ `/quiet` black-screens fresh install → ABANDONED (wizard stays).
+> **❌ REMAINING GOG (deferred, none started):** #2-P2 cloud auto-triggers (install/launch/exit) + conflict/gzip/Etag/tombstones (highest-value); #4 `.info`-driven launch (playTasks exe/args/workingDir); #7 language selection (English-only today); #3-P2a ISI script-interpreter + P2b per-game launch-arg catalog; #5-P2 DLC at-install-picker + per-DLC-uninstall + DLC-download happy-path device-proof (needs owned DLC); #13 recommendations (low prio). Full scorecard → memory `reference_gog_gamenative_gap_roadmap`.
+> **STAGED main:** `/sdcard/Download/Bannerlator-main-e11fc162-pubg.apk` sha `b447b0916f52cc0d2745196e882e17abba82e98686bf5407df80b5a7e7d3fc0a`.
+
+## 2026-08-22 — 🛒☁️ **GOG cloud-save AUTO-PATH (gap #2 P1) + reliability bundle MERGED to main**
+> **Ask (user, going to bed):** merge the reliability bundle, then start GOG cloud-save auto-path, build + stage for morning test, checkpoint memory+log.
+> **MERGE:** `feat/gog-reliability-bundle` → **main `86258436`** (no-ff, The412Banner; main had advanced to `cfdf6e40` via unrelated mali-report docs commits — disjoint, clean ort merge, 9 files +812/−103). Backout `git revert -m 1 86258436`. Main build `32553145739` GREEN; **STAGED `/sdcard/Download/Bannerlator-main-86258436-gogbundle-pubg.apk` sha `e1f9944291ab83f682728d79566b3866b6a1e1edea75400495b8ed460142be7c`** (bundle-only fallback).
+> **CLOUD-SAVE AUTO-PATH (branch `feat/gog-cloud-save-autopath` off main, plan `docs/GOG_CLOUD_SAVE_AUTOPATH_PLAN.md` commit `fcbaad67`; feature commit `00099873`):** clean-room, GN GPL-3.0 refs only. Kills the manual "Browse" folder pick — save dir auto-resolves inside the game's Wine container prefix (mirrors `EpicCloudSavePaths`).
+>  - **KEY FINDING (live on-device):** GOG save location is NOT in local files (`goggame-<clientId>.info` has only buildId/clientId/gameId/playTasks; `ELDERBORN_GOG.json` has no save loc). Authoritative source = **unauthenticated** `GET https://remote-config.gog.com/components/galaxy_client/clients/<clientId>?component_version=2.0.45` → `content.Windows.cloudStorage.locations[].location`. Verified ELDERBORN (clientId `53002674479823021`) → `<?APPLICATION_DATA_LOCAL_LOW?>/Hyperstrange/ELDERBORN` → `…/drive_c/users/<user>/AppData/LocalLow/Hyperstrange/ELDERBORN`. Cached `gog_cloud_location_<gameId>`; clientId from `gog_client_id_<gameId>` or local `.info` fallback.
+>  - **New `GogCloudSavePaths.kt`** (object): `resolveContainer` (matches UNTAGGED GOG shortcut by `gog_games` install path), `locationTemplate` (cached→remote-config fetch/parse), `resolveSaveDirectory` (token expand + Epic's case-insensitive walk + escape guard), `resolve()` one-shot. Tokens: `<?INSTALL?>`,`<?SAVED_GAMES?>`,`<?DOCUMENTS?>`/`%DOCUMENTS%`,`<?APPLICATION_DATA_LOCAL?>`/`%LOCALAPPDATA%`,`<?APPLICATION_DATA_LOCAL_LOW?>`,`<?APPLICATION_DATA_ROAMING?>`/`%APPDATA%`,`%USERPROFILE%`,`%PROGRAMDATA%`.
+>  - **Wired:** `GogGameDetailActivity` (`resolveGogSaveDir` manual-wins-else-auto, `cloudSync`, `Auto:` label) + `SteamSaveManagerActivity` GOG tab (`autoResolvable`/`autoTail`, Up/Down enabled on manual-OR-auto, `Auto: …/<tail>`). Manual Browse override still wins.
+>  - **Degrades to null (logged, no crash):** no container / no clientId / remote-config fail / `enabled=false` / empty locations / unknown token / path-escape. ⚠️ **ELDERBORN installed but may NOT be attached to a container** → resolveContainer null until user adds it to a container (morning test step). Resolution logged `autopath:` to **`/sdcard/bh_cloud_debug.txt`** (tagged `[GOG]`, NOT bh_gog_debug.txt).
+> **Status:** code complete, brace-balanced. CI `32554050244` on tip `00099873` (in flight). **NEXT (overnight, unattended):** CI green → stage pubg → morning device test. **MORNING TEST:** install staged cloud-save APK, verify sha; ELDERBORN ▸ ensure it's in a container → GOG detail page + GOG Save Manager tab show `Auto: …LocalLow/Hyperstrange/ELDERBORN` WITHOUT Browse; Up pushes, Down restores; read `/sdcard/bh_cloud_debug.txt` grep `autopath:`. Deferred P2/P3: conflict/newest-wins, gzip+Etag, tombstones, auto-triggers (install/launch/exit). → memory `project_bannerlator_gog_cloud_save_autopath`, `reference_gog_gamenative_gap_roadmap`.
+
+## 2026-08-21 (later 6) — 🛒🟢 **GOG reliability bundle + GOG Save Manager tab (branch `feat/gog-reliability-bundle`)**
+> **Ask (user):** start the GOG GN-parity quick-wins bundle (#1 MD5, #6 link-refresh, #11 disk-guard, #12 OAuth-state), save it to a plan + task list; AND make GOG games show in their OWN Save Manager tab, not duplicated under Custom (the Epic BUG-3 lesson).
+> **Context:** re-verified GOG gap list vs GN LIVE repo (GN master `12433d92`, 2026-08-21) — GN GOG code FROZEN since the 2026-08-19 audit, 13-gap list unchanged, nothing started our side. Plan doc = `docs/GOG_RELIABILITY_BUNDLE_PLAN.md` (committed `1018589a`).
+> **Branch:** `feat/gog-reliability-bundle` off main `dc1cc225`. Two feature commits (native-steam-engineer + android-app-engineer, coordinated; clean-room, GN GOG = GPL-3.0, no source lifted).
+> **Commit `d471bd26` — reliability bundle (gen2 only; gen1/standalone-installer paths UNTOUCHED):** `GogDownloadManager.java` (+408) + `GogLoginActivity.kt` (+61).
+>  - **#1 MD5 (⭐):** chunk MD5s were already parsed, never verified. Now 3-layer — compressed-bytes MD5 before inflate, decompressed size+MD5 after inflate (`fetchChunkVerified`), whole-file size (summed chunk sizes) + whole-file MD5 *when the file item carries one* (degrades gracefully if absent — DEVICE-VERIFY whether gen2 file items include top-level `md5`). Resume skip `exists&&len>0` → size+MD5 recheck (`fileVerified`). New public `verifyRepair()` (clears `_gog_manifest.json` marker → re-run → only bad/missing re-pulled) — **NOT wired to UI yet** (follow-up).
+>  - **#6 secure-link refresh:** on chunk 401/403/404/500 re-request secure link, re-parse CDN base into shared `AtomicReference cdnBaseRef`, single-flight under lock, capped 5 global (`cdnRefreshCount`), re-queues chunk w/o consuming hard-fail slot; `buildChunkUrl` append-before-query preserves `__token__`.
+>  - **#11 disk guard (greenfield):** pre-flight sum `df.totalSize` vs `installPath.getUsableSpace()`; short → `DISK_GUARD:` sentinel → `doDownload` hard-stops (NO gen1 fallthrough) w/ "need X, only Y free". Skipped when chunk sizes absent.
+>  - **#12 OAuth state:** 24-byte SecureRandom URL-safe Base64, `buildAuthUrl(state)`, survives WebView recreation (`KEY_STATE`), redirect fragment `state` validated — ⚠️ STRICT (rejects missing OR mismatch); one-line relax located in `handleImplicitRedirect` if auth.gog.com doesn't echo `state` and valid logins get rejected.
+> **Commit `adfdd0eb` — GOG Save Manager tab + Custom de-dup:** `SteamSaveManagerActivity.kt` (+226) + `CustomSaveVault.kt` (+20).
+>  - New **GOG tab (index 4)** modeled 1:1 on Epic tab: `GogSaveTab`/`GogSaveRow`/`loadGogSaveStatuses` (disk-truth enum from `bh_gog_prefs` `gog_dir_`/`gog_exe_` + `GogInstallPath.getInstallDir().exists()`, title via `GogLibrarySync.cachedDetail`, folder via `gog_save_dir_`), manual Up/Down through `GogCloudSaveManager.upload/downloadSaves`. No Auto (Epic has none), no auto-path/conflict (gap #2, out of scope) — buttons disabled until folder set on the game's GOG detail page.
+>  - **Custom de-dup (the lesson):** GOG shortcuts are **UNTAGGED** (no `storeSource=gog` — `StarLaunchBridge` only stamps steam/epic), so the **`gog_games` path segment is the load-bearing exclusion**. `CustomSaveVault.isCustom()` now excludes `"gog"` (defensive) + `gog_games` path → GOG no longer double-lists under Custom.
+> **Status:** CODE COMPLETE, brace/paren-balanced both agents; NOT built/pushed at this line. Stretch items left undone + annotated: #6 multi-base HEAD-probe, #11 mid-download recheck. **NEXT:** push → CI 3 flavors → verify headSha == pushed → stage pubg → device test (tamper-a-chunk corruption catch, link-refresh on long DL, disk-guard near-full, GOG login still works, GOG tab lists games + NOT under Custom, confirm gen2 file-level md5 presence). Follow-ups: wire `verifyRepair()` to a Verify/Repair button; #12 strict-state relax if needed. → memory `project_bannerlator_gog_reliability_bundle`, `reference_gog_gamenative_gap_roadmap`.
+
+## 2026-08-21 (later 5) — 💾✅ **Epic Cloud Saves — RETEST #4 PASS → SAGA CLOSED, MERGED → main `03f0a522`, main build staged**
+> **Ask (user):** run retest #4; on pass, merge to main, build artifacts from main only, watch to green, stage pubg.
+> **RETEST #4 = FULL PASS (device-proven), on installed sha `6bd2e479…94eb5` (dlfix build) verified == staged.** Test title **Jotunnslayer** (Games Farm), Epic `appName=05cc03868360490aa4d7138723f4d99e`, container **xuser-3 / P11-2 arm** (active `xuser->./xuser-3`), save dir `…/AppData/LocalLow/Games Farm/Jotunnslayer/saves` (5 files: `16-0-0.sav/.meta/.bak` + `backup/16-0-0_20260821_222407.{sav,meta}`). From `/sdcard/bh_cloud_debug.txt`:
+> - **UPLOAD ✅** (22:25) empty-cloud first upload: `toUpload=5 of 5`, `writeLinks granted=5/5`, 5× `PUT … -> ok`, `upload complete uploaded=5`.
+> - **DEDUP ✅** (22:27) re-Up with cloud populated (`listCloudFiles body len=5400`, `cloudFiles=5`, `localFiles=5`): `toUpload=0 of 5 []` → `already up to date, nothing PUT`. Proves `stripCloudKeyPrefix()` normalizes full Epic keys→game-relative tails on the read/compare side.
+> - **DOWNLOAD ✅** (22:29) cleared live `saves/` first (host backup `/sdcard/Download/jotunnslayer_saves_backup_20260821/` + container stash, both verified); Download restored all 5 **TOP-LEVEL** (`download … -> localFolder=…/saves`, each `GET … -> …/saves/16-0-0.sav`, `…/saves/backup/…`), `download complete downloaded=5`. **`find` over the whole game dir = NO `savesync/<hash>/…` nesting anywhere** — the exact broken symptom is gone. Byte sizes round-trip exact. Container stash removed post-pass; host backup left for the user.
+> **MERGE → main:** `feat/epic-cloud-saves` was a straight-line 10 commits ahead of main (main = clean ancestor). User chose "merge whole branch". No-ff merge as The412Banner → **merge commit `03f0a522`** (ort strategy, zero conflicts; 10 files, +834/−43, new `EpicCloudSavePaths.kt`), pushed `origin/main` `5965b802..03f0a522`. Brings Epic cloud saves (device-proven) + the verified DA **11.0-2/10.0-34** layer-token gate + PROGRESS_LOG docs. Backout: `git revert -m 1 03f0a522`.
+> **Main build (artifacts-only, from main only):** dispatched `build-artifacts.yml` `--ref main` → run **`32546549948`**, headSha `03f0a522` VERIFIED == main. **CI GREEN** (`conclusion=success`, all 3 flavors ~522MB). **STAGED `/sdcard/Download/Bannerlator-main-03f0a522-epic-cloud-pubg.apk` sha256 `035e340086fb5d4c7ce72366811ad73d51afb380c2c5bf15a0c81cee3425dd04`** (524098738 B, valid APK — classes.dex + AndroidManifest present; cp-only per staging rule). This is a fresh SHA vs the proven branch tip `c7863890` but the Epic code is byte-identical. **Epic cloud-saves saga CLOSED end-to-end: scoped → built → 4 device retests → merged → main build staged.** → memory `project_bannerlator_epic_cloud_saves_port`.
+
+## 2026-08-21 (later 4) — 💾🐛 **Epic Cloud Saves — RETEST #3 = upload PASS both surfaces, download BUG found + FIXED (branch `feat/epic-cloud-saves`)**
+> **Retest #3 on installed sha `ab05729a…` (epic-cloud-da, tip `442f33c7`):**
+> - **UPLOAD ✅ PROVEN both surfaces.** Detail-page auto-resolver label = `Auto: …/amanita-design.samorost3/Local Store` (Fix 1 works); Save Manager tab = "Synced 0 minutes ago"; 3-state indicator correct (Samorost synced / Tomb Raider ready-not-synced / Brawlhalla+DOOMBLADE+Metalstorm no-support). `bh_cloud_debug.txt` shows the physical write: `writeLinks granted=4/4` → 4× `PUT … -> ok` → `upload complete uploaded=4` (init.dat 18B, save_00 1748B, save_18 1785B, save_20 1761B). Ran twice (one per surface), both clean.
+> - **DOWNLOAD ❌ BUG (found + root-caused + fixed this session).** GETs succeeded HTTP-wise (5/5 ok, downloaded=5) but files landed at the WRONG path: `Local Store/savesync/<hash>/<appName>/save_18.S3S` instead of `Local Store/save_18.S3S`. Game reads the top-level path → restored saves invisible; original 4 top-level files left untouched (not even overwritten, since dest path differed). The 5th cloud file = Epic's own `manifests/2025.10.19-….manifest` (266B), explains cloudFiles=5 vs localFiles=4.
+> - **Root cause:** Epic's GET listing returns each key as the full canonical storage path `savesync/<hash>/<appName>/<relPath>`, while `requestWriteLinks` echoes the bare requested name — so upload used bare names but download wrote the full server key verbatim (`new File(localFolder, cf.name)`, `EpicCloudSaveManager.java:147`). Same asymmetry silently killed the upload newer-than-cloud dedup (`getCloudModifiedMs` never matched bare-vs-fullkey → every Up showed `toUpload=4 of 4`, "already up to date" branch dead).
+> - **Fix (1 file, `EpicCloudSaveManager.java`):** new `stripCloudKeyPrefix(key, appName)` — strips through the `/<appName>/` segment (handles `<appName>/`-rooted + already-bare keys, safe to apply unconditionally). Applied in `listCloudFiles` at parse (`cf.name = stripCloudKeyPrefix(key, appName)`). Fixes BOTH: download writes `localFolder/<relPath>`, and upload dedup now matches so re-Up hits "already up to date". Device junk (`Local Store/savesync/`) cleaned off DOOMBLADE… er, Samorost prefix.
+> **Status:** code complete, brace-verified. **NEXT:** commit (The412Banner) → push → CI 3 flavors → verify headSha == pushed → stage pubg → **RETEST #4**: Download on Samorost 3, confirm `save_XX.S3S` land at top of `Local Store/` (+ `manifests/…` subdir), GET lines show bare tails; then re-Up and confirm `toUpload=0` / "already up to date". → memory `project_bannerlator_epic_cloud_saves_port`.
+
+## 2026-08-21 (later 3) — 🍾🔊 **Proton 11.0-2 layer SHIPPED (Latest) + catalog live + DA gate wired (checkpoint)**
+> **Ask (user):** finish the Proton 11.0-2 build that a prior crashed session left un-published — cut the release + "set the files"; then rebuild the APK off the epic branch with the new gates + latest cloud-save work.
+> **Layer release (repo `The412Banner/proton-wine`):** the 11.0-2 merge (branch `proton_11.0-2` @ built commit `8bff4069`, Valve 11.0-2 `dc26e618` + full stack, 2 patches re-rolled for the removed `MemoryFexStatsShm` class) was already CI-green — SDK28 run `32533617296` / SDK35 `32533619187`, both headSha `8bff4069`. This session **cut the release**: dispatched the branch's `Publish Proton 11.0-2 (consolidated)` workflow (run `32535095548`, target_commitish pinned to `8bff4069`, prerelease=false) → **`build-p11-20260821` is now `releases/latest`** (user chose LATEST; workflow only offers prerelease-OR-latest). 4 assets `proton-11.0-2-{arm64ec,x86_64}-{sdk28,sdk35}.wcp`; installs as layer **`proton-11.0-2-arm64ec-1`** (type Proton, vc1).
+> **Artifact GATE PASSED** (arm64ec sdk28, byte-identical to shipped asset, sha256 `23ae9d8f…f3259d`): zstd magic 28b5 2ffd ✅ · profile versionName `11.0-2-arm64ec`/vc1 ✅ · XRandR 27 syms (only XVidMode+Xshape "not compiled in", NOT XRandR) ✅ · WINE_FAST_YIELD in ntdll ✅ · ntdll stripped 0 .symtab/.debug ✅ · DirectAudio 3-file set complete ✅. **NOT yet device-boot-proven.**
+> **"Set the files":** (1) **Catalog LIVE** — `winlator-contents/contents.json` `main` @ `5bf478f` (The412Banner): added `proton-11.0-2-arm64ec-unixlibs-{sdk28,sdk35}` (vc1) → new release URLs. Committed+pushed per user → 11.0-2 now shows in the in-app Contents drawer for all users. (2) **DA gate** — `core/DirectAudioSupport.kt`: added tokens `11.0-2` AND `10.0-34` (GE-Proton 10.0-34 — the pending consolidated-release DA follow-up; verified from catalog `ge-proton-10.0-34-arm64ec`; it ships the Wine-10 DA driver so DA genuinely works. NOTE: an earlier `10.0-38` typo was corrected → `10.0-34`), label+counts → six. User chose to keep this on `feat/epic-cloud-saves` (NOT a separate branch).
+> **wcp STAGED for device boot-test:** `/sdcard/Download/proton-11.0-2-arm64ec-sdk28.wcp` (95031047 B, sha256 `23ae9d8f…f3259d` verified on-device == shipped asset). Test: Contents ▸ install local wcp → **fresh arm64ec container** (profile needs new prefix) → launch a game → confirm desktop/render; XRandR refresh unlock available; DA opt-in via reg `Software\Wine\Drivers` `Audio=directaudio`.
+> **APK rebuild (epic branch) — DONE + STAGED:** DA gate committed onto epic tip (`0b789aff` = detail-page resolver, latest cloud-save work) then token typo fixed `10.0-38`→`10.0-34` (commit `e8c7794f`). Stale build `32535733206` (wrong token) CANCELLED; **re-dispatched `build-artifacts.yml` run `32536055912` @ `e8c7794f` (headSha verified == pushed) — CI GREEN (all 3 flavors)**. **STAGED for Epic retest #3: `/sdcard/Download/Bannerlator-epic-cloud-da-11.0-2-pubg.apk` sha256 `ab05729ae0f14981e717e8ceec1c9e5d430d5becb97538367ed6864d58691e42`** (524098812 B, in-place over com.tencent.ig). Old retest-#2 apk `Bannerlator-epic-cloud-fixes-pubg.apk` (`d2cc72ed…`) still in Downloads under its own name — superseded. This apk carries BOTH the latest cloud-save work AND the `11.0-2`/`10.0-34` DA-gate tokens.
+> **Release-notes accuracy fix:** verified the 11.0-2 feature list against the actual extracted arm64ec binaries — FEX unixlib loader CONFIRMED (`load_unixlib_by_name`/`__wine_unixlib_handle` in ntdll.so), fast-yield/WINEVMEMMAXSIZE/XRandR/DirectAudio/C.UTF-8/winedmo all present. **Dropped the `ntsync` overclaim** (client-side ntdll has 0 ntsync refs, no `/dev/ntsync` on Android; esync+fsync are what work) from BOTH the live release body AND source `p11-body.md` (branch commit `2b107bb0`). Also added upstream Valve link (`1a168ebf`). Reddit release post saved `/sdcard/Download/proton-11.0-2-reddit-post.txt` (features verified accurate). → memory `project_bannerlator_proton_11_0_2_build`, `project_bannerlator_epic_cloud_saves_port`, `project_bannerlator_directaudio_moonshot`.
+
+## 2026-08-21 (later 2) — 💾🔌 **Epic Cloud Saves — detail-page resolver wiring + self-evidencing PUT logging (branch `feat/epic-cloud-saves`)**
+> **Ask (user):** RETEST #2 exposed two things — implement both, rebuild. (1) The Epic **detail page** Cloud Saves section showed "No save folder set" and could not confirm the upload; (2) the upload's PUT path is unlogged so device tests can't self-prove a physical write.
+> **Root cause found:** `EpicGameDetailActivity.cloudUpload()/cloudDownload()` read `epic_save_dir_<appName>` (the legacy **manual Browse** key) and bailed with "Set a save folder first" — they never called the P1 auto-resolver (`EpicCloudSavePaths`). So the detail page = a stale surface disconnected from the Save Manager Epic tab. Separately, `EpicCloudSaveManager.uploadSaves` logged only `appName`/`listCloudFiles` — the `requestWriteLinks` + PUT loop (and the "already up to date" no-op branch) emitted **nothing**, so absence-of-PUT-lines proved nothing.
+> **Fix 1 (`EpicGameDetailActivity.kt`):** new `resolveEpicSaveDir()` — **manual pick wins** (Browse override), else auto-resolve via `EpicCloudSavePaths.resolveContainer` + `resolveSaveDirectory` (same path as the Save Manager tab). `cloudUpload`/`cloudDownload` now resolve off-main in a `Thread` (file I/O: shortcut load + prefix walk), show "Resolving save folder…", and "No save folder found for this game" when the resolver yields nothing (no more dead "Set a save folder first"). New `refreshResolvedSaveDirLabel()` populates the Cloud Saves label with `Auto: …/Local Store` on load when no manual folder is set, so both surfaces agree.
+> **Fix 2 (`EpicCloudSaveManager.java`):** `debug()` now traces the full upload — `localFiles`/`cloudFiles` counts, `toUpload` list (newer-than-cloud), the "already up to date" no-op, `writeLinks granted`, **per-file `PUT <name> bytes=N -> ok/FAIL`**, and `upload complete uploaded=N`. Symmetric traces added to `downloadSaves` (`cloudFiles`, per-file `GET … bytes=N`, `download complete`). `debug()` already appends to persistent `/sdcard/bh_cloud_debug.txt` (survives the logcat ring roll) — that's the read-back surface for retest #3.
+> **Status:** CODE COMPLETE, brace/structure verified. NOT yet committed/built at time of this line. **NEXT:** commit (The412Banner) → push `feat/epic-cloud-saves` → CI 3 flavors → verify run headSha == pushed SHA → restage pubg → RETEST #3 (Samorost 3 ▸ Up from BOTH the Save Manager tab and the detail page; read `/sdcard/bh_cloud_debug.txt` for the PUT sequence). → memory `project_bannerlator_epic_cloud_saves_port`.
+
+## 2026-08-21 (later) — 💾🧪 **Epic Cloud Saves P1 — DEVICE TEST #1: 3 bugs found + fixed (branch `feat/epic-cloud-saves`, commit `b5ec0979`)**
+> **Ask (user):** run the staged P1 build on device against a real Epic save, fix what breaks, rebuild.
+> **Setup verified:** installed `com.tencent.ig` sha == staged P1 `a510f0fa…`. Epic library refresh **device-proved component #2** — `CloudSaveFolder` fetch/parse/persist landed for **15 titles** with correct token grammar (`{AppData}/../Roaming|LocalLow/…`, `{UserDir}/…`, `{EpicID}`).
+> **Finding 0 (not a bug):** DOOMBLADE — user made a real local save (`LocalLow/Muro Studios/DOOMBLADE/Save1.save`) but Epic catalog returns **no CloudSaveFolder** (`epic_uses_eos=false`) ⇒ genuinely not cloud-enabled; can't be the test title. Switched to **Samorost 3** (real save at `Roaming/amanita-design.samorost3/Local Store/{init.dat,save_00/18/20.S3S}`, container **xuser-1 / "P11-5 GE Arm"**).
+> **BUG 1 (blocked most of the library) — the `..` escape guard rejected Epic's OWN token grammar.** Device log: `resolveSaveDirectory: rejecting '..' in '{AppData}/../Roaming/amanitadesign.samorost3/Local Store/'`. `{appdata}`==AppData/Local (correct); Epic reaches the sibling roots via `../Roaming` / `../LocalLow`. **Fix (`EpicCloudSavePaths.kt`):** dropped the blanket `..` reject; the walk now resolves `..` (`dir.parentFile`); the containment boundary moved from the individual AppData sub-dir to the **container user profile** (install dir for `{installdir}`), still enforced by the canonical-path escape guard.
+> **BUG 2 (Samorost + any name-normalized folder) — case-insensitive walk can't bridge punctuation.** Catalog `amanita**design**.samorost3` vs on-disk `amanita**-design**.samorost3` (hyphen). **Fix (`EpicCloudSavePaths.kt`):** new `normalizeFolderName` (lowercase, alphanumerics-only) used as a **fallback** match — only when exact case-insensitive fails AND exactly one on-disk candidate normalizes equal (ambiguity ⇒ no match).
+> **BUG 3 — Epic games double-listed under the Custom tab.** `CustomSaveVault.isCustom()` only excluded `storeSource=steam`/`steam_games`. **Fix (`CustomSaveVault.kt`):** also exclude `storeSource=epic` + `epic_games` paths (each store owns its own tab).
+> **FEATURE (user-requested) — "no cloud-save support" indicator.** Post-refresh, unsupported titles (DOOMBLADE) showed the misleading "Open the Epic store…" line. **Fix:** stamp `epic_cloud_checked_<appName>=true` for every catalog-processed game (`EpicGamesActivity.kt`); new `EpicSaveStatus.metadataChecked` (`EpicCloudSavePaths.kt`); Epic row is now **3-state** (`SteamSaveManagerActivity.kt`) — *Cloud saves ready* / **No cloud-save support** (dimmed `CloudOff` badge, no sync buttons) / *Open the Epic store…*.
+> **Status:** committed `b5ec0979` (The412Banner) on `feat/epic-cloud-saves`; **CI GREEN — run `32527341842`, all 3 flavors (standard/ludashi/pubg) success, headSha `b5ec0979` verified.** No versionCode bump (feature build). Still NOT device-proven. **STAGED `/sdcard/Download/Bannerlator-epic-cloud-fixes-pubg.apk` sha `d2cc72ed36c03469b965f3b756ea6dd167ac3f5bda8721513817a4d06b0beea8`** (CI-green pubg artifact, in-place over com.tencent.ig). **AWAITING RETEST #2 — user retests ~1h (home ~18:30 2026-08-21):** verify installed sha == new stage → Epic-store refresh → Save Manager ▸ Epic ▸ **Samorost 3** ▸ Up → watch `BH_EPIC_CLOUD` for resolve of `Roaming/amanita-design.samorost3/Local Store/` (BUG-2 normalized fallback) + PUT of the 4 save files; confirm DOOMBLADE "No cloud-save support" badge + Epic gone from Custom tab. Empty-cloud first-upload still to be device-proven. → memory `project_bannerlator_epic_cloud_saves_port`.
+
+## 2026-08-21 — 💾☁️ **Epic Cloud Saves → Save Manager port — P1 MVP (branch `feat/epic-cloud-saves`)**
+> **Ask (user):** resume the scoped Epic cloud-saves work — make Epic cloud saves work in the in-app Save Manager like Steam/Custom, via a new **Epic tab**. Phase 3 EOS Overlay (the paired ask) already merged dark `9a1c5370`, so this session = cloud-saves only.
+> **What it is:** clean-room reimplementation (GN/Legendary = GPL-3.0, MECHANISM ref only) of Epic cloud-save path resolution + recursive sync + the Save-Manager Epic tab. Transport was ALREADY done (`EpicCloudSaveManager` speaks the savesync API) — P1 built the **sync brain + save-path resolver + UI tab**.
+> **Files:** NEW `store/EpicCloudSavePaths.kt` (the resolver: `resolveContainer` = epicAppName-tag primary + install-dir fallback; `resolveSaveDirectory` = CloudSaveFolder token expansion into the Wine prefix, case-insensitive on-disk segment walk, `..`/prefix-escape guard, descend-into-first-non-empty-user-subdir; `EpicSaveStatus`/`listStatuses`; ISO-8601 parser). MOD `EpicCloudSaveManager.java` (flat `listFiles` → **recursive** relative-path walk both directions + `mkdirs` on download + `markSynced` writes `epic_sync_timestamp_<appName>`). MOD `EpicApiClient.java` (parse `customAttributes.CloudSaveFolder` → `cloudSaveEnabled`/`cloudSaveFolder`; + on-demand `getCloudSaveFolder`, added-but-unwired P2 hook). MOD `EpicGame.java` (2 fields). MOD `EpicGamesActivity.kt` (persist/read `epic_save_folder_<appName>` + cache fields). MOD `SteamSaveManagerActivity.kt` (Epic `RailItem` selectedTab==3 + `3 -> EpicSaveTab` + label; new `EpicSaveTab`/`EpicSaveRow` composables, manual Up/Down through resolver+transport; warning strip now Steam-only).
+> **Design decisions:** `{appdata}`==`%LOCALAPPDATA%`→AppData/Local (VERIFIED vs Legendary `resolve_save_path`, not trusted); both `{appdata}`+`{localappdata}`→Local, `{roamingappdata}`→Roaming. Container→prefix resolver reuses `SaveLocator.profileDir` verbatim (identical prefix base to Steam path model). `epic_sync_timestamp_` written but NOT read (P2 conflict detection).
+> **Out of scope (P2/P3, NOT built):** conflict resolution, auto-triggers (install/launch/exit), chunked-manifest codec, deletion sync.
+> **Status:** commit `0065d84d`; static-review PASSED (every cross-file symbol verified: SaveLocator.profileDir / EpicLibrarySync.cachedDetail.title / Shortcut.container·path·getExtra / Container.id / ContainerManager.loadShortcuts / upload·downloadSaves·Callback sigs / CATALOG_BASE / Java imports). **CI-GREEN — run 32520100527, all 3 flavors (standard/ludashi/pubg) success.** No versionCode bump (feature build). **STAGED for device test: `/sdcard/Download/Bannerlator-epic-cloud-saves-p1-pubg.apk` sha `a510f0fa6bfed77f1461ea3832da5398168c558cb2b499aa5395ed7be15784c2`** (in-place over com.tencent.ig). Empty-cloud first-upload verified in code (getCloudModifiedMs→0 ⇒ all local files upload). **NEXT (this session, if it survives): user device test** — install → sync Epic library → Save Manager ▸ Epic tab → make a save in DOOMBLADE/Tomb Raider I-III → tap Up; Claude tails logs to confirm resolved folder + upload. NOT device-proven. → memory `project_bannerlator_epic_cloud_saves_port`.
+
+## 2026-08-20 — 🌑🛡️ **Epic/EOS Phase 3 — DARK-MERGED behind an off-by-default FeatureFlag (branch `feat/epic-eos-overlay-phase3` → `main`)**
+> **Ask (user):** the Phase 3 EOS Friends Overlay is fully built + device-proven-correct but NOT user-usable yet (it only renders once a wine-compat DXVK ≥ #5257 / Wine ≥ 10.17 + CEF-under-Wine wrapper lands). Merge it DARK — every line stays in the tree, but nothing is visible or active until a single boolean is flipped later. No versionCode bump.
+> **Change:** new `FeatureFlags.EPIC_OVERLAY_ENABLED = false` (same mechanism as `TV_OUTPUT_ENABLED`), with a comment recording the DXVK/Wine/CEF unblock condition. Gated THREE surfaces so the feature is completely inert while off: (a) **toggle** — the "Epic Friends Overlay" `Switch` Row in `ShortcutsScreen.kt` is wrapped in `if (FeatureFlags.EPIC_OVERLAY_ENABLED)`, so no shortcut can be set to `epicOverlay=1` through the UI; (b) **pill** — `isEpicOverlayEnabledForLaunch()` (the single predicate behind `attachEpicOverlayPill()`) now ANDs the flag, so the pill is never attached; (c) **provisioning** — because the same predicate is false, `provisionEpicOverlay()` takes its existing STRIP branch for every Epic launch: it removes any residual `HKCU\Software\Epic Games\EOS` `OverlayPath` and writes/downloads nothing. Net with the flag OFF: no toggle, no pill, no provisioning, and stale reg keys (e.g. the Metalstorm / Samorost 3 test shortcuts still carrying `epicOverlay=1` + a written key) get stripped on launch = fully dormant and self-cleaning. Flag ON (future) = the feature works exactly as built today. Also refreshed the stale "Phase 3 pending" header comment in `EpicLaunchArgs.java`.
+> **Merge:** branch was already based directly on current `main` (origin/main `0c2293df`) — no rebase/conflicts. Flag-gate committed on the branch, CI-verified green (all flavors), then `--no-ff` merged to `main` (branch kept, no tag/release). → memory `project_bannerlator_epic_eos_support`.
+
+## 2026-08-20 — 🛡️🎮 **Epic/EOS Phase 3 — Friends Overlay (provision-only) + per-shortcut toggle + edge-snap pill (branch `feat/epic-eos-overlay-phase3`)**
+> **Ask (user):** ship Phase 3 of Epic/EOS — the EOS Friends Overlay, gated behind a per-shortcut toggle, with an in-game draggable edge-snap "Epic pill" that injects the overlay hotkey. Fully scoped by prior investigations; follow the file:line insertion points.
+> **What it is (not overbuilt):** Epic's overlay is PROVISION-ONLY. We download Epic's REAL overlay component into the game's wine prefix, write ONE HKCU registry pointer, and the game's OWN bundled EOS SDK loads it and owns the hotkey (default Shift+F3). We render nothing and trigger nothing in software — the pill just synthesises Shift+F3 into the guest so a touch user can summon it. Uses the user's real Epic login; not a bypass. Clean-room (GameNative + Legendary as MECHANISM references; Epic app IDs / registry key / Windows path / manifest-API shape / `EOSOVH-Win64-Shipping.dll` are public facts).
+> **P3a — backend + toggle:**
+> - NEW `store/EpicOverlayManager.java`: `ensureOverlayInstalled(ctx, prefixDir)` skips when `…/Portal/Extras/Overlay/EOSOVH-Win64-Shipping.dll` already exists, else fetches the overlay app manifest (`getManifestApiJson`, fixed Epic IDs app/ns/catalog + `Live`) and chunk-downloads via the EXISTING `EpicDownloadManager.install` (no reinvented chunk assembly; Live CDN only — Epic binaries NOT bundled). `writeRegistry` sets `HKCU\Software\Epic Games\EOS` `OverlayPath` in `user.reg` via `WineRegistryEditor` (the ONLY key). `stripRegistry` removes it when the toggle is off. Bearer from `EpicCredentialStore.getValidAccessToken` (auto-refresh).
+> - `XServerDisplayActivity`: new `provisionEpicOverlay()` wired in the launch worker AFTER `applyGameRefreshRateUnlock()` / BEFORE `setupXEnvironment()`; gated on `storeSource=epic && epicOverlay=1`; gated-off Epic path strips stale keys. Runs on the background launch thread (sync I/O ANR-safe there).
+> - SERVICES guarantee: when overlay is ON, an AGGRESSIVE container startup is bumped to NORMAL for that launch (in `setupWineSystemFiles`, flows through `changeServicesStatus`) so services.exe (RpcSs/BITS) survives — the EOS SDK needs it. DXVK: warn (don't force-rewrite) when the resolved dxwrapper isn't DXVK-based (no3d → grey overlay). See report for the residual DXVK gap.
+> - `ShortcutsScreen.kt`: new **"Epic Friends Overlay"** switch in the Epic block (default OFF, key `epicOverlay`), seeded + persisted alongside `epicEos`/`epicOvtForce`/`epicOffline`.
+> **P3b — edge-snap pill:** NEW `widget/EpicOverlayPill.java` — small draggable badge over the game (only when `storeSource=epic && epicOverlay=1`), attached to `FLXServerDisplay` last (`bringToFront`). Drag via the shared `HudLockController`; on release it MAGNETISES to the nearest left/right edge (net-new edge-snap) and persists per-game via `persistHudPosition("epicPillPos")`/`restoreHudPosition`. Tap → four ordered `xServer.injectKeyPress/Release(SHIFT_L,F3)` calls (UI thread, mirrors `Keyboard`). The pill is NEVER a prerequisite for the overlay — a physical Shift+F3 works independently (SDK owns the hotkey).
+> **Status:** agent-authored, static-review only — UNBUILT until CI. No versionCode bump (feature test build). Pushing `feat/epic-eos-overlay-phase3`; CI builds all flavors. → memory `project_bannerlator_epic_eos_support`.
+
+## 2026-08-20 — 🕹️🖼️ **Big Picture "games wall" — new landscape library home (branch `feat/bigpicture-games-wall`)**
+> **Ask (user):** implement, exactly, an approved HTML mockup of a Steam-Big-Picture-style **games wall** as the app's library — built by iterating a mock against on-device screenshots (fit fixed after a fixed-px→scale-to-fit correction). User decisions: **replace** the current library screen (not an additive mode); cover art = local → **SteamGridDB** → **monogram tile** fallback; accent = **follow the app theme** (NOT a pinned orange); footer = **playtime only** (no fabricated completion-% or play-count).
+> **Change:** NEW `ui/screens/GamesWallScreen.kt` — rail header (bolt + "Bannerlator" wordmark, live clock + decorative wifi/battery, functional name-filter search), left nav rail (accent stripe; Back/Library(selected pill)/Community catalog/Tools/Power), centre-highlighted 2:3 `LazyRow` cover wall (focused tile 1.14× + 4dp accent ring, others ~0.82 opacity, edge scroll-mask + "‹ scroll ›"), footer launch bar (name · 🕐 playtime + LAUNCH + Options + green Ⓐ/red Ⓑ hints). Single-root-focus D-pad across HEADER/RAIL/WALL/FOOTER; A=launch, B=back, Left/Right select. Landscape-locked via `DisposableEffect` (restores `AppOrientation` on exit). Accent everywhere = `MaterialTheme.colorScheme.primary`. `AppNavGraph` `Screen.Games` → `GamesWallScreen`; `MainActivity` full-bleed on the Games route (no top bar/drawer/padding). `BigPictureScreen.loadCover`/`runShortcut` widened `private`→`internal` and **reused verbatim** (same cover-resolution + same launch entry — no forked launcher). Ex-drawer destinations (Containers/Contents/Saves/Input/File Manager/Wrappers/Downloads/Settings) preserved through the **Tools** rail sheet. Old `BigPictureScreen`/`enable_big_picture_mode` path untouched.
+> **Gaps/notes:** no completion-% data model (dropped, per user); "My account" drawer signal not consumed by the wall (reachable via Community catalog → account); SteamGridDB fetch is pre-existing (reused, needs key/network — unverified live); the NEW bit is the monogram-on-null fallback. Making the default home landscape-only is a deliberate UX shift (user OK'd).
+> **Status:** agent-authored, **static-review only — UNBUILT/UNCOMPILED, not device-proven.** Branching off current `main` `c3281b45`, dispatching `build-artifacts.yml` (label `bigpicture-wall`) for the first compile check. No versionCode bump (test build). → memory `project_bannerlator_bigpicture_games_wall`.
+
+## 2026-08-20 — 📐 **Shortcut settings dialog — slim title bar + OK/Cancel footer (both orientations)**
+> Device feedback (landscape): the top title bar (game name + ✕) and bottom Cancel/OK bar ate a lot of vertical space. Halved both, in BOTH orientations (user: "same on portrait and landscape"). Title Row vertical padding 10→3dp + close `IconButton` sized 48→28dp; footer Row padding 8dp→(h8,v2) + `TextButton`s `heightIn(min=32dp)` with tighter `contentPadding`. Pure spacing, no logic touched. `ShortcutsScreen.kt` only. Rebuilding combined APK.
+
+## 2026-08-20 — 🧭🖥️ **Shortcut settings dialog → responsive tabbed layout (portrait top-tabs / landscape rail), branch `feat/per-dll-override-toggles`**
+> **Ask (user):** make the per-game **Shortcut Settings** dialog use the SAME responsive tab layout the **Container editor** already has — pinned top tabs in portrait, a collapsible left rail in landscape — instead of one long scrolling column with the tab strip buried mid-scroll.
+> **Change (`ShortcutsScreen.kt` + `ui/components/CollapsibleRail.kt`):** the dialog body was one `verticalScroll` `Column` = a big "general" block, then an in-body `DpTabs`/`TabRow`, then Win/Env/Advanced content. Reworked into **FIVE tabs** — **General · Win Components · Env Vars · Advanced · Controller** — each its own screen. The old top block split along the "Input" `SectionBox` boundary: everything above it (screen size, icon, graphics driver + DX wrapper, renderer + SF/Vulkan opts, frame-gen, perf, audio, Epic/EOS/Denuvo/Launch-offline) → **General (0)**; the Input/Player-Slots/`PlayerSlotsEditor`/gyro "Motion Aim" block → **Controller (4, last)**. All content now lives in ONE shared `mainContent` lambda dispatched by `when(selectedTab)` (branch labels are tab indices; General+Controller authored adjacent since both came from the old form). Portrait pins the tab strip on top; landscape uses the shared `CollapsibleRail` beside the content; gated on `LocalConfiguration` `isPortrait`, exactly like `ContainerDetailScreen`.
+> **Reused vs new:** LANDSCAPE reuses the **shared `CollapsibleRail`/`RailItem`/`RailSection`/`rememberRailState`** as-is (screenKey `"shortcut"`), with the same "What is all this?" glossary `RailLink`. PORTRAIT top bar = new **`RailTopTabs`** added to `CollapsibleRail.kt` (icon-over-label cells + orange selected underline, faithfully mirroring the container editor's private `ContainerTopTabs`/`TopCell`; container keeps its own copy for now — noted for a future unify). Icons via new `shortcutTabIcon` (General=Settings, Win=Widgets, Env=Extension, Advanced=Tune, Controller=SportsEsports).
+> **D-pad preserved:** the `SettingsDpad`/`DpTabs` model is intact — the "tabs" node still switches tabs via Left/Right (both selectors wrapped in `DpTabs`), and `dpadIds` is now tab-gated (General controls only on tab 0, Controller controls only on tab 4; title-close + tabs + Cancel/OK always). Content on Win/Env/Advanced stays touch-navigable as before.
+> **Sizing/footer:** dialog stays `fillMaxWidth(0.95f)`/`fillMaxHeight(0.92f)` (roomy for rail + content in landscape). The shared content is wrapped in a **weighted Box/Column** so it scrolls internally and the Cancel/OK footer stays **pinned** in both orientations (never pushed off-screen). No Room/schema change, no versionCode bump (pure UI-layout move); all state/callbacks (`controllerSlotOverridesJson`, `envVarsStr`, `winComponents`, EOS extras, #382 graphics persistence, per-DLL `WINEDLLOVERRIDES` toggles) untouched.
+> **Status:** code review only — **NOT built / NOT device-verified** (user coordinates the combined build; no CI dispatch). Needs a device glance: dialog sizing + internal scroll + pinned footer in BOTH orientations, and the d-pad highlight border the rail/top-bar shows when the "tabs" node is focused.
+
+## 2026-08-20 — 🐞 **Per-DLL toggle-off STUCK — `baselineOf` bugfix (device-caught)**
+> **Symptom (user, device):** with the new per-DLL UI installed, enabling the master or a `version.dll` toggle wrote `WINEDLLOVERRIDES=version=n,b`, but the switch **could not be turned back off** — only the env-var trash-can (which wipes the whole var) cleared it. **Root cause:** `DllOverrides.baselineOf()` only stripped our `=n,b` signature entries `if (isEnabled(overrides))` — i.e. only when ALL 8 safe-list DLLs were native-first. GTA ships just `version.dll`, so that guard was false, the baseline kept `version=n,b`, and `disable()` removed the entry then immediately **restored it from the stale baseline** → stuck-on. **Fix:** `baselineOf` now ALWAYS strips signature entries (our markers are never user intent). Per user's spec: toggle-off deletes the entry outright, master-off deletes every entry it added, individual-off deletes only its own; genuinely hand-written builtin-first/grouped overrides are still preserved. One-line change in `EnvVarsEditor.kt`. Rebuilding combined APK.
+
+## 2026-08-20 — 🧩🎛️ **Per-DLL "Prefer game-folder DLLs" toggles — individual switches for each detected DLL (branch `feat/per-dll-override-toggles`)**
+> **Ask (user):** the shortcut Env-Vars ▸ Compatibility panel had ONE blanket "Prefer game-folder DLLs" switch that wrote the whole 8-name safe-list (`version, winmm, dinput, dinput8, dsound, xinput1_3, msacm32, dbghelp` = `n,b`) even when only `version.dll` was on disk (GTA V Enhanced STEAMRIP proxy). Wanted **one toggle per DLL actually detected** in the game folder, not all-or-nothing.
+> **Change (all in `EnvVarsEditor.kt`):** `DllOverrides` gained per-DLL + list overloads — `isEnabled(o,dll)` / `enable(o,dll)` / `disable(o,baseline,dll)` + `…(o,dlls:List)` folds; each splits a single DLL out of a grouped `version,winmm=…` entry and restores the editor-open baseline on toggle-off. Removed the now-dead whole-list `enable`/`disable` (list overload over `PREFER_GAME_FOLDER` reproduces them). UI: **master switch = select-all/none scoped to the DETECTED set** (falls back to full safe-list when nothing detected, e.g. container editor → unchanged); below it a **per-DLL `Switch` row for every `foundDlls` entry**; mixed state (some-but-not-all on) reads as master-off + "Some game-folder DLLs on — see below." caption. Kept Switch idiom (app-consistent) over a literal tri-state box.
+> **Status:** local edit only, **UNBUILT/UNVERIFIED**. Dispatching `build-artifacts.yml` for the `pubg` test artifact to stage for device check on the Pocket FIT (GTA V: expect a single `version.dll` toggle). No versionCode bump (test build). → memory `project_bannerlator_gta5_enhanced_debug`.
+## 2026-08-20 — 🎛️💾 **#382 per-game graphics quick-settings now persist across relaunch (branch, not built)**
+> **Reported:** the in-game drawer's graphics quick-settings reset to defaults on every launch — only the scaling-mode picker was sticky. **Root cause:** setup seeded every one of these to a hardcoded default (Vulkan `setUpscaleSharpness(75)`/`setCas(false,60)`/`setHdr(false)`; GL `setSgsrEnabled(false)`/`setSgsrSharpness(50)`/`setGlUpscaleSharpness(75)`/`setDeband*`), and the drawer apply callbacks never wrote the value back — unlike `persistScalingMode`, which the scaling picker already used.
+> **Fix (branch `feat/persist-graphics-quicksettings` off `origin/main`):** added generic `persistExtraInt/Bool` + `resolveExtraInt/Bool` helpers next to `persistScalingMode` (identical shortcut-first→container→saveData write / shortcut→container→default read). Replaced the hardcoded seeds in `initInlineTabStates` + the Vulkan render-setup block with `resolveExtra*(key, <old-default>)` (first launch byte-identical), and added a `persistExtra*` call in each drawer apply callback so a change sticks immediately (persisting the SAME value applied to the renderer). Seeds now also re-apply a saved deband/SGSR pass to the renderer on relaunch, not just show it in the drawer. **Keys (all per-game, shortcut-override-else-container):** Vulkan — `upscaleSharpness`(75) `casEnabled`(f) `casSharpness`(60) `hdrEnabled`(f); GL — `sgsrEnabled`(f) `sgsrSharpness`(50) `glUpscaleSharpness`(75); shared — `debandEnabled`(f) `debandStrength`(100). Added all nine to `ConfigExporter.BL_EXT_KEYS` so shared community configs round-trip them (import overlays `bl_ext` keys generically — no import-side change needed).
+> **Scope note:** deband lives in BOTH renderer paths off the same drawer state + key, so it is persisted in both (the issue named it under GL). Excluded per instruction: Vulkan screen-effects (brightness/contrast/gamma/fxaa/toon/crt/ntsc) and GL HDR presence — noted follow-ups. `XServerDialogState.reset()`-on-destroy is unchanged and safe (apply writes through). **Not built/not device-verified — user coordinates builds.**
+
+## 2026-08-19 — 🏁🧪 **3.0.0-pre2 SHIPPED (vc73, opt-in prerelease) — 2nd 3.0 beta, 2.9.9 stays Latest**
+> Cut via `release.yml` (workflow_dispatch, `make_prerelease=true`). Tag **`3.0.0-pre2` → `c54b18e5`** (VERIFIED points at the release commit, not the default-branch gotcha). Bumped `app/build.gradle` vc 72→**73**, versionName→`3.0.0-pre2`. Release run `32315703887` GREEN; **3 flavor APKs + update.json attached**; **`releases/latest` VERIFIED still `2.9.9`** (make_latest=false → stable users' updater untouched, opt-in beta only). Notes matched pre1 style (logo + shield badges + emoji sections + known-limitations + carried-forward + standalone-doc link); standalone doc `docs/releases/3.0.0-pre2.md`. **Credits scoped to THIS build's work** (user instruction): WinNative #603, GameNative (Epic/EOS), VKD3D-Proton+DXVK (HUD label ground truth), AMD FSR3 (win-fg), Wine/GE-Proton (WINEVMEMMAXSIZE) + pre-release testers.
+> **Delta since pre1 (46 feature commits, thorough from git history):** 🎮 **Epic Games Store / EOS** (real launch-arg auth + EOS identify, EPIC/EOS badges, Denuvo `-epicovt` ownership token + heuristic, per-shortcut Launch-offline, selective install-tags + delta/verify/repair, full cancel-safe + atomic-chunk resume-safe downloader, library dedup) · 📦 **Contents unified install popup** (shared w/ container-create, two-pass bar, up-front metadata, real Cancel, live notification, save-location dedupe, delete-crash fix, D7VK chip) · 🖥️ **HUD arm64ec API-label fix** (layered log resolver; dual-API games labelled right) · 🎮 **controller input-death fix** (#603 ring 512→4096 + seqlock fences + drawer-neutralize) · 🍷 **WINEVMEMMAXSIZE** opt-in guest VA cap · 🎞️ **win-fg Phase 3a** frame-synthesis bring-up (still passthrough/experimental) · ✨ HUD polish (Show-HUD live, idle threads). ⚠️ NOT in build: controller slot-takeover #345; win-fg frame-insertion. **Next dev cut = vc74+.** → memory `reference_bannerlator_release_history`.
+
+## 2026-08-19 — 🖥️🏷️ **In-game HUD API label fixed on arm64ec (D3D12/VKD3D games no longer mislabelled DXVK) — MERGED to main**
+> **Reported:** GTA V Enhanced (D3D12 via VKD3D, arm64ec Proton 11) showed **DXVK** on the Fusion HUD. **Root cause (device-proven, non-obvious):** the label seeds from the container's configured DX wrapper (DXVK) and is only upgraded by `detectActiveDxApi()` scanning `/proc/<pid>/maps` for `d3d12.dll` — but on **arm64ec** the DX wrappers (d3d11/d3d12/dxgi) are **PE-only** (no `aarch64-unix/*.so` half), so they NEVER appear in `/proc/maps`. The maps scan is structurally blind to the DX API on arm64ec → always falls back to the wrapper name. (A case-insensitive attempt was a red herring; device-tested identical.)
+> **Fix (branch chain → `fix/hud-api-label-robust` → `fix/hud-d3d12-probe`):** a layered resolver in `startDxApiDetection`, each poll: **P1** `readAppDeclaredApi` (guest self-report, e.g. AIO test) → **P2** Unity `Player.log` (lifted to top-level so it works on arm64ec too — also *fixes* Unity dual-API there) → **P3** NEW wrapper-log resolver (`resolveApiFromWrapperLogs`) reading the game's own `vkd3d-proton.log` / DXVK `*_d3d11.log` → **P4** `/proc/maps` (still correct for x86/box64) → **P5** wrapper-name fallback. Plus **always-on minimal private wrapper log** (`hudapi` dir under imagefs tmp) so P3 works even with the user's DXVK-log toggle OFF (`DXVKConfigDialog`). Label-only — never changes which API a game uses.
+> **Two device-caught iterations:** (1) matched the vkd3d log by the running exe → FAILED, because two-process games run a launcher (`PlayGTAV.exe`) while the log names the renderer (`GTA5_Enhanced.exe`); switched to **per-game folder + this-session freshness** as identity. (2) that mislabelled **Deus Ex: Mankind Divided** (DX11/DX12-selectable) in DX11 mode as VKD3D, because it creates a throwaway D3D12 device to **probe** support (fresh 2KB `vkd3d-proton.log`, no swapchain) next to its real 37KB `DXMD_d3d11.log`; gated the vkd3d win on **actual rendering markers** (`swapchain`/`command_queue`/`ExecuteCommandLists`) via `vkd3dLogShowsRendering()` — real D3D12 (GTA V, Metalstorm) has them, a probe doesn't.
+> **Verified:** GTA V → **D3D12 · VKD3D** (device-proven). DXMD-DX11 probe-gate fix staged (`Bannerlator-hudprobe-d90da5ba-pubg.apk`, sha `9ef03d0d…`) — device-confirm GTA V still VKD3D + DXMD-DX11 now D3D11·DXVK + DXMD-DX12 → VKD3D. CI pubg-job green. → memory `project_bannerlator_hud_api_label_arm64ec`.
+
+## 2026-08-19 (checkpoint) — 🧠🧱 **5 Proton/GE layers REBUILT + REPUBLISHED with WINEVMEMMAXSIZE (repo `The412Banner/proton-wine`, NOT this app repo — publishing in progress)**
+> Re-cut the consolidated 5-layer arm64ec bionic release so distributed `.wcp`s carry the **WINEVMEMMAXSIZE** ntdll patch (heavy-game OOM fix — Deus Ex: MD's ~489GB VA reservation; opt-in env, inert when unset). Same five layers, **feature-identical to the 08-17 `build-bionic-layers-20260817-arihany` release + WINEVMEMMAXSIZE only** (arihany 3 fixes · DirectAudio 1.3.1 · fast-yield · FEX-unixlib · XRandR/XRender · debug strip · zstd-19 all verified carried).
+> **Patch parity:** 4 of 5 source branches already had the ntdll patch; the **GE-11.3 gap** (`feat/ge113-arihany-fixes`) was patched this session via contents API — commit `5ce19920` (author The412Banner), identical 3-hunk form (static `vmem_max_size` + `getenv` in `virtual_init` + alloc guard `|| (vmem_max_size>0 && size>vmem_max_size)`).
+> **versionCode reset ALL FIVE → `1`** (user decision; was 6/8/4/5/1). Safe: users uninstall old + recreate container, old release de-listed, layer identity = `type-verName-verCode` equality (no numeric downgrade block, `ContentsManager.java:442`). New ids `11.0-5/11.0-3/11.0-1/10.0-4/10.0-34-arm64ec-1`.
+> **⚠️ GE-11.5 FMV EXCLUSION (user caught it):** the GE-11.5 build branch `feat/fmv-audio-converter-skip` carried the UNRELEASED FMV audio-converter-skip patch (`8956410a`) that 08-17 shipped without. Rebuilt GE-11.5 CLEAN off `ge-proton11-5-bionic-staging` — branch `feat/ge115-vmem-nofmv` `b0441b6b`, cherry-picked ONLY `1f09eaf3`(ci prefixPack)+`735f6a60`(vmem), dropped FMV; verified FMV `.patch` ABSENT/404. Other 4 branches verified clean (08-17 + vmem only).
+> **Ops:** cancelled 6 redundant `on:push` auto-fire dup runs on mainline proton_10.0/proton_11.0 (push-filter `[main,master,proton_XX.0]`); recovered 1 stuck build — 11.0-1 sdk28 `32248131245` hung ~49min on "Set up build environment" → cancelled + re-dispatched `32252398979` (vc=1). All 10 dispatch arm64ec legs GREEN, release jobs `if:false` (no wrong-tag auto-publish). Background agent publishing server-side (attach 10 assets on runner — never local `gh release upload`).
+> **Release:** tag `build-bionic-layers-20260819-vmem`, `--latest`, supersedes 08-17. Body reuses the 08-17 layout (summary table → per-layer `<details>`) with WINEVMEMMAXSIZE featured at top; title adds `· WINEVMEMMAXSIZE`. **NEXT: capture final URL + 10 sha256 when it lands.** Parked follow-ups: Contents `contents.json` catalog wiring + de-list old; delete `feat/vmem-max-size` test branch; CI build refactor (5-run page-size matrix + x86_64 toggle + ccache + concurrency-cancel). → memory `project_bannerlator_wine_vmem_max`, `project_proton_wine_ci_build_refactor`.
+
+## 2026-08-18 — 🎨🎮✅ **Proton 9 (arm64ec + x86_64) FINALS — freetype + working game controllers; rumble PARKED**
+> Big P9 session (proton-wine repo). Every "Wine-9 limitation" became a fix. **Two `-final` wcps staged** = complete, shippable P9: `proton-9.0-arm64ec-final.wcp` (run `32191740848` @ `feat/p9-arihany-parity` `d5f9a98f`) + `proton-9.0-x86_64-final.wcp` (run `32176346795` @ `claude/p9-input-x86_64` `a36931a7`). Both: freetype + arihany parity (SD-card boot / C.UTF-8 / XRandR / fast-yield) + FEX-unixlib + **HID xinput + SDL winebus = controllers work in real games (device-proven, DiRT 3, both arches)**.
+> **Fixes cracked:** (1) **Blank menus/text** = arm64ec Wine built `--without-freetype` (no glyph engine → text can't draw; rects/DXVK fine). Fixed `--with-freetype`, folded into parity. Caught by diffing our build vs the catalog build (user's idea). (2) **x86_64 wfm not opening** = the "Essential" Startup-Services preset DISABLES RpcSs (`WineUtils.changeServicesStatus`) → COM/shell hangs; set **Normal** preset. App-bug: presets shouldn't disable RpcSs/PlugPlay (android-app follow-up). (3) **Controllers** = the joy.cpl "Game Controller Test" applet crash (`hid_update_thread_proc` null-deref, disassembled — DInput+XInput dual-enum makes a null device slot; games use pure XInput = clean) was a FALSE NEGATIVE; real games read the pad fine. `libfakeinput cannot pre-load` under box64 is harmless for a physical pad (SDL reads `/dev/input/event*` directly). 
+> **🅿️ PARKED (user, "work on it later"):** finals have **no rumble** — the FFB-strip mitigation was UNNECESSARY (catalog P9 arm64ec gives controllers AND vibration, proving it). Follow-up (agent acfddb in flight): REVERT FFB-strip in `winebus.sys/bus_sdl.c` (rumble back) + ADD null-guard in `xinput1_3/main.c` `hid_update_thread_proc` (`if(!device) continue;` → fixes joy.cpl too), rebuild both arches = rumble + games + tester all working. → memory `project_proton9_arm64ec_unixlib`.
+
+## 2026-08-18 — 🎮🌐✅ **Epic EOS Phase 2 (Denuvo ownership token) MERGED to main `3f9cd462` — best-effort, untestable**
+> Merged `feat/epic-eos-phase2-denuvo` (ff, branch deleted, no vc bump). Adds: `store/DenuvoDetector.java` (literal-"Denuvo"-string scan + >120MB shipping-exe heuristic, cached shortcut extra `denuvo=1/0`), `EpicSidecar.fetchOwnershipTokenSync` (Epic ecommerce ownership JWT), `-epicovt`/`-epicapp`/`-epicenv=Prod` appended in `EpicLaunchArgs` when `epicEos && (isDenuvo || epicOvtForce)`, and a per-shortcut **"Force Denuvo ownership token"** override (`epicOvtForce`, `ShortcutsScreen.kt`). **NOT device-proven — no runnable Denuvo-on-EOS game exists to test it:** LEGO 2K Drive = Denuvo anti-tamper SEH-crashes under FEX (`err:seh Exception frame is not in stack limits` — ownership token can't fix anti-tamper); Deus Ex MD = OOM flood (`allocate_virtual_memory out of memory`, heavy AAA) + is actually non-Denuvo on Epic (44MB exe); remaining candidates are non-Denuvo or anti-cheat (EAC/BattlEye) which also wall. Phase 2 is harmless (gated off) and helps only the rare ownership-check-only case. Phase 3 (EOS overlay) deferred. → memory `project_bannerlator_epic_eos_support`.
+
+## 2026-08-18 — 🎮🌐✅ **Epic EOS Phase 1 + Epic badge + in-app folder picker MERGED to main `62d043cf`**
+> Merged `feat/epic-eos-launch-args` (7 commits, rebase-onto-main + ff, branch deleted, no vc bump — 72). **Phase 1 EOS is DEVICE-PROVEN**: Metalstorm authenticated to real Epic Online Services and connected to its production servers (verified in the game's own `Player.log` — our injected `-EpicPortal … -AUTH_TYPE=exchangecode` args + a fetched deploymentId reached the game; `EpicSidecar` exchange-code/deployment fetch worked). Shipped: real-Epic launch-arg auth (`store/EpicLaunchArgs.java`+`EpicSidecar.java`, injected at `XServerDisplayActivity.getWineStartCommand`), EOS + **EPIC store badges** (list=next to name, grid/poster/detail-hero=corner overlay), per-shortcut EOS toggle, EOS launch-splash chip, and the **install-dir root-cause fix** (detail-screen installed Epic games OUTSIDE imagefs → broken `Z:` path → "File not found"; now `imagefs/epic_games`). Also: Contents "Choose another folder…" now uses the in-app file manager (`InAppFilePicker.buildDirIntent`) instead of SAF. PR #206 (arro000 Epic dup-crash fix) merged earlier in the same line. **NEXT: Phase 2 (`-epicovt`/Denuvo ownership token)** — scoped in memory; user gating pref = auto-for-all-EOS or Denuvo-detection (not a toggle). → memory `project_bannerlator_epic_eos_support`.
+
 ## 2026-08-18 (checkpoint) — 🎮🌐 **Epic EOS Phase 1 + device-test round 1 (branch, NOT merged)**
 > **PR #206 (arro000) merged to main `921bfd64`** first (Epic library crash on duplicate `appName` → `distinctBy`). Then **Epic EOS Phase 1** on branch `feat/epic-eos-launch-args` (tip **`544f35bf`**, on top of #206), NOT merged. Real-Epic launch-arg auth (no emulator — game's own EOSSDK auths against real EOS with the user's Epic account): new `store/EpicSidecar.java` + `EpicLaunchArgs.java` + `EpicEosDetector.java`; injection at `XServerDisplayActivity.getWineStartCommand():6639` (Epic + `epicEos!=0`); `StarLaunchBridge.EpicMeta` stamps `storeSource=epic/epicAppName/epicSandboxId/epicCatalogId/epicEos` on the shortcut; EOS badge in Epic list/detail + mixed ShortcutsScreen; per-shortcut EOS toggle. Full compare + port plan (BannerHub 3.8.0 vs GameNative — both real-Epic not emulator; BH 3.8.0 wiring is dead code; GN is the live reference) → memory `project_bannerlator_epic_eos_support`. Phases 2 (`-epicovt` ownership token / Denuvo) + 3 (EOS Overlay) deferred.
 > **Device test r1 (Metalstorm, a Unity EOS game):** toggle + mixed-grid badge ✅. Fixed: EOS badge missing in grid/poster views + narrow poster cards + launch-splash EOS chip (`544f35bf`). **Critical:** "File not found" on launch was ROOT-CAUSED to a pre-existing install-path bug (NOT the EOS args) — `EpicGameDetailActivity` installed to `files/epic_games` (OUTSIDE imagefs) while `Z:` maps to imagefs, so `Z:\data\…\files\epic_games\…exe` was unreachable; `EpicGamesActivity` (list) already used `imagefs/epic_games`. Fixed `d08e4462` (detail-screen `:347`/`:595` + write-check `:316` → `imagefs/epic_games`). **RESUME:** install `…-epic-eos-p1b-pubg.apk`, REINSTALL Metalstorm (old install won't migrate), retest launch. ⚠️ Two agents pushed builds without confirming green (one non-compiling) — always re-verify CI. → memory `project_bannerlator_epic_eos_support`.
@@ -5551,6 +8236,31 @@ Resume recipe: launch GL container xuser-3 -> AIO DX11 cube -> enable perf HUD -
 
 **Guardrails:** Do 1+2 first (biggest ROI). Do NOT start editing until today's `c72d943` (CI run `28685150972`) is DEVICE-CONFIRMED on HL2 — don't stack unproven changes. One item per commit, device-verify each. Branch `feat/steam-goldberg-patcher`. Also-deferred #5 = wire the dead `updateNotification` (cosmetic).
 
+---
+
+## 2026-07-19 — WAYLAND RUNTIME: PARKED (revisit later)
+
+Parked cleanly on `feat/wayland-runtime` (tip 9eca32e0, pushed). X11 path untouched. Full detail in memory: `project_bannerlator_wayland_runtime` + `project_bannerlator_wlroots_desktop`.
+
+### DONE this session
+- **libwayland 1.24 -> 1.26.0** cross-compiled for aarch64/bionic (Termux clang + meson) and swapped into BOTH sides: app compositor (`waylandcomp/prebuilt` + jniLibs, app tip 9eca32e0) and the winewayland wcp (proton-wine `feat/winewayland` d6a7216). New wcp staged: `/sdcard/Download/proton-11.0-1-arm64ec-wl126.wcp`.
+- **Compositor input fixes:** (1) scale pointer coords output-space -> surface-local (clickfix); (2) present the LARGEST surface, not the last committed (largest-surface fix), so tiny taskbar toplevels don't steal the fullscreen blit.
+- **DEVICE-VALIDATED for interaction:** user navigated the Wayland file manager (drives/folders) and double-click-launched an exe -> selection / click / double-tap-open all work.
+- Latest APK: `/sdcard/Download/Bannerlator-1.26-gamefix-ludashi.apk` (md5 598af855782f5f154fa9ec32f6f85f9a) = 1.26 + clickfix + largest-surface.
+
+### BLOCKER (why parked) — NOT ours, not the compositor
+FlatOut 2 aborts at launch on Wayland (c0000142). Root cause = the game's **Goldberg/gbe_fork `steam_api.dll` DllMain returns FALSE under FEX-wow64** (heavy 32-bit C++ DLL). Reproduces on X11 too; both the ludashi + standard apps use the identical arm64ec Proton 11 + FEXCore-2607 stack -> **not** our winewayland wcp, **not** the display. The game is DRM-free (ZOOM Platform), so it doesn't need Goldberg at all. **FIX (untested, parked before applying): turn Goldberg OFF / Restore for FlatOut 2** (restores the 268KB Valve `steam_api.dll.bak`, whose DllMain inits fine).
+
+### FULL DESKTOP path (future)
+wlroots-on-Android spike = **GO** (device-proven: wlroots + deps cross-compile, link, and run in a bionic process). Fork `xMeM/wlroots-termux` (0.16.2); it already ships an AHardwareBuffer->dmabuf allocator. Next milestone = **M2** (headless wlroots in-APK). Spike artifacts: `~/scratchpad/wlroots-spike/` + device `/sdcard/Download/wlrspike/`. Keep our proven `vk_present.c`; replace `compositor.c`. See `project_bannerlator_wlroots_desktop`.
+
+### CLEANUP BEFORE ANY MERGE (debug-only, still in tree)
+- Remove the temp pointer log in `compositor.c` `deliver_pointer` (`WLOGI("pointer action=...")`).
+- (Earlier) remove `send_pointer` / `get_pointer` / `send_key` WLOGI; restore device `wine_debug_channels` pref; drop `WAYLAND_DEBUG` if set.
+
+### RESUME HERE (when revisiting)
+1. Apply Goldberg-OFF to FlatOut 2 (or pick a game that boots) -> launch on Wayland -> validate the fullscreen-game cheap win (compositor render + input with a real running game).
+2. Decide whether to green-light **wlroots M2** for the full multi-window desktop.
 
 ## 👆 CURSOR-TO-TOUCH FIX + RTS TOUCH GESTURES (2026-07-21) — branch `feat/touch-gestures`
 **Reported:** device screenshot — enabling "Cursor to Touch" (Controls > Mouse) never lights the chip.
@@ -5893,3 +8603,2481 @@ STRICT PER-SCOPE + PER-ENGINE CONFIG (no bleed on any axis) — DEVICE-PROVEN:
 - **Root cause:** `ProcessHelper.listRunningWineProcesses()` matched the filter `{"wine","exe"}` against `/proc/<pid>/stat`, whose `comm` field is truncated to 15 chars (TASK_COMM_LEN). `NINJA GAIDEN SI` → `.exe` chopped off → no match → never SIGSTOP'd by `pauseAllWineProcesses()`. Short-named exes (e.g. `witcher3.exe`) keep `.exe` within 15 chars, which is why it paused correctly for most users.
 - **Fix (additive, no regression surface):** also match the FULL untruncated argv from `/proc/<pid>/cmdline` (new `readCmdline()` helper — same source `findLinuxPidByExe` already uses). A pid the stat check matched is still matched; we only ADD the previously-missed game process. Also added a `break` so a pid matching both filters is added once (was double-added). Java-only, single file.
 - Base: clean `ad03f23f` (branched off before the stray `mali-report … wine_debug.log` commits that landed on origin/main a36ecc25→8b314ef2 — those look accidental, clean up separately).
+
+## feat/steam-library-allowlist — MERGED to main 40a19c0f (2026-08-20, device-proven)
+Three Steam-store features, merged --no-ff over Big Picture main (ae765278), clean (only 6 store files). No vc bump; release.yml is workflow_dispatch so the push didn't cut a release.
+
+1. NON-"game" ALLOWLIST (a4bf925f). Owned Steam apps are shown only when PICS common.type=="game" — filtered at sync-ingest (tool/hardware/music/video/advertising blocklist) AND display (it.type=="game"). New `SteamRepository.LIBRARY_ALLOWLIST` (Set<Integer>, seeded 993090 Lossless Scaling) bypasses BOTH filters; extend by adding appids. Device-proven: Lossless Scaling shows + downloads.
+
+2. OVERLAP-AWARE COMPLETION FIX (08a829b4, superseded wrong first try c72bcaa9). Symptom: LS "fails at 87%" though the download is complete on disk. Root cause: LS ships two OVERLAPPING content depots (993091 real 175.3MB ≈ 993092 173.3MB, identical files); Steam de-dupes and downloads each unique file once (993091 delivers 0), so the guard's realExpected=sum(depot realSize)=348.6MB DOUBLE-COUNTS shared content and a complete 305MB install can't reach 90%. Fix in `SteamDepotDownloader.onDownloadCompleted`: size totals can't tell overlap (complete) from a dominant-depot skip (HL2 405MB-of-8.4GB, incomplete), so decide on ACTUAL on-disk footprint — overlapping depots collapse to ~one copy, so a complete install reaches >=90% of the LARGEST single kept depot; a real skip stays far below. Plus zero-byte-file check (`dirSizeBytes`/`hasZeroByteFile` helpers). HL2-class skips still fail. Device-proven: LS marks is_installed=1 (log "overlapping/de-duplicated depots, trusting completion"). Downloaded Lossless Scaling 3.2.1 (Lossless.dll 5.2MB, .NET 9.0.5, depot built Aug 19 2025).
+
+3. BETA-BRANCH SELECTOR (f5c70a81). Detail-page branch picker shown only when non-public branches exist; shows each branch's description + last-updated before download; beta-access-code field for password-gated betas. DB v7->8 (+steam_branches, steam_unlocked_branches, additive migration no library wipe); parse depots/branches in processApps; JavaSteam checkAppBetaPassword persists unlocked branches; AppItem(branch=..., branchPassword=...) threaded (non-public skips explicit-manifest path so engine self-resolves). Default public. Ported from GameNative (GPL-3.0, same JavaSteam arch), attributed. Device-verified. Context: LS beta branch ships a newer ~7MB Lossless.dll (newer LSFG model) vs public 3.2.1's 5.2MB; GN pulls PUBLIC for LSFG and copies whatever DLL you own — the beta is reached via a manual branch picker, which this now gives us.
+
+QUEUED NEXT (scoped, ON HOLD until user is home): Epic Cloud Saves -> Save Manager port (Epic tab, resolveSaveDirectory + SyncAction + recursive sync + auto-triggers; defer chunked-manifest codec) + Epic Phase 3 EOS Overlay. See memory project_bannerlator_epic_cloud_saves_port.
+
+## feat/native-rendering-asr — Native Rendering routes to the hardened ASR (SurfaceFlinger) renderer (2026-08-21, CI-built, NOT device-proven)
+- Branch off main `d42b402d`, commit `578f7ecb`. CI build run 32481425033 (headSha verified == push). Not merged.
+- **Why:** cross-app audit found the "Native Rendering" (`rendererNative`) toggle drove the LEANER inline Vulkan FLIP scanout (`ScanoutContext.cpp`), which lacks the SurfaceFlinger hardening already shipping in the ASR renderer (port of GN #1582/#1620: OnComplete release-fence recycle, BGRA→RGBA colour, ordered anti-ANR shutdown, reparent-null leak guard). The sturdy path sat unused behind `renderer="surfaceflinger"`.
+- **Change (1 file, `XServerDisplayActivity.java`, +30):** (1) reroute at renderer selection — Vulkan container → `"surfaceflinger"` when native on && scalingMode<3 && !swapRB && ASR API29+; like-for-like (same containers that got FLIP now get ASR), falls back to FLIP when ASR unsupported. (2) ASR launch marks native enabled + hides the live toggle (can't live-switch renderers). (3) `onNativeRenderingToggle` + (4) `disableNativeRenderingForPreset` guarded for ASR.
+- **Deferred:** setFrameRate (GN #1612) into ASR (the one FLIP feature ASR lacks — FPS-cap VRR vote); bringing swapRB/RGBA games into native via ASR sfCompat blit (colour-verify on device first).
+- **Verify on device:** `dumpsys SurfaceFlinger` shows `winlator_game` layer (DEVICE comp-type ideal), colours correct, HUD ticks, clean exit, in-game Native toggle hidden. Memory: project_bannerlator_native_rendering_asr_reroute.
+- **Native backend picker (commit `48ce9004`, CI run 32482496620):** per-container `rendererNativeBackend` (Auto/asr/flip, default auto) chooses the native path instead of the hardcoded reroute — "flip" forces the old Vulkan FLIP direct-scanout. UI = `LabeledDropdown` under the Native Rendering switch in the container renderer options (`VulkanSettingsDialog`, ContainerDetailScreen.kt), shown only when native is on; NOT the in-game drawer (renderer fixed at launch). Container JSON field (no vc bump), `resolvedNativeBackend()` gate `&& !"flip"...`. Verify on device: dropdown shows/hides with the switch + pick round-trips.
+- **Rebased onto main `35517de9`** (game-mode-signal commit landed) — clean rebase, CI run 32483550755 green.
+- **Per-game shortcut parity (commits `d60c1dff` nativeBackend, `ea74c908` compositor-driver; CI 32485948461 / 32486956566):** the game-shortcut editor (`ShortcutsScreen.kt` Vulkan block) was missing the Native backend picker and the compositor (present-layer) driver that the container Vulkan cog has. Added both as per-game overrides (default from container, saved as shortcut extra, honored at launch — `nativeBackend` via resolvedNativeBackend(), `rendererDriverId` already resolved at XServerDisplayActivity:1996). Filter mode is not a cog control anywhere (in-game Scaling mode owns it, already per-game); sfCompat already in the editor. So the shortcut editor now has full parity with the container Vulkan cog. Verify: open a game's settings, Vulkan renderer -> Native backend + compositor driver appear and round-trip per game.
+
+## psi-memory / lmkd-OOM survival + NewTermux keep-alive (2026-08-21 — device-infra work, NOT in this app repo)
+Context: DOOMBLADE (pubg-flavor native-asr build) was OOM-killed ~1-2s into load by lmkd (2x at 10:40, REASON_LOW_MEMORY, during load) despite ~11GB avail + 21GB swap free. Full write-ups: memory `project_bannerlator_lmkd_psi_experiment`, `project_newtermux_memory_pressure`.
+
+**RESULT — PSI fix DEVICE-PROVEN.** Flipped lmkd minfree->PSI (`persist.device_config.lmkd_native.use_minfree_levels=false`, new pid 5298, DMA32 zone-reader spam gone). DOOMBLADE reached in-game (screenshot 11:35:30, 39-42fps, D3D11 FL11_1->DXVK, Adreno750). NO kill: no new exit-reasons file, OOMWatch events clean, pressure flat 0.00. RAM trace showed the REAL spike (MemAvailable 10.8GB->3.4GB, MemFree->~106MB in ~60s) — that MemFree dip is exactly what tripped the OLD minfree lmkd's false kill; PSI (pressure-based) correctly ignored it. So the 10:40 kills were false-alarm minfree/buggy-DMA32 kills.
+
+**SESSION-DEATH DIAGNOSIS** — our Claude/Termux session died DURING the run but NOT via OOM (no lmkd kill, no AMS exit-info today, no kernel OOM, no tombstone, phantom-killer off; guard held -1000). Cause = the NewTermux **app process torn down while backgrounded** (game foreground; the FGS wakelock was FLAPPING acq/rel ~30s, not held continuously) + sessions are in-process-only -> reopen = blank tabs. Structural bug: the `-1000` `sess_guard.sh` was nohup'd INSIDE the termux/proot shell -> lived in the app's uid cgroup -> died WITH the app it guarded (guard in its own blast radius).
+
+**TWO ARTIFACTS (both CI-green/built, DEVICE-UNPROVEN):**
+1. **Magisk module "Memory Pressure Survival" v2.0** (id `lmkd_cushion`, in-place replaces the OLD minfree-forcing one which was the reboot-failsafe that *reverted* PSI). Staged `/sdcard/Download/MemoryPressureSurvival-v2.0.zip` (sha `c3cd1d40…`). Levers: PSI lmkd + 16GB `/data/swapfile` prio -2->10 (active cushion) + early-reclaim (`min_free_kbytes` 32768, `watermark_scale_factor` 80) + root-side UID-based `-1000` guard launched from init context (fixes the blast-radius bug). Applied LIVE via bridge = **3 of 4 levers active now** (scripts in `/data/local/tmp/mps/`); the 4th (guard daemon) could NOT be hand-launched — **the getlog Magisk bridge reaps any daemon it spawns** (proven: guard.sh sync-test with `timeout 3` ran + logged fine; setsid/nohup/orphan all reaped). Old app-side guard still covers the pin live; the persistent guard starts on flash+reboot via `service.sh`. Revert live: `sh /data/local/tmp/mps/revert.sh` or reboot.
+2. **NewTermux `v1.6.2-pre.1`** pre-release (repo The412Banner/NewTermux, branch `feat/background-keepalive` `7a9285c6`, draft PR #17, NOT merged; debug_build 32501069332 + release.yml 32501593968 both green, headSha verified). Install `termux-app_apt-android-7-debug_arm64-v8a.apk` (staged `/sdcard/Download`, sha `8f60051c…`, shared testkey = in-place over current NewTermux). Fixes: (1) session-lifecycle-driven continuous wakelock (kills the onStart/onStop flap = the flapping root cause) + "Keep alive in background" setting default ON; (2) battery-opt/Doze prompt (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`); (3) `SessionStatePersister` -> `~/.termux/session_state.json`, tabs+cwd restore on sticky restart (VIEW only, NOT live PIDs).
+
+**POST-REBOOT PICKUP (next session: run these to learn the actual device state after the user flashes + reboots):**
+- Module flashed? `bridge 'grep -E "^version" /data/adb/modules/lmkd_cushion/module.prop'` (v2.0=new, v1.0=old still there). Boot apply log: `bridge 'cat /data/adb/modules/lmkd_cushion/last-apply.log'`.
+- PSI on? `bridge 'getprop persist.device_config.lmkd_native.use_minfree_levels'` (false=PSI). Swap: `bridge 'grep swapfile /proc/swaps'` (prio 10). Sysctls: `bridge 'cat /proc/sys/vm/min_free_kbytes /proc/sys/vm/watermark_scale_factor'` (32768 / 80).
+- Persistent guard alive this time? `bridge 'pgrep -f guard.sh; logcat -d -t 300 | grep mps-guard'` (expect "guarding uid=10250").
+- NewTermux updated? `bridge 'dumpsys package com.termux | grep versionName'` (1.6.2-pre.1) — NOTE the live `/data/local/tmp/mps/` scripts + old app-guard are GONE after reboot (tmp clears).
+- **THE ACTUAL TEST (only device-proof still owed for BOTH):** start a `claude` session in NewTermux -> launch DOOMBLADE -> play -> return: did the session survive + tabs rehydrate? Report survives/tabs/what-died.
+
+### 2026-08-21 (session 2) — POST-REBOOT VERIFIED + swap boot-race fix (v2.1) + pre-launch checkpoint
+User flashed module + installed NewTermux + rebooted. Verified live: **module v2.0->patched-to-v2.1**, boot-apply 12:34:05, **PSI on** (use_minfree=false, thrash 300, lmkd pid 6935), **sysctls 32768/80/swappiness100**, **root-side guard alive** pid 7004 uid=0, **NewTermux versionName=1.6.2-pre.1**.
+- **SWAP root cause + fix.** `/data` is **f2fs** -> swapon needs the file pinned+contiguous; device has **NO f2fs_io** so our module can't pin it. `/data/swapfile` is **AYANEO-vendor-owned** (Konkr Pocket / settings app creates+pins it); our module only reprioritizes. At boot our apply ran BEFORE the vendor activated swap -> `swapon` lost the race + silently failed (`2>/dev/null`). **Fixed to v2.1 (versionCode 3), live-patched + zip restaged:** new `swap_apply.sh` (only reorders once vendor-active, never hides errors, falls back to plain swapon so swap never left OFF; rc 0=done/1=fail/2=waiting) + `service.sh` bounded post-boot poll (~3min, loop while rc=2) wins the race. All 3 branches device-tested (already-10 rc0 / -2->10 rc0 / off->rc2). **Swap now live at prio 10** (overflow below zram 32758), 0 used. New zip `/sdcard/Download/MemoryPressureSurvival-v2.1.zip` sha `ce21c93caf5b3dbabf74db8a4fdab86b8c273b29470fd0b88f4f64215e545ae8`. Reflash/reboot NOT required — live module already fixed; zip is for clean installs, self-corrects on next reboot.
+- **ALL 4 LEVERS LIVE NOW:** PSI + early-reclaim sysctls + root-side guard (pid 7004) + swapfile prio 10.
+- **PRE-LAUNCH CHECKPOINT (this session may die when DOOMBLADE foregrounds — see [[reference_device_bannerlator_background_sigstop]]).** Watcher armed: on-device snapshotter -> `/sdcard/Download/doomblade_watch.log` (survives session death) + Monitor polling it. **If this session dies mid-test, a fresh session reconstructs from:** doomblade_watch.log (last snapshot before death), AMS `dumpsys activity exit-info com.termux`, OOMWatch `/sdcard/OOMWatch/events.log`, and NewTermux `~/.termux/session_state.json` (did tabs rehydrate?). Test target = **game survives (PSI)** + **session survives backgrounding + tabs rehydrate (NewTermux keep-alive)** — two separate pass/fail. After results: PULL-BACK RULE (foreground Termux) then report.
+
+### 2026-08-21 (session 3) — 🟢 PHANTOM-PROCESS KILLER found = the real session killer + module v2.2
+DOOMBLADE survival test ran 13:14: **tabs persisted ✅ but process survival FAILED** — burst of `reason=3 LOW_MEMORY` kills on com.termux (19527/7495/8207/9181). Hardened the guard ~13:32 (root cause: the old `for d in /proc/[0-9]*; stat` sweep forked ~800 stats = **secretly ~1.5s/iter** regardless of GUARD_INTERVAL → switched to one `pgrep -U $APPUID` pass ~30ms; GUARD_INTERVAL 2→0.25 now real; folded the watcher INTO guard.sh so it survives an app kill). **But it STILL recurred 13:37:54** (`com.termux reason=3 LOW_MEMORY importance=125 state=empty`, 0.25s guard already live, **NO game running**, ~11GB avail / MemFree 388M / PSI flat 0.00). Guard-tightening alone did NOT fix it.
+- **🔑 ROOT CAUSE (new): the AYANEO-forced PHANTOM-PROCESS KILLER.** `persist.sys.fflag.override.settings_enable_monitor_phantom_procs=true` (forced ON despite `settings get`=false — the earlier "phantom-killer off" note was that misread), `max_phantom_processes=32`. Android 12+'s phantom-proc monitor trims a foreground app's **forked children** (proot/zsh/claude/python) by **AMS policy that IGNORES oom_score_adj** = the ONE path that kills THROUGH the guard's −1000 pin + reaps the "empty" host proc at flat pressure. No separate vendor lmkd (only AOSP lmkd 6935). Guard IS working — my Claude session pid 8232 orphan-survived the 13:37 host kill because pinned children reparent to init (guard pid 31105).
+- **✅ FIXED LIVE (reversible):** `settings put global settings_enable_monitor_phantom_procs false` + `resetprop persist.sys.fflag.override.settings_enable_monitor_phantom_procs false` + `device_config put activity_manager max_phantom_processes 2147483647` + `device_config set_sync_disabled_for_tests persistent`. Verified AMS effective `max_phantom_processes=2147483647`.
+- **✅ BAKED INTO MODULE v2.2 / versionCode 4** (scratchpad `mps_module/`, session `513a9a9a…`): `DISABLE_PHANTOM_KILLER`/`PHANTOM_MAX` in config.sh, apply.sh step-2 block, revert.sh restore; **also folded the 13:32 guard hardening (pgrep -U + 0.25s + folded watcher) back into source** (was device-only till now). ▶️ NEXT: push v2.2 scripts to live `/data/adb/modules/lmkd_cushion/` for boot-persistence, build+stage `MemoryPressureSurvival-v2.2.zip`, NewTermux FGS-`type`+child-pin app fix (`feat/background-keepalive` `7a9285c6`), re-run survival test w/ phantom killer OFF. Full detail: memory `project_bannerlator_lmkd_psi_experiment` 13:44 section.
+
+### 2026-08-22 (session) — 🎞️ lsfg-vk: one-tap "Detect from Steam store" Lossless.dll
+Branch `feat/lsfg-detect-store-dll` (`5470ec36`) off fresh main `1ba5d2a4` (post GOG cloud-download merge). App-layer only (`SettingsScreen.kt`), runtime LSFG path untouched.
+- **New**: `findStoreLosslessDll()` walks `filesDir/imagefs/steam_games/**` (maxDepth 6, appId 993090) for `Lossless.dll`, newest wins; `detectLosslessDllFromStore()` copies → `filesDir/lsfg-vk/Lossless.dll`, toasts result.
+- **UX**: "Detect from Steam store" button + manual Import stays as override (never auto-clobbered → satisfies manual-overrides-store precedence). Provenance badge via persisted `lsfg_dll_source` pref (store|manual), survives restart; Remove clears it.
+- **Confidence**: compiles-clean by inspection; NOT CI-green, NOT device-proven. CI build dispatched off the branch. ⚠️ watch: if store nests DLL deeper than 6 dirs, bump maxDepth.
+
+### 2026-08-23 — 🐞 fix(file-manager): in-app picker no longer trapped in Download
+Reports (Yurim + user): the in-app file picker opened in /storage/emulated/0/Download for drive-folder allocation AND local-component selection, stuck there with NO back/up button. Root cause (FileManagerScreen pickMode): start dir defaulted to Download AND currentRoot (the up/back FLOOR — back/up gated on currentDir!=currentRoot) was set to the start dir → floored at Download.
+- Fix: pickMode opens at internal storage ROOT (/storage/emulated/0) by default (explicit caller initialDir still wins); currentRoot is now the VOLUME ROOT of the start dir (internal or SD /storage/XXXX-XXXX), not the start dir → back/up work from any subfolder, disabled only AT a volume root. Central fix in the one shared FileManagerScreen → covers ALL in-app pick flows (drive folder, .wcp component, wallpaper, backup, VEGAS, wrapper import). "Pick via system…" SAF paths unaffected (separate OS picker).
+- Confidence: inspection-clean; CI = compile gate; device-verify the drive-folder pick after. vc frozen 73. Branch fix/file-picker-internal-root off main aed9bb16.
+
+### 2026-08-23 — 🎮📁 feat: add game from a container's Drive C (fix inert "Drive C" option)
+Report: Games + → pick container → Add game/folder → the "Drive C" option did nothing. Root cause: FilePickerActivity isn't a MainActivity → its container list is empty → the drive-chip "Drive C:" branch never fired. Some games only boot / boot faster from a container's C: drive, so users need to add games from there.
+- Fix (scope = browse & pick from C:, no copy): thread the selected container's `.wine/drive_c` into the picker (new EXTRA_CONTAINER_DRIVE_C + driveCPath param through InAppFilePicker→FilePickerActivity→FileManagerScreen). Wires the drive-chip "Drive C:" dropdown AND adds a working "Drive C:" rail item (rail un-gated for this one flow); openDrive pins currentRoot=drive_c so up/back bounded at C:\. ShortcutsScreen passes drive_c for both Add-game-EXE + Add-games-folder (null-safe, only if dir exists). All other pickers unchanged (driveCPath null).
+- Boots-from-C verified in code: WinePath.resolveWindowsPath checks drive_c FIRST → returns C:\<rel>; both import flows route through it → Exec=wine C:\… (runs from container C:, not a new letter). No import fix needed.
+- Confidence: inspection-clean; CI = compile gate; NEEDS device pass (browse C:, add game, confirm boots from C:) before merge. vc frozen 73. Branch feat/add-game-from-drive-c off main 0baa8ff6.
+
+### 2026-08-23 — 🎮📦 feat: "Copy game to Drive C" helper (universal fix for internal-storage hang)
+Fixes games that hang booting from FUSE-backed internal/SD storage (device-proven ~0.5 MB/s intro-movie streaming; see reference_fuse_storage_intro_movie_hang) by copying the game onto the container's C: drive (native fs) + repointing the shortcut to C:\.
+- New `core/CopyGameToDriveC.kt` (pure logic): parse exe+args from Shortcut.path, defaultSourceRoot (walk up binary subfolders), isAncestor validation, folderSize, freeBytes/hasRoomFor (StatFs on filesDir, +250MB margin), copyTree (iterative, 1MB buf, cancelable, deletes partial on cancel/fail), repoint (rewrite Exec= line only, preserve launch args, via WinePath.resolveWindowsPath → C:\Games\<name>\<rel>).
+- ShortcutsScreen: 2 entry points — "Copy to Drive C…" ⋮ menu item (both list+grid menus, after Clone to container) + "Storage" row in shortcut editor General tab (+ "Move to Drive C" button when not on C:, Games-list only). CopyToDriveCCoordinator: confirm-source (path+size+Change folder+ancestor validation) → free-space → overwrite/keep-both/cancel → cancelable progress → repoint → delete-original(Move)/keep(Copy). vm.refresh() after (Shortcut.path is final).
+- Verified pre-build: Exec format `Exec=wine C:\\\\…` matches escapeForExec; WinePath/Shortcut APIs exist; repoint-only-after-success + partial-cleanup safety.
+- Confidence: reviewed-by-inspection; CI=compile gate; MUST device-test (copy a game→C:, shortcut repoints to C:\, game runs, original intact until delete) before merge. Nested-exe supported (relative-path). vc frozen 73. Branch feat/copy-game-to-drive-c off main 4d71ec53.
+
+### 2026-08-23 — 🎮🔀 feat: "Change executable" (repoint a shortcut to a different .exe) — same branch
+Reuses the copy-to-C repoint plumbing (DRY): extracted `CopyGameToDriveC.setShortcutExe(shortcut,newExeAndroid,argsSuffix)` as the single Exec-rewrite source of truth; copy-to-C `repoint` now delegates to it (ancestor/rel check preserved; resolveWindowsPath now wrapped in runCatching → safe null-abort instead of throw).
+- ShortcutsScreen: "Change executable…" ⋮ menu item (list+grid, after Copy to Drive C) + "Executable" row (current exe + Change… button) in shortcut editor General tab (Games-list caller only). ChangeExecutableCoordinator: picker (InAppFilePicker.SHORTCUT) seeded at current exe's folder + Drive-C rail → validate exists/.exe/.lnk/.desktop → keep-or-clear launch args (skip if none) → setShortcutExe → vm.refresh(). Null return = warn + abort, shortcut untouched.
+- Confidence: reviewed (shared helper + repoint integrity verified); CI=compile gate; device-test both copy-to-C + change-exe before merge. vc frozen 73. Same branch feat/copy-game-to-drive-c.
+
+## 2026-09-02 — checkpoint: Rust Steam engine merged, 3.0.4 code-complete, Option B (app-session Steam) in build
+
+- **main `27ee2dc7`+**: native Rust Steam engine merged (`--no-ff 05b282a5`), ON by default; JavaSteam stays selectable in Log Manager for one release, removed next release. Ships: doorman pre-flight (photo slideshow), live agent channel + in-game friends relay + drawer Friends tab, VAC-aware fallback, Steam region picker, Network/NAT row, SteamLite client update card, overlay-injection crash fix (`localconfig.vdf` `EnableGameOverlay=0` + `OverlayAppEnable=0`), PR compile check workflow + branch protection on main.
+- **Device-proven (flag ON):** QR sign-in, library, cloud, achievements, region auto-pick, secure SteamLite launches, CS:S VAC join, agent channel, friends relay (list + chat), no startup crash. Still to prove before the cut: download/verify/update, password+Guard sign-in, chat send, flag-OFF smoke, slideshow landscape.
+- **SteamLite hosted v5** (agent p3b, relay after spawn, VAC-aware window). v6 (agent p3d: honest "Status unknown" — the headless client receives no friend presence stream; would need `IClientFriends` RE) prepared, not published.
+- **Brawlhalla "Incorrect Version" on mobile networks** = Brawlhalla's own server reply (tcpdump-proven: handshake → login → `"Incorrect Version, Please Update"`), not Bannerlator; home network works.
+- **Option B started:** run games on the app's Steam session (Valve CDN `bins_androidarm64_linuxarm64` genuine bionic `libsteamclient.so` in-app + Proton `lsteamclient`). None of the installed layers (10.0-2/4, 11.0-2/5/6, 9.5-x86_64) carry lsteamclient today. Tracks: proton-wine `feat/lsteamclient-11.0-2` (vc3 slot, artifacts only) and bannerlators `feat/app-steam` (`bl-steam-host`, `SteamHostComponent`, `AppSteam` launch card). VAC unproven → SteamLite stays default for VAC titles until the CS:S probe passes.
+- **PR #444** (VEGAS config UI): merges clean but fails to compile (`EnvVarsView`), leaks `WN_STEAM_TOKEN` via env dump, removes container-editor tab nav — review posted, awaiting author.
+
+## 2026-09-02 (later) — Option B progress: lsteamclient layer built, App Steam app side CI-green
+
+- **Proton (P0) done, artifact-verified, not published:** proton-wine `feat/lsteamclient-11.0-2` @ `905a5d05` (off the shipped catalog-vc2 11.0-2 commit) imports Valve's Proton 11.0-2 `lsteamclient` + `steam_helper` verbatim, unix side reads `WINESTEAMCLIENTPATH64` (fallback `$HOME/.steam/sdkarm64/steamclient.so`), WoW64 32-bit buffer fix, wcp `versionCode 3` (installs beside `-1` as `11.0-2-arm64ec-3`). Run `33648875708`: arm64ec + x86_64 × sdk28/sdk35 all green; `lsteamclient.dll` (arm64ec + i386), `lsteamclient.so`, page alignment verified. No `WINEDLLOVERRIDES` needed (ntdll loader hook); `PROTON_DISABLE_LSTEAMCLIENT` stays the SteamLite kill-switch.
+- **App (P1–P3) CI-green:** bannerlators `feat/app-steam` @ `5079bf1a` (run `33651447592`): `bl-steam-host` in-app genuine Steam host (standalone arm64 ELF, token via env, status socket), `SteamHostComponent` (Valve CDN `steam_client_linuxarm64` → `bins_androidarm64_linuxarm64`, sha2-verified, on-demand), `AppSteamLauncher` + `launchMode=AppSteam` popup card (default only for non-VAC titles until proven), engine rules (no session suspend, no GamesPlayed, no kick, wine_bridge listeners off).
+- **Next:** stage the vc3 layer + APK on the AYANEO, prove host login, first App Steam launch (Brawlhalla, friends "via app session"), then the CS:S VAC probe (2 servers, `status` secure). SteamLite remains the VAC path until then.
+
+## 2026-09-02 (later) — 📥⚙️ Rust depot pipeline decoupled to match JavaSteam (Fix B, JavaSteam-parity effort)
+
+Branch `feat/rust-download-java-parity` (off main; already carries Fix A = short-depot auto-resume). Goal: the Rust engine's per-depot writer fused fetch+decrypt+decompress+write into each worker and ignored `maxDecompress`, so the socket idled per worker (slow on many-small-file games, e.g. Hades). Reworked `depot_writer.rs::write_depot_parallel` into JavaSteam's decoupled 2-stage pipeline.
+
+- **New pipeline (within a single depot; depots still processed sequentially for `.bl_depot` journal/resume correctness):** a FETCH pool (`max_workers` = tier `maxDownloads`) work-steals chunk-job indices via the existing `AtomicUsize`; a chunk already correct on disk is counted as verifying via the progress callback and never enqueued, otherwise the RAW encrypted chunk is fetched with the existing retry/rotation (`MAX_CHUNK_ATTEMPTS=5`, server rotation, 300<<(n-1) cap 4000ms backoff, reconnect, slow-chunk rotation >8s×3) — split out as new `fetch_raw_chunk` — and pushed into a bounded `sync_channel`. A separate PROCESS pool (`max_process_workers` = tier `maxDecompress`) drains the channel and does decrypt+decompress+write-at-offset (`process_and_write_chunk`), counting bytes on the WRITE as before. Both pools poll cancel and short-circuit on the first error via `error_slot`; the template sender is dropped so process workers drain then exit; scoped threads join all.
+- **Channel bound = `(max_fetch + max_proc).max(4)`** — load-bearing: caps in-flight compressed+decompressed buffers to tens of MB, independent of game size (JavaSteam's public engine OOM'd on HITMAN 87 GB / #408 with deep in-memory channels). Never unbounded, never scaled with game size; heap stays O(workers).
+- **`maxDecompress` plumbed end to end:** `BlDepotInstaller` now computes `maxDecompress` and passes it to `downloadApp`; `BlSteamSession.downloadApp`/`nativeDownloadApp` + `downloadWorkshopItem`/`nativeDownloadWorkshopItem` carry `decompressWorkers`; JNI `nativeDownloadApp`/`nativeDownloadWorkshopItem` take `decompress_workers` and thread `max_process_workers` through `download_resolved_depots*`; `DepotWriteOptions` gains `max_process_workers` (default = fetch default so existing callers/tests are unchanged).
+- **Kept unchanged:** `plan_depot_write`, layout creation, per-file finalize/truncate, the single-worker sequential fallback (workers==1 or ≤1 chunk), all `depot_downloader.rs` journaling, and the `Semaphore(1)`/single per-session cancel model (Fix C territory — left alone).
+- **Tests:** new `depot_writer` tests for the 2-pool path (existing-chunk verify accounting + finalize, cancel verdict) + default-options field; updated the two `download_resolved_depots` test call sites for the new arg. (No local Rust toolchain in the worktree — CI `cargo build` validates production code; `cargo test` deferred to a toolchain host.)
+- Confidence: reviewed-by-inspection; CI compile gate; NOT device-tested (user drives the device). Other worktree `/home/claude-user/bannerlators` untouched.
+
+## 2026-09-02 (later) — 📥⚡ Rust downloader B2a: structural throughput wins + per-server measurement
+
+Branch `feat/rust-download-java-parity` (on top of A short-depot auto-resume + B decoupled pipeline
++ Q managed queue). Device-proven problem: on 1 Gbps FiOS the Rust engine under-drove the pipe
+(Fast ~24 Mbps, Blazing ~44 Mbps sustained) with CPU 70% idle + disk idle — bottleneck = in-flight
+network concurrency + per-chunk file-reopen stalls, NOT decode. This is the cheap/low-risk half
+(B2a); the tokio async fetch client (B2b) is a separate measured follow-up. Decode untouched.
+
+All five levers land in `app/src/main/cpp/bl-steam-client/rust/src/` (mainly `depot_writer.rs`):
+- **1. One held handle per file + positioned writes.** `write_chunk_at`/`process_and_write_chunk`
+  now take an already-open `&File` and write with `FileExt::write_at`/`write_all_at` (pwrite, no
+  shared seek cursor) — race-free when the work-stealing pool writes different chunks of the SAME
+  file concurrently. New `DepotFiles` table opens one handle per file lazily and closes it as the
+  file's LAST chunk lands (per-file `remaining` counter → set_len(exact)+fsync fires EXACTLY once,
+  never per-chunk); peak open fds bounded by worker concurrency, not file count. Removed the old
+  per-chunk open+seek+write+close and the whole per-file reopen finalize pass.
+- **2. Pre-allocate files to the EXACT manifest size** (`file.size`, ground truth) at first open via
+  `libc::fallocate`; on **EOPNOTSUPP/ENOSYS** (FUSE/sdcardfs) branch on the errno and fall back to
+  `set_len`, logged ONCE per download. Skipped entirely on resume of a file already ≥ its size.
+- **3. Byte-budget the fetch→process channel.** Replaced the chunk-COUNT `sync_channel` bound with
+  an unbounded channel gated by an in-flight **byte** budget on the RAW compressed bytes
+  (`FETCH_INFLIGHT_BUDGET_BYTES = 24 MiB`): incremented on ENQUEUE, decremented on WRITE-COMPLETE.
+  Deadlock guard (`budget_admits`): always admits ≥1 chunk when nothing is in flight, so a chunk
+  bigger than the whole budget can't wedge. Heap stays fixed regardless of game size (#408 class).
+- **4. Per-server bytes/sec measurement.** New lock-free `BandwidthMeter` (atomic counters only, off
+  the hot path); fetch workers `record()` the winning server's bytes; a reporter thread emits
+  `throughput depot=… overall=…MB/s … per-server` to `BL_STEAM_DL` every 5 s + a final line. Wired
+  through a new `DepotLogCallback` on `DepotWriteOptions` → `download_resolved_depots*` →
+  `jni.rs` `android_log("BL_STEAM_DL", …)`.
+- **5. Free-space guard → exact manifest sizes.** Before writing a depot, `statvfs` the target vs the
+  summed EXACT manifest sizes minus what's already on disk; conservative (skips on statvfs failure /
+  zero, 64 MiB margin) so a wonky FS never false-fails.
+- **libc** added as a direct dep (already transitive via ring/rustls, pinned same 0.2.186 in
+  Cargo.lock — no new fetch). `write_at`/`fallocate`/`statvfs` unix-gated with non-unix stubs.
+
+A/B/Q intact: fetch/process decouple preserved (only backpressure mechanism changed count→bytes),
+short-depot auto-resume and the managed one-at-a-time queue untouched; each active download still
+runs its own pipeline. NOT B2b, no ruzstd→C-zstd swap, no speed-ranked CDN pick, no adaptive window;
+`.so` stays async-free. New/updated `depot_writer` tests: concurrent pwrite race-free, byte-budget
+deadlock guard, prealloc→write→finalize exact size, verify accounting, cancel. No local Rust
+toolchain — CI `cargo build --lib` is the compile gate (tests not compiled by `--lib`);
+NOT device-tested (user drives the device). Other worktree `/home/claude-user/bannerlators` untouched.
+
+## Steam downloads — denied-depot tolerance (Hades false-fail fix), both engines
+Bug (device-confirmed 2026-09-02, Hades appId 1145360): a download whose OWNED content fully
+completed was marked FAILED because a NON-ENTITLED depot blocked the verdict. Depots 1145361
+(11.4 GB) + 1145363 (492 MB) COMPLETE (journal recorded, game playable) but 1145362 (~2.1 GB
+soundtrack DLC, real_size=0 = account not entitled; Steam DENIED the key) was treated as blocking
+→ steam_downloads.status=failed, is_installed=0. A denied key never becomes a completed depot on any
+retry, so blocking the install forever is wrong once the owned depots are complete.
+
+Rust path (primary) `BlDepotInstaller.kt` completion verdict:
+- `blocking = short.filter { it.first !in denied }` (was `!in deniedDlc`) → ANY Steam-denied depot
+  is tolerated, not only depots already recognized as DLC. Genuinely-SHORT (non-denied) depots STILL
+  block (auto-resume/fail path, Layer 1 A) — untouched.
+- GUARD: mark installed only if at least one selected depot COMPLETED (`completed = specs.filter
+  journal[d]==m`). If nothing completed → `fail(appId, "Steam denied access to every depot of this
+  game (not owned on this account?)")` so "tolerate denied" can't false-succeed a fully-unowned game.
+- Persist ALL denied depots (not just DLC-recognized) via `SteamPrefs.setExcludedDlc(appId,
+  excludedDlc + deniedSkipped)` so a re-download/update never re-selects and re-denies them.
+- dlog/BlSteamEngineLog narrative kept (each denied depot logged skipped-not-owned; final verdict =
+  complete-with-N-skipped, or not-owned). Removed now-unused `dlcDepotIds` helper.
+
+JavaSteam path (fallback, parity) `SteamDepotDownloader.kt` onDownloadCompleted per-depot verdict:
+- `verifyDepot` now returns `DepotVerdict {COMPLETE, SHORT, DENIED}`. A selected depot with ZERO
+  transfer this session (pct==null && delivered==0) AND not covered by the footprint/overlap escapes
+  = DENIED (the engine finished the app without ever fetching a chunk for it → account not entitled;
+  an owned-but-incomplete depot always shows engine progress → stays SHORT). Was: those cases were
+  SHORT (blocking).
+- Aggregation: SHORT → Layer-1 auto-resume (unchanged); if none complete → `emitFailed` not-owned
+  guard; else persist denied as excluded + markInstalled. DENIED handled only when nothing is SHORT,
+  so a mixed pass never excludes a depot while owned content is still fetching.
+
+A/B/Q/B2a/WifiLock intact (no queue/native/DownloadSpeedConfig/depot_writer.rs changes). Kotlin-only.
+Other worktree /home/claude-user/bannerlators untouched. CI compile gate only; NOT device-tested.
+
+## 2026-09-05 — feat/ea-steam-support r1: EA-published Steam titles launch through SteamLite + EA Desktop
+Device-proven recipe (NFS Payback, GE-Proton 11.0-6 arm64ec, SteamLite v6 agent p5) turned into app behaviour:
+- `EaSupport` (new): on-disk detection (`__Installer/Origin`, `Link2EA.exe`, `EASteamProxy.exe`, `Core/Activation*`), Javelin anti-cheat flag, FEX preset clamp (EXTREME→PERFORMANCE, EXTREME_TSO→PERFORMANCE_TSO — SMC checks must stay on for Activation64), wine-mono check + catalog-component install, `WN_STEAM_LAUNCH_CHAIN` value.
+- Games tab: EA titles skip the launch-method popup → SteamLite forced + remembered; if EA Desktop isn't installed in the container → "Set up EA Desktop" dialog runs the depot installScript (mono first if missing, then `EAappInstaller.exe EAX_LAUNCH_CLIENT=0 IGNORE_INSTALLED=1`) in auto-closing sessions; Javelin titles get an "unsupported" dialog.
+- installScript executor (from the Aug scaffold, now built): VdfParser (exhaustive when fix), Registry with Steam's per-language block semantics (values on the parent key), Copy Files, Run Process with mono prerequisite + `resumePending` chained from ComponentInstallResume. Local stages also run at shortcut write and pre-launch.
+- RealSteamLauncher: steamapps\common folder = Valve's PICS installdir, ASCII-only (the ™ bug); `WN_STEAM_LAUNCH_CHAIN` for EA launches; `WN_STEAM_DEPOTS` from depot_manifests (agent writes InstalledDepots).
+- GuestProgramLauncherComponent: `WINE_ANDROID_GATEWAY` from the active network's default route (eanet layers' route table).
+- ContainerManager: vendor client .lnk (EA, Ubisoft Connect, …) no longer auto-imported as game cards. XServerDisplayActivity: `AppThemeState.init` on cold start; EA overlay hint.
+Not yet: Steamworks Shared 228980 download; auto-resume without the "Finish" tap; activation-persistence investigation.
+- r3: Steam Library tab gains an **Installed** chip (All / Games / Demos / Installed) = Games ∪ Demos that are downloaded on this device; own empty-state copy. r1→r2 was a one-line javac fix (Kotlin object accessor).
+- r4: FIX — `steam_games.install_dir` is the HOST install path after download (markInstalled overwrites the PICS value; PICS `config.installdir` is not persisted anywhere), so r2/r3 would have named the steamapps\common symlink after the sanitized host path. `prepare()` now ignores path-like values and falls back to the ASCII display name ("Need for Speed Payback", "Need for Speed Most Wanted"). Follow-up: persist PICS installdir in its own column at library sync.
+- CHECKPOINT (2026-09-06, before device test): r4 `1c2930cb` installed on the AYANEO (sha f3926aa5…), fresh container xuser-5 on the eanet GE 11.0-6 layer (slot -3), NFS Most Wanted 2012 (1262560, 32-bit NFS13.exe) added; Payback may follow in the same container. First launch = full EA setup chain; second title skips it. Result to be recorded here.
+- r5 FIX (device test #1, Most Wanted on fresh xuser-5): the Games-tab EA gate never fired — `WinePath.resolveAndroidPath` only knows the container's mapped drive letters, and Steam games live on Z: (implicit imagefs root), so `EaSupport.installDirOf` returned null → no detection → normal SteamLite launch → Steam's `link2ea://` launch had no handler (EA Desktop not installed) → Wine "no Windows program configured to open this type of file". Launch-time half WORKED: agent log shows `launcher chain configured: 5 exe name(s)` and the ASCII `steamapps/common/Need for Speed Most Wanted` symlink. Fix: resolver maps Z: → imagefs root (also fixes the pre-launch local-stages hook), plus a path-string fallback in installDirOf.
+- r6: EA titles are TAGGED on the shortcut at write time (`eaSupport=1`, `eaAntiCheat=1` for Javelin) exactly like `storeSource`/`steamAppId`; the Games-tab gate reads the tag first (disk detection only for pre-tag shortcuts, then self-heals the tag); red "EA" pill next to the STEAM badge on cards.
+- r7 (device test #2 on r6, Most Wanted, fresh xuser-5): dialog fired ✅, mono MSI session installed mono ✅ (233 MB) but showed a BLACK desktop (silent MSI, overlay closed on first window) → user killed it not knowing it had worked; EA installer session then ran ~2 min and exited WITHOUT installing EA Desktop — the Run-Process stage had split `EAX_LAUNCH_CLIENT=0 IGNORE_INSTALLED=1` off as ENV vars instead of passing them as command-line properties (the working manual run passed them as args). Also executor guards used async `apply()` and were lost when the session restart killed the process. Fixes: ONE batch-driven setup session (`cmd /c C:\bl_installscript_<name>.bat "<exe>"`: optional `msiexec /i wine-mono.msi /qn`, then `start /wait "" %1 <command verbatim>`, exit marker) — mono MSI is only DOWNLOADED app-side (`EaSupport.stageMonoMsi`), no second session / no 'Finish' tap; launch overlay stays up for installer sessions with an "Installing … closes by itself" status; guards `commit()`; dialog copy updated. Registry + Copy Files stages verified working on device (EA Games key, Origin LocalContent .dat).
+- r8: device test #3 on r7 — "Set up" did nothing: the executor's optimistic `runproc_c5` mark (prefs `installscript_state.xml`, written when the r6 session launched) made the Run-Process step look already done, so the dialog's retry was a silent no-op (`LocalApplied`). The dialog path now calls `runForShortcut(..., retryRunProcess=true)`, which clears that mark whenever the bundled client is NOT installed (HasRun guard unsatisfied), so a killed/failed setup can be re-run.
+- r9/r10: device test #3b on r7 (after clearing the stale guard) — the r7 batch launched the EA installer with its arguments, but EA's WiX-burn wizard waited for "Install" BEHIND the always-on overlay (opaque, swallows touches) for 4+ min; the batch exit marker later read -1609956224 (user cancelled). r9 commit carried only this log line (edit script failed). r10: installer sessions close the overlay when a window appears (wizard visible + clickable, matching GameHub's interactive EA install) + reminder toast every ~45 s; the overlay status line only persists for silent installers (no window). Per user decision the EA installer stays INTERACTIVE (no /quiet); mono stays a silent MSI inside the same session.
+- r11: device test #4 on r10 — UX correct (console + EA wizard visible, "Let's go" clickable) but the installer died ~1 s after Let's go: burn log stops at OnCachePackageBegin (245 MB payload), batch exit code 3 = ERROR_PATH_NOT_FOUND. All three attempts that reached Apply failed at the same step with `WixBundleOriginalSource` = `Z:\steam_games\Need for Speed™ Most Wanted\…\EAappInstaller.exe`; this morning's working install ran from the ASCII-renamed `NFSPayback` folder. Fix: the Run-Process exe is launched via an ASCII symlink alias `C:\bl_installscript\<ascii-name>` → install dir (same trick as steamapps\common). Also seen: a cancelled burn leaves `Package Cache\{GUID}` + an Uninstall registration in resume=Active state → the next run resumes it and fails 0xa00a0480 "Failed to run per-user mode"; cleaned by hand on the device this time (follow-up: clean it up automatically before a retry).
+- r12: device test #5 on r11 — ASCII symlink alias got past payload caching (the r10 killer) but the burn ELEVATED worker never connected ("Launched elevated engine process" with no "Connected", parent waits forever, wizard hidden → black screen). Log comparison with this morning's WORKING install (xuser-3, 14:47: Launched → Connected same second → cached in 2 s → Apply complete 0x0 in 20 s): the proven condition is a REAL directory with an ASCII path (the renamed `NFSPayback` folder). r12 copies the installer's directory (regular files, ~230 MB) to `C:\bl_installscript\<ascii>\<rel>` and runs from there — no ™, no symlink. Also learned: this morning's FIRST attempt (14:30, mono present) still failed 0x8007065b; the 14:47 retry succeeded after the Wine Gecko auto-install + ea.reg import — gecko is a prerequisite too (container 5 got it during the r6 attempt).
+- r13: Gecko is the SECOND prerequisite — container 3 (installed EA Desktop) has Wine Gecko 2.47.4 under BOTH system32 and syswow64 (104 MB); container 5 has only the 32-bit half (pulled by Wine's download dialog during the r6 attempt) and the 64-bit stub → EA's MSI custom actions (64-bit msiexec, mshtml) would fail 0x8007065b or stall on the Gecko download dialog, exactly this morning's 14:30→14:47 pattern. The setup batch now installs every missing runtime MSI silently before the bundled installer: wine-mono + gecko x86 + gecko x86_64 (all from the components catalog, downloaded app-side into windows\temp\bannerlator_components).
+- r14: device test #6 on r12 — 🎉 EA DESKTOP INSTALLED by the automated flow (real ASCII copy; burn Apply complete 0x0, exit 0, InstallSuccessful in both registry views; 64-bit gecko NOT required after all). But the next launch showed the setup dialog again: the HasRun guard reads `HKLM\SOFTWARE\Electronic Arts\EA Desktop\InstallSuccessful` and WineRegistryEditor matches section headers byte-for-byte against Wine's `[Software\\…]` casing → value read as absent. Fix: canonicalise well-known key segments (Software/Wow6432Node/Microsoft/Windows/CurrentVersion/Uninstall) in InstallScriptTokens for both guard reads and registry writes.
+- r15: device test #8 on r14 — the setup dialog no longer appears (guard casing fix works) but the launch was RAW: `requestLaunch` set `launchMode=RealSteam` with putExtra and never called `saveData()`, and XServerDisplayActivity re-reads the .desktop → no launchMode → plain launch of NFS13.exe (agent log untouched, prefix not re-staged). The game's own activation then started EA Desktop (online: 0 offline errors, telemetry 200 — the eanet layer's network fix is proven live with no hand-swapped libs) and EA created its Auth window, hidden behind the game's black fullscreen surface. Fix: saveData() after the gate's extras and after the EA tag self-heal.
+- 🏁 2026-09-06 ~22:50 — NFS MOST WANTED 2012 RUNS through the automated EA flow on a hack-free container (xuser-5, eanet layer, SteamLite v6, r14 + the launchMode hand-patched that r15 now saves): EA tag → setup dialog → one batch session (mono MSI, EA installer from a real ASCII copy, interactive wizard) → guard (canonical casing) → SteamLite → agent "launcher chain detected (6 process) - holding" → EA Desktop online (0 offline errors) → NFS13.exe running → title screen at 60 fps with the in-game Friends drawer live. No EA sign-in prompt for this Origin-era title.
+- r16: device test #9 (fresh xuser-6, r15): runtimes installed (mono + gecko ×2, exit 0) ✅, EA installer launched from the ASCII copy ✅ and reached caching — then Bannerlator CLOSED the session 10 s into the install: `start /wait` returns when the stub spawns its worker, the batch ended, and the process-name watch no longer recognised the installer's clean-room/elevated processes. The next Set up hit the half-installed bundle's resume state (0xa00a0480). Fix: the batch now waits for the install to really finish — `reg query` for the script's HasRun value (EA `InstallSuccessful`), plus `tasklist|findstr` for installer processes with a 30 s absence grace, capped at 15 min — so cmd.exe (the session's watched process) stays alive for the whole install. Container 6 bundle state cleaned again (bak/c6).
+- r17: device test #10 (xuser-6, r16): runtimes present ✓, EA installer launched ✓, but the batch's wait loop used `findstr /i "A" "B" "C"` — only the first quoted arg is a pattern, the rest are FILE names → never matched → gave up after 30 s → cmd exited → session closed ~40 s into the install again (0xa00a0480 resume failure on the relaunch). Fix: `/c:"…"` per pattern, absence grace 60 s, stale exit marker deleted at batch start. Container 6 burn state cleaned again.
+- r18: device test #11 (xuser-6, r17): the wait loop now works, but the EA wizard process ABORTS with Wine's gdiplus assertion `x1_min > x` (dlls/gdiplus/region.c:2443) while redrawing after "Let's go" — exit code 3 = abort(); confirmed in the session wine_debug.log of every failing run (23:08, 23:28, 23:49) and absent from the one success (xuser-5 22:24). Timing-dependent Wine bug in EA's GDI+ UI. Fix: run the EA installer `/quiet /norestart` (no wizard → no gdiplus → also hands-off); the batch's HasRun wait + console still show progress. Layer follow-up: patch the gdiplus assert into a clamp.
+- r19: USER DECISION — the EA Desktop install stays MANUAL (wizard driven by the user). r18's `/quiet /norestart` reverted; the wizard's Wine GDI+ abort (gdiplus region.c:2443 assert) is to be fixed in the compatibility layers instead (aio-eanet rebuild with a gdiplus patch).
+- r20 (C15): a failed/aborted EA Desktop install is cleaned automatically before a retry — `EaSupport.cleanupFailedInstall` removes burn's `ProgramData\Package Cache`, the `windows\Temp\{GUID}` clean rooms, stale exit markers, and every system.reg section carrying the EA bundle's GUID (Uninstall / Installer\Dependencies / RunOnce), with a `system.reg.bak_ea_cleanup` backup — so "Set up" can be pressed again after a wizard abort without hand cleaning (the 0xa00a0480 resume failure).
+- r21: device test #13 (container 6 deleted + recreated, r20): setup + wizard succeeded (no GDI+ assert that time), but the launch froze — EA Desktop `GamePreLaunchError: GameNotInstalled`: the recreated container reused id 6 and the executor's prefs guard `local_c6` (from the old container) skipped Registry + Copy Files, so the new prefix had no EA Games keys / Origin licence. Guards are now marker FILES inside the prefix (`drive_c/bl_installscript/state/<appId>.{local,runproc}`) that die with the container. Also confirmed in the session log: the agent received the right exe and staged appmanifest with depots from `WN_STEAM_DEPOTS` (C5b works).
+- r22: device test #14 (container 6 recreated again on r20): the EA registry keys + Origin licence were missing at launch even without a stale guard — the executor wrote them at 00:51:44 while the setup session's Wine was running, and wineserver saved its own registry copy at exit (00:51:56), overwriting them; the licence copy made before the fresh prefix's first boot was lost to prefix creation. The pre-launch hook (after setupWineSystemFiles, before Wine starts) now ALWAYS re-applies Registry + Copy Files (idempotent), ignoring the once-marker, so the keys land at the one safe moment.
+- 🏁 2026-09-06 01:15 — FULL HANDS-OFF END-TO-END on a fresh container (eanet2 GE 11.0-6 layer, slot -4) with r22: add → EA pill → Set up → one session (mono + gecko + EA installer, wizard survived: gdiplus clamp proven) → EA Desktop installed → launch → SteamLite chain hold → EA Desktop online (0 offline errors) → `Successful launch` → Need for Speed Most Wanted running. Zero hand edits on device.
+- 2026-09-06 — EA support MERGED to main (`b86732de`); layers `build-bionic-layers-20260906-eanet2` promoted to latest + catalog vc4. Follow-up `fix/vendor-desktop-shortcuts` (ea-vendor-desktop-r1): winemenubuilder writes `EA.desktop` straight into the container Desktop folder when EA Desktop installs (its .lnk is under Public\Desktop), and the shortcut loader only filtered .lnk names, so an "EA" card appeared per container. `ContainerManager.isVendorClientDesktopEntry` now skips vendor .desktop entries by name / StartupWMClass / Exec+Path; app-written entries (storeSource/steamAppId) are never skipped.
+- 2026-09-06 — EA registry "Install Dir" now points at the ASCII steamapps link (ea-vendor-desktop-r4). On a fresh container Need for Speed Payback signed in, activated, was relaunched by EA Desktop and then quit after 61s without ever creating a D3D device (no DXVK "Game:" line, black screen). A/B against the container that worked this morning: the working one had EA Games\...\Install Dir = C:\Program Files (x86)\Steam\steamapps\common\Need for Speed Payback, the failing one Z:\steam_games\Need for Speed(tm) Payback. EA Desktop launches the game from that registry value and Frostbite fails to read its module path through a non-ASCII one (the same reason RealSteamLauncher already links the depot into steamapps\common\<ascii>). Registry values now resolve %INSTALLDIR% to that link when it resolves to the depot; process/command paths are unchanged. The stage is re-applied after prepare() creates the link so a first launch gets it too.
+- 2026-09-06 — Auto-close-on-exit watchdog defers to the SteamLite agent for EA chain titles (ea-vendor-desktop-r5). With the Install Dir fix in place Payback loaded from the ASCII steamapps path, the stub exe handed off, the agent logged "gone but the launcher chain is alive - holding", and 12 s later the app closed the session itself (EXIT_SELF, no agent teardown): the per-game "close when the game exits" watch counts 3 empty 2-second ticks of the shortcut exe, and EA's hand-off gaps can exceed that. While the agent (steam.exe) is alive on an EA chain launch the watch no longer counts; the agent bounds the hold and its exit still closes the session via the guest termination callback.
+- 🏁 CHECKPOINT 2026-09-06 03:23 — EA-on-Steam SHIPPED END-TO-END, USER-CONFIRMED. Need for Speed Payback on a container built entirely by the app (catalog GE-Proton 11.0-6 `-4` layer from build-bionic-layers-20260906-eanet2, hosted SteamLite v7 / agent p6, app main `92872f87`): add game → EA pill → one setup session (mono + Gecko + EA Desktop wizard, no GDI+ abort) → launch → Steam → Link2EA → EA Desktop → EASteamProxy → EA sign-in + validation → title screen at 59 fps. Most Wanted proven the same way earlier (Steam-linked login, no sign-in). Layers are the repo's latest release and the in-app catalog default. Known remaining: Payback asks for the EA sign-in on every launch — the activation dialog literally says "DisplayName field missing from registry": EA's activation reads the product name from the `EA Games\<game>\<language>` subkey, which the installscript stage collapses into the parent key. Next fix writes that subkey too. Also open: HUD labels EA titles D3D12/VKD3D (they are D3D11/DXVK), Steamworks Shared depot 228980 not staged, the eanet2 layer patches still live on the aio-eanet/* staging branches.
+- 🧭 CHECKPOINT 2026-09-06 13:45 — EA launch is shipped and stable: Need for Speed Payback reached gameplay three more times tonight on the app-built container (main `92872f87`, staged main build sha 07d133f6…). Open item D1, the EA "Activate Your Game" sign-in on every launch, is now understood but NOT fixed: it is the game's own embedded Origin DRM (ActivationUI, V4.11.05.64) re-verifying the machine each launch, not EA Desktop (whose Steam-linked auth succeeds silently every time). It is not a regression: the container that worked this morning shows 15 such re-activations in its own DRM log. Branch fix/ea-language-subkey (writes the EA Games\<game>\english subkey the real Steam client writes) is verified in the registry and removed the "DisplayName field missing" text but did not stop the prompt, so it is not merged as the fix. Ruled out as unstable fingerprint inputs: C: volume serial (Wine reports 0 with no .windows-serial) and MachineGuid. Next probe: adapter MAC/GUID and SMBIOS as seen inside the prefix across two launches.
+- 2026-09-06 — EA detection covers EA-app-era folder layouts (ea-detect-installer-r1). STAR WARS Jedi: Survivor got no EA badge and no setup: it ships no Link2EA.exe / EASteamProxy.exe / Core\Activation* and its installer is not under __Installer\Origin, which were the only on-disk tells. Detection now also accepts an EAappInstaller*.exe (or EADesktop*.exe) anywhere up to four levels under __Installer, or an installscript in the depot root that references EA's installer/client. Untagged shortcuts already self-heal from disk, so existing shortcuts pick the badge up on their next launch.
+- 2026-09-06 — installScript Registry: the Steam-language block is written as the `<key>\<language>` subkey too (ea-language-subkey-r1). EA's activation dialog on Payback read "DisplayName field missing from registry" and asked for the EA sign-in on every launch: Activation64/ActivationUI look the product name up under `EA Games\<game>\english`, which the stage only folded into the parent key. Parent values stay (EA Desktop needs them); the subkey is added, matching what the real Steam client writes.
+- 2026-09-06 — installScript Registry: plain hive roots are written to BOTH WOW64 views (ea-language-subkey-r2). The Steam client that runs installscripts on Windows is 32-bit, so a root without a _WOW64_32/_WOW64_64 suffix (Payback's `HKEY_LOCAL_MACHINE\SOFTWARE\Origin Games\1035208`) lands under Wow6432Node there, and EA's 32-bit ActivationUI reads it back from the same redirected view. The app wrote plain roots to the native view only, so ActivationUI kept reporting "DisplayName field missing from registry" (the message is in ActivationUI.exe) on every launch, on this container and on the one that worked this morning. Explicit _WOW64_32/_WOW64_64 roots are unchanged.
+- 2026-09-06 — HUD API label no longer taken from store-client / overlay wrapper logs (hud-api-ea-r1). EA titles (Payback, Most Wanted: D3D11 on DXVK) read "D3D12 · VKD3D" because EA Desktop's CEF front end and its IGOProxy overlay create real D3D12 swapchains on VKD3D, and their vkd3d-proton.log outranked the game's own DXVK D3D11 log in the wrapper-log resolver. Wrapper logs written by known helper processes (Steam/EA/Origin/Ubisoft/Epic/GOG clients, overlay proxies, launcher-chain helpers) are now used only when no game-tier log of that API exists, and a rendering vkd3d log naming a different program than the shortcut's exe loses to the shortcut exe's own DXVK log.
+- 🧭 CHECKPOINT 2026-09-06 17:00 — EA support shipped and user-confirmed (main `7f8997ff`): detection for Origin-era and EA-app-era depots, one-session EA Desktop setup, automatic Steam → EA Desktop → game launch, SteamLite v7 agent holding through EA's hand-offs, HUD API label reads the game's real API on EA titles, stray EA cards gone, atomic SteamLite/Goldberg updates, installscript registry parity, Input Controls import flow. Proven: Payback, Most Wanted 2012, Jedi Survivor (Fold 8). Known: Origin-era titles (Payback) ask for the EA sign-in every launch, and EA counts each as an activation — repeated launches or many containers trip EA's "Concurrency guard limit" (Most Wanted was refused today for that reason: deleted test containers still hold its licences on EA's side). When EA refuses, the launch ends on a black screen; a failure card naming EA's reason (read from EADesktop.log during the chain hold) is the next EA item. Release-notes EA section drafted in memory.
+- 2026-09-06 — EA refusal card (ea-refusal-r1). When EA Desktop refuses to license an EA title it aborts the launch itself; the game never starts, the SteamLite agent holds the session for it and the user sat on a black screen (device-seen: Most Wanted, EA reason "Concurrency guard limit"). During an EA-chain launch the app now tails EA Desktop's own log inside the prefix (ProgramData\EA Desktop\Logs\EADesktop.log, only lines written this session) for the abort and the game.license.erro telemetry reason, releases the agent's hold, and shows the launch failure card: "EA Desktop couldn't start <game>", EA's reason in plain words plus EA's own string, and advice (try later; every container counts as a separate PC to EA; Deauthorize computers in the EA account), with Retry and Close. The guest-exit failure path leaves that card in place.
+- 🧭 CHECKPOINT 2026-09-06 17:55 — main `463c31c0`: EA-on-Steam complete for this cycle. Shipped and user-confirmed today: EA detection (Origin-era + EA-app-era), one-session EA Desktop setup, automatic Steam → EA Desktop → game launch with the SteamLite v7 agent holding through EA's hand-offs, ASCII steamapps Install Dir, exit watchdog deferring to the agent, atomic SteamLite/Goldberg updates, stray EA cards removed, installscript registry parity (language subkey + both WOW64 views), HUD API label reading the game's real API, Input Controls import flow, and the EA refusal card (EA Desktop's licence refusal → failure card naming EA's reason instead of a black screen; proven on Most Wanted's "Concurrency guard limit"). Known and documented for the release notes: Origin-era titles ask for the EA sign-in every launch and each counts against EA's activation quota; every container counts as a separate PC to EA. Open: Need for Speed 2015 goes black after activation (game alive, never creates its D3D device; EA's Denuvo token helper logged exit code 1); GTA V Enhanced's Rockstar launcher installs but its Chromium UI never loads a page (no Rockstar support yet, GTA Online impossible under BattlEye); landing the eanet2 layer patches into the real Proton branches; Steamworks Shared depot.
+- 2026-09-06 — Shortcuts: one unreadable or truncated .desktop entry no longer crashes the app at start (shortcut-load-r1, merged `ed518fa1`). A root-owned shortcut file made the Games screen die at open (`Shortcut.<init>` substring on an empty Exec line); a bad entry is now skipped and logged and the rest of the library still loads. User-confirmed on device.
+- 🧭 CHECKPOINT 2026-09-06 18:45 — main `ed518fa1`. EA sign-in-every-launch (Origin-era titles) remains OPEN and documented in the release notes: 8 local theories tested on device today, incl. FEX hidden hypervisor bit (no change), the "2601-Denuvo" FEXCore package (byte-identical to the plain Jan nightly; game exits after 15 s on it), and a fixed C: volume serial (`drive_c/.windows-serial`, left in place; test inconclusive because EA's activation server now refuses Payback with HTTP 403 "too many computers" after today's test launches). Rule: each EA launch of an Origin-era title costs an EA activation; do not test-launch EA titles repeatedly. Also open: NFS 2015 black screen (GetGameToken exit 1), Rockstar launcher CEF UI (GTA V), C6 Steamworks Shared, land aio-eanet/* layer patches.
+- 2026-09-06 — 3.0.7 prep: versionCode 81 / versionName 3.0.7, release notes `docs/releases/3.0.7.md` (EA-on-Steam headline, EA known limitations, Input Controls import, LSFG Native follow-ups, fixes, carried-over issues), README version row + EA bullet. Artifacts build of main first (`main-3.0.7-rc1`); the stable cut runs only on explicit go.
+- 🏁 RELEASE 2026-09-06 — **3.0.7 STABLE** (vc81, tag `3.0.7` → `5f15f60a`, run 34068746301, Latest). The EA update: EA-on-Steam (detection, one-session EA Desktop setup, automatic Steam → EA Desktop → game chain, refusal card, registry parity, ASCII install path) — researched and implemented by The412Banner by reverse-engineering GameHub's EA launch methods; new `-4` compatibility layers (eanet2: EA Desktop online + installer GDI+ fix); Input Controls import rebuilt with previews; LSFG Native follow-ups; HUD API label fix; shortcut-crash and client-update hardening. Known/open: Origin-era EA sign-in per launch + EA activation limits, NFS 2015 black screen, Rockstar launcher unsupported, carried-over Steam items. update.json notes re-uploaded as a short summary. versionCode FROZEN at 81 until the next stable.
+- 🧭 CHECKPOINT 2026-09-06 21:05 — 3.0.7 STABLE live and verified (tag `3.0.7` → `5f15f60a`, Latest, 3 APKs + short-notes update.json). Post-cut docs on main: EA research credit (The412Banner, reverse-engineered GameHub's EA methods), first-outside-GameHub / GameHub-parity statement, release-history entry. Layers: EA work landed on all 7 `proton_*` parents, 7 builds green, no releases created; parents now build the unified 16 KB / sdk28 / DirectAudio 1.3.2 shape but still stamp versionCode 3 and a "1.3.1" description — fix before the next layer publish. Open after 3.0.7: Origin-era EA sign-in per launch (8 theories disproven; C: serial test pending EA quota), NFS 2015 black screen, Rockstar launcher, refusal card for game-side OOA 403, EA account-manager autofill (assessed only). vc FROZEN 81.
+- 2026-09-06 — 3.0.7 release body: EA end-to-end video (YouTube FwWjWacPpgo) added as a 360 px clickable thumbnail under the intro; notes file and live body in sync (`22c85224`, `0d3688bd`). Playable inline embed is not possible for YouTube on GitHub; only a user-uploaded ≤10 MB clip renders as a player.
+- 2026-09-06 — Launch failure card: Close now clears the shared card state and the game screen's teardown drops a lingering card (preloader-close-r1, merged `b2c3838a`). The overlay is composed in both the game screen and the Games menu off one app-wide state; Close only finished the game screen, so the Games menu kept showing the card with an inert Close until the app was swiped away. User-confirmed on device (Serious Sam Shatterverse exit-code-255 card → Close → Games menu).
+## 2026-09-07 — 🎮🧠 **Serious Sam Shatterverse (UE 5.5.4 / RUNE): relax_wave_size vkd3d DEVICE-PROVEN, new blocker = Android LOW_MEMORY kill** (container 5 "P11-6 GE Arm", shortcut `vkd3dVersion=3.1.0-wave64-relax-1` + `VKD3D_SHADER_MODEL=6_6`)
+> Log set `/storage/emulated/0/Download/bannerlator/Serious Sam Shatterverse/` (run 23:54:44→23:56:28 2026-09-06) + UE `Saved/Logs` + `dumpsys activity exit-info`.
+> - **WaveSize crash (crash 2) FIXED on device:** vkd3d log `build: d01924b6f02fa3f+`, `d3d12_device_validate_shader_meta … relax_wave_size is set, clamping` printed once (shader `bdc0f293c54b96b9`), zero `Failed to create pipeline`. Game reached HqLobby_02, intro video (ElectraPlayer), "Starting the match", `LoadMap OTH_Map_Tutorial_001` — well past the frame-1 render-thread AV.
+> - **New blocker:** `ApplicationExitInfo com.tencent.ig reason=3 (LOW_MEMORY)` @23:56:28 pid 31407. logcat 23:56:06→28 = lmkd cascade: all cached apps → Chrome/Discord/Claude app/**Termux** (killed the Claude session) → game (fg TOP). No tombstone, no UE crash dir; UE log stops mid tutorial-map load during the PSO-compile burst.
+> - **Why:** 15.6 GB device, 6.4 GB already used by other apps at game start (UE `LogMemory`); wrapper `maxDeviceMemory=0` → vkd3d/UE see **11458 MB "dedicated VRAM"** (UMA) → UE "Larger" bucket + desktop-sized Nanite/VSM/Lumen budgets; lmkd `use_minfree_levels=true` kills fg at free<72 MB while 22 GB swap sits unused. Scalability all @1, 1280x720.
+> - **Loose ends:** 23:49 + 23:52 crashes = RenderThread AV @0x98 t=0 WITH relax build but 0 WaveSize lines / no vkd3d errors → different, intermittent, not understood. `Saved/Config/Windows/Engine.ini` (crash-1 LogOnline fix) is GONE (only GameUserSettings.ini) yet LogOnline Verbose=0 since 23:27 — recreate anyway.
+> - **Next (NOT applied, awaiting go):** Engine.ini `[Core.Log]` LogOnline*=Log + `[SystemSettings]` r.Streaming.PoolSize=800, r.Streaming.LimitPoolSizeToVRAM=0, r.Shadow.Virtual.MaxPhysicalPages=2048; GameUserSettings sg.GlobalIlluminationQuality=0 / sg.ShadowQuality=0; shortcut wrapper `maxDeviceMemory=4096` (→ `WRAPPER_VMEM_MAX_SIZE`, `XServerDisplayActivity.java:8684`); kill Discord/Chrome before launch; sample `/proc/meminfo` during map load. Launch recipe: `am start -n com.tencent.ig/com.winlator.star.XServerDisplayActivity --ei container_id 5 --es shortcut_path "<.desktop>"`.
+> - ⚠️ Tooling: `bridge` grep basic `\|` alternation matches nothing (toybox) — use `grep -E "a|b"`.
+
+- 🔎 2026-09-07 00:41 — NFS 2015 (Denuvo, appid 1262540) black-screen analysed from the full 338 MB Wine log: dbdata.dll (Denuvo token module) loads and unloads within ~0.15 s, game spawns Core\ActivationUI.exe then re-execs itself with `/dbrv=N` every ~37 s (5 instances), never creates a window or D3D device. Same root as EA Desktop's GetGameToken exit 1. WINEDEBUG trace (+reg,+file,+ntdll,+process,+thread,+sync) armed on the xuser-5 shortcut for one user launch. Memory: project_bannerlator_ea_support_shipping_tasklist.
+- 🏁 2026-09-07 01:57 — **NFS HEAT (Denuvo, EA-app era, appid 1222680) DEVICE-PROVEN — gameplay reached, main menu at 59 fps** on a fresh container (xuser-6) built on the new **GE-Proton 11.0-6-arm64ec-5** layer + FEXCore nightly **2608+45**. Two fixes were needed together: (1) Wine `RtlIsEcCode` had no bounds check, so a garbage pc from unwinding a Denuvo frame read past the arm64ec code bitmap → nested AV ×143 → stack overflow → black screen; guard `if (ptr >> 47) return FALSE` added to `dlls/ntdll/signal_arm64ec.c` on all 7 `proton_*` parents (vc5, DirectAudio text 1.3.2, single 16 KB wcp shape), all 7 builds green, guard verified in the shipped ntdll (`lsr x8,x0,#47`); NOT released or catalogued yet, GE 11.0-6 wcp staged `/sdcard/Download/GE-proton-11.0-6-arm64ec-vc5-eccode.wcp`. (2) the original AV `c0000005 @ NeedForSpeedHeat.exe+0x120100C7` (Denuvo runtime reading a garbage pointer) is a **FEX 2608+229 regression**: same container, only the shortcut's FEXCore switched +229 → +45 and the AV is gone. 3.0.7 ships +229 as default, so EA/Denuvo black screens reported on 3.0.7 may be this. First-run load ≈5-6 min (layer's default +seh/+loaddll log = 832 MB + sync DXVK compiles). EA online + entitlement check work through the eanet networking. Bonus: first proof that the single-16 KB-page wcp shape boots on a 4 KB device. Owed: A/B old layer (-4) + FEX +45; release/catalog the vc5 layers; consider pinning EA/Denuvo launches to a known-good FEX. NFS 2015 (Denuvo 2015-era) still black: Denuvo self-patch loop (NtProtectVirtualMemory RW→RX per write) is ~100× too slow under FEX (mtrack 37 s/cycle, `FEX_SMCCHECKS=full` 125 s, `mman` 7 s, all self-relaunch `/dbrv=N`); Box64 A/B armed on the xuser-5 shortcut, then park. Memory: project_bannerlator_ea_support_shipping_tasklist, project_proton_wine_consolidated_layers_release.
+- 🔎 2026-09-07 02:45 — Post-Heat findings logged. (1) **Heat gameplay confirmed** on container 6 (GE-Proton 11.0-6-arm64ec-5 + FEX 2608+45): opening cutscene 5 fps, races 8-16 fps, pause menu 17, graphics menu 31 fps at 1280x720 vsync off; CPU 94% vs GPU 46-61% → CPU-bound (user video `Movies/screen-20260907-021146.mp4`). (2) **~7 min black→game load: log storm identified** — wine_debug.log 2.59 GB, ~17k lines/s of `trace:seh:RtlInitializeExtendedContext2` (the game's threads capturing CPU contexts with AVX state constantly); the `+seh,+loaddll` channels come from the app's SteamLite launch path (`XServerDisplayActivity.setupXEnvironment`, added whenever Log Manager's Wine-debug toggle is on), NOT from the layer. Mitigation on device: Heat shortcut `envVars=WINEDEBUG=-all`. Log cost vs cold shader/JIT caches not yet A/B-measured. Candidate app fix: limit the SteamLite add-on to `warn+seh,err+seh` (trace class is the flood). (3) **vc5 layers PRE-RELEASED** as `build-bionic-layers-20260907-eccode` on proton-wine (8 wcp, all verified: vc5, RtlIsEcCode guard, EA fixes, DirectAudio 1.3.2, 16 KB-aligned single wcp); eanet2 stays latest/catalog; promotion is a separate step. (4) **NFS 2015 parked**: run 6 on FEX 2608+45 looped identically to +229 (new pid every 35-75 s, no D3D) → FEX build is not 2015's factor; run 7 on WOWBox64 was cut short by EA's "too many computers" account limit before the loop was reached → inconclusive, shortcut left armed on box64 for a retry after the quota clears. Verdict stands: 2015-era Denuvo self-patch loop ~100× too slow under emulation. (5) EA activations are the scarce resource now (Payback + 2015 both hit the limit today); waiting for EA to cool down. Memory: project_bannerlator_ea_support_shipping_tasklist, project_proton_wine_consolidated_layers_release, feedback_ea_launch_session_watchers.
+
+- 2026-09-07 — Contents hub: Official catalog as a built-in repository + "Save archive only" (contents-official-r1, branch `feat/contents-official-saveonly`, NOT merged). The official `contents.json` (`ContentsManager.REMOTE_PROFILES`) is listed FIRST in the Download tab with the green Official tag (shared `SourceTagBadge` with the container/shortcut sheet, which now skips that source when building its community groups so it is never double-listed); hideable via the repo menu or the new Contents-settings toggle "Show Official catalog in repositories" (hub only; sheets unaffected); a user-added source with the same URL is deduped. Every downloadable row (components, GPU drivers, all repos, search) gets a disk icon: `ContentsInstaller.saveOnly` rides the install rails (same registry key, FGS bracket, shade line, popup, Cancel) but files the raw archive into the Contents save location via `ComponentLibrary.saveRaw(saveOnly=true)` (move when same-fs, else copy) — no extract/install; row shows Saved, My Files lists it with "saved only, not installed" (`saved_only_keys` mirror, cleared by Reinstall or a keep-raw install). Already saved → dimmed icon + toast, long-press re-downloads. `WcpJsonCatalog` parser extracted (exact `type` match first — the official catalog lists Box64 AND WOWBox64, DXVK AND D7VK; substring fallback keeps the `fex` alias) with a JVM unit test on a 3-entry sample; StevenMXZ lists `wowbox64` explicitly. Download loop now `ensureActive()`s per chunk so Cancel takes effect mid-transfer (installs too). Landscape: existing `wide` path untouched; disk action is fixed-width in an `IntrinsicSize.Min` row; settings dialog scrolls. Docs `docs/CONTENTS_HUB_OFFICIAL_SAVEONLY.md`. Not device-tested.
+- 🧭 2026-09-07 18:15 — CHECKPOINT. **NFS Heat run #2 with logging off** (shortcut `WINEDEBUG=-all`, FEX 2608+45, GE 11.0-6 arm64ec-5): user "launched fine"; Wine log 122 KB vs 832 MB at the same point yesterday; 59 threads / 2.5 GB resident. The log storm came from the SteamLite launch path adding the seh/loaddll channels whenever Log Manager's Wine-debug toggle is on; app-side fix (warn/err classes only) still to build. **Layers:** `build-bionic-layers-20260907-eccode` promoted to a full release and latest; delivery copies on winlator-contents `bionic-layers-20260907-eccode`; catalog repointed (`0131e01`) — the 16 eanet2 vc4 entries replaced by 8 vc5 entries, one wcp per layer, renamed to `Proton-…/GE-Proton-… (v5)` (`6a6a123`). 16 KB-device boot of the single-wcp shape still unproven; rollback = revert the catalog commit + re-mark eanet2 latest. **Policy (user):** recommend STABLE FEXCore builds to users; an EA title that black-screens after sign-in gets a different stable FEX first. FEX 2608+45 is no longer obtainable from the Nightlies feed (rotated to +240). **NFS 2015:** WOWBox64 A/B attempted twice (02:40, 18:07), both refused by EA's "too many computers" limit before the game reached its loop → still unanswered; no relaunch before 2026-09-08 ~02:40. **Hiatus safety:** /tmp auto-prune hook removed, transcript retention 10 years, every repo/worktree/stash backed up to `refs/backup/20260907/*` and `~/backup-bundles-20260907/`; standard launch watcher `~/.local/bin/launchwatch.sh` now mandatory for every device launch test. Memory: project_bannerlator_nfs_heat_working_recipe, project_hiatus_20260907_backup_state, feedback_fex_stable_for_users_ea_blackscreen, feedback_ea_launch_session_watchers.
+- ✅ 2026-09-07 18:50 — MERGED `fix/fm-parent-folder-476` → main `3b4b2822` (revert `git revert -m 1 3b4b2822`). Issue #476 (Devaspe) was right: favourites, the Downloads/Games/Pictures rail shortcuts and the caller-supplied start folder all pinned the File Manager's up/back floor to the jump target, so after opening a favourite the up arrow was greyed out and Back did nothing. Jumps now keep the floor at the volume root (or the container's C: drive when inside it); real drives still pin. Added the ".." parent row/tile as the first entry of every listing below the floor, sharing one goUp() with the toolbar arrow and system Back; hidden at the root and during search. User-confirmed on device ("works great", r1 `d4f5a5a6…`, run 34166568233). Memory: project_bannerlator_fm_parent_folder_476.
+- ✅ 2026-09-07 20:35 — MERGED `feat/container-layer-update-impl` → main (revert `git revert -m 1 <merge sha>`). **In-place container layer update**: when a newer INSTALLED layer of the same line exists (same versionName, higher versionCode, same arch), the container card shows "Update layer → vN" + a "?" explainer; the update snapshots `.container` + the three registry hives into `<container>/.layer-update-backup/<ts>/`, switches `wineVersion`, re-copies only Wine-builtin-signed DLLs into system32/syswow64 (DXVK/FEX/wowbox64/game files untouched), clears the prefix-tweak caches; Wine's own prefix update runs on the next launch. "Revert layer to vN…" in the ⋮ menu restores hives + old DLLs (old layer must still be installed; the dialog says so when it isn't). Device-proven tonight: xuser-3 -2→-5 (old layer gone) + TF2 Real Steam launch to menu; xuser-5 -4→-5→-4 (registry byte-identical to backup) →-5 again. Also: `WineInfo.fromIdentifier` now strips the versionCode at the last dash, so layers with versionCode ≥ 10 resolve instead of falling back to the bundled Wine. Detection is installed-only (no network); catalog-driven notice + cross-line updates = follow-ups. Plan: docs/CONTAINER_LAYER_UPDATE_PLAN.md. Memory: project_bannerlator_container_layer_update.
+- ✅ 2026-09-07 21:20 — MERGED `feat/layer-update-catalog` → main (revert `git revert -m 1 <merge sha>`). The container-card layer update now also fires when the newer layer exists ONLY in the online catalog: the card shows "Update layer → vN" with a cloud-download glyph, the dialog states the download size, and confirming downloads + installs the wcp through the existing Contents installer before running the same in-place update (a wcp whose profile isn't the promised layer is rejected and the container left untouched). An INSTALLED newer layer still wins, so the no-network path is unchanged; with no catalog reachable the behaviour falls back to installed-only. Matching relies on the new `versionName` field (the wcp profile's layer identity) added to the Proton/GE rows of winlator-contents `contents.json` (`e8af9ad`) — **every future Proton/Wine catalog row must carry it**, since `verName` is only a display label. Device-proven: a fresh container on `Proton-10.0-4-arm64ec-4` (v5 catalog-only) → tapped → 88 MB downloaded, `contents/Proton/10.0-4-arm64ec-5` installed, container moved to v5 with its ntdll matching the new layer (1510 builtin files refreshed) and a v4 snapshot kept. Cross-line updates remain out of scope. Memory: project_bannerlator_container_layer_update.
+- 🏁 RELEASE 2026-09-07 22:00 — **3.0.8 STABLE** (vc82, tag `3.0.8` → `8b1750e7`, run 34177815411, Latest). *The downloads-and-containers update.* Ten merges since 3.0.7: Rust download engines for Epic/GOG/Amazon (GOG 4.5→2.2 s, Epic 11.4→4.3 s, Amazon 68→48 s) + a Store download speed tier · in-place **container layer update** with a card button, "?" explainer, catalog download when the layer isn't installed, and revert from a registry snapshot · new `-arm64ec-5` layers (Wine `RtlIsEcCode` bounds check → **NFS Heat reaches gameplay**, DirectAudio 1.3.2, one wcp per layer for both page sizes) · Screen Effect "Looks" on both renderer paths + Saturation · store Media tab and the official catalog as a Contents source · fixes: file-manager parent folder (#476), EA legacy shortcut, layer versionCode ≥ 10, Relative Mouse per game (#431), file-manager card height (#475), failure-card Close. Release body = `docs/releases/3.0.8.md`, including a **Need for Speed Heat showcase** (5 JPEGs committed at `docs/release-media/3.0.8/`, embedded via raw blob URLs) and the 86 s gameplay clip uploaded as the release asset `nfs-heat-gameplay.mp4` (60 MB, too large for inline playback). Credits name the Denuvo-unwinder diagnosis, the layer update and the Rust engines as this release's original work, plus GloriousEggroll, the Wine and FEX-Emu teams, Devaspe (#476) and the EA community testers. README: version row, six-bullet What's New, 3.0.7 demoted to "Earlier". Known limitations carried: store cancel/resume unfinished, EA per-launch sign-in + activation quota, NFS 2015 unsupported, Rockstar unsupported, x64 direct-launch overlay crash, Java Steam fallback still present, and the not-yet-device-tested Contents official mode and Media tabs. versionCode FROZEN at 82 until the next stable.
+- 🧭 2026-09-07 22:05 — CHECKPOINT. main `122f3190`. Open after 3.0.8: **NFS 2015** parked behind EA's rolling 24 h activation limit — the WOWBox64 A/B is armed on container xuser-6 and must not be relaunched before ~02:40 on 2026-09-08, then the stable FEXCore builds in order (2601-Denuvo → 2608-stable-unix); **EA sign-in per launch** on Origin-era titles (8 theories disproven, parked); **catalog rule** — every future Proton/Wine row in winlator-contents `contents.json` must carry `versionName` (the wcp profile identity) or containers on that line will never be offered the update; **cross-line layer updates** (e.g. 11.0-2 → 11.0-6) deliberately not offered; **SteamLite `+seh` log storm** — the launch path still adds the trace-class seh/loaddll channels whenever Log Manager's Wine-debug toggle is on (a 2.6 GB log and a ~7 min first load on Heat), the fix is to limit it to the warn/err classes, unbuilt. Hiatus safety from earlier today still in force: /tmp auto-prune hook removed, transcript retention 10 years, every repo/worktree/stash backed up to `refs/backup/20260907/*` and `~/backup-bundles-20260907/`.
+- 🔴 2026-09-08 10:00 — CHECKPOINT (written BEFORE the launch, per the checkpoint-around-game-launches rule). main `8f4cff74`, working tree clean, no code changed today. **D1 (EA "Activate Your Game" every launch on Origin-era titles) volume-serial retest is ARMED on Payback / container xuser-5 and awaiting the user's launch.** Nothing needed arming — the 2026-09-06 18:30 setup survived untouched: `drive_c/.windows-serial` = `A1B2C3D4` still present (xuser-6 has none), the Payback shortcut is clean with no `envVars=` line (so no WINEDEBUG override — that is what produced this morning's 320 MB Hot Pursuit log), and Payback's licence `1035208.dlf` is absent, torn up at the end of the 09-06 18:33 run and never re-granted because EA 403'd us. That 403 is the only reason this test was never answered on 09-06. Quota should now be clear: last Payback activation was 09-06 18:34, ~38 h before the test, against EA's rolling 24 h window. **Baseline (the OOA log is UTF-16LE — a plain `grep` on device returns 0 for every pattern; `iconv -f UTF-16LE` first): `retry requested` = 12, `Log Opened` = 29, `License Request` = 54, file 82,564 B.** PASS = no ActivationUI page and the retry count stays 12, which would make D1 a one-line container-setup fix for every EA title; FAIL = the licence binds to something other than the C: volume serial and the file-on-disk route is dead for good. Watcher armed 10:00:48 via `launchwatch.sh` (watch the `actui=` column, not the D3D verdict; it gives up ~15 min after arming and needs re-arming if the launch comes later).
+- 📌 2026-09-08 10:00 — Recon + design, nothing built. **Maxima** (`ArmchairDevelopers/Maxima`, GPL-3.0 Rust reimplementation of the EA Desktop/Origin launcher) assessed as a source to derive from: its LSX server, persisted OOA licence and hardware-hash routine are the reusable parts; licence gate is clear against our GPL-3.0-or-later. Its headline cpuid-instability theory for D1 is **already dead on our own device evidence** (two probe boots byte-identical, all 8 cores identical under FEX) — the one input we have never dumped is the GPU PnP ID. **User's EA account-manager idea assessed** in two versions: (A) password autofill into ActivationUI hides the symptom but still costs one EA activation per launch and dies on 2FA — not worth building alone; (B) the SteamLite agent hosts LSX and serves a persisted licence itself, dropping EA Desktop out of the launch path — the only version that reduces activations, and not speculative, since we already observed `Origin::SDK::Lsx` → `RequestLicense` → `RequestLicenseResponse` on device on 09-06. Version B is Origin-era only (Heat and Hot Pursuit already persist their licences on xuser-6) and fixes neither the Hot Pursuit FEX crash nor the Denuvo slowness. Both are gated on the retest above. ⛔ The ".dlf copy/restore" idea must not be run: the 09-06 `+file` trace already shows the game reading the licence, querying the volume serial, then deleting it — a restored copy takes the identical path.
+- 🧹 2026-09-08 10:00 — Device housekeeping: swept `find …/imagefs/home -user root` and chowned 10 leftover `.bak` files back to `u0_a249` across containers 3, 5 and 6 (system.reg backups, shortcut backups, steam.exe backups, `winedirectaudio.drv.pre-mic`). Sweep now returns clean. Root-owned files inside the app's data are indistinguishable from data loss if the app touches them.
+- ❌ 2026-09-08 10:06 — **D1 VOLUME-SERIAL TEST FAILED.** Payback on xuser-5 with `drive_c/.windows-serial` = `A1B2C3D4` still showed "Activate Your Game": `License signature is good` → +36 s `Digital DRM verification retry requested` (count 12 → 13) → sign-in page → user signed in → licence re-granted → 609 B slip written → game reached D3D (4184 B d3d11 log, 45 threads). Identical in shape to every 09-06 run. That is the **ninth** dead D1 theory (after the \english subkey, machine fingerprint, legacyPM bridge, per-core CPUID, 32-vs-64 registry identity, DisplayName, hypervisor bit and .dlf re-injection). The licence binds to something other than the C: volume serial, and the file-on-disk route is now exhausted — D1 goes to the LSX/agent route (agent hosts LSX and serves a persisted licence, EA Desktop out of the launch path) or nowhere. `.windows-serial` left in place; it is harmless and matches the real Windows layout.
+- 🐞 2026-09-08 10:06 — **Tooling bug found and fixed, and it invalidates prior evidence.** I first read this run as a PASS because the watcher reported `actui=0` (no ActivationUI) in all 31 samples; the user then reported they *were* made to sign in. Root cause: Linux caps `/proc/<pid>/comm` at 15 characters — proven live on this run, `NeedForSpeedPayback.exe` has comm `NeedForSpeedPay`. `ActivationUI.exe` is 16 characters, so its comm is `ActivationUI.ex` and **`pgrep -x ActivationUI.exe` can never match** — it returns 0 unconditionally. `~/.local/bin/launchwatch.sh:19` used exactly that, so its `actui=` column has silently reported 0 for **every EA launch test we have run**. Fixed to `pgrep ActivationUI` (pattern match, not `-x`); backup at `launchwatch.sh.bak-actui`. Any earlier conclusion resting on `actui=0` is void — the only reliable "was the user prompted" signals are the fixed pgrep or asking the user. Note the OOA log cannot substitute: its retry → HTTP 200 lands in the same second even when an interactive sign-in occurred, because the sign-in gets no OOA line of its own.
+- 🎮 2026-09-08 19:05 — **Root-caused the long-standing "controller randomly stops working" report**, from the first in-house reproduction (Titanfall 2, container on GE-Proton 11.0-6 arm64ec-5). Symptoms: the physical pad *and* the on-screen controls both dead, touch still working, the in-game drawer still showing the controller as connected, and nothing recovering it — including the drawer's own Reset Input. Cause, from exactly one occurrence of each line in the wine log: `err:esync:__esync_wait_objects ppoll failed: Try again` followed by `err:xinput:hid_update_thread_proc wait failed in the update thread, ret 4294967295, error 32`. `4294967295` is `WAIT_FAILED`. Wine's XInput update loop continues only on a signalled handle or a timeout; anything else falls through to `FreeLibraryAndExitThread`, so one transient esync hiccup ends XInput polling for the life of the process. The pad and the emulated on-screen controller share that lane (OSC is slot 0, pads 1-3), which is why both die together while touch — a different subsystem — keeps working. Reset Input cannot help: it rebuilds the *host* side of the transport while the thread that died is in the guest, and `XServerDisplayActivity` :2154 notes Wine enumerates `/dev/input` only at boot. Confirmed on-device that nothing in the container held those event nodes open. Two earlier theories were wrong and are recorded as dead: the `onPause` `inputControlsView` guard (that view is always created during setup) and #345 slot-takeover.
+- 🍾 2026-09-08 20:45 — **Layers v6 published — all seven rebuilt with the XInput fix.** `hid_update_thread_proc` now absorbs up to 100 transient `WAIT_FAILED`s with a 50 ms backoff, re-enumerating controllers as if the wait had timed out, and still terminates if they persist. esync stays enabled — the patch makes its stumble survivable rather than avoiding it. `xinput1_1`/`1_2`/`1_4`/`xinputuap` build from the same source, so every XInput version is covered. Releases: `winlator-contents` `bionic-layers-20260908-xinput` (delivery, what the catalog serves) and `proton-wine` `build-bionic-layers-20260908-xinput` (source-repo all-in-one; note GitHub moved `releases/latest` to it automatically, as any new non-prerelease release becomes Latest). Catalog `winlator-contents` `133816b`: 8 Proton rows bumped to `verCode` 6 and repointed, with `versionName` deliberately untouched on every row since that is the identity a container is matched against. All 8 URLs verified 200. Every wcp was checked binary-side for the `"transient wait failure"` string before publishing — a patch that fails to apply is only logged as `SKIPPED` and the build still goes green, so a green build is not evidence a patch landed. **Only GE-Proton 11.0-6 has been booted on hardware**; the other six carry the identical verified patch but are untested, and both release bodies say so.
+- ⚠️ 2026-09-08 — Two traps worth remembering. **A hand-installed layer silently beats the catalog:** `findNewerInCatalog` skips any row whose install directory already exists, so the test layer left at `contents/Proton/11.0-6-arm64ec-6` would have permanently suppressed the published v6 for that whole line — containers would have kept being offered the older local build. It also explains why all three containers showed a "v6 available" before anything was published (`findNewerInstalled` offers from installed layers). Removed before publishing. **Wine-10 and Wine-11 branches use different patch layouts:** Wine-10 keeps patches in `android/patches/common/` with underscore names referenced as `"common/<name>"`, Wine-11 uses flat dotted names. The first rollout anchored on a Wine-11-only line, so both Wine-10 layers copied the patch without registering it and would have shipped unpatched with nothing in CI to show it; the corrective pass refuses to push unless it greps the registration back out of the build script.
+- ❌ 2026-09-08 19:37 — EA Desktop's black screen is **not** the `EnableNonClientDpiScaling` stub. The patch worked — EA Desktop reached `DesktopFSM[authenticated]` with the failure count held at 15, where it had fired on all 15 previous starts — but the CEF message pump still stalled ~5 s later and the window never painted. The pre-build read was right: that error also fires on launches that succeed, including a Payback run that reached gameplay. Patch reverted; v6 carries only the XInput fix. EA Desktop still authenticates and loads content fine, then wedges its Chromium UI, with no evidence-backed candidate remaining — the cheap next step, if it is ever picked up, is a GameHub A/B on the same device.
+- 🔬🌊 2026-09-12 — **DiRT Rally 2.0 on Wayland: root-cause hunt, still stalling.** X11 in the same container reaches the title screen at 60 fps; Wayland shows the splash forever. Measured, not inferred: the game creates a **probe D3D11 device**, destroys it, `LdrUnloadDll(winevulkan.dll)` → `free_modref unloading winevulkan.dll`, creates its worker pool (`NtSetInformationThread ThreadIdealProcessor` burst, identical to X11) — and then **stops dead**: no further relay calls, no wineserver requests, no waylanddrv calls, blocked in `ppoll(1 fd, timeout=NULL)` with ~0.6 s CPU total. **The fork is the reload:** on X11 the game loads `winevulkan.dll` a *second* time (`dr2-dll-x11.log:3532`) and builds its real device; on Wayland it never does. `winhandler.exe` is separately blocked in `SendMessageW(<game window>, WM_GETOBJECT, OBJID_QUERYCLASSNAMEIDX)` — a consequence of the game no longer pumping messages, not the cause. **Disproven and not to be re-tested:** display-mode list (diffed X11 vs Wayland, byte-identical — 25 modes, 640×480/800×600/960×540/1280×720 × 60/144 Hz × 8/16/32 bpp); GPU-name spoof (`gpuName=Device` on both, `WRAPPER_DEVICE_NAME` unset); saved `hardwaresettings` (moved aside — stalls earlier); explorer/desktop-owner SendMessage deadlock (explorer idle in normal message waits); compositor health (48 fps, splash redrawing ~400×/10 s); buffer starvation in `wayland_buffer_queue_get_free_buffer` (the main thread never enters it). DXVK does log `readMonitorEdidFromKey: Failed to get EDID reg key size` → `DXGI: Failed to parse display metadata + colorimetry info, using blank` on Wayland, but continues past it. **Next fix to build:** the Turnip ICD is pinned `RTLD_NODELETE` (that killed the earlier 676k-exception storm) while the PE-side `winevulkan.dll` is still torn down — unix-side driver globals outlive destroyed PE-side Vulkan state, so the reload never completes. Have `winewayland.drv`'s `use_bundled_drivers()` export `BANNER_PIN_WINEVULKAN=1` and pin the module in `winevulkan`'s DllMain when set; env-gated so **X11 is untouched**. Also answered: Wayland **is** using esync (`WINEESYNC=1`, `esync: up and running`); ntsync on neither backend.
+- ⚠️ 2026-09-12 — Two device-debugging traps, both cost real time today. (1) **Android's cached-app freezer SIGSTOPs the whole game process** the moment the app loses foreground (every thread `T`, `TracerPid: 0`) — any `top`/`/proc` reading taken then is garbage, and it looks exactly like a hang. Disabled for this work with `settings put global cached_apps_freezer disabled`; the original value was *unset*, so restore with `settings delete global cached_apps_freezer`. `debuggerd -b` is also unusable here: the Wine process leader is a zombie, so it cannot attach. (2) **Hand-walking a thread stack out of `/proc/<tid>/mem` produces false frames** — stale words that resolve to plausible libraries. A scan "proved" the main thread was blocked in `libwayland-client` from `winewayland.so +0x1d564`; disassembling that offset showed a plain `add`, not a return address. Verify any such frame against the disassembly before believing it.
+- 🅿️🏁 2026-09-12 — **DiRT Rally 2.0 on Wayland: PARKED by the user, not fixed** ("let's park dirt 2.0 for now, continue working on opengl and wined3d"). The session's one decisive experiment: **same container 7, same Proton `11.0-2-arm64ec-90`, same game, same settings, only `displayBackend` switched** → X11 creates **2 D3D11 devices + 2 swapchains** and reaches the title screen at 60 fps; Wayland creates 1 device, 0 swapchains, splash forever. So it is the display backend, not our Proton build. **What the game is actually doing:** it is *not blocked* — the main thread **spins in its own code**, issuing 46,698 `RtlWakeAddressAll` + 27,802 `RtlWakeAddressSingle` in ~60 s with **no thread waiting on those addresses**, no syscalls, no wineserver requests and no Wayland protocol traffic (`WAYLAND_DEBUG=1`: 8 sync requests, 8 done, nothing outstanding); every other thread idles and the compositor holds ~49 fps throughout. The spin starts immediately after `winevulkan.dll` PROCESS_ATTACH for the *real* device — the exact point where X11 instead creates the game's main window (`WM_NCCREATE`→`WM_CREATE`) and builds device #2. DXVK's `dxgi.dll`/`d3d11.dll` are native PEs, so Wine's relay never instruments them, which is why the loop leaves no trace. **Disproven and not to be re-tested:** GPU-name mismatch (`Wrapper(Adreno (TM) 750)` vs `Turnip Adreno (TM) 750`) tested in *both* directions — `dxgi.customDeviceDesc` (DXVK's parser truncates the value at the first space) and rewriting the saved `hardware_settings_info.xml`; winevulkan PE unload/reload (the pin works now, still hangs); display-mode list (byte-identical, 25 modes); saved `hardwaresettings`; Wayland buffer starvation; explorer deadlock; EDID (fails on both backends, DXVK continues). `winhandler`'s blocked cross-process `SendMessage(WM_GETOBJECT)` is a consequence of the game not pumping, not the cause. **Shipped anyway:** `winevulkan` pins itself when a Wayland environment is present (proton-wine `e5d4ebb31c8`, run 34723810826) — harmless, stops the unload/reload cycle, did not fix the hang; ⚠️ it logs at ERR level, downgrade to TRACE before release. **Next idea (the user's):** OpenGL is still gated off on Wayland (`BANNER_WAYLAND_GL=1`); if this game's startup touches GL it would work on X11 and fail here, so re-test DiRT once GL lands. Device left fully reverted (shortcut back to `displayBackend=wayland`, no test envVars/dxvk.conf, freezer setting deleted).
+- 🧰 2026-09-12 — Debug tooling + two traps worth keeping. **Built `/data/local/tmp/unwind <tid> [frames]`** — a static aarch64 ptrace unwinder (SEIZE + INTERRUPT + `NT_PRSTATUS` + x29 chain), needed because `debuggerd -b` **cannot attach** to Wine processes here (the process leader is a zombie). Strip PAC bits (`addr & ((1<<40)-1)`) then resolve against `/proc/<tid>/maps` + `readelf -sW`, adding the text segment's vaddr−fileoff delta (`0x4000` for the Proton `.so`s). Channels that earned their keep: `+pid,+sync` (every wait **with handles** — this is what proved the spin), `+pid,+server` (names handle creation and the handle→fd map), `+pid,+relay`, `+pid,+waylanddrv`, `WAYLAND_DEBUG=1`. **Trap 1:** `winewayland.so+0x21564` is `waylanddrv_unix_read_events`' `while (wl_display_dispatch_queue(…))` loop — a thread parked in `poll` there is normal, not a hang; I misread it as the game's main thread and chased it for a long time. **Trap 2:** hand-walking a stack out of `/proc/<tid>/mem` invents plausible-looking frames — a scan "proved" a libwayland block whose offset disassembled to a plain `add`. Verify against the disassembly, or use the unwinder.
+- ✅🌊 2026-09-12 20:11 — **OpenGL on Wayland DEVICE-PROVEN.** Root cause of the old "every launch hangs with GL on": with `WINE_USE_EGL=1`, win32u's `lock_display_devices()` ran `get_opengl_gpus()` in every process under the display lock — on Wayland that builds a Zink context inside the desktop owner (explorer) and every other process then stalls opening a display DC. The OpenGL GPU list only fills in what the Vulkan probe didn't report, and Vulkan already finds the GPU on Wayland, so the probe added nothing but the deadlock. Fix (proton-wine `e53a8124`, run 34726884200): winewayland sets `WINE_SKIP_OPENGL_GPU_PROBE=1` next to `WINE_USE_EGL`, and win32u skips the probe when asked; OpenGL then initialises lazily on first real use, off the desktop owner's path. X11 never sets it → untouched. Device: installed the unix `win32u.so` + `winewayland.so`, set `BANNER_WAYLAND_GL=1` in container 7 → the AIO launch no longer hangs, all four Wine processes log `OpenGL through …/libEGL.so.1 (Zink)`, the AIO lists OpenGL as available (was "unavailable in this container"), and selecting it renders the cube at **292 fps** (3.4 ms frametime, 3.6 ms GPU) while DXVK D3D11 in the same session still does ~2,200 fps. Open: the Fusion HUD keeps showing "D3D11 · DXVK / 0 fps" in GL mode (it has no hook on the EGL present path); GL cube colours (magenta/yellow) need a human check against the AIO's real GL palette (we fixed an R/B swap on the Vulkan path earlier today); gate still needs flipping to default-on. Tip: the container is in touchpad mode, so `input tap` clicks *at the cursor* — move with `input swipe`, then tap anywhere to click.
+- 🔎🌊 2026-09-12 20:25 — **"OpenGL runs, then freezes/crashes" on Wayland ROOT-CAUSED — it's a background/resume kill, not a rendering bug.** Reproduced: AIO in OpenGL mode (HUD "OpenGL · Zink", 220 fps, `opengl32 → Zink → Vulkan`, FIFO/vsync present) → HOME → resume: `explorer.exe` disconnects 20:22:49, "the desktop closed", and 1.5 s later `am_proc_died` for the app with **no tombstone and no crash-buffer entry** — the app exited itself through the normal "program ended → close session" path (`System.exit`, same as the auto-vault-on-exit line seen on death #2). Chain: with no Android surface the compositor draws nothing and only fired **frame callbacks** on a one-shot timer re-armed by client commits — it never delivered **wp_presentation feedback**, which Zink's Vulkan-WSI FIFO present waits on; the blocked GL client stops pumping messages; `winhandler.exe` wedges in its `SendMessage` to that window; the app's `evaluateGameExitTick` sees three empty process lists → `exit()`. DXVK (mailbox) never waits, so it survives the identical resume (verified: D3D10 went 5 fps backgrounded → 300 fps on resume, no death). Fix (compositor, `feat/wayland-runtime`): `pace_without_output()` answers every pending frame callback **and** presentation feedback (discarded) whenever there is no output window, immediately and on a 16 ms timer that re-arms itself until `vkp_has_window()`. Untested until the APK builds. Also today: the user was right that the first "300 fps GL" reading was DX10 — the window had come up maximised and my injected click hit the wrong row; GL was confirmed afterwards. **WineD3D still black:** it creates a GL context on a probe window, destroys it, and never presents (0 swaps) — device/swapchain creation fails silently after the probe; next thing to trace with `+d3d11,+dxgi` (warn/err classes are already on and say nothing).
+- 🔬🌊 2026-09-12 21:00 — **The OpenGL freeze on Wayland is a GPU fault, reproduced with nothing else touching the device.** Full AIO backend sweep (Vulkan → OpenGL → D3D12 → D3D11 → D3D10 → D3D9 → D3D8 → DirectDraw), freezer disabled, no user interaction: Vulkan ✅ 274 fps (HUD "Vulkan · Turnip"); OpenGL started at 169 fps and **froze after a few seconds** — the next four screenshots are pixel-identical, later clicks hit a dead program, the compositor's own 10-s heartbeat went silent ~30 s, then the app exited through the usual "program stopped answering → session closed" chain. Kernel log (`dmesg`, hidden under SELinux `avc` spam): `kgsl kgsl-3d0: CP: AHB bus error, CP_RL_ERROR_DETAILS_0:0x10008e07 CP_RL_ERROR_DETAILS_1:0x12144` in bursts at 20:58:27–33 (= the freeze) and 20:59:00 (= the recovery window). So: the Adreno command processor faults on an invalid register access while **Zink** renders, the kernel takes ~30 s to recover, the compositor blocks on its fence meanwhile, the GL client stops pumping, winhandler wedges, watcher exits. DXVK/Vulkan never trigger it on the identical compositor/import path → prime suspect is Zink-on-Turnip (Wine-side Termux Turnip 26.0.6 + our Mesa 26.3.0-devel gallium) under the container's inherited X11-Zink env: `TU_DEBUG=noconform,sysmem`, `ZINK_DEBUG=compact`, `ZINK_DESCRIPTORS=lazy`, `mesa_glthread=true`. Experiment A (running): drop `TU_DEBUG`. Also learned: the AIO exe has `--force-gl`/`--cube`/`--bench`/`--autoclose` switches, but `--force-gl` bails out before ever showing its window (no `ShowWindow`, main thread idle in `GetMessage`) — not a usable reference. Tooling: `/data/local/tmp/watch.sh <s> <out>` samples the compositor thread (found by a libbannerwayland frame) + AIO threads every 3 s. The two compositor changes (58fa1e23: pace hidden clients incl. presentation feedback; discard feedback for undrawn surfaces) are installed and did not regress DXVK; WineD3D still black (probe window path) — re-test after the GPU-fault question.
+- 🧭 2026-09-12 21:05 — **Session wrap on the Wayland API sweep.** Confirmed by screenshot on Wayland: **Vulkan ✅ 274 fps** (HUD "Vulkan · Turnip"), **Direct3D 11 ✅ ~1,800–2,280 fps**, **Direct3D 10 ✅ ~300 fps** (HUD "D3D10 · DXVK", translation path `d3d10 → DXVK → Turnip`), **OpenGL ✅ renders 169–292 fps** (HUD "OpenGL · Zink", path `opengl32 → Zink → Vulkan`) **but dies after a few seconds**. D3D12/D3D9/D3D8/DirectDraw not individually re-confirmed this session — the AIO list is driven in touchpad mode where `input tap` clicks *at the cursor*, so scripted clicks repeatedly landed on the wrong row; several "sweep" screenshots show a row that was never actually selected. Any future sweep should move with `input swipe` and verify the breadcrumb ("Graphics Backends > X") in the screenshot before trusting the reading. **GL instability, current evidence:** after a few seconds the AIO's Zink threads (`zfq0`/`zcq0`/`gl0`, libgallium) and Turnip threads sit in `futex_wait` on a fence that never signals; `dmesg` shows `kgsl kgsl-3d0: CP: AHB bus error CP_RL_ERROR_DETAILS_0:0x10008e07` bursts. ⚠️ Not yet causal — a later DXVK-only run logged the same AHB bursts and kept running at 143 fps, so the bus error is at least sometimes benign; the distinguishing factor may be that Zink cannot recover from a fault DXVK rides out. Dropping `TU_DEBUG=noconform,sysmem` was armed as experiment A but the run never actually selected GL, so it is **untested**. The compositor is exonerated: a 60 s stack watch shows it healthy in `epoll_wait`/`vkp_render` throughout. Device left clean: container 7 GL gate OFF, `TU_DEBUG` restored, no WINEDEBUG, temp "AIO GL" shortcut deleted.
+- 🔖 2026-09-12 21:20 — **CHECKPOINT for a device reboot.** Full resume note in memory: `project_bannerlator_wayland_resume_20260912` — read it first next session. State: **APK** `d28a134e` (= `feat/wayland-runtime` `58fa1e23`, compositor pacing fixes) installed and staged in `/sdcard/Download/Wayland/`. ⚠️ **Container 7's Proton is hand-patched and the staged wcp does not contain the patches** — `lib/wine/aarch64-unix/win32u.so` `962e6e96`, `winewayland.so` `ebefa21e` (proton `e53a8124`, run 34726884200) and `winevulkan.dll` `0b4171ae`/i386 `8c79a985` **plus the prefix copies in `system32`/`syswow64`** (proton `e5d4ebb31c8`, run 34723810826); a Proton re-extract silently loses the OpenGL fix and the winevulkan pin. Container 7 env is back to shipped state (GL gate OFF, `TU_DEBUG=noconform,sysmem`, no WINEDEBUG); shortcuts clean; temp shortcut deleted; `cached_apps_freezer` setting deleted. **Branch tips:** proton-wine `feat/winewayland-desktop-11.0-2` = `e53a8124`; bannerlators `feat/wayland-runtime` = `72186d8e`. **Proven this session:** Wayland — Vulkan 274 fps, D3D11 ~1,800–2,280, D3D10 ~300, OpenGL renders 169–292 fps then dies; X11 (same container 7) — D3D11 1,845 fps, Vulkan 708 fps, DiRT Rally title screen 60 fps. **Explicitly NOT proven:** the user's live question *"do they all run on X11?"* — the X11 sweep only got through Vulkan before the device switched apps; D3D12/D3D9/D3D8/DirectDraw untested on both backends. GL's death cause unestablished (kgsl `CP: AHB bus error` seen, but also seen harmlessly under DXVK; the `TU_DEBUG` A/B never actually selected GL). **Next, in order:** (1) finish the X11 API sweep, then the same on Wayland; (2) reproduce GL-selected and settle the crash; (3) WineD3D black screen; (4) re-test DiRT Rally against a healthy GL (the user's hypothesis, still live); (5) downgrade the winevulkan ERR logs and cut one wcp carrying all three patched modules. **Testing recipe that finally worked:** set `simTouchScreen=1` on the shortcut for absolute taps (touchpad mode makes `input tap` click at the cursor, which produced two wrong readings today that the user caught); X11 fullscreen rows at x=1550, y=284/335/386/437/488/539/590/641 — and always verify the on-screen breadcrumb before trusting a number.
+- 🏁🌊 2026-09-13 01:30 — **Wayland API-switch death ROOT-CAUSED and FIXED: it was the bundled Termux Turnip. All 8 AIO backends now switch fluidly in ONE Wayland launch on our own Wayland Turnip.** Sweep (X11 order, 11 s each, breadcrumb verified per screenshot, same pid throughout, screen 144 fps): Vulkan 596 · OpenGL 228 · D3D12 336 · D3D11 2,144 · D3D10 303 · D3D9 284 · D3D8 288 · DirectDraw 226 (X11: 752/172/430/2,298/396/292/291/224). How it was found: the AIO now logs both halves of every backend switch (`switch: cleanup/init begin/end`, plus the D3D12 teardown stages) — the hang sat inside `ID3D12Device_Release` on Wayland (7 ms on X11), main thread spinning in userspace, no GPU fence outstanding, explorer/wineserver healthy, nothing accumulating in the compositor (fd/thread/RSS flat; the guest leaks ~24–48 fds + up to 13 threads per switch on BOTH backends, X11 leaks more and survives). Only the Vulkan driver differed between the paths → built our own: Banners-Turnip `wayland` `f7f9ccb` (Mesa 26.3 `7cda7850`, `-Dfreedreno-kmds=msm,kgsl`, libdrm, display-WSI `pthread_cancel`→SIGUSR2 shim, Termux 0014, unstripped, b_ndebug). Our earlier own-build crash in `vkCreateSwapchainKHR` was a recipe bug: `kgsl` alone makes Mesa drop libdrm and `wsi_common_drm.c`, so the Wayland WSI hit a compiled-out branch. OpenGL's "dies after seconds" was the Termux driver too (now stable); DirectDraw needs OpenGL on Wayland (Wine builtin ddraw → wined3d → GL) so the GL gate is now default-on in proton-wine `ea1e1fa` (which also ships the ICD in the wcp, bundles libdrm, drops the `BANNER_WAYLAND_VK_KEEP` experiment, quietens the pin logs). Reviews of the compositor + Wine side found no compositor cause and a ranked defect list (HUD sampling on the dispatch thread every 500 ms, WSI calls under the swap lock, swapchain error recovery, buffer-destroy churn, missing pointer-constraints/relative-pointer, LINEAR-only modifier) → memory `project_bannerlator_wayland_compositor_review_20260913`. Device: container 7 carries the ICD `407ff41f` by hand until the new wcp is staged; Termux original at `/data/local/tmp/turnip_termux.bak`.
+- 🧭🌊 2026-09-13 02:10 — **Wayland settings gating pass shipped** (`4f35572e` + `dccf8bdb`, run 34741535126, pubg sha `2a6ea46c`, installed; tester kit refreshed in `Download/Wayland/` with README). On Wayland the container / shortcut / XMB editors now relabel the graphics-driver picker "Compositor driver", grey its config with a reason, show "Game driver: Wayland Turnip bundled with this Proton", warn when the picker resolves to "System" (black screen: the system driver cannot import dmabufs), un-grey the FPS counter (stale gate), and grey the in-game Relative Mouse chip (no pointer constraints yet). Verified on device via the UI tree; launch regression on the new APK: Vulkan→D3D12→D3D9 in one Wayland launch, OpenGL on by default. DiRT Rally 2.0 on Wayland now reaches its title screen at 60 fps (2 swapchains, = X11) — same driver fix.
+- 🗺️🌊 2026-09-13 02:30 — **CHECKPOINT (user request) — Wayland roadmap saved.** Left, ranked: (1) mouse-look/pointer lock (compositor: pointer-constraints + relative-pointer; Wine already supports); (2) per-container Wayland game-driver picker (Linux-ICD import type + editor row + winewayland honouring an app path); (3) compositor defects from the 2026-09-13 review (HUD sysfs/binder sampling on the dispatch thread every ~500 ms, WSI calls under g_swap_lock, no swapchain recovery on non-OUT_OF_DATE, black frame on wl_buffer destroy at swapchain recreate, FPS-limiter release drift, drop_dmabuf(s,0) on surface destroy); (4) clipboard + text-input protocols; (5) guest fd/thread leak per backend switch (both backends); (6) perf headroom ~20% on Vulkan/D3D12 (compositor blit + LINEAR-only modifier → advertise UBWC); (7) untested: frame generation, game breadth; (8) cosmetic: icons/decorations/output name; (9) ERR spam, ICD strip, merge to main + catalog. What Wayland can do that X11 can't: zero-copy per-window Android layers (ASurfaceControl; needs dmabuf↔AHB interop), per-window presentation feedback → even pacing, tearing control, fractional scale, native multi-touch, HDR/colour management, explicit sync, no X server hops, overlays as separate layers. Recommended order after the picker: pointer lock, then zero-copy layers. Installed at this checkpoint: pubg `74592bea` (15203259); final gating build `e4fc4e80` (run 34742857493) in flight → install + folder refresh next.
+- ✅🌊 2026-09-13 02:40 — **CHECKPOINT after install: final gating APK `e4fc4e80` (run 34742857493, pubg sha `dddb57d3`) installed and staged in `Download/Wayland/` with README.** On Wayland the Compositor driver is a dropdown over installed Turnips (hidden wrapper flavours; writes only the `version` key), driver config stays open with a note, greyed Renderer reads "Vulkan (Wayland compositor)", Render scale "Not used on Wayland", "System" warning, Relative Mouse greyed in-game. Next per roadmap: Wayland game-driver picker → pointer lock → zero-copy layers.
+- ✅🌊 2026-09-13 02:58 — **CHECKPOINT after install: driver-area final build `e15a60bc` (run 34743695865, pubg sha `bf5357bd`) installed + staged in `Download/Wayland/` with README.** Wayland driver area is now three lines: fixed "Game driver: bundled with this Proton", ONE "Compositor driver" dropdown (dialog's compatible list incl. bundled v819/turnip-sdk36 + imports, minus System), red warning if System stored; the config gear is hidden on Wayland. Verified: any Android-type community Turnip works as the compositor driver (plain r4 release presented zero-copy at 143.7 fps); only the in-Proton game driver must be the Wayland-variant build. Coverage caveat: the in-Proton driver is unpatched upstream Mesa → Adreno 6xx + 730/740/750 expected OK (750 proven), 710/720/722 and 8xx need Wayland-variant builds with the repo's device patches (next build task).
+- ✅🌊 2026-09-13 03:28 — installed `fe5d8b6f` (pubg sha `0e8b6ea1`): wrapper-manager cloud button now hidden on Wayland too; driver area is just the info line + Compositor driver dropdown + help. Staged in Download/Wayland/, README bumped. Screen re-check pending (user in Discord).
+- ✅🌊 2026-09-13 03:50 — **CHECKPOINT: container editor Wayland gating SIGNED OFF by the user** (build `fe5d8b6f`, pubg `0e8b6ea1` installed). Verified on screen: game-driver info line, single Compositor driver dropdown (bundled + imported Turnips, no System), no gear/no wrapper button, Renderer "Vulkan (Wayland compositor)", Render scale "Not used on Wayland". In flight (next commit): Frame Generation + LSFG-compat reason fixed for Wayland, Mouse Warp Override greyed, Fullscreen Mode + Screen Alignment greyed (compositor always stretches: `vk_present.c` kx/ky independent scale, no fit/integer/alignment — roadmap gap), and a parity pass so the shortcut pop-up editor + XMB carry the identical gating. Then push → build → install → folder refresh.
+- ✅🌊 2026-09-13 04:05 — **CHECKPOINT after install: `affb8179` (pubg sha `9c348a0b`) installed + staged with README.** Gating complete across container editor, shortcut pop-up and XMB (Frame Gen reason, Mouse Warp Override, Fullscreen Mode + Screen Alignment greyed with honest text; XMB help text). Merge-gate regression on this build in progress: X11 sweep (D3D12→D3D11→D3D9) then a Wayland launch.
+- ✅🌊 2026-09-13 04:10 — **Merge-gate regression PASSED on `affb8179` (pubg `9c348a0b`)**: X11 D3D12→D3D11→D3D9 in one launch (same pid, inits ok); Wayland Vulkan→D3D12→D3D9 in one launch (3 inits ok, OpenGL on by default, 141.9 fps on screen). Branch is merge-ready pending: (a) user screenshot of a Wayland game's shortcut editor, (b) decision on where the Wayland wcp lives for main users (catalog as experimental, or help-text pointer).
+- ✅🌊 2026-09-13 04:00 — **Container editor on Wayland SIGNED OFF by the user on build `affb8179` (3 screenshots)**: driver area = info line + single Compositor driver dropdown + "?"; Renderer "Vulkan (Wayland compositor)"; Render scale / Fullscreen Mode / Screen Alignment "Not used on Wayland" (+ stretch-to-screen reason); Frame Generation + LSFG compat "Not available on Wayland yet"; Mouse Warp Override greyed (pointer constraints). Live and applicable on both backends: DX wrapper, audio, emulator, FPS counter, FPS limiter (⚠️ compositor `release_buffer` drift bug still open when a cap is set), refresh-rate rows, ReShade, desktop theme, LC_ALL. Remaining before merge: shortcut-editor screenshot + wcp distribution decision.
+- ✅🌊 2026-09-13 04:05 — **Shortcut editor on Wayland SIGNED OFF by the user on build `affb8179` (4 screenshots, AIO Graphics Test shortcut, Force Wayland)**: backend help text + "Game driver: Wayland Turnip bundled with this Proton" info line + Compositor driver dropdown; DX Wrapper + config live; Renderer "Vulkan (Wayland compositor)"; Render scale / Screen Alignment / Fullscreen Mode "Not used on Wayland"; Frame Generation "Not available on Wayland yet"; FPS limiter, refresh rate (Use container default), Performance, audio, mic, emulator, MIDI, LC_ALL live. Both merge gates for the settings pass are now green; only the wcp-distribution decision remains before merging `feat/wayland-runtime` → main.
+- 🔖🌊 2026-09-13 04:20 — **CHECKPOINT before the merge-to-main work.** User decisions: Wayland wcp goes in the catalog as EXPERIMENTAL, then merge `feat/wayland-runtime` → main; plus a NEW ask: gate the Wayland selection (container create/edit, shortcut, XMB) on the selected Proton actually being Wayland-capable. Catalog trap found first: the wcp's profile.json said line `11.0-2-arm64ec` @ versionCode 90 → `ContainerLayerUpdater` (same line + higher verCode) would have offered it as an "update" to every stock 11.0-2 (v7) container. Fix at the source: proton-wine `feat/winewayland-desktop-11.0-2` workflow now stamps line **`11.0-2-wayland-arm64ec` versionCode 1** (own line, never an update candidate). Capability evidence (device): the Wayland entry has `lib/wine/aarch64-unix/winewayland.so` + `lib/libvulkan_freedreno_wayland.so` + `libdrm.so`; stock 11.0-6-arm64ec-7 has none; the OLD 11.0-1-arm64ec-90 has winewayland.so but NO bundled driver (= the build that wedged on API switch) → gate = BOTH files present. Installed pubg still `9c348a0b` (affb8179).
+- 🧭🌊 2026-09-13 04:35 — **User decisions:** (1) NO catalog row for the Wayland wcp for now ("forget updating and adding it to the catalog") — distribution stays the `/sdcard/Download/Wayland/` test kit; winlator-contents untouched. (2) Wayland selection must be GATED on the layer being Wayland-capable (container create/edit, shortcut editor, XMB, plus a launch-time X11 fallback) → in flight on `feat/wayland-runtime` via `WineWaylandSupport` (winewayland.so + libvulkan_freedreno_wayland.so both present). (3) Layer-name question answered: `11.0-2-wayland-arm64ec` would NOT parse (`WineInfo` regex `proton-<ver>-<sub>-<arch>` → silent fallback to bundled Proton 9 in every shipped build), so the Wayland line is `11.0-2.1-arm64ec` versionCode 1 (parses everywhere, separate line from 11.0-2, never an update candidate). proton-wine run 34747015227 (`490067e1`) building it; entry name will be `Proton-11.0-2.1-arm64ec-1`.
+- ✅🌊 2026-09-13 04:40 — **Wayland capability gate DEVICE-PROVEN on `ce9f4dc0` (pubg `a81ee24c`).** (1) Positive: container 7 repointed to the new entry `Proton-11.0-2.1-arm64ec-1` (wcp `6246f12d…`, proton-wine run 34747015227) → one launch, Vulkan 622 fps → D3D12 337 fps → D3D9 286 fps, all alive, HUD "Wayland". First launch on the new entry came up at the 1024x768 first-run size (known first-launch quirk, relaunch fixes it). (2) Negative: DiRT Showdown on container 3 (stock GE 11.0-6, no winewayland/no Wayland Turnip) launched with `wayland_mode=true` → fell back to X11, title screen 36 fps, HUD "X11". Gotcha logged: the device has no zstd, so a wcp must be decompressed to a .tar first and `tar -xf` on the device (an empty entry dir = "exit code 255 · The game exited before rendering"). Ready to merge `feat/wayland-runtime` → main.
+- 🏁🌊 2026-09-13 04:55 — **Wayland runtime MERGED TO MAIN (`bd75d20c`) and the main build is INSTALLED + PROVEN**: run 34748199038 green, pubg sha `fa88d9d6…` installed; one-launch Wayland sweep on `Proton-11.0-2.1-arm64ec-1` → Vulkan → D3D12 → D3D9 all alive. Staged `/sdcard/Download/Bannerlator-wayland-main-pubg.apk`. Tester kit `/sdcard/Download/Wayland/` refreshed: main APK, `proton-11.0-2.1-arm64ec-wayland-v1.wcp` (`6246f12d…`), Turnip zip, README rewritten (v90 wcp + intermediate APKs removed). No catalog row (user). Next: Wayland roadmap (Adreno 710/720 + 8xx variants → game-driver picker → pointer lock → zero-copy layers → compositor defects); long term fold Wayland into the AIO layers (11.0-2 → v8 + the other six).
+- 🔖🌊 2026-09-13 05:00 — **CHECKPOINT: Wayland phase 2 starts (user go: "drive and test everything, hand me finished wcp + APK in the Wayland folder").** Baseline = main `f4b38b6d` (Wayland merged, pubg `fa88d9d6` installed), wcp `proton-11.0-2.1-arm64ec-wayland-v1` (proton-wine `feat/winewayland-desktop-11.0-2` @ `490067e1`), container 7 on entry `Proton-11.0-2.1-arm64ec-1`. Work order (from the saved roadmap): (1) Adreno 710/720 + 8xx variants of the in-Proton Wayland Turnip, (2) per-container Wayland game-driver picker (Auto by GPU / bundled variant / imported Linux ICD) with winewayland honouring an app-passed ICD path, (3) pointer lock in the compositor (`zwp_pointer_constraints_v1` + `zwp_relative_pointer_manager_v1`) + Relative Mouse chip, (4) compositor defects from the review (HUD sampling off the dispatch thread, WSI-under-lock, swapchain recovery, buffer-destroy churn, FPS-limiter drift, drop_dmabuf), (5) fullscreen modes + screen alignment in the compositor, (6) clipboard / IME, (7) zero-copy Android layers (spike). Deliverable = new wcp + APK in `/sdcard/Download/Wayland/` with README, each item device-proven before hand-over. No catalog changes.
+- ✅🌊 2026-09-13 05:20 — **Phase 2 item 2 (app side) device-proven: Wayland game-driver picker** (`feat/wayland-game-driver-picker` `f4262eb7`, pubg `48a3c404`): launch log `wayland game driver: auto → variant=plain icd=none` on the Adreno 750, AIO renders on Wayland (D3D11 1,876 fps). Contract: container/shortcut extra `waylandGameDriver` (`auto`|`bundled`|`bundled-a7xx`|`bundled-a8xx`|`imported:<id>`) → env `BANNER_WAYLAND_VK_VARIANT` (`a7xx`|`a8xx`) / `BANNER_WAYLAND_VK_ICD` (json path), Wayland-only; imports live in `files/wayland_game_drivers/<id>/` (Contents › "Wayland game drivers (Linux ICD)"). Variant forcing + imports await the v2 wcp (3 bundled variants, in CI). Integration branch `feat/wayland-phase2` opened off main. Device tip: read app logs with a streamed `logcat -s <tags>` during the launch (the ring buffer is flooded by avc spam within seconds).
+- ✅🌊 2026-09-13 05:40 — **Phase 2 item 3 device-proven: pointer lock on Wayland** (`feat/wayland-pointer-lock` `53010c5f`, pubg `37ea8ad5`). Half-Life 2 (`Z:\steam_games\Half-Life 2\hl2.exe -novid +map d1_trainstation_01`, new shortcut "Half-Life 2 Wayland" in container 7) runs on Wayland at ~144 fps; compositor log: `lock requested by hl2.exe` → `locked (persistent), pointer frozen` → `relative pointer created for hl2.exe (motion arrives as deltas)`; Wine's two "doesn't support optional zwp_*" lines are gone. Camera turns from the compositor test FIFO (`rel dx dy`) AND from real Android touch drags (`input swipe`), incl. a full turn-around → the touch→WinHandler→compositor delta path works. Merged into `feat/wayland-phase2` (`10dbe166`, clean merge with the picker). Note seen in the log: explorer.exe disconnects ~1.6 s after creating the desktop → compositor falls back to "no desktop: showing largest window" (harmless for fullscreen games; check whether the app's startup selection kills explorer on Wayland).
+- ✅🌊 2026-09-13 06:10 — **Phase 2 items 4+5 device-proven: compositor fixes + fullscreen modes/alignment** (`feat/wayland-compositor-fixes` `58dd8958`, pubg `3ba92585`): (a) API-switch sweep Vulkan→D3D12→D3D9 alive (swapchain-recreate buffer lifetime path); (b) **Integer** mode: log `screen  integer, center: 1280x720 scene shown 1280x720 at 320,180 on the 1920x1080 output`, picture 1:1 centered, a tap lands exactly where the arrow appears (input transform matches); (c) **60 fps cap** (shortcut `fpsLimiterEnabled=1`): HUD 60.0 fps, 16.66 ms flat, stats 600 frames/10 s; (d) **HOME → back**: `screen surface gone: presenting paused` → `screen surface attached` + `screen output …`, AIO alive and presenting again (bring back with `am start --activity-reorder-to-front -n …/XServerDisplayActivity`). SUBOPTIMAL (panel rotation) logged once and presented as is, by design. Merged into `feat/wayland-phase2`. New test shortcuts in container 7: "AIO Wayland Int" (fullscreenMode=4), "AIO Wayland Cap60".
+- 🔬🌊 2026-09-13 06:20 — **Phase 2 item 6 (clipboard + text input) partially proven; KEYBOARD ON WAYLAND FOUND DEAD (pre-existing).** Clipboard build `feat/wayland-clipboard-ime` `7b099689` (pubg `c919164c`): Android → guest works at the protocol level (`clipboard  Android clipboard → guest (20 bytes)` right at session start, seeded with termux-clipboard-set); Wine's three "doesn't support …" lines are gone; tapping notepad's edit area logs `text input enabled by notepad.exe (cursor rect 0,0 0x0)`. NOT provable yet: Ctrl+V / typed text / Ctrl+C never reached notepad — root cause is in winewayland, not the app: `wayland_keyboard_init` returns early when `rxkb_context_parse_default_ruleset` fails, so the wl_keyboard listener is never installed and no key ever reaches Wine; it always fails because the bundled libxkbregistry's default path is `/data/data/com.termux/files/usr/share/xkeyboard-config-2` (mode 700, unreadable by the app). The app side (`WaylandCompositor.nativeSendKey` from XServerDisplayActivity ~6777) is fine. Fix requested in the proton-wine wayland branch (registry optional → continue; `find_xkb_layout_variant` returns FALSE → layout "us") for the v2/v3 wcp. Two pre-existing app crashes fixed on `feat/wayland-phase2`: `LogView.setFilename` (exe without a dot) and `FileUtils.getDirname` (exe without a path) threw StringIndexOutOfBounds. Clipboard branch merged (2 additive conflicts resolved); phase-2 integration build started.
+- 🔬🌊 2026-09-13 06:35 — **Second keyboard root cause (compositor side).** With the v2 wcp (`Proton-11.0-2.1-arm64ec-2`, keyboard init fixed: the "Failed to parse default Xkb ruleset" ERR is gone) keys STILL never reached notepad, even when injected straight into the compositor's test FIFO (`keydown 35`). Cause: `key_event()` gave keyboard focus to Wine's DESKTOP surface; winewayland's `keyboard_handle_key` calls `NtUserSendHardwareInput(focused_hwnd, …)` with the desktop hwnd, so wineserver queues the key to explorer's thread, never to the foreground program (X11 delivers keys to the focused app window). Fix on `feat/wayland-phase2`: keyboard target = last clicked program window (`banner_ime_target()`), else topmost non-shell toplevel, else the desktop. Rebuild started. Also verified on the v2 wcp: variant selection works — a shortcut with `waylandGameDriver=bundled-a8xx` … (see next entry once checked).
+- ✅🌊 2026-09-13 06:38 — **Phase 2 items 1+2 device-proven end to end: driver variants + game-driver picker.** v2 wcp (`proton-11.0-2.1-arm64ec` versionCode 2, sha `caf9a58d…`, proton-wine run 34751528762 @ `61b92388`; Turnip repo run 34748951798 @ `efeca2f`) installed as `Proton-11.0-2.1-arm64ec-2`, container 7 repointed. Shortcut "AIO Wayland A8xx" (`waylandGameDriver=bundled-a8xx`) → wine log `winewayland: Vulkan driver …/banner_wayland_turnip_a8xx.json`, AIO renders on Wayland (D3D11 1,814 fps on the 750 — the a8xx build keeps the 7xx table). Default `auto` → plain manifest. Both the variant and the ICD env contract are therefore live; real 710/720/8xx hardware still untested (none here).
+- ✅⌨️🌊 2026-09-13 06:45 — **KEYBOARD + CLIPBOARD + TEXT INPUT ON WAYLAND DEVICE-PROVEN** (phase-2 build `ab8e8ef0`, pubg `40f75fde`, wcp v2). Notepad on Wayland: Android clipboard (seeded "ANDROID-TO-GUEST-789") pasted with Ctrl+V, " HELLO-FROM-GUEST" typed via key events, Ctrl+A/Ctrl+C → Android clipboard reads "ANDROID-TO-GUEST-789 HELLO-FROM-GUEST" (termux-clipboard-get) — both directions + keyboard in one run; the soft keyboard auto-opened on the text field (zwp_text_input_v3 cursor rect). The two fixes that made it work: winewayland keeps its keyboard when the Xkb registry is unreadable (wcp v2, `61b92388`) and the compositor gives keyboard focus to the clicked program window instead of Wine's desktop surface (`ab8e8ef0`). Regression sweep on this build: see next line.
+- ✅🌊 2026-09-13 06:50 — Regression sweep on the phase-2 build (`40f75fde`): Vulkan → D3D12 → D3D9 alive. **Tester kit refreshed** (`/sdcard/Download/Wayland/`): `Bannerlator-wayland-phase2-pubg.apk` (`40f75fde…`), `proton-11.0-2.1-arm64ec-wayland-v2.wcp` (`caf9a58d…`), Turnip zip, README rewritten for phase 2 (main APK + v1 wcp removed). Also staged `/sdcard/Download/Bannerlator-wayland-phase2-pubg.apk`. Pending: zero-copy spike report; then decide merge of `feat/wayland-phase2` → main.
+- ✅🧪🌊 2026-09-13 06:58 — **Phase 2 item 7: zero-copy Android layers — spike DONE + prototype DEVICE-PROVEN** (`spike/wayland-zero-copy-layers` `389419b9`, report `app/src/main/cpp/waylandcomp/ZERO_COPY_SPIKE.md`, merged into `feat/wayland-phase2`). Gated by `BANNER_WAYLAND_ZERO_COPY=1` in the container/shortcut env (off by default = no new code runs). HL2 fullscreen with the flag: compositor log `layer  SurfaceControl "banner_wayland_game" created…`, `pool buffer 1280x720 linear (3 buffers)`, `presenting … on their own SurfaceControl layer`, `kernel exports sync_file fences from the game's dma-buf`; `dumpsys SurfaceFlinger`: layer `banner_wayland_game` **Comp Type DEVICE** (HWC, not client), ROT_90 + 1.5x scale to the panel, 144 Hz; game 143.7 fps, picture correct. The biggest risk (HWC client fallback on rotate+scale) did NOT happen on the Pocket FIT. Findings: a raw dma-buf can never become an AHardwareBuffer (option b closed); the true zero-copy needs the game's swapchain images to be gralloc AHBs → patch our own Wayland Turnip WSI (`create_mem` → `AHardwareBuffer_allocate` + AHB import, ship the AHB over a socketpair via a private protocol) ≈ 2–3 days + 1 day proving; UBWC (`QCOM_COMPRESSED`) can be advertised in `bind_dmabuf` today (one line, A/B first). Prototype today = host half only (one blit into an AHB pool, same copy count), which isolates the SF path for measurement.
+- 🏁🌊 2026-09-13 07:10 — **WAYLAND PHASE 2 DELIVERED.** Final build `feat/wayland-phase2` `0afa16c3` (run 34753203275, pubg `0b238e38…`) installed; regression on it: API-switch sweep Vulkan → D3D12 → D3D9 alive; notepad Android→guest paste + typing + guest→Android copy ("FINAL-ANDROID-TEXT HELLO-FROM-GUEST"). Tester kit `/sdcard/Download/Wayland/`: `Bannerlator-wayland-phase2-pubg.apk` (`0b238e38…`), `proton-11.0-2.1-arm64ec-wayland-v2.wcp` (`caf9a58d…`), Turnip zip, README (phase 2, incl. the `BANNER_WAYLAND_ZERO_COPY=1` experimental flag). Also staged `/sdcard/Download/Bannerlator-wayland-phase2-pubg.apk`. Branch NOT merged to main (user to test first). Left for later: xkeyboard-config data in the wcp (layout names default to "us"); HL2 launch closes Wine's desktop process (fullscreen unaffected); `libEGL/libgallium` in wayland-deps predate the variant build; real Adreno 710/720/8xx hardware untested; zero-copy WSI patch in our Wayland Turnip; UBWC A/B.
+- 🔁🌊 2026-09-13 12:25 — **User decision: rebuild the two Wayland driver variants from the community upstream recipes** (wcp versionCode 3, in flight on proton-wine `feat/winewayland-desktop-11.0-2` + Turnip `wayland` branch): a8xx = `WinNative-Emu/Drivers` WN-Turnip **v1.15** recipe (Mesa main `12b7b819e`, their patch set, **Performance** tuning — user changed from Balanced at 12:30); a7xx = `Vauzi-17/710` **v3.6** recipe (`add_710_720_722.py` on that release's Mesa pin); plain unchanged (7cda7850). Their zips are Android builds, so this is a source rebuild with our Wayland changes on top; output names/manifests/app contract unchanged. Also refreshing libEGL/libgallium in the wcp from the same run.
+- 🔁🌊 2026-09-13 12:35 — **User: ship BOTH WinNative a8xx tunings.** wcp vc3 now bundles four drivers: plain (7cda7850), a7xx (Vauzi-17 3.6), a8xx (WN-Turnip 1.15 Balanced, Auto's pick on 8xx), a8xx_perf (WN-Turnip 1.15 Performance, PWR_MAX). winewayland accepts `BANNER_WAYLAND_VK_VARIANT=a8xx-perf`; app picker gained "Bundled a8xx Performance" (`bundled-a8xx-perf`) on `feat/wayland-phase2`.
+- 🏁🌊 2026-09-13 13:25 — **Four-driver wcp v3 + final app DEVICE-PROVEN and HANDED OVER.** wcp `proton-11.0-2.1-arm64ec` versionCode 3 (`eecef4c4…`, proton-wine run 34770549538 @ `a2056d15`; Turnip `wayland` run 34770093130 @ `099941b5`) installed as `Proton-11.0-2.1-arm64ec-3`, container 7 on it. App `feat/wayland-phase2` `2aeda707` (run 34770587381, pubg `a418010d`) installed. Each pick loads its manifest and AIO renders: Sweep/auto → `banner_wayland_turnip.json`, a7xx → `_a7xx` (Vauzi-17 3.6 recipe, Mesa `7631b525`), a8xx → `_a8xx` (WN-Turnip 1.15 Balanced, Mesa `12b7b819`), a8xx-perf → `_a8xx_perf` (WN 1.15 Performance). Switch sweep Vulkan → D3D12 → D3D9 alive. Kit: `Bannerlator-wayland-phase2-pubg.apk` (`a418010d…`), `proton-11.0-2.1-arm64ec-wayland-v3.wcp`, Turnip zip, README updated (v2 wcp removed). Caveat recorded by the build: Vauzi 3.6 names no Mesa commit (binary tag not on any public tree) → pinned to mesa main just before the release's build time. WinNative's dev-info script also fixes the inert A810 disable-GMEM read our old script missed.
+- 🚀🌊 2026-09-13 13:45 — **3.1.2 Wayland pre-release 1 dispatched** (user go: "create a release … 3.1.2 Wayland pre-release"; "include all three APK builds"; Turnip zip dropped as redundant — any catalog Android Turnip serves the compositor). release.yml run 34772420158 on `feat/wayland-phase2` `9bf83142` (versionName `3.1.2-wayland-pre1`, versionCode stays 85), `make_prerelease=true` → not Latest, update.json not at releases/latest. Page = `docs/releases/3.1.2-wayland-pre1.md` (house layout, --prerelease validated): what's done, can/cannot, what's left, driver sources with links, credits. After publish: upload `proton-11.0-2.1-arm64ec-wayland-v3.wcp` + `README-Wayland-test-kit.txt` as assets.
+- ✅🚀 2026-09-13 14:05 — **3.1.2 Wayland pre-release 1 LIVE**: https://github.com/The412Banner/Bannerlator/releases/tag/3.1.2-wayland-pre1 (prerelease=true, 3.1.1 still Latest, `releases/latest/download/update.json` still vc85/3.1.1). Assets: standard / pubg / ludashi APKs (`3.1.2-wayland-pre1`, vc85), `proton-11.0-2.1-arm64ec-wayland-v3.wcp`, `README-Wayland-test-kit.txt`; the workflow's `update.json` asset deleted from the pre-release to avoid confusion. Share folder now holds the released pubg APK (Turnip zip removed as redundant).
+- 🖥️🌊 2026-09-13 14:30 — **X11 vs Wayland deck hosted + linked.** `docs/wayland-deck.html` committed to main (`4d8fccb0`, GitHub Pages from main:/docs) → https://the412banner.github.io/Bannerlator/wayland-deck.html (serving, 200); private artifact copy https://claude.ai/code/artifact/7777913d-d01d-406f-ba42-28311facb266. Linked from the live 3.1.2-wayland-pre1 release body (callout above "Read before testing") and in `docs/releases/3.1.2-wayland-pre1.md`.
+- 🔖🌊 2026-09-13 14:45 — **CHECKPOINT: Wayland PHASE 3 starts** (user: "continue with the fix list and improvement list"). Baseline = pre-release `3.1.2-wayland-pre1` (branch tip `9bf83142`+log commits), wcp v3, deck on Pages. External signal: user's Galaxy Fold (Adreno 840) performs poorly on Wayland — suspects: a8xx game driver / linear-only handoff / compositor Turnip; logs requested. Streams: (1) UBWC handoff A/B `feat/wayland-ubwc`; (2) zero-copy WSI in our Wayland Turnip + compositor half `feat/wayland-zero-copy-wsi`; (3) first-launch 1024x768 + desktop-close fixes `feat/wayland-launch-fixes`; (4) xkb data + fifth driver `a8xx-gen8` (user's non-test Android recipe) → wcp vc4 + picker `bundled-a8xx-gen8`. Later: frame gen on Wayland, presentation feedback/pacing, tearing, multi-touch, decorations, DnD/image clipboard.
+- ✅🌊 2026-09-13 15:20 — **Phase 3 results so far.** (a) UBWC handoff (`feat/wayland-ubwc` `1302cb46`) DEVICE-PROVEN and merged (`e04c8287`): `dmabuf formats: … linear+qcom_compressed`, game presents `XB24, qcom_compressed`, picture correct; `BANNER_WAYLAND_UBWC=0` → linear. No fps change on the 750 (Vulkan 612/613, D3D12 324/346 = noise) → the compositor blit is the remaining cost, not the game's resolve. (b) wcp v4 (`231d8b78`, five drivers + `share/X11/xkb`) installed as `Proton-11.0-2.1-arm64ec-4`: wine log `winewayland: Xkb config root …/share/X11/xkb`, the xkbregistry include-path error is gone, typing + clipboard both ways OK, switch sweep alive. (c) User asked for two MORE a8xx builds: StevenMXZ Gen8 V36 (`StevenMXZ/Adreno-Tools-Drivers` v36, 2026-09-08) and whitebelyash Mainline v31 (`whitebelyash/freedreno_turnip-CI` tu_v31, 2026-08-07) → wcp vc5 with seven drivers in flight; app options `bundled-a8xx-smxz` / `bundled-a8xx-white` committed (`5bb25c28`). (d) Process: the zero-copy agent had switched this worktree to its branch; restored, its work lives on `feat/wayland-zero-copy-wsi`.
+- 🔬✅🌊 2026-09-13 15:55 — **Launch bugs root-caused + fixed app-side (`feat/wayland-launch-fixes` `f0d05bc6` + `da1615d4`, merged).** (1) First launch after a layer change at 1024x768: ntdll runs `wineboot --init` from the session's FIRST process; a stale `.update-timestamp` (≠ the layer's wine.inf mtime) makes it install wine.inf ~7 s while explorer is blocked before main(); wineboot's wait dialog needs a desktop → win32u auto-spawns `explorer /desktop` on "Default", the zero close-timeout kills it in 9 ms, and our explorer's display cache then carries source-less monitors reported as {0,0,1024,768}; the 1280x720 mode stacks onto it (1488). Fix: `GuestProgramLauncherComponent.updatePrefixBeforeSession()` runs a throwaway `wineboot -h` (no WAYLAND_DISPLAY) before the real launch when stale. (2) HL2 loses the desktop at +0.25 s: `server/winstation.c` `close_timeout_val = 0` in this Proton tree (upstream = 1 s grace; only Proton's Steam helper raises it); explorer's helper threads live on "Default", so `users == running_threads` matched during the 32-bit game's FEX thread churn → WM_CLOSE. Fix: on Wayland `setWineDisplayDriver()` writes `HKCU\Software\Wine\Explorer\Desktop=shell` + `Desktops\shell=<size>` so every session process is born on "shell" (X11 launches remove both). Layer-side proper fix (restore `-TICKS_PER_SEC`) queued for the wcp. Also merged: `feat/wayland-zero-copy-wsi` (`2ba85ebc`+`504825ab`: `banner_ahb_v1` AHB swapchain path; Turnip patch `patches/wayland/banner_ahb_wsi.py` on every variant, run 34775590533 @ `48267b2`) — one conflict with the UBWC env parsing resolved (`ce81f974`). Integration build 34776808321 queued; wcp v5 (eight drivers) in flight.
+- ✅🌊 2026-09-13 16:05 — **Phase-3 integration build DEVICE-PROVEN (`ce81f974`, pubg `13dda8ad`, on wcp v4):** (1) first-launch size fix: forced `.update-timestamp=1` → `virtual desktop (0,0)-(1280,720)`, no resize, marker refreshed; (2) desktop-close fix: HL2 session `the desktop closed` count = 0, lock + relative pointer still created, touch mouse-look works; (3) switch sweep Vulkan → D3D12 → D3D9 alive. Remaining for this phase: wcp v5 (eight drivers + zero-copy WSI patch + 1 s desktop-close grace) → eight picks + zero-copy A/B on HL2 → kit + pre-release 2.
+- 🏁🌊 2026-09-13 16:20 — **Phase 3 DEVICE-PROVEN on wcp v5 (`84e5b087`, eight drivers, proton-wine run 34778034214 @ `b8c091a2`; Turnip run 34777324766 @ `2f19fcfe`) + app `13dda8ad` (`ce81f974`):** all eight picks load their manifest and render (plain / a7xx / a8xx / a8xx-perf / a8xx-gen8 / a8xx-smxz / a8xx-white / a8xx-upstream @ Mesa `bbc7792f`); **zero-copy proven**: guest `banner-ahb: 1280x720 swapchain (5 images) on gralloc buffers: linear`, compositor stats `1239 zero-copy frames` of 1240 on screen, picture correct, 144.8 fps (cap) vs 144.3 off; HL2 desktop survives; sweep alive. Kit refreshed (`proton-11.0-2.1-arm64ec-wayland-v5.wcp`, README phase 3; v3/v4 wcps removed). Next: pre-release 2.
+- 📊🌊 2026-09-13 16:20 — **Zero-copy A/B, proper run (HL2, `+fps_max 0 +mat_vsync 0`, d1_trainstation_01 scripted intro, 45 s warm-up + 60 s sampled, 2 passes each, alternating; kgsl gpubusy + gpuclk + battery current×voltage at 1 Hz; compositor stats per 10 s).** Game fps (uncapped, mailbox): zero-copy 179.6 / 191.0 vs copy path 188.5 / 185.3 → means **185.3 vs 186.9 fps = no fps change** (the game is CPU/FEX-bound here, not GPU-bound: CPU 46–58%). GPU busy **78.6% vs 82.6%**, GPU clock **944 vs 1000 MHz**, power **16.29 vs 16.78 W** (both pairs in the same direction: zc1 77.0%/16.24 W vs off1 83.0%/17.00 W; zc2 80.2%/16.34 W vs off2 82.3%/16.55 W). On-screen frames 134.5 vs 134.0 (vsync 144 minus drops). Conclusion: zero-copy removes the compositor blit's GPU work (~4–5 points of GPU busy, ~3% power at equal fps) but cannot raise fps in a CPU-bound game; a GPU-bound game or a big panel is where it would show as fps. Scripts: `/data/local/tmp/hl2_bench.sh`, samples in `/sdcard/Download/wayland-backup/bench-*/`.
+- 🧭🌊 2026-09-13 16:45 — **Phase 3b started (user screenshots of the in-game drawer on a Wayland session):** (1) Task Manager CONTAINER rows: add "Display backend: X11/Wayland"; on Wayland Renderer → "Vulkan (Wayland compositor)", Graphics driver → compositor + game driver (today shows "OpenGL"/"wrapper-original", wrong). (2) Graphics tab: "Native Rendering" (X11 direct scanout) greyed on Wayland with reason; new "Zero-copy presentation" toggle (writes `BANNER_WAYLAND_ZERO_COPY=1` to the shortcut/container env, applies next launch, shows live zero-copy frame count). (3) Scaling modes / CAS / HDR / Debanding / Looks + colour sliders / FXAA-CRT-Toon-NTSC: today X11-only (GL effect chain in `cpp/winlator/*.frag`) → greyed on Wayland with reason behind `waylandEffectsAvailable`, and the chain is being ported to the compositor's Vulkan present pass (`feat/wayland-effects`); effects on ⇒ zero-copy pauses for the session. Branches: `feat/wayland-drawer` (UI), `feat/wayland-effects` (compositor). Test shortcuts were removed at the user's request; re-create for the regression run.
+- 🔁🌊 2026-09-13 16:55 — **User: no permanent grey-outs — effects, scaling AND frame generation must WORK on Wayland.** Greys become runtime capability fallbacks only (`waylandEffectsAvailable`, `waylandFrameGenAvailable`). Third stream started: `feat/wayland-framegen` ports the FG engines (LSFG Native / Win-FG / bionic-fg) into the compositor present pass (hook order: scene → effects → framegen → mapping/blit → swapchain; FG or effects on ⇒ copy path, zero-copy paused). Drawer + effects agents re-briefed accordingly.
+- 🐛🌊 2026-09-13 17:05 — **Tester (vower, Samsung, Adreno 8xx): zero-copy on Wayland = "full speed", but the app HUD reads FPS 0.0** (Samsung's own overlay showed 59 fps, GPU 83%). Root cause: `take_dmabuf()` bound the HUD surface and ticked `banner_on_game_frame()` only when `b->img` existed, i.e. when the compositor could import the buffer for its copy path; on that device the game's gralloc buffers are not importable there (logged as "could not import … shown on their own layer only"), so zero-copy presented them fine while the HUD never got a frame. Fixed on `feat/wayland-phase2` (`ahb_swapchain_has_ahb(b)` counts as a presented frame; the log now says "presenting … on its own display layer only"). Ships in the next build with the effects + framegen merges. Also: first external Wayland report — on par with X11 and "slightly lower" battery on the Samsung per the tester.
+- 📝🌊 2026-09-13 17:10 — User asks for a LIVE zero-copy toggle (today: saved, next launch). Plan queued after the effects/framegen merges: compositor-owned "ahb enabled" state read by the driver at swapchain creation + forced swapchain rebuild on toggle (window nudge through winewayland), live-off without rebuild only where gralloc import works; reuse for live effects/FG ⇄ copy-path switching.
+- ✅🌊 2026-09-13 17:50 — **Phase 3b DEVICE-PROVEN on `feat/wayland-phase2` `2b36410d` (pubg `1eaf2f54`, wcp v5):** switch sweep alive; drawer on a Wayland session: Task Manager "Display backend: Wayland", Renderer "Vulkan (Wayland compositor)", Graphics driver "compositor: … · game: Bundled (auto)"; Graphics tab: all effect/scaling rows live, Native Rendering greyed with reason, Zero-copy toggle present and writing `BANNER_WAYLAND_ZERO_COPY=1` to the shortcut; effects chain compiled on the 750 (`chain ready: 13 passes`), Look "Retro CRT" visibly applied in-game live (scanlines/NTSC). Frame gen: engines report ready (`LSFG Native available (supported…), Win-FG Native available`); launch never auto-arms (same as X11, `launchMult = 0` by design) → the user tests LSFG from the drawer. Kit refreshed with `Bannerlator-wayland-phase3b-pubg.apk` + README (phase 3b section). Test shortcuts: AIO Wayland Sweep/ZC, Half-Life 2 Wayland, HL2 FG (lsfg 2x) recreated for this pass.
+- ✅🌊 2026-09-13 17:55 — Zero-copy ⇄ effects interplay proven on fullscreen HL2 (`HL2 ZC`): Look "Retro CRT" applied live → stats `zero-copy frames` 1211 → 822 → 0 (paused, copy path), CRT visible over the game at 139 fps. Test shortcuts removed again except **"HL2 FG"** (Half-Life 2 on Wayland with `frameGenEngine=lsfg`, `frameGenMultiplier=2`) left for the user's LSFG Native test from the drawer.
+- ✅🎞️🌊 2026-09-13 18:05 — **LSFG Native on Wayland DEVICE-PROVEN by the user (build `2b36410d`, pubg `1eaf2f54`, wcp v5), Half-Life 2 "HL2 FG" shortcut, armed from the drawer:** session log `LSFG Native x2 armed (flow scale 0.60, panel 144 Hz)` → stats `300 GPU frames from games | 300 generated frames` (60.0 fps), then 600 generated (90.0 fps) at 3x and 900 generated (120.0 fps) at 4x, all on a 30 fps game (33.3 ms); HUD `30.0→60.0 / 90.1 / 119.6 fps · Wayland`, four screenshots. Zero-copy was active (`qcom_compressed (zero-copy)`) until FG armed, then the copy path took over as designed. Follow-up in this commit: the log now records multiplier changes while armed (only the first arm was logged). "HL2 FG" test shortcut removed; container 7 holds only the user's five shortcuts. Next: pre-release 3 (`3.1.2-wayland-pre3`, same wcp v5), then the live zero-copy switch.
+- 🚀🌊 2026-09-13 18:20 — **3.1.2 Wayland pre-release 3 LIVE**: https://github.com/The412Banner/Bannerlator/releases/tag/3.1.2-wayland-pre3 (run 34785614916 @ `43afe50f`, prerelease=true, vc85; `releases/latest/download/update.json` still 3.1.1/vc85 — stable users untouched). Assets: standard / pubg / ludashi APKs, `proton-11.0-2.1-arm64ec-wayland-v5.wcp` (`84e5b087…`, unchanged from pre2), `README-Wayland-test-kit.txt`; the workflow's `update.json` asset deleted. Notes = `docs/releases/3.1.2-wayland-pre3.md` (drawer on Wayland: 13-pass effects + scaling live, LSFG Native / Win-FG Native FG, zero-copy toggle, backend row, HUD-0.0 fix, multiplier log). Deck on main refreshed for pre3 (`939fde40`). Kit `/sdcard/Download/Wayland/` = pre3 pubg APK (`98f4aae0…`, INSTALLED, versionName 3.1.2-wayland-pre3) + v5 wcp + README; phase3b APK removed.
+- 🧹🌊 2026-09-13 18:35 — **Wayland pre-releases 1 and 2 DELETED on the user's ask** (pre-release 3 supersedes both). Tags `3.1.2-wayland-pre1/-pre2` kept, so the exact build points stay referable; notes kept at `docs/releases/3.1.2-wayland-pre1.md` / `-pre2.md`. Assets gone with them: the pre1/pre2 APK sets and **`proton-11.0-2.1-arm64ec-wayland-v3.wcp`** (four-driver layer, only copy on GitHub — rebuildable from proton-wine `feat/winewayland-desktop-11.0-2` @ `a2056d15`; a local copy is in this session's scratchpad). v5 stays attached to pre-release 3 and is unchanged (`84e5b087…`). Old share links to pre1/pre2 now 404 — point testers at `releases/tag/3.1.2-wayland-pre3`.
+- 🔄🌊 2026-09-13 22:45 — **LIVE zero-copy switch: code done on all three sides, CI in flight.** App `feat/wayland-zero-copy-live` `810076ce` off `feat/wayland-phase2` `e3386271` (build 34787145506); Turnip `wayland` `5f26c15e` (build 34786863775); proton-wine wcp v6 to follow. Design: `banner_ahb_v1` **version 2** gains a `mode(enabled)` event, sent on bind and on every flip; the compositor advertises the global on every session where `sc_layer_available()`, not only when launched with `BANNER_WAYLAND_ZERO_COPY=1`, and `nativeSetZeroCopy()` is now live from any thread (posts through the `banner_ext` host queue → `ahb_swapchain_set_mode()` on the compositor thread → flip, broadcast, flush, redraw). Guest WSI follows `display->banner_ahb_mode` per swapchain and retires a chain built for the other mode by reusing Mesa's own three `chain->retired` early-outs → `VK_ERROR_OUT_OF_DATE_KHR` → DXVK/vkd3d/Zink rebuild. **Version negotiation is load-bearing:** the registry bind clamps to `MIN(advertised, 2)` (binding above the advertised version is a fatal `wl_display` error and pre-pre4 apps advertise 1), and on version 1 — or version 2 before the first `mode` arrives — the driver keeps the v5 contract byte for byte (gralloc iff `BANNER_WSI_AHB=1`, per swapchain, nothing ever retired). With the mode in play `BANNER_WSI_AHB=1` no longer forces on (the app exports it on every zero-copy launch, which would freeze the switch); `=0` still forces off. Anchors re-verified against all three `wsi_common_wayland.c` variants the eight builds use (`7cda7850`/`12b7b819`/`bbc7792f`, `7631b525`/`c501e1d1`, whitebelyash `9c475fc3`) by applying the patch to each locally. Compositor off-path fixes that the switch exposed: `sc_layer_hide()` and `ahb_swapchain_defer_release()` were gated on `g_zero_copy`, which after a live OFF would have left the layer up with a frozen frame over the scene and handed the game back a buffer the display was still scanning out.
+- ✅🔁🌊 2026-09-13 18:47 — **Reverse-compat proven first (new app `810076ce`, pubg `d0a7546d…`, on the OLD wcp v5 whose drivers bind `banner_ahb_v1` version 1).** HL2 fullscreen on Wayland, container 7, launched with zero-copy OFF: `layer zero-copy: banner_ahb_v1 version 2 advertised …` and `layer zero-copy: off at launch (the drawer's Zero-copy presentation switch turns it on live)` — the global is now advertised on a session started WITHOUT `BANNER_WAYLAND_ZERO_COPY`, which it never was before — then `layer zero-copy: hl2.exe bound banner_ahb_v1 version 1 (version 1: decides from its launch environment only)` (one line, not the seven the old per-format-query bind used to log). Drawer toggle ON → `layer zero-copy switched on from the drawer: 0 bound programs told to rebuild their swapchains` (0 = correct: a version-1 client cannot be told) and the compositor fell back to the pool-blit layer path (`presenting 1280x720 game frames on their own SurfaceControl layer (linear pool, 3 buffers)`), 122.6 fps, `0 zero-copy frames`. Toggle OFF → `layer hidden (scene is not a single fullscreen window)` and the game kept rendering (screenshot: train station, 8.1 ms). That `layer hidden` line is the off-path fix: gated on `g_zero_copy` as it was, the layer would have stayed up with a frozen frame over the scene forever. Evidence log `/sdcard/Download/zc-evidence-v1compat.log`.
+- 🏁✅🌊 2026-09-13 19:05 — **LIVE ZERO-COPY SWITCH DEVICE-PROVEN, both halves.** App `feat/wayland-zero-copy-live` `810076ce` (CI 34787145506, pubg sha256 `d0a7546da9cf817750560738cf43e593bd0593a98883b847823153ab5e758cb4`, installed sha verified) + **wcp v6** `proton-11.0-2.1-arm64ec-wayland-v6.wcp` sha256 `828b66d55ad738bd0cc314b333555db917f96a580963009c15f0403714b48dd5` (proton-wine `2f8cb2cb`, run 34787459651, versionCode 6, installed as `Proton-11.0-2.1-arm64ec-6`; Turnip `5f26c15e`, run 34786863775, all eight drivers carry the mode handler). Container 7 repointed to the v6 layer (old value backed up at `.container.bak-zclive`; layer `-5` still installed).
+  - **HL2 fullscreen on Wayland, launched with zero-copy OFF** (`layer zero-copy: off at launch`), driver `hl2.exe bound banner_ahb_v1 version 2 (follows the live switch)`. Baseline 142.1/139.0/140.4 fps on screen, 1436/1439/1435 GPU frames from games, no `zero-copy frames` field.
+  - **Toggle ON in the real drawer (18:50:12.158):** `layer zero-copy switched on from the drawer: 1 bound program told to rebuild their swapchains` → 45 ms later `layer zero-copy: AHB swapchain from hl2.exe (5 images, 1280x720, linear, stride 1280 px)` → `layer zero-copy: presenting "HALF-LIFE 2 - Direct3D 9" (hl2.exe) without a copy`. Guest side, same moment: `banner-ahb: zero-copy switched on: retiring the 1280x720 swapchain so the program rebuilds it on gralloc buffers` then `banner-ahb: 1280x720 swapchain (5 images) on gralloc buffers: linear, stride 1280 px`. Steady state **`1328 frames on screen (132.8 fps) … | 1328 zero-copy frames`** — every frame on screen is zero-copy.
+  - **Toggle OFF (18:52:04.005):** `zero-copy switched off from the drawer: 1 bound program told to rebuild their swapchains` → 3 ms later `layer hidden (scene is not a single fullscreen window)`; guest `banner-ahb: zero-copy switched off: retiring the 1280x720 swapchain so the program rebuilds it on standard buffers`. Next full window: `1238 frames on screen (123.8 fps) | 1436 GPU frames from games` with **no zero-copy field at all = 0**. **ON again at 18:52:46.998**, AHB chain back 30 ms later. Screenshots at every step show the game rendering — **never a black frame**.
+  - **Game fps unchanged across all switches:** GPU frames from games 1436/1439/1435 (off) → 1410/1423/1432/1439 (on) → 1436/1440/1440 (off) → 1439 (on). The on-screen count moves a few fps either way with scene content; the game's own rate does not.
+  - **Effects interplay still works live:** CRT on → `effects zero-copy paused: screen effects need the compositor pass` + `layer hidden`, `chain ready: 13 passes … on Adreno (TM) 750`, zero-copy frames 1303 → 477 → 0; Look "Retro CRT" → paused again; all effects off → `effects zero-copy resumed: screen effects and frame generation are off`, count back to 1314/1320 per window. Three full pause/resume cycles.
+  - **Drawer:** status line follows the compositor, not the switch — screenshot shows "On: 759 zero-copy frames in the last 10 s" while on and "Off: the compositor copies each frame into its own swapchain." while off; no grey-out. The toggle ALSO persisted `envVars=BANNER_WAYLAND_ZERO_COPY=1` to the shortcut, and the **next launch started on** (`layer zero-copy: on at launch (BANNER_WAYLAND_ZERO_COPY=1 …)` with the AHB chain built at startup).
+  - **AIO Graphics Test API sweep with zero-copy ON: alive.** Vulkan (459 fps, HUD "Vulkan · Turnip") → Direct3D 12 → Direct3D 9 (286 fps) → Vulkan, same pid 3877 throughout, each rendering; guest log shows the gralloc chains rebuilt across the switches (`1172x686 … on gralloc buffers` ×2, `852x578 …` ×1).
+  - Evidence on device: `/sdcard/Download/zc-evidence-v6-hl2.log` (compositor), `/sdcard/Download/zc-evidence-v6-guest.log` (driver), `/sdcard/Download/zc-evidence-v1compat.log` (new app on the old v5 layer). Kit staged: `/sdcard/Download/Wayland/proton-11.0-2.1-arm64ec-wayland-v6.wcp` + `Bannerlator-wayland-zc-live-pubg.apk`; the v5 wcp, pre3 APK and README left alone. Test shortcuts created for this run ("HL2 ZC Live", "AIO ZC Live") deleted; container 7 holds only the user's five, and "AIO Graphics Test" was not modified.
+- 🚀🌊 2026-09-13 19:15 — **Live zero-copy switch MERGED (`58fa13f6`) and pre-release 4 dispatched** (`3.1.2-wayland-pre4`, run 34788736833 @ `408e0195`, versionName bumped, vc85). Verified before merging: Turnip run 34786863775 ✅ `5f26c15e`, proton-wine run 34787459651 ✅ `2f8cb2cb` → wcp v6 `828b66d5…`, app run 34787145506 ✅ `810076ce` (`d0a7546d…`). Device evidence read first-hand (`/sdcard/Download/zc-evidence-v6-hl2.log`): `18:50:12.158 layer zero-copy switched on from the drawer: 1 bound program told to rebuild their swapchains` → +45 ms `AHB swapchain from hl2.exe (5 images, 1280x720)` → `presenting … without a copy`; steady `1328 frames on screen | 1328 zero-copy frames`; `18:52:04.005 switched off` → `layer hidden` + the stats line drops the zero-copy field entirely; `18:52:46.998` on again, AHB chain back in 30 ms. Game frames flat 1428–1440 per 10 s across every switch. Effects pause/resume cycles logged; AIO sweep Vulkan → D3D12 → D3D9 → Vulkan alive with zero-copy on. Reverse compat proven (`zc-evidence-v1compat.log`): new app + old v5 layer → `hl2.exe bound banner_ahb_v1 version 1 (decides from its launch environment only)`, 143.7 fps, no regression. Container 7 now on `Proton-11.0-2.1-arm64ec-6`; test shortcuts gone (user's five only). After publish: upload wcp v6 + README, delete update.json, **delete pre-release 3** (rolling single link), refresh the deck, install the released APK.
+- ✅🚀🌊 2026-09-13 19:25 — **3.1.2 Wayland pre-release 4 LIVE**: https://github.com/The412Banner/Bannerlator/releases/tag/3.1.2-wayland-pre4 (run 34788736833 @ `408e0195`, prerelease, vc85; 3.1.1 still Latest). Assets: three APKs (pubg `abbe1028…`), **`proton-11.0-2.1-arm64ec-wayland-v6.wcp`** (`828b66d5…`, installs as `Proton-11.0-2.1-arm64ec-6`), README; update.json deleted. **Pre-release 3 deleted** — pre-release 4 is the only Wayland tester link (user's rolling-link rule, [[feedback_wayland_prerelease3_wcp_swap]]). Deck on main `6ca04365` refreshed for pre4. Device + kit on pre4 (installed sha verified, kit holds only pre4 APK + v6 wcp + README). Branch `feat/wayland-phase2` tip = pre4 + log commits.
+- 💬 2026-09-13 19:25 — Tester report handled (Discord #winlator-general, "John"): on **pre-release 2** the in-game Task Manager Renderer row read "OpenGL" on a Wayland session. That is the stale-readout bug fixed in pre-release 3 (`53977398` drawer work): the row printed the container's renderer setting instead of the session's. Wayland has no GL path at all — D3D goes through DXVK/VKD3D and GL through Zink, always onto Vulkan. Reply drafted for the user pointing at pre-release 4.
+- 🔖🌊 2026-09-13 19:45 — **WAYLAND CHECKPOINT (user-requested) — pre-release 4 shipped, branch merging to main.** Memory: [[project_bannerlator_wayland_checkpoint_20260913_pre4]] (+ roadmap rewritten, hot line updated).
+  **DONE, device-proven:** display backend per container + per-game override, gated on a capable layer; every graphics API in one session (Vulkan / GL via Zink / D3D12→D3D8 / DDraw); pointer lock + relative pointer; keyboard, clipboard both ways, `zwp_text_input_v3` soft keyboard, bundled xkb layouts; fullscreen modes + alignment live, FPS cap, HOME/resume, swapchain rebuild without a black frame, HUD sampling off the dispatch thread; **eight bundled game drivers** + Linux-ICD import; UBWC handoff; **zero-copy presentation with a LIVE in-game switch** (`banner_ahb_v1` v2 `mode` event → driver forces `VK_ERROR_OUT_OF_DATE_KHR` → DXVK rebuilds); **13-pass Vulkan effects/scaling chain live**; **LSFG Native + Win-FG Native frame generation live** (user-tested 30 → 60/90/120 fps); Task Manager Display backend + both driver names + zero-copy toggle; fixes for the 1024x768 first launch, the Wine desktop closing under 32-bit games, HUD fps 0.0 under zero-copy, and shortcuts without a folder/`.exe`.
+  **LEFT, ranked:** (1) other GPUs — everything is one Adreno 750 + one tester's Samsung 8xx; the user's Fold (A840) logs are still outstanding, real 710/720/722 + 830/840 reports beat new code; (2) prove zero-copy where it can win (GPU-bound game, big panel) then default it on — on the 750 it is same fps, −4 pts GPU busy, −3 % power, and the copy path is still ~20 % behind X11 on synthetic Vulkan/D3D12; (3) effects / frame-gen on GPUs whose buffers the compositor cannot import (`b->img == NULL`, the Samsung case) — now solvable with the display-layer machinery; (4) fold Wayland into the AIO layer release (11.0-2 → v8 + the other six), still no catalog row; (5) cosmetic/bridges — window icons, decorations, drag-and-drop, image clipboard; (6) Wayland-only wins not started — presentation feedback → even pacing, tearing control, fractional scaling, native multi-touch, HDR/colour management, explicit sync; (7) guest-side fd/thread leak on API switches (X11 leaks more), bionic-fg stays X11-only by the user's decision.
+- 🏁🌊 2026-09-13 20:05 — **WAYLAND MERGED TO MAIN** (user's go): `feat/wayland-phase2` → main **`3e98053c`**, clean merge, 71 files (+15,407 / −1,381), no conflicts. `app/build.gradle` on main deliberately kept at versionName **3.1.1** / versionCode 85 (the repo bumps versionName only at release prep; the pre-release name stays on the branch). Verification build on main **green**: run 34789763976 @ `3e98053c`, all three flavours. Branch kept (hiatus safeguards). Tester link is still `3.1.2-wayland-pre4`; 3.1.1 remains Latest and the in-app update. Next per the checkpoint: other GPUs (Fold/A840 logs), zero-copy where it can win → default on, effects on non-importable GPUs, fold Wayland into the AIO layers.
+- 🔖🌊 2026-09-13 20:30 — **CHECKPOINT: Wayland PHASE 4 starts** (user go: "get started … continue on the Wayland branch, drive the testing yourself, hand me a finished wcp + APK with a status report"). Baseline = main `3e98053c` (Wayland merged, verification build green) / branch `feat/wayland-phase2`, shipped tester build `3.1.2-wayland-pre4` (pubg `abbe1028…` installed, wcp v6 `828b66d5…` = `Proton-11.0-2.1-arm64ec-6`, container 7 on it). Streams, both APK-side (the wcp is expected to stay v6 — no game-driver change):
+  1. **Refresh-rate matching is INERT on Wayland (bug, found 20:15).** `XServerDisplayActivity.applyVrr()` returns at `if (xServerView == null) return;` (line ~11708) and the vote is pushed through `xServerView.setDisplayFrameRate(...)` (~11742), so on a Wayland session Auto (match FPS), the manual Hz lock and the native-FG `cap × multiplier` rate pick all do nothing. Fix: route the same vote to the Wayland surface, and to the game's own SurfaceControl layer when zero-copy is on (`sc_layer.c` has no `setFrameRate` yet — `ASurfaceTransaction_setFrameRate` needs dlsym'ing next to `setBuffer`/`setZOrder`/`setVisibility`). No new UI: the existing container/drawer controls just have to work.
+  2. **Multi-layer presentation** (the user's "layers have to be ordered correctly and pass input through"): game on its own display layer + our overlay content on a second layer, correct z-order, input still routed to the app's SurfaceView, HWC composition preserved (watch `dumpsys SurfaceFlinger` Comp Type DEVICE), and effects output kept on the layer instead of dropping the session back to the app surface.
+  Later (user interested, not this round): HDR / colour management on the layer path — needs the colour protocol in the compositor, the description carried to the layer, and HDR swapchain formats in the game driver (that one WILL need a new wcp).
+- 🌊🧱 2026-09-14 00:20 — **Multi-layer presentation implemented (stream 2 of phase 4), branch `feat/wayland-multilayer` `caa3f632`, CI run 34792205242 @ `caa3f632` in flight.** Base = `feat/wayland-phase2` `3714fb6e` (merge re-checked before the build; `feat/wayland-vrr` had landed nothing yet — it is still at the same commit, so the `setFrameRate` addition will merge cleanly into `sc_layer.c`'s dlsym block and the `struct layer` array). Layer mode used to hand SurfaceFlinger exactly ONE layer, so one window above the game — or any screen effect — dropped the whole session back to the copy path. `sc_layer.c` now owns an ordered SET: `banner_wayland_game` (z=1) and `banner_wayland_overlay` (z=2), both `ASurfaceControl` children of the compositor's SurfaceView, each with its own pool (3 / 2 buffers), geometry and lifetime; **2 is a hard cap** (`SC_LAYER_COUNT`) and is logged, because HWC only composes a few layers before SurfaceFlinger falls back to GPU client composition. New: `vkp_pass_begin`/`vkp_pass_copy_to`/`vkp_pass_abort` in `vk_present.c` run the composite + effects chain WITHOUT presenting and copy the result into the game layer's gralloc buffer, so a Look no longer costs the layer (and the scene→output map is done by the display's `setGeometry` instead of a second fullscreen GPU blit). Still on the copy path by design: frame generation (its extra frames need a present each on consecutive vblanks; a layer latches one buffer per refresh), effects with a window above the game (the chain must see the whole scene), and two or more draws above the game (a third layer is not worth the client-composition risk). Layers are OPAQUE and the overlay is cropped to its window — the compositor composes with blits and never alpha-blends on either path, so there is no blending to get wrong. Input is untouched by construction (an `ASurfaceControl` has no input channel; the SurfaceView is not Z-on-top so both layers stay under the activity's window). Stats line gains `| N layer frames` beside `| N zero-copy frames`. ⏭️ device proof next: overlay via drawer → Task Manager → New Task (`winHandler.exec`) over HL2, `dumpsys SurfaceFlinger` Comp Type per layer, Retro CRT staying on the layer, drawer/tap routing, fps vs pre4, lifecycle, AIO API sweep.
+- 🌊📏 2026-09-13 20:35 — **Pre-release 4 BASELINE captured on the Pocket FIT before installing the multi-layer build** (pubg `abbe1028…` installed and sha-verified; test shortcut `ZZ Test HL2` on container 7 = `Z:\steam_games\Half-Life 2\hl2.exe -novid +map d1_trainstation_01`, uncapped, `BANNER_WAYLAND_ZERO_COPY=1`, 1280x720 scene on the 1920x1080 output). **Composition types ARE readable on this device, just not from `dumpsys SurfaceFlinger`** — that build prints no `Comp Type` / `composition:` field, debugfs is not mounted and `lshal` is unavailable; the QTI HWC3 dump does: `dumpsys android.hardware.graphics.composer3.IComposer/default`. (a) **layer path, single layer:** `layer: … name: AHardwareBuffer pid [26616] z: 0 composition: DEVICE/DEVICE … format: RGBA_8888 … transform: 90/0/0` with `VRI[XServerDisplayActivity] z: 1 composition: DEVICE/DEVICE` ABOVE it — the game's own gralloc buffer is scanned out by the DPU, rotated and scaled, and the app's window is above it. (`VRI[ScreenDecorHwcOverlay] … DISPLAY_DECORATION/CLIENT` is the system's rounded-corner layer and is why SurfaceFlinger's `clientCompositionFrames` is 100 % on this device in every state — that counter is useless here, the HWC3 dump is the real evidence.) fps over a 60 s scripted-intro bench: **134.1 avg** (7×10 s samples 124.5–141.8), game GPU frames ~143 fps, GPU busy 80.0 %, GPU clock 672 MHz, 176 mA @ 8.66 V. (b) **one effect on (CAS, one drawer tap):** `effects  zero-copy paused: screen effects need the compositor pass` + `layer  layer hidden (scene is not a single fullscreen window)` within the same millisecond; stats go to **`0 zero-copy frames`**, fps 125.0–128.5, and the HWC dump replaces the game layer with `SurfaceView[…XServerDisplayActivity]#2 z: 0 composition: DEVICE/DEVICE` — i.e. the game is back inside the compositor's swapchain. This is exactly the behaviour the multi-layer branch is meant to remove.
+- ⚠️✅🌊 2026-09-13 21:05 — **Phase 4 stream 1 done, and my diagnosis corrected.** `applyVrr()` does NOT early-return on Wayland — `setupUI()` creates and adds `XServerView` there too (`:7834`/`:8050`), the compositor's SurfaceView is overlaid on it, so refresh-rate matching was already moving the panel on Wayland (measured on shipped pre4 before any change: Auto+60 → 60, LSFG 2× on a 30 cap → 60, cap off → 144). **The user saw 144 Hz in their LSFG session because container 7 has `matchRefreshRate=0`.** Real defects found and fixed: (a) the vote rode on the X view's surface, which presents no frames in a Wayland session (`--latency` all zeros vs the compositor view's 33.3 ms rows) and survived only through an AOSP `LayerHistory::isLayerActive()` accident; (b) the zero-copy game layer carried no vote at all. Fix merged (`19e03da0`): `routeVrrVote()`/`applySurfaceFrameRate()` + `ASurfaceTransaction_setFrameRate` on the game layer. Proven (CI 34791664379 @ `60c61b55`, pubg `e13d5b21…`): Auto+60 w/ zero-copy → panel 60.000004 + `layer display frame-rate vote on the game layer: 60.00 Hz`; cap off → 144.00002 + cleared; manual 90 → 90.0; LSFG 2× on 30 → 60; X11 unchanged. 🐛 New pre-existing bug (not fixed): a shortcut carrying its own `matchRefreshRate` extra makes the in-game Auto toggle inert (`resolvedMatchRefreshRate()` prefers the shortcut extra, the drawer writes the container). ⚠️ Device is on `e13d5b21…`, not the released pre4.
+- 🌊🧱✅ 2026-09-13 21:10 — **Multi-layer presentation DEVICE-PROVEN on the Pocket FIT** (build 1 = `488d049b`, CI run 34792892845, pubg `8d949157…` installed and sha-verified; test shortcuts `ZZ Test HL2` / `ZZ Test HL2W` / `ZZ Test AIO` on container 7, all deleted afterwards). Composition types read with **`dumpsys android.hardware.graphics.composer3.IComposer/default`** (the QTI HWC3 dump — `dumpsys SurfaceFlinger` on this build prints no `composition:` field at all, debugfs is unmounted, `lshal` unavailable; SurfaceFlinger's `clientCompositionFrames` reads 100 % in every state here because `VRI[ScreenDecorHwcOverlay]` is permanently `DISPLAY_DECORATION/CLIENT`, so it is useless as a metric).
+  - **(a) Overlay layer works.** Wine Task Manager opened over windowed HL2: `window opened "Task Manager" (taskmgr.exe) 404x453 at 438,133` → `SurfaceControl "banner_wayland_overlay" created … (z=2)` → `banner_wayland_overlay geometry: buffer 0,0-404,453 -> screen 657,200-1263,879` → `2 display layers in use: "banner_wayland_game" (z=1) and "banner_wayland_overlay" (z=2) above it …`. Stats the same 10 s: `437 zero-copy frames | 144 layer frames` — **the game kept its display layer and its copy-free frames while a window sat on top of it**. Screenshot: the Task Manager drawn crisply over the game, right place, right size, no black box, no darkening. On pre-release 4 the identical moment logs `layer hidden (scene is not a single fullscreen window)` and `0 zero-copy frames`.
+  - **⚠️ (a, the catch) — the SECOND layer costs hardware composition on this device.** One layer: `AHardwareBuffer pid […] z: 0 composition: DEVICE/DEVICE … transform: 90/0/0`. Two layers: every layer becomes `DEVICE/CLIENT` — SurfaceFlinger composes the frame on the GPU. Controls run: opening/closing the drawer alone does NOT cause it (stays DEVICE/DEVICE), and a fresh single-layer session is DEVICE/DEVICE on this build exactly as on pre4, so it is the second SurfaceControl, not a regression of the game path. **It is also sticky**: hiding the overlay layer does not restore DEVICE composition, but HOME+resume (which retires both SurfaceControls) does → fix in build 2: `sc_layer_hide_overlay()` now RETIRES the overlay's SurfaceControl. Likely mechanism is the DPU's rotator budget (portrait panel + landscape session = every layer is ROT_90 + scaled), not the layer count as such — so a device/orientation needing no rotation may well take both. Even in client composition the overlay layer is not a loss (SurfaceFlinger does the one blit the compositor would have done); the HWC win is real for the single-layer cases.
+  - **(b) Screen effects stay on the layer.** Retro CRT applied live: `effects  scaling=None, CAS off, Look="Custom", colour b=+6 c=+14 g=1.05 s=115%, NTSC on, CRT on` with **no `zero-copy paused` line**; `banner_wayland_game: pool buffer 1920x1080 linear` (the chain's mapped-output-size result) → `geometry: buffer 0,0-1920,1080 -> screen 0,0-1920,1080`; stats `0 zero-copy frames | 1090 layer frames`; HWC still `DEVICE/DEVICE`. Screenshot shows scanlines + NTSC fringing + vignette, picture correct. On pre4 the same act logs `zero-copy paused: screen effects need the compositor pass` + `layer hidden` and the HWC dump replaces the game layer with `SurfaceView[…]#2`. **Honest note on the counters:** those frames are on the layer but no longer copy-free, so they are counted in the new `| N layer frames` column and `zero-copy frames` correctly reads 0.
+  - **(b, the cost)** Same Look, same scene, live zero-copy toggle: **layer path 111.5/113.6/113.9 fps vs copy path 128.7/129.3/130.7 fps** — the first shape of the effects pass was ~13 % SLOWER because it was two submits with a CPU fence wait between them. Fixed in build 2 (one command buffer, one submit, one present).
+  - **(c) Input.** `dumpsys input`: `name='banner_wayland_overlay#57508' … inputConfig=NO_INPUT_CHANNEL … touchableRegion=<empty>` and the same for `banner_wayland_game#57498`; `dumpsys window windows | grep -c banner_wayland` = 0. The only input window is `9293e7b com.tencent.ig/…XServerDisplayActivity` with `touchableRegion=[0,0][1080,1920]`. The drawer opened over game+overlay and every tap in it landed (tabs, scrolling, New Task + OK, the live zero-copy toggle, the Look buttons). Tap-lands-at-the-drawn-cursor proved on the AIO test: arrow moved onto the "Vulkan" row, one tap → breadcrumb `Graphics Backends > Vulkan`, HUD label `Vulkan · Turnip`. (Could not repeat that with an overlay present: the only overlay-capable scene available uses Half-Life 2, which takes a persistent Wayland pointer lock — `pointer  locked: … (persistent)` — so there is no visible cursor to compare against there.)
+  - **(d) Frame rate unchanged.** Same 45 s warm + 60 s scripted-intro bench, HL2 uncapped, zero-copy, no effects: **pre4 134.1 fps avg vs multi-layer 135.3 fps avg** (7×10 s samples each: 141.4/137.5/136.7/141.8/127.1/124.5/129.6 vs 143.3/142.8/140.6/126.4/132.9/132.2/128.9), GPU busy 80.0 % vs 80.2 %. (GPU clock and current read higher on the second run — 958 MHz/394 mA vs 672 MHz/176 mA — but that run followed 30 min of effects testing at 90 °C, so the DVFS state is confounded; fps and GPU busy are the comparable numbers.)
+  - **(e) Lifecycle.** HOME: `banner_wayland_overlay: SurfaceControl retired` + `banner_wayland_game: SurfaceControl retired` + `screen surface gone: presenting paused`; resume re-creates only the game layer (no stale overlay) and composition returns to `DEVICE/DEVICE`. Window closed: `window closed "Task Manager"` → `banner_wayland_overlay: layer hidden (nothing is above the game any more)`, gone from the HWC list, game keeps its layer. Zero-copy toggled off live with a Look on: `zero-copy switched off from the drawer: 1 bound program told to rebuild their swapchains` → `layers hidden` → clean copy path, no black frame, no crash. Two sessions force-stopped mid-layer with no stale layer left behind.
+  - **(f) AIO Graphics Test** ran its whole backend sweep in one session — Vulkan 1420, OpenGL 519, D3D12 850, D3D11 3192, D3D10 2604, D3D9 1175, D3D8 603, DirectDraw 884 fps — and live switching between backends worked with the compositor at 143.8 fps throughout. (Its window is 1172x686 inside a 1280x720 desktop, so it is not a layer candidate and takes the copy path — the intended policy.)
+  - **Also found:** the overlay's 2-buffer pool ran dry every ~5 s (`no free layer buffer (display still holds all 2): frame dropped`) → 3 buffers in build 2; and the drawer's zero-copy status line still claimed "Paused while screen effects are on" → corrected.
+- 🌊🧱⚠️ 2026-09-13 21:15 — **Build 2 (`e3a29a16`, run 34794400736, pubg `f50d1816…`) measured the "optimisation" WRONG and it was reverted in build 3.** Build 2 folded the composite + effects chain + layer copy + the base surface's black frame into one command buffer, one submit and one present — the shape that looks cheaper. On device it is much worse: HL2 + Retro CRT at 1920x1080 gave **72.0 / 71.6 fps** (`0 zero-copy frames | 720 layer frames`, HWC still `DEVICE/DEVICE`) against build 1's **111.5–113.9 fps** for the same Look and scene; the copy path measured **128.7 / 128.3 fps** on the same build, i.e. unchanged, so it is the layer shape and not a general regression. Cause: a present holds an acquired swapchain image and the acquire semaphore is a vblank gate — putting the 13-pass chain inside that submit costs a whole refresh (72 ≈ 144/2). **Build 3 (`396e926a`, run 34795361829)** puts the chain back in its own submit with no image acquired (`vkp_pass_begin`/`vkp_pass_copy_to`/`vkp_pass_abort`) AND presents the base surface's black frame *after* the layer transaction, so the transaction does not wait for a vblank either (`vkp_apply_window_request()` is called explicitly at the top of the layer path, since `vkp_render` no longer runs first). Build 2's other two fixes are kept: `sc_layer_hide_overlay()` retires the overlay SurfaceControl (a hidden one keeps SurfaceFlinger in client composition) and the overlay pool is 3 buffers. The measurement is written into `vk_present.c` and `WAYLAND_RUNTIME.md` so nobody re-"optimises" it.
+- 🌊🧱🔬 2026-09-13 21:27 — **The client-composition fallback is stickier than the retire fix assumed (measured twice on build 2, `f50d1816…`).** Sequence on windowed HL2: one layer → `AHardwareBuffer … z: 0 composition: DEVICE/DEVICE … transform: 90/0/0` at 138 fps; Task Manager opened → two `AHardwareBuffer` layers, both `DEVICE/CLIENT`; Task Manager killed → `banner_wayland_overlay: SurfaceControl retired` + `gone (nothing is above the game any more)` (the retire fix does what it says, the layer leaves the HWC list) but composition **stays `DEVICE/CLIENT`**, still there 25 s later. HOME + resume → new SurfaceControls → **`DEVICE/DEVICE` again**, reproduced twice. So SurfaceFlinger's fallback is tied to the *game layer's* SurfaceControl, not to the overlay's presence: it clears only when that SurfaceControl is re-created (surface teardown / new session). Retiring the overlay is still right (one fewer live layer, and it is gone from the HWC list), it just does not clear the fallback on its own. **Next step if the coordinator wants it:** retire and immediately re-create the GAME layer's SurfaceControl when the overlay goes away — it would restore DEVICE composition for the rest of the session, at the cost of one black frame unless the new SurfaceControl is shown before the old one is retired. Not implemented; unproven.
+- 🌊🧱 2026-09-13 21:30 — **Overlay pool fix verified** on build 2 (`f50d1816…`): the session log `wayland-2026-09-13_21-23-44.log` allocated **3** `banner_wayland_overlay: pool buffer` slots and logged **0** `no free layer buffer` drops for the whole Task-Manager episode, against build 1's 2-buffer pool which dropped a frame every ~5 s while that window redrew.
+- 🌊🧱🏁 2026-09-13 21:40 — **BUILD 4 = the final shape, device-verified. Branch `feat/wayland-multilayer`, code `d8b3d429`, CI run 34795712344 green on all three flavours, pubg `2fb6e537c1166488cb83fea2d49fa4f4a2038184acd62544c109d1cc6869acc7` installed on the Pocket FIT and sha-verified.** The present reorder (layers up first, base surface's black frame after, chain in its own submit) recovers the effects cost almost entirely — same scene, same Look, same session:
+  | HL2 + Retro CRT @ 1920x1080 | layer path | copy path |
+  |---|---|---|
+  | build 1 (two submits, black present first) | 111.5–113.9 fps | 128.7–130.7 fps |
+  | build 2 (one submit, chain behind the acquire) | **72.0 fps** | 128.3–128.7 fps |
+  | **build 4 (two submits, layers first)** | **118.2 / 119.3 → 123.3 / 123.7 fps** | 122.3 / 126.4 fps |
+  Log on build 4: `effects  scaling=None, CAS off, Look="Retro CRT", colour b=+6 c=+14 g=1.05 s=115%, NTSC on, CRT on` with **no `zero-copy paused` line**, `0 zero-copy frames | 1234 layer frames`, and the HWC3 dump still `AHardwareBuffer … z: 0 composition: DEVICE/DEVICE … transform: 90/0/0`. No-effects layer path unchanged at **143.6 / 142.9 fps**, `DEVICE/DEVICE`. The live zero-copy switch was exercised both ways with the Look applied (off: `layers hidden`, clean copy path; on: the layer resumes at 123 fps) and the drawer's corrected status line reads **"On: screen effects are drawn into the game's display layer, so it keeps hardware composition."** Remaining known cost: the game layer occasionally logs `no free layer buffer (display still holds all 3): frame dropped` while the chain runs at 1920x1080 (a few per minute; the pool is 3 buffers of the chain's result size).
+  **Cleanup done:** the three test shortcuts (`ZZ Test HL2`, `ZZ Test HL2W`, `ZZ Test AIO`) are deleted — container 7's Desktop is back to the user's five — and the staged APKs, screenshots and the device-side test script are gone. Evidence kept: `/sdcard/Download/wayland-backup/bench-pre4-hl2/`, `bench-ml-hl2/` and `multilayer/*.png`. **The device is left on build 4** (`2fb6e537…`); pre-release 4 (`abbe1028…`) can be restored from the `3.1.2-wayland-pre4` release if a tester build is wanted back.
+- 🌊🧱 2026-09-13 21:45 — Branch tip `0b44c3d4` = the device-tested code (`d8b3d429`) + the latest `feat/wayland-phase2` merged in (HDR recon doc + log, no code) + two comment-only commits; verified with `git diff d8b3d429 HEAD -- .../waylandcomp/src` that the source delta is comments alone. Tip verification build: CI run **34796666647** @ `0b44c3d4` — ✅ **green, all three flavours**.
+- 🌊🧱✅ 2026-09-13 21:45 — **Build 4 overlay path + the new full-hide rule verified on device.** Windowed HL2 + Wine Task Manager: `2 display layers in use …`, `banner_wayland_overlay geometry: buffer 0,0-404,453 -> screen 657,200-1263,879`, stats `253 zero-copy frames | 163 layer frames` (the game kept its copy-free frames with a window on top), HWC `DEVICE/CLIENT` as expected on this panel. Drawer screenshot shows it drawn over the game layer AND the overlay window with the zero-copy line reading `On: 165 zero-copy frames in the last 10 s`. Then Retro CRT applied **while the overlay was up** — the new rule fires with its own message and the overlay SurfaceControl is let go rather than left live:
+  `effects  zero-copy paused: a window above the game needs the compositor pass for the whole scene` / `layer  banner_wayland_overlay: SurfaceControl retired (window 0x79574d1320)` / `layer  banner_wayland_overlay: gone (nothing is above the game any more)` / `layer  layers hidden (scene is not a single fullscreen window)` — all in the same millisecond, then the whole scene on the copy path (`0 zero-copy frames`). Test shortcut deleted again; container 7's Desktop is the user's five.
+- ✅🚀🌊 2026-09-13 22:10 — **3.1.2 Wayland pre-release 5 LIVE** (run 34797125679 @ `77cabc23`, prerelease, vc85; 3.1.1 still Latest): https://github.com/The412Banner/Bannerlator/releases/tag/3.1.2-wayland-pre5 — three APKs (pubg `4a8f4716…`), **the same `proton-11.0-2.1-arm64ec-wayland-v6.wcp`** (`828b66d5…`, app-only round), README; update.json deleted; **pre-release 4 deleted** (single rolling link). Deck on main `c5652ade`. Merged into the branch for this cut: `feat/wayland-vrr` (`19e03da0`) and `feat/wayland-multilayer` (code `d8b3d429`, CI 34795712344 + tip 34796666647 both green). Device + kit on pre5. **My own regression on the released build** (session `wayland-2026-09-13_22-03-36.log`): AIO Graphics Test on Wayland, `zero-copy: AIO-Graphics-Test-64bit.exe bound banner_ahb_v1 version 2 (follows the live switch)`, `presenting GPU frames through Wayland: 1172x686, XB24, qcom_compressed (zero-copy)`, steady 144.0 fps over five stats windows, two windows open, no errors. Test shortcut deleted; container 7's Desktop is the user's five.
+- 🐛🌊 2026-09-13 23:30 — **Native OpenGL on Wayland has NEVER worked; root-caused, half fixed.** User report: Wizardry LoLS (`LoLS_win32.exe`, 32-bit, GL) = sound + black screen + no HUD on Wayland. Evidence: session log `0 GPU frames from games` with ~300 `window redraws`/10 s and no `presenting GPU frames` line; wine log has no DXVK/VKD3D init but six `mesa_glthread` ATTENTION lines (GL-only). Chain: we advertised `zwp_linux_dmabuf_v1` **v3**; Mesa's EGL DRM path only reads `get_default_feedback` at **v≥4** and we ship no `wl_drm`, so `eglInitialize` retried with `ForceSoftware` → `swrast`; the layer's gallium is `zink+kopper+swrast` with `-Dllvm=disabled`, so nothing rasterised — the game's `wl_shm` buffer arrived **all zeros** (dumped live: 3,686,400 B, 0 non-zero) and the compositor blitted it faithfully. HUD never armed because it arms on the first GPU frame. **✅ Compositor half merged (`9e2e77b2`)**: dmabuf global at v4 with real feedback (sealed memfd format table, `main_device`, one tranche) — live proof `dmabuf feedback ready: 8 format/modifier pairs, main device 226:128`, Turnip's WSI binds at 4, and a purpose-built client probe verified v1-3 clients still get the old `format`/`modifier` events (bind 3 → 4 format + 12 modifier events; bind 4 → 0). Regressions green on that build (HL2 zero-copy `600 GPU | 600 zero-copy frames`; AIO all eight backends; effects on the layer path `613 layer frames`). **⛔ Remaining half is in the wcp's Mesa**: `banners-turnip-wayland/build_wayland.sh` patches `platform_wayland.c` to `if (ForceSoftware || Options.Zink) → dri2_initialize_wayland_swrast()`, and `registry_handle_global_swrast` has no dmabuf branch at any version, so our v4 global is ignored and the intended kopper path never engages (`LIBGL_KOPPER_DISABLE=1` changes nothing). Fix queued as **wcp v7**: drop the `|| Options.Zink` shortcut so EGL takes `dri2_initialize_wayland_drm()` → `driver_name=zink`, `kopper=true`. Client precondition holds (`/dev/dri/renderD128` 226:128, world-readable, opens as the app user). Env workarounds ruled out by evidence (`MESA_LOADER_DRIVER_OVERRIDE=zink` = no-op, winewayland already sets it; `LIBGL_ALWAYS_SOFTWARE=1` → game dies with `No matching GL pixel format available`). ⚠️ **Two of my earlier premises were WRONG:** the AIO Graphics Test is not a GL control on Wayland — it presents every backend through a Vulkan swapchain (`{mesa vk …}` queues, zero `{mesa egl …}`), and the same false claim is written into `proton-wine .../waylanddrv_main.c` (to be corrected in the v7 build); and this game is **worse on X11**, dying with `Could not create GL context: Invalid window handle`.
+- 🏁🌊🎮 2026-09-14 02:20 — **NATIVE OPENGL RENDERS ON WAYLAND (first time ever) + Wizardry PLAYABLE; shipped as pre-release 6.** (a) **wcp v7** (`436edf62…`, Turnip run 34804055227 @ `05dcce18`, proton-wine run 34804623989 @ `33d96b02`): dropped the `|| disp->Options.Zink` patch in `build_wayland.sh`, so EGL takes `dri2_initialize_wayland_drm()` → dmabuf at `MIN2(version,4)` → `main_device` from our feedback → `/dev/dri/renderD128` → `driver_name=zink, kopper=true`. Wine `+wgl`: `init_device_info - device_name: "zink Vulkan 1.4(Turnip Adreno (TM) 750 (MESA_TURNIP))", accelerated: 1, core_version: 46`. The old patch could never have worked: the swrast initialiser never sets `fd_render_gpu`, so with Zink-but-not-ForceSoftware it failed `loader_is_device_render_capable(-1)` and fell into the `Zink=FALSE; ForceSoftware=TRUE` retry. `-Dllvm=disabled` stays (nothing rasterises on CPU on this path); the script now **asserts** upstream's dispatcher shape instead of printing a skip line. The false "AIO proves OpenGL at ~230 fps" comment corrected in `waylanddrv_main.c` + `TURNIP.md` (the AIO's fps column is a STATIC reference table — never quote it). (b) **Wizardry's exit root-caused and NOT ours:** SIGSEGV (`sig=11 code=1`, SEGV_MAPERR) on Mesa's `u_threaded_context` util_queue thread `gdrv0` in libgallium — a plain pthread, so Wine's handler runs with no TEB, faults again 19 µs later (two `signal_generate`, **no `signal_deliver`**), kernel forces SIG_DFL and the process vanishes: no tombstone, no `+seh`, no exit reason. Cracked with a private ftrace instance on `signal:signal_generate` filtered by comm — **keep that as standard practice for non-Wine-thread crashes**. **Fix: `GALLIUM_THREAD=0`** in Env Vars → full intro cinematic, PRESS START, attract loop, 2862 swaps in one run, locked 30 fps (game's own cap), GPU 10 %, 4.7 W. Added to the user's Wizardry shortcut (backup `/sdcard/Download/wayland-backup/wizardry.desktop.bak`). Ruled out with evidence: Cg (never runs — 50 GL entry points resolved, none of the ARB program/shader ones; engine is Sony PSSG), our EGL/zink path (AIO `--force-gl` 4630 swaps 64-bit / 4310 32-bit), FEX vs box64, audio driver, pointer lock/geometry, zero-copy, zink bgc / Turnip sysmem / shader cache, `mesa_glthread`. (c) **Regressions on v7:** HL2 zero-copy 132.5-143.2 fps and 1325-1432 zero-copy frames per 10 s (v6: 124.5-141.8 / 1244-1418); effects `13 passes` at 144.0 fps; Notepad typing + clipboard both ways + xkb root on `-7`. ⚠️ AIO eight-backend sweep not re-proven (taps would not reach the window in the harness; keyboard input does reach the guest, so it is a harness problem — the app ran 3+ min per session across six sessions at 144 fps). (d) **Shipped: `3.1.2-wayland-pre6`** (run 34808796593 @ `fd3db7dc`, prerelease, vc85) with the v7 wcp + README; update.json dropped; **pre-release 5 deleted**; device + kit on pre6 (pubg `48377d13…`). ⚠️ Open risks: the DRM path walks `/sys/dev/char/226:128/...` — the Pocket FIT is SELinux Permissive, so an enforcing device is unproven (failure is graceful: EGL retries in software = a black GL window; check `logcat | grep 'avc: denied'`); devices exposing more than one Vulkan ICD would break zink's "only one device" fallback (winewayland sets exactly one today). Proper fix for the gallium crash needs the faulting PC (Mesa build with a surviving crash print, or a SIGSEGV handler chained ahead of Wine's) = another wcp; not done.
+- 🔖🌊 2026-09-14 03:00 — **CHECKPOINT: Wayland PHASE 5 starts** (user: "begin then"). Baseline: main **`8fc2f5ce`** (the display-layer + refresh-rate + OpenGL work merged; versionName kept at 3.1.1/vc85; verification build 34824400465), branch `feat/wayland-phase2` `7caa8e98`, shipped tester build `3.1.2-wayland-pre6` + wcp **v7** (`Proton-11.0-2.1-arm64ec-7`). This round is **app-only** (wcp stays v7):
+  1. **OpenGL safe mode** — default ON for GL sessions on Wayland with a drawer/container switch to turn it off, exporting `GALLIUM_THREAD=0`, so a GL game cannot vanish silently ([[project_bannerlator_wayland_gallium_thread_crash]]). Two greying reasons must stay distinct where relevant ("your screen/driver cannot" vs "not built yet").
+  2. **HDR capability reporting** — every session logs what the display reports (`Display.getHdrCapabilities().getSupportedHdrTypes()`, `isHdrSdrRatioAvailable()`, max luminance) so tester devices tell us whether HDR is worth building. The Pocket FIT reports `supportedHdrTypes=[]`, 500 nits, `hdrSdrRatio not_available` = **no HDR**. Capability is per-display and changes when an external screen is attached, so read it live, not once at launch.
+  3. **Display-layer composition recovery** — when the overlay layer goes away, retire and immediately re-create the game layer so the frame returns to hardware composition (today it stays CLIENT until something else rebuilds it; measured in `sc_layer.h`).
+  Not this round: the real fix for the gallium crash (needs a driver rebuild with surviving crash reporting → new wcp), the 10-bit slice, HDR itself (blocked on hardware that can show it), zero-copy by default (needs more devices), folding Wayland into the AIO layers.
+- 🛑🌊 2026-09-14 03:05 — **USER GATE: no new pre-release until the work is finished AND they approve it.** Everything stays local from here: branches pushed and merged as usual, but **no tag, no GitHub release, no published asset** for Wayland without an explicit go. Hand-over = refresh `/sdcard/Download/Wayland/` (APK + wcp + README) and install on the device. `3.1.2-wayland-pre6` stays as the current public tester link; the rolling-swap rules in [[feedback_wayland_prerelease3_wcp_swap]] resume when they green-light the next cut.
+- 🔖🌊 2026-09-14 03:10 — **ROLLBACK CHECKPOINT written (user ask): [[project_bannerlator_wayland_checkpoint_20260914_pre6]]**. Restore point = main **`8fc2f5ce`** / branch `feat/wayland-phase2` **`0a52cd7a`** (code `7caa8e98`) / proton-wine **`33d96b02`** / Turnip **`05dcce18`** / wcp **v7** `436edf62d00bef2f…` (`Proton-11.0-2.1-arm64ec-7`) / APK `48377d135e542464…` = `3.1.2-wayland-pre6` installed / container 7 on layer 7 (layer 6 still installed for a one-line revert) / share folder = pre6 APK + v7 wcp + README / Desktop = the user's six shortcuts (Wizardry carries `envVars=GALLIUM_THREAD=0`, backup `/sdcard/Download/wayland-backup/wizardry.desktop.bak`). Deck on Pages is one cut stale (says pre-release 5) — refresh at the next approved public cut. Known issues carried forward: silent GL-game death (gallium threaded context), two-layer CLIENT composition until the game layer is rebuilt, the shortcut-vs-container `matchRefreshRate` resolution bug, AIO sweep unproven on v7 (harness), SELinux-enforcing devices unproven for the new EGL DRM path.
+- ✅🌊 2026-09-14 05:40 — **Phase 5 merged (`f2adbaeb`, from `feat/wayland-phase5` code `217efe9e`, CI 34825893993 green, pubg `207154ce…` installed on the device).** No wcp change (layer stays `-7`), **no release** (user's gate). (a) **OpenGL safe mode PROVEN as an A/B/A on one shortcut with no hand-typed env var**: ON (default) → `wayland: OpenGL safe mode on - exporting GALLIUM_THREAD=0` + `302 frames on screen (30.2 fps) | 300 GPU frames` for 90 s; OFF from the drawer (writes `waylandGlSafeMode=0` to the **same owner the resolver reads**, so the toggle can never be inert — the `matchRefreshRate` bug is not reproduced) → `05:26:10.832 presenting GPU frames` → `05:26:11.141 program disconnected` = **309 ms, one frame**; ON again → 30 fps steady. (b) **HDR reporting PROVEN**: first line of every session log — `HDR capability of "Built-in Screen" (display 0, Android API 34): formats none | luminance max 500 nits… | HDR/SDR headroom not available -- SDR only: an HDR layer here would be tone-mapped and dropped to GPU composition`; Task Manager CONTAINER shows `HDR  none · panel 500 nits`. (d) HL2 zero-copy unchanged (seven windows of `600 frames | 600 GPU frames | 600 zero-copy frames`). ⚠️ **(c) display-layer composition recovery is CODE-ONLY, UNPROVEN**: the game+overlay pair never came up (fullscreen HL2 minimises itself when Wine's Task Manager takes guest focus → `window moved to -32000,-32000` → `layers hidden`; the windowed retry hung). `DEVICE/CLIENT`, the recovery log line and the return to `DEVICE/DEVICE` are all unobserved — re-test recipe is in the branch's log. Also unproven: the HDR re-read when a display is attached (nothing plugged in), effects applied live, and an X11 regression launch. 📌 **Wizardry's `envVars=GALLIUM_THREAD=0` is now redundant AND harmful** — the launch path leaves an explicit user value alone, so while that line is on the shortcut the in-game safe-mode toggle cannot turn it off for that game. Remove it when the device is free (user was driving). Device left on the phase-5 build, NOT the released pre6; share folder still holds pre6.
+- ✅🌊 2026-09-14 07:05 — **Overlay layer now GATED on the display's transform+scale; merged (`3320b192`, code `5334b3d3`, CI 34834608772 green, pubg `5be0ea93…` installed).** The phase-4 premise was wrong and is corrected in `sc_layer.h`: a second display layer flips the frame to `DEVICE/CLIENT` **for the rest of the session** on this panel, and rebuilding the game layer does NOT bring it back (reproduced 3×, also at +8/+16/+24 s, and after dropping the layer path entirely; the earlier "HOME+resume fixes it" reading was wrong because HOME+resume re-creates the app's whole window and SurfaceView, `VRI[XServerDisplayActivity]#0` → `#4`). Control: the drawer alone does not cause it. **Gate (prediction, not measure-then-back-out — the composition type is not readable by an app: it lives in the Composer HAL, `ASurfaceTransactionStats` carries only latch time + fences, and the `dumpsys` copy needs `android.permission.DUMP` and would arrive a frame late):** rotation from `VkSurfaceCapabilitiesKHR::currentTransform` (`vkp_surface_rotation_degrees()`, so it follows panel install orientation + session orientation on any device, no allowlist) and scale from the game layer's own src→dst rects, decided in `render_scene()` **before** the game is committed to a layer (deciding inside `sc_layer_present_overlay()` showed/hid the game layer every frame). Proven: `overlay layer declined: this display rotates every layer 90° and the game layer is scaled 1280x720 -> 1920x1080 …` + `zero-copy paused: … whole scene on the copy path`; composer dump shows **no AHardwareBuffer layers**, `SurfaceView … z=0 DEVICE/DEVICE t=90`; picture identical, no black frame; fps not worse (30.5/27.6/30.6/30.8/30.5 with the window up vs 30.5/30.8 on the two-layer path); closing the window → `zero-copy resumed: the game is back on its own display layer`, `267 layer frames`, still `DEVICE/DEVICE`. **The session never leaves DEVICE/DEVICE now**, where before it lost it permanently. Regressions: layer path with no window above `300 frames | 300 GPU | 300 layer frames` `DEVICE/DEVICE`; effects live `13 passes` keeping the layer; X11 untouched (no safe-mode/overlay lines, no session log, Insane 2 `D3D9 · DXVK · 202.4 fps · X11`). The fresh-SurfaceControl swap stays for displays where the overlay IS raised. ⏳ Still code-only: the HDR re-read when a display is attached (nothing can be plugged into USB-C; a simulated display was correctly de-duplicated because the game stayed on the built-in panel).
+
+### 2026-09-18 — controllers for the Steam client: the reader works, the client's SDL3 is the wall
+
+**What the user reported.** The Steam client had no gamepad at all. Neither the on-screen controls
+nor a physical GameSir G8+ over Bluetooth reached it.
+
+**One cause for both.** `WinHandler.sendGamepadState()` never went through Wine: it writes the pad
+state into shared-memory rings, and `libfakeinput.so` turns those into a real `/dev/input/eventN`.
+That interposer fakes the whole evdev and udev surface in userspace, so it was never Wine-specific —
+it was only ever *preloaded* into Wine. A gamescope session has no Wine, so the rings had a writer
+and no reader.
+
+**Why the built-in pad on the Pocket FIT works and the Fold's Bluetooth pad does not.** The FIT is
+SELinux **Permissive**: its own logcat shows `avc: denied { open } for /dev/input/event9 ...
+permissive=1`, logged and not enforced, so the session reads the real kernel node — and
+`/dev/input/event8` there is literally `045e:028e  Microsoft X-Box 360 pad`, the best-mapped GUID in
+SDL's database. Nothing of ours is involved. On an enforcing device the same `open()` fails. The
+nodes are `crw-rw-r-x root:input`, so ordinary permissions allow it and SELinux is the only gate.
+Direct passthrough is therefore not shippable; it works on the FIT by accident of a permissive kernel.
+
+**Built.** `fakeinput.cpp` now compiles against glibc too — the only blocker was `ioctl`'s request
+type (bionic `int`, glibc `unsigned long`). Linked `-static-libstdc++ -static-libgcc`, because it is
+preloaded into every Steam process and Steam ships its own libstdc++ while rewriting
+`LD_LIBRARY_PATH`. It ships as a 1.4MB **APK asset** staged into the runtime at launch, not baked
+into the rootfs image, so an already installed runtime gains it on the next launch instead of waiting
+on a ~790MB re-host. `FAKE_EVDEV_IDENTITY=xbox360` gives it `045E:028E`, vendor/product deliberately
+**not** offset per slot, since a real pad reports the same ids on every port and offsetting produces
+a GUID no database knows. That is WinNative PR #727's change, taken scoped: the Wine path keeps the
+generic identity until it is proven on device.
+
+**Three bugs of mine, in order.**
+1. The preload was added to `bannerlator-session`, which lives *inside the rootfs image* — it could
+   never have reached an installed runtime. The app sets `LD_PRELOAD` in the session env instead.
+2. `FAKE_EVDEV_DIR` was empty when the client scanned. `open()` only serves a ring when a file of
+   that name exists, and it **rewrites** the path rather than falling back, so a missing node gives
+   ENOENT. `onCreate` deletes `event0..3` and the **Wine** launcher is what normally recreates
+   `event0`; the Linux path never did. Writers create their node when a slot is claimed, long after
+   the client has finished scanning. Now `event0` is created before the session starts — one node
+   only, since each extra file is another pad the client would list.
+3. The SDL hint was the SDL2 spelling. The client ships **SDL3**, which wants
+   `SDL_JOYSTICK_LINUX_CLASSIC`. Also `libudev.so.1` is present so SDL3 prefers
+   `udev_enumerate_scan_devices`, which enumerates from `/sys/class/input` where the synthetic pad
+   has no entry and never will — hence `SDL_JOYSTICK_DISABLE_UDEV=1`.
+
+**A bench rig that needs no Steam, no app and no controller.** Two aarch64 glibc probes, run on the
+FIT by invoking the rootfs loader directly (`ld-linux-aarch64.so.1 --library-path`), so proot is out
+of the picture. A valid ring is 98368 bytes with a four-word header. `evprobe` mimics an evdev scan;
+`sdlprobe` dlopens the client's own `libSDL3.so.0` and lists gamepads. `FAKE_EVDEV_LOG=1` writes to
+stderr, so the redirect has to be inside the bridge quotes.
+
+**Proven.** `evprobe` against the real interposer: `scandir(/dev/input)=event0`, `OPENED`,
+`id=045e:028e bus 0003 ver 0110`, `name=Xbox 360 Controller (0)`, the gamepad bits all set, so a
+client applying SDL's own test would accept it.
+
+**The wall.** `sdlprobe` on the client's SDL3 finds exactly one joystick by default — `PS4
+Controller`, the real G8+ — and it reaches it through **hidraw**, which the interposer does not hook.
+With `SDL_JOYSTICK_HIDAPI=0` it finds **zero**, with an empty `SDL_GetError` and **not one
+interposer log line**, while `evprobe` in the same configuration emits seven. So the client's SDL3
+never opens, stats or scans anything under `/dev/input`. The Linux backend is compiled in
+(`SDL_JOYSTICK_LINUX_DEADZONES`, `_HAT_DEADZONES`, `_DIGITAL_HATS`, `_CLASSIC` are all in the
+binary), so this is not a missing driver.
+
+**Where that points.** SDL's `LINUX_CLASSIC` selects the old `/dev/input/js*` interface rather than
+evdev, and the fake directory has no `js0`. `SDL_EnumerateDirectory` also walks a directory with
+`opendir`/`readdir`, which the interposer does not hook — it hooks `scandir` only — so a walk sees the
+real `/dev/input`. Next: add `js0`, hook `opendir`/`readdir`, re-run `sdlprobe`.
+
+**One correction worth carrying.** Because `open()` rewrites the path, the interposer **masks** the
+real `/dev/input` — so the Pocket FIT *is* a valid test platform once the preload is active, and
+permissive versus enforcing stops mattering. hidraw is not masked, which is exactly how the real G8+
+still reached SDL3.
+
+**Solved, on this device, without Steam or a controller.** A path-tracing preload alongside the
+interposer showed the client's SDL doing `opendir(/sys/class/input/)`, then
+`scandir(/dev/input)` returning **one** entry, then `open(/dev/input/js0)`. **It enumerates `js*`
+nodes and ignores `event*` entirely.** With only `event0` present it found nothing — that, not udev
+and not the hint spelling, is why no pad ever appeared. With `js0` there, SDL reports
+`Xbox 360 Controller`, applies its own mapping
+(`03005e615e0400008e02000010010000,...,a:b0,...,leftx:a0,...`) with no configuration, and a BTN_A
+plus ABS_X written straight into the ring with `dd` read back through SDL's gamepad API as
+`pad:SOUTH=1 pad:LEFTX=-20000`. That mapping arriving for free is the xbox360 identity earning its
+keep.
+
+**And a translation written on a wrong inference, thrown away on evidence.** `js*` nodes speak the
+old joystick protocol, so I taught the interposer to convert. It made things worse: SDL's read buffer
+is 768 bytes, exactly 32 `input_event`s, so it wants evdev structs even from a js node. Two
+`js_event`s are 16 bytes against one `input_event`'s 24, so every read became a short read SDL threw
+away — `read(fd=10) = 16` and `SOUTH` stayed 0. Reverted, and the pre-translation library produced the
+result above on the first run. Serving evdev on a `js*` node looks wrong and is what this consumer
+wants; there is a note in the file now so it is not re-added.
+
+**Working configuration.** Node `js0`, with `event0` kept beside it for anything scanning evdev
+directly — SDL's own filter skips it, so no duplicate pad — plus `SDL_JOYSTICK_DISABLE_UDEV=1`,
+`SDL_JOYSTICK_LINUX_CLASSIC=1` and `FAKE_EVDEV_IDENTITY=xbox360`. Stale `js*` nodes are cleared at
+launch with `event*`, so a Linux session cannot leave a phantom pad behind for a Wine session.
+
+**Still unproven:** all of the above is the interposer and SDL in isolation. Nothing has yet run in a
+real session, where the writer is `WinHandler` rather than `dd`, and where gamescope and the client
+are in the picture. Build `35410420407` (`596f8991`) is the first with the node.
+
+### 2026-09-19 — Max's fork explains the Fold: two session-killers and the games step
+
+**Where the work lives.** Not in `WinNative-Emu/WinNative` — the `feature/wayland-gamescope`
+branch is on Max's personal fork, `maxjivi05/WinNative`. Searching the org repo found nothing,
+which was the wrong conclusion drawn from the wrong place.
+
+**What was on the Fold, in his commit messages.** `7d41c135` (Sep 18): the sandbox denies the
+`NETLINK_KOBJECT_UEVENT` socket, so libudev cannot create a monitor, `SDL_hid_init()` fails, and
+the Steam client retries it hundreds of times a second until its main loop stalls and it asserts
+out. That is the Fold's `socket(): Function not implemented` storm, the `wl_client_create failed`
+that follows on a stale errno, and the `rc=1` / `rc=139` a second after login. The Pocket FIT is
+permissive, gets its netlink socket, and never sees any of it — which is the whole FIT/Fold split
+of the last six hours. His answer is `preload/udevmon.c`: one end of a datagram socketpair stands
+in for the netlink socket, its peer held open, `bind`/`getsockname`/`setsockopt` answered, the real
+socket tried first. `79aa7f68`: Steam forks while other threads are inside the interposer's hooks,
+the child inherits a held mutex and blocks on its first `open()`, the client's watchdog fires
+(`BMainLoop appears to have stalled > 15 seconds`) and gamescope is torn down about two minutes
+in — fixed with `pthread_atfork` handlers on every lock the preloads take.
+
+**The "spoof to a specific device" he mentioned.** `29d93f13`: Steam Input claims the pad, lists
+its id in `SDL_GAMECONTROLLER_IGNORE_DEVICES`, and its overlay refuses the game's `open()` with
+ENODEV; the game is meant to get Steam's uinput virtual pad, which cannot exist on Android. So
+under `FAKE_EVDEV_STEAM_VIRTUAL=1` the fake pad answers as that virtual pad — `28de:11ff`,
+"Microsoft X-Box 360 pad N" — for every process except the client. `f1f34cd7` moves the triggers
+to `ABS_Z`/`ABS_RZ` under that identity, because Wine places axes by advertised order.
+
+**Two design points where his is right and mine is not.** He binds the ring directory *as*
+`/dev/input` in proot, so unhooked `opendir`/`readdir` simply see it; I rewrite paths inside the
+interposer and hook only `scandir`, which is the whole reason the `js0` node was needed. And his
+comment on the launch: the Steam client rebuilds `LD_PRELOAD` for every process it starts and
+appends its overlay without a separator, silently dropping whatever was there. So the
+`LD_PRELOAD` I put in the guest environment reaches the client — the FIT proved it held the ring —
+and is lost for every game the client launches. He names both shims in `/etc/ld.so.preload`
+instead, ships them as app assets, and syncs them into the runtime at every launch, which is also
+how a fix like `udevmon.c` reaches a runtime that is already installed.
+
+**Port plan, in order.** (1) `udevmon.c` and the atfork handlers into our preload set, and ship
+`libblsession.so` as an app asset synced at launch — the Fold's crash, with no runtime re-host.
+(2) Bind the rings as `/dev/input`, move both shims to `ld.so.preload`, drop the env `LD_PRELOAD`.
+(3) Take his `fakeinput.cpp` — mutex, atfork, `shared_ptr` map, `ioctl_request_t`, the virtual
+identity, Z/RZ — and re-apply the opt-in Xbox 360 identity and the static C++ runtime on top.
+(4) `FAKE_EVDEV_STEAM_VIRTUAL=1` for games. Each stage verified on the FIT bench and in a real
+session before it goes near the Fold.
+
+**Ported, all four stages, in `15aeade5` and `ee8b7b19`.** The session shim gained Max's
+`udevmon.c` (the netlink stand-in) and fork handlers on its locks, and is now built into the APK
+and staged into the runtime at every launch, so the Fold gets it on r9 with no runtime re-host.
+The interposer is Max's file whole — locking, fork handlers, `shared_ptr` table, the Steam
+virtual identity, Z/RZ triggers — with the opt-in Xbox 360 identity re-applied on top. The
+ring directory is bound in as `/dev/input`; `LD_PRELOAD` is gone from the session environment
+and both shims are named in `/etc/ld.so.preload`, which the app writes by rename each launch;
+`FAKE_EVDEV_STEAM_VIRTUAL=1` and Max's three SDL hints are set; the `js0` node and the
+classic-scan hints are removed. Bench first, with the runtime's own proot on the FIT: with the
+rings bound as `/dev/input`, `event0` alone and no hints at all finds the pad; adding the
+classic hint without `js0` finds nothing, which is why the two had to go together and why they
+are both gone now.
+
+**Scope worth knowing.** `fakeinput.cpp` is one file built twice — bionic for Wine, glibc for
+the Linux runtime — so the hardening (locks, fork safety, the safer device table) is now live
+for Windows games as well. That is the code WinNative has shipped for Windows games since
+mid-September, and its behaviour toward Wine is unchanged because everything new is gated on
+variables only the Linux session sets. It has not been re-tested under Wine tonight.
+
+**Where this stands, for whoever resumes.** Test build `ee8b7b19` (run 35420566622), building at
+the time of writing; nothing in it has run on a device yet. On the Pocket FIT — r8 and then r9 —
+the pre-port chain was proven end to end: the client held our ring with no hidraw descriptors,
+identified the pad as an Xbox 360 controller, rendered Xbox prompts, and navigated Big Picture
+from injected input and then from real on-screen touches. The Fold never got that far because
+its sandbox denies udev's netlink socket, which is what the port fixes. The Fold protocol is:
+the **standard** artifact, GameHub force-stopped first (it takes the Steam login within seconds
+and has done so twice tonight), GameSir connected, optionally an empty
+`Download/bannerlator-fake-input-log` for the interposer trace, then zip
+`/sdcard/Download/Bannerlator-LinuxSteam/` and read `fake-input-<stamp>.txt` before anything
+else: it lists both staged libraries, the `ld.so.preload` contents, the nodes and rings, whether
+a pad was connected, every variable handed to the session, and — appended when the session ends
+— how many events the app wrote into the ring. `Download/bannerlator-no-fake-input` turns the
+whole feature off for a true baseline.
+
+**Still open.** The device test itself. One run on the FIT under r9 produced the same ENOSYS
+storm once and never again, which may be the same netlink denial under seccomp rather than
+SELinux and should be re-checked with the stand-in in place. The Wine path has not been
+re-tested since the interposer swap. Every commit from 2026-09-18 carries an attribution trailer
+that the repo rule forbids; the branch is unmerged, and rewriting those messages is offered and
+waiting on a yes. Not started: the on-screen segfault seen once on the Fold, if it survives the
+port at all — its timing suggested it was the same assert, not the overlay.
+
+**2026-09-19, confirmed on the Fold.** With `ee8b7b19` (standard flavour, r9, SELinux enforcing)
+both the on-screen controls and the GameSir G8+ work in the native Steam client. That closes the
+gap that ran all night: the client stayed alive because the session shim now answers udev's
+netlink socket instead of letting SDL's HID init fail until the client asserts, and the pad
+reached it through the rings bound in as `/dev/input`. Not yet re-run on the Pocket FIT — the
+install there did not take (package still the previous build), and the ported test is staged
+to run the moment it does.
+
+**2026-09-19, confirmed on the Pocket FIT as well.** `ee8b7b19` installed (hash `37a89dcb…`
+verified first), Steam launched with the trace on and GameHub stopped: both libraries staged
+(26,928 and 1,434,960 bytes), `ld.so.preload` naming both, nodes `event0..3` and no `js0`, zero
+socket or memfd ENOSYS, Steam alive with no `LD_PRELOAD` in its environment and all three SDL
+hints present, holding the rings with no hidraw descriptors; 137 interposer trace lines of it
+opening and probing the pads. Driven from the ring, the D-pad navigated and A opened an item —
+the bottom bar switched to `STORE PAGE / CLOSE`. Both devices now work on the same build. The
+one leftover was cosmetic: the diagnostics file's variable filter did not print
+`SDL_HIDAPI_JOYSTICK_DISABLE_UDEV`, which was nonetheless set; fixed.
+
+**Two corrections to the open items above.** The attribution trailers never reached the repo:
+a global `commit-msg` hook (`core.hooksPath` in the Termux git config, dated June) deletes any
+`Co-Authored-By` line naming Claude and any line carrying the anthropic address, so the branch was
+clean all along and the rewrite on 2026-09-19 changed nothing — 113 commits above `origin/main`,
+zero matches, identical tree. And the Pocket FIT is now confirmed in real use as well, not just
+by driven input: the built-in pad and the on-screen controls both work in the client on
+`ee8b7b19`. That leaves one open item, the Wine-path re-test after the interposer swap.
+
+### 2026-09-19 — a fresh client never listed Bannerlator Proton until restarted
+
+**What the user saw on the Fold.** After a fresh install of the client, Brawlhalla's Compatibility
+list held only Valve's two ARM64 entries; a download-then-launch failed; quitting and relaunching
+the client made "Bannerlator Proton (ARM64)" appear and the launch work.
+
+**Both halves proven.** Our tool was a symlink mirror of Valve's ARM64 Proton depot, so it could
+not exist before that depot was downloaded, and the client downloads it only as a dependency of
+its own chosen tool on a title's first launch — a launch that dies under the Steam Linux Runtime
+container. And a running client does not rescan `compatibilitytools.d`: on the FIT, with the
+client live, a probe tool dropped into that directory produced no log line in 45 seconds. So the
+watcher that registered ours seconds after the depot landed was invisible until the next start.
+On this device it only ever worked because the depot already existed when the registrar ran.
+
+**Fix, `0309ed5e`.** The tool is written at the start of every session with no depot required —
+its own manifests and a launcher that finds whichever ARM64 Proton depot the client has at launch
+time and runs its `proton` directly. Its manifest names that depot (appid 4427310) as the tool's
+dependency, so the client fetches it before a first launch the way its own entries pull in their
+runtime, but not the depot's own dependency on the arm64 Steam Linux Runtime. The default and
+every installed title map to ours from session one, and the session re-runs the registrar every
+fifteen seconds so a title installed later is remapped too. The session scripts now ship as app
+assets refreshed at every launch, alongside the preload libraries, which is how this reaches a
+runtime that is already installed.
+
+**Not settled.** Whether the client composes the depot's own runtime dependency onto our tool
+transitively. If it does, the launch is wrapped in the container's entry point and dies before our
+launcher runs; the compat log of the first launch will show a dependency on 4185400 or a
+`_v2-entry-point` command prefix, and the fallback is to drop the dependency line and keep the
+old seed as the download trigger.
+
+### 2026-09-19 — the rest of Max's session stack, and the two libraries meeting in the middle
+
+**Why now.** The Fold's Brawlhalla sat at "Loading Game Files 99%". Max's own words on it
+("I didn't have all the networking stuff set up for Gamescope like I did Proton") and his
+`f76a5c4a` describe it exactly: the sandbox refuses `getifaddrs`, `if_nameindex`, the
+hardware-address ioctl and every `/proc/net` table; Wine builds its adapter tables from those;
+Brawlhalla enumerates its adapters at the end of loading and never returns. This device never
+showed it because its sandbox is permissive — the same split as every other Fold-only failure
+tonight. His `a78c4601` is a second Brawlhalla killer: proot is a ptrace tracer, the client took
+the `TracerPid` for a debugger, closed descriptor 1 on every failed assert, and the game found
+its Steam socket dead at its first call.
+
+**Ported, `a49806e8` and `e92e37da`.** Into the app-shipped session shim: `netif.c`, `tracer.c`,
+`lock.c` (FUSE cannot lock; the client read ENOSYS as failure and walked downloads backwards),
+`opens.c` (O_NOATIME refused on shared storage; the client called the file corrupt),
+`inputudev.c` (the pads described to Wine's HID bus, for controllers inside games), and
+`connect()` keeping EINPROGRESS. Into the session: the log rolls at 8 MB; shared
+redistributables are marked as already run so their x86 installers never start under emulation;
+the ARM64 Proton depot is asked for on the command line the first time a client lacks it, which
+replaces the dependency declaration in the morning's registrar — a dependency composes its own
+dependencies, and that depot's is the runtime container that cannot exist here; the launcher
+drops the overlay library, which stood in front of `/dev/input` reads and left a pad that never
+reported; what a game leaves under gamescope's reaper is killed when the client exits. In the
+app: a component publishes the device's active link to `etc/bannerlator-net` and follows it
+while the session runs, with a stable locally administered MAC seeded from the device id; the
+`/dev/shm` stand-in is emptied before a session; the client's games get the container's FEX
+preset instead of FEX's bare defaults; manifests are reconciled by build id so a title the
+client updated is adopted rather than reverted; and every game the client installed for itself
+gets a Games-tab entry that launches through it.
+
+**Left out, deliberately.** His proot change (we ship Termux's proot, not that tree), the
+storage-move UI, the compositor blend and the Turnip timestamp change — none bear on the client.
+
+**Process note.** Two editing passes aborted on a mis-typed anchor and the surrounding shell
+went on to commit and push regardless, which produced one build with the pieces present but
+not wired (cancelled, `a49806e8`). The final state was proved by counting the wired call sites
+and balancing braces, not by exit codes. Not yet run on a device.
+
+**Caught before the first two-way test.** The user began downloading a title through the app's
+store to see it appear in the Linux client. On this device the store's games live in containers
+3, 6 and 7 — twenty installed titles — while the Linux client's entry is in container 8, whose
+prefix holds no store installs at all, and the library sync read only the launching container.
+The client would have been shown nothing, and the test would have failed for a reason unrelated
+to any of tonight's work. `77d947b7` scans every container, takes a title present in more than one
+from the first that has it complete, offers only complete installs (StateFlags 4 — a bind of one
+still downloading would hand the client half a game), and reconciles the client's manifest back
+into the container that owns the title. The `e92e37da` build staged minutes earlier was withdrawn
+before it was installed.
+
+**And a second gap behind it.** The store leaves only a link under the prefix's
+`steamapps/common`, pointing at wherever it put the files — the app's own storage, or a card the
+user chose (on this device, Brawlhalla lives on a removable card at `/storage/7B7F-E3AA/…`). The
+sync bound the link itself, and a card is not among the trees bound into the runtime, so inside the
+client the link resolved to nothing: through the runtime's own proot, binding the link showed an
+empty folder and binding the resolved path showed all 580 files. `d71739fe` binds the real folder.
+
+**The user was right to push on this.** "Why read containers and not the original folders?"
+The library sync had been built on the links the store leaves under each container's prefix,
+and two rounds of patching — scanning every container, then chasing links that had gone stale
+after a game was moved to a card — were symptoms of the wrong shape. `9ce0cf67` replaces it:
+the store's database is the source of truth, one row per game with the folder it actually lives
+in, kept current on a move; the original folder is what gets bound into the client, wherever it
+is; and a folder the database does not know still counts if it identifies itself, by the
+`steam_appid.txt` a launch leaves behind or by the downloader's journal mapped back through the
+database. The one thing that cannot be skipped is the manifest: the client will not treat a bare
+folder as a game, so each gets the manifest the app already wrote where one exists, or one
+written from its row. Nothing is copied; the client reads the same files Steam delivered.
+
+**`9ce0cf67` failed session setup on the first launch here** — "Attempt to get length of null
+array" while building the environment. The trace pointed at the folder-identity fallback:
+`FileUtils.readString` throws on a file that is not there rather than returning null, and the
+fallback read `steam_appid.txt` from every folder under the store's roots, so the first folder
+that had never been launched — the user's fresh FlatOut download — ended the setup. `15952f1a`
+checks each file exists before reading it and skips one bad folder instead of losing the
+session. The staged `9ce0cf67` build was withdrawn. The unified-library design the user approved
+— the app's two roots registered as the client's own library folders, so client downloads land
+where the app's would and are adopted into the store's database — is the next change, on top of
+this fix.
+
+**Unified libraries, written and held (`3613ba0a`).** The app's two game roots — its own
+`steam_games` and `bannerlator/steam_games` on the chosen card — are bound in whole as the
+`common/` folder of two Steam libraries the client sees, registered by name even when empty, so
+the client offers the same two install locations the store does and a download made in the client
+lands exactly where the app would have put it. Nothing is copied. Manifests are still written on
+the runtime side of each library, since the client will not treat a bare folder as a game: the
+app's own manifest for a title the database knows, reconciled by build both ways, else one
+written from what the folder says about itself. In the other direction, a game the client
+installs into either library is recorded in the store's database as installed there — at session
+start and again at exit — so the store shows it and the app can launch it; a game in the client's
+private library keeps only its Games-tab entry, because the app cannot run files that live
+inside the runtime. Pushed but deliberately not built yet, so the crash fix before it can be
+tested on its own; the next dispatch carries both. One caveat stands: the client's default
+install location is still its own library unless the user picks ours in the install dialog.
+
+**Main library = internal storage (`67bb8249`), on top of the held unified change.** The user's
+call: "main will always be internal storage by default like the app side." The client always has
+a main library it installs to by default and cannot remove, so instead of adding a third
+`/mnt/bannerlator` folder beside it, its own `steamapps/common` is bound over with the app's
+internal `steam_games`; the card is the one extra library. The install dialog now offers exactly
+the store's two locations with internal storage preselected, and there is no private folder for
+a forgotten choice to land in. Whatever the client had already installed into its own folder
+(Brawlhalla on the Fold) is renamed into internal storage once, before the bind — same
+filesystem, no copy; a name present in both is left in place and logged. The client's tools
+(228980/1493710/3127680/4183110/4427310/4185400, Proton/SLR/Steamworks/FEX by name) share that
+library and are never adopted as games; the app deletes only manifests it wrote itself. The
+Games-tab `syncClientGames` path is gone — a client install is adopted into the store's database.
+Dispatching `build-artifacts.yml` on `67bb8249` + the log commit; crash-fix `15952f1a` remains
+staged and untested on device.
+
+**Saves and Steam Cloud, checked against the change (2026-09-19).** Nothing that holds a save
+moves. Client-side saves live under the library's `steamapps/compatdata/<appid>/pfx` and the
+client's `userdata/`, both in the runtime root — the bind covers only `common/`, and Steam Cloud
+in the client is keyed by appid, not by folder. App-side saves live in each container's Wine
+prefix and sync through `SteamCloudSaveManager`; the change never touches a container. The one
+leftover was `bannerlator-seed-redists`, still seeding the retired `/mnt/bannerlator` library's
+prefixes — now `/mnt/bannerlator-sd`; the dead `GUEST_ROOT` constant is gone (`2b1f3163`). The
+`cc237b45` run was cancelled and `build-artifacts.yml` re-dispatched on `2b1f3163`
+(run 35426952192, headSha verified).
+
+**"Anything missing?" audit of the unified libraries — four gaps closed (2026-09-19).**
+(1) Every device that ran an earlier build has `/mnt/bannerlator` registered in the client's
+`libraryfolders.vdf`; it is not bound any more, so the client would keep offering a location
+that is not there. `bannerlator-steam-library` now removes that entry (block-wise edit, unit-tested
+on a sample), and the app's `retireOldLibrary` moves the prefixes/shader caches games made in that
+library into the main one (rename, same fs) and deletes the rest. (2) A game uninstalled from the
+store kept its client manifest; now any fully-installed manifest whose folder is gone is removed,
+tools excluded, downloads in progress kept. (3) The card library downloaded into the runtime root
+(internal) and then had to cross filesystems into the card: `<card>/bannerlator/steam_downloading`
+is now bound as that library's `steamapps/downloading`, so finishing a download is a rename;
+prefixes stay internal where symlinks and locks work. (4) A game the client uninstalls is marked
+not installed in the store's database, but only when its library is present — a missing card
+proves nothing. Run 35426952192 cancelled; rebuilt on the commit below. Needs device proof: card
+download in the client, retired-library cleanup on the Fold, store launch of an adopted game.
+
+**FlatOut would not launch: the input interposer killed Proton (2026-09-19).** The client mapped
+6220 to our ARM64 Proton correctly, spawned `reaper` → `proton waitforexitandrun FlatOut.exe`,
+and the process was gone in the same second with `exit code -1`; the session log also carried a
+`Segmentation fault  bannerlator-steam-compat` every 15 s from the refresh loop. Both are one
+fault. Proton is a Python script and the registrar is a Python script, and **`libfakeinput.so`
+segfaults glibc Python the moment it is preloaded** - proven on the FIT with the rootfs loader,
+no Steam involved: `bash` under the preload runs, `python3.14 -S -c 'print(1)'` dies rc=139.
+`LD_DEBUG=files` gives the mechanism: for bash the loader prints `calling init: libfakeinput.so`
+before transferring control, for Python the init list ends at `libpython3.14.so.1.0` - libpython's
+own initialiser runs first and calls `close()`/`read()`, which land in our hooks, which take
+`controller_mutex` and look in `controller_map` **before either object has been constructed**.
+`LD_DEBUG=symbols` confirms it: the last symbol bound is the `_Hashtable<...FakeController...>::find`.
+`python -I` survives because its startup takes a different path to the first hooked call.
+
+The fix (ours, not from Max - his version and ours before it share the pattern): nothing with a
+constructor stays at file scope. `controller_mutex`, `controller_map`, `ring_paths`, `ff_effects`
+and the env-derived config are accessors that build on first use and never destroy, which also
+closes the mirror-image window after static destructors at exit. `library_init` now only warms
+them. Host syntax check clean. NOT yet device-proven: the game still has to run under FEX once
+Proton starts.
+
+**Fix proven on the FIT before install (`2afae914`, run 35428880736 green, staged
+`Bannerlator-pyfix-2afae914-pubg.apk` sha `ae50423ea3cba7f3…`).** Old interposer vs new, same
+loader, same rootfs python: old `rc=139` on both `python -S -c print` and a normal import set,
+new `rc=0` on both. `bash` still fine, both shims together fine, and the interposer still serves
+its nodes (`/dev/input` lists event0..event5 under the preload). The registrar - the script that
+was segfaulting every fifteen seconds - now runs to completion: "default and 9 installed title(s)
+set to bannerlator-proton-arm64". The launch chain is therefore unblocked; whether FlatOut then
+runs under FEX is the next unknown and is not proven by any of this.
+
+**The Steam button was never wired into a Linux session (2026-09-19).** FlatOut runs on
+`2afae914`; the Home/Guide button does not open the client's in-game menu. Not a regression -
+the press never left the app. Three links were missing and the evidence is unambiguous at each:
+`ExternalController.getButtonIdxByKeyCode(KEYCODE_BUTTON_MODE)` returned -1, so
+`updateStateFromKeyEvent` returned false and `WinHandler.onKeyEvent` never called
+`sendGamepadState`; `GamepadState` had no bit for it and said so in a comment;
+`FakeInputWriter.BUTTON_MAP` held ten buttons with no `BTN_MODE`, and `fakeinput.cpp` said
+"e.g. BTN_MODE, which the writer never presses". The session's `fake-input-*.txt` confirms it:
+zero code-316 events all session. Meanwhile Steam is ready for it - the mapping it wrote for our
+pad is `...back:b6,guide:b8,start:b7...` and the interposer already advertises `BTN_MODE` in the
+key bits at exactly the position SDL reads as b8.
+
+Wired end to end: `IDX_BUTTON_MODE = 12` (10 and 11 are the triggers-as-buttons) mapped from
+`KEYCODE_BUTTON_MODE`; snapshot bit 10 in both `FakeInputWriter.BUTTON_MAP` and the interposer's
+`kSnapshotButtons` (hardcoded `i < 10` loops replaced by `kSnapshotButtonCount`); the Steam
+Controller backend sets the same bit from its `B_GUIDE`; and the activity's Home/Select block no
+longer computes a result and drops it - each of those keys is offered to the bindings, then the
+pad, then the keyboard, and is still kept from Android. `prevButtonStates` was already 12 wide.
+The compositing half was already right: gamescope runs with `-e` and the client with `-gamepadui`.
+NOT device-proven: whether the client opens its menu over a Proton game once it sees the press.
+
+**DEVICE-PROVEN 2026-09-19 (FIT, `428fac48`): the Steam button opens the client's in-game menu
+over FlatOut.** User: "works". That closes the chain in full - the unified libraries present the
+app's games to the client, our ARM64 Proton launches a Windows title, and the client draws its
+menu over it. Still to prove: a download to the card from inside the client, the retired-library
+cleanup on the Fold, store-side launch/Verify of a client-installed game, and the Fold's on-screen
+controls, which have no Steam-button element yet.
+
+**Two-way visibility read off the device, and a StateFlags bug it exposed (2026-09-19).** The
+app's seven installed titles are all present to the client: Brawlhalla, FlatOut, Half-Life,
+Half-Life 2, Lossless Scaling and Stumble Guys in the main library, Team Fortress 2 in the card
+library, which `libraryfolders.vdf` lists as `/mnt/bannerlator-sd` with apps 440 and 550. The
+reverse direction is live too - Left 4 Dead 2 was installed by the client onto the card and
+appears there - but it is **not** in the store's database, and that is our bug, not a delay.
+`StateFlags` is a bit field and adoption compared the whole field to "4". L4D2 reads 6 (installed
++ update available) and TF2 reads 516 (installed + update paused), so a game that is fully on
+disk but a version behind was read as "still downloading" and never adopted. Replaced both
+equality tests with `isInstalled()`: bit 4 set, bit 2048 (being removed) clear, and a manifest
+with no StateFlags still counts, which is how the app's own manifests read.
+
+**Brawlhalla now exists twice** - `imagefs/steam_games/Brawlhalla` and the card's copy, ~1.5 GB
+duplicated, with a manifest in each library. `migratePrivateLibrary` only checks the destination
+root for a name collision, and the app's copy was on the card, so the client's private copy moved
+in beside it instead of being recognised as the same game. Flagged to the user rather than
+deleted; the collision check should consult the database's install dir for the app id, not just
+the destination folder.
+
+**Delete-reflection test passed on `f9dae5c2` (FIT, 2026-09-19).** The user removed Brawlhalla and
+Team Fortress 2 from the store - both Brawlhalla copies went, so the duplicate resolved itself -
+and relaunched the client. Both stale manifests were cleaned: the card library now holds only
+`appmanifest_550`. On the build before this one Team Fortress 2 would have survived, because the
+sweep compared its StateFlags (516) to "4"; the bit test removes it. The reverse direction landed
+in the same pass - Left 4 Dead 2, installed by the client onto the card at StateFlags 38, is now
+`is_installed` in the store's database.
+
+Side effect worth a decision: the Half-Life 2 episodes (340/380/420) were adopted too. Their
+manifests carry bit 4 and their `installdir` is the Half-Life 2 folder, which is present, so they
+are installed by every test we have - but the client's own Installed filter does not list them,
+so the store now shows three entries the client does not. Correct by the data, noisy in the UI.
+
+**Skeleton manifests made the client re-fetch games it already had (2026-09-19).** Left 4 Dead 2
+sat re-verifying 13.4 GB on the card with 2h23m to run, restarting the loop each time it was
+suspended, and Lossless Scaling had queued its whole 54.5 MB download beside 177 MB of its own
+files. Same cause for both: where the app had no manifest of its own to hand over, we synthesised
+one through `RealSteamLauncher.writeAppManifest`, which writes `InstalledDepots { }` empty with
+`SizeOnDisk 0` and `buildid 0`. That tells the client the game is installed without saying which
+files or which build, and the only safe reading of that is to verify everything and fetch what is
+missing. FlatOut, whose manifest the app's own downloader wrote, has a real depot list and has
+never misbehaved.
+
+The app already knows the answer: `depot_manifests` holds every depot with the manifest id it was
+installed from - L4D2's 551 and 552 sum to ~15 GB against 13.4 GB on the card. `writeManifest`
+now fills a manifest from that table, and also repairs one already on disk whose `InstalledDepots`
+is empty, which is what L4D2 and Lossless Scaling both need since their stubs already exist. With
+no depots recorded there is nothing better to write, so the old skeleton stays rather than
+replacing something with nothing. `SizeOnDisk` is the depot total, matching what Steam writes
+itself. NOT yet proven: whether the client accepts the repaired manifest and stops verifying.
+
+**Depot-aware manifests on device (`fbf5d4fb`): fixed for Lossless Scaling, inconclusive for
+Left 4 Dead 2 (2026-09-19).** Lossless Scaling now reads `StateFlags 4` with a real depot and
+manifest id, and Steam has since rewritten it itself - pruning to the one depot that applies and
+setting `SizeOnDisk` to that depot's size - which is what accepting an install looks like. Its
+phantom download is gone.
+
+Left 4 Dead 2 did not settle, and the session logged no `wrote ... depot(s)` line for it. The
+regex and the data both check out: the current manifest matches the empty-depot pattern and the
+database holds both depots, so a repair would fire now. The likeliest reading is that at session
+setup the manifest still carried the depots Steam wrote during its earlier verification, so
+nothing looked broken, and Steam emptied them again at 13:38 when it re-queued the update - the
+file's mtime is after session start and the content log shows Update Queued/Running from then.
+
+Worth saying plainly: this install is a poor test. Steam has flagged FilesMissing on it, there is
+no `.bl_depot` journal, so the app never downloaded it, and the folder is ~500 MB short of the
+depot total. Steam wanting to repair it may simply be correct, and no manifest we write should
+override that. The case that proves the fix is Lossless Scaling, which the app did install.
+
+Also adopted this session: Half-Life 2's episodes (340/380/420), all pointing at the Half-Life 2
+folder they share. Correct by every test we have, but the client does not list them, so the store
+now shows three entries the client does not.
+
+**Card cleared for the user's clean slate (2026-09-19).** Left 4 Dead 2 (~12.9 GB) and the
+2 MB Apex Legends stub removed from `/storage/<card>/bannerlator/steam_games`, along with the
+client's stale `appmanifest_550`. The card library now holds no manifests at all. Free space went
+from 273 GB to 286 GB. The first attempt was cut off partway - a delete that size over the card's
+FUSE layer outlives the bridge connection - so it was re-run detached and polled to completion.
+The store's database still records 550 as installed; `releaseClientUninstalls` corrects that on
+the next session, which is the path worth watching when the user next launches.
+
+Cleared the card's `steam_downloading/550` as well: 7.9 GB of Left 4 Dead 2's partial fetch.
+That also answers the open question about that install - Steam held nearly eight gigabytes of
+download scratch for it, so it genuinely was mid-fetch and was right to keep asking for files.
+Card free space 273 GB -> 293 GB, both card folders now empty.
+
+**The last untested direction is proven (2026-09-19, `fbf5d4fb`).** With Left 4 Dead 2's files
+deleted, the session logged `Left 4 Dead 2 (550) is gone from ...; no longer installed` and the
+store's row flipped to not-installed without being asked. All four directions now hold on device:
+the app's installs reach the client, the client's installs reach the store, an app-side delete
+cleans the client's manifest, and files vanishing clears the store's record.
+
+The client now lists four and the store eight, and the whole difference is accounted for. The
+three Half-Life 2 episodes share the Half-Life 2 folder, so they are installed and the store is
+right to say so; Big Picture simply does not list them separately. Lossless Scaling is an
+application rather than a game, so the client's game filters exclude it - it has never appeared
+there, including before any of today's work, so its absence is not a regression, and its manifest
+is now correct, which is what stopped it asking to download itself again.
+
+**Install dialog is right; the card's free space is not (2026-09-19).** The client offers exactly
+two locations - "Local Drive (/)" starred as the default and "Bannerlator (card)" - which is the
+behaviour the user asked for: the store's two places, internal preselected, no third location to
+fall into. But both rows read 279.64 GB free, and only internal has that: the card has 293 GB.
+
+The card library's root directory still lives in internal storage; only its `steamapps/common`
+and `steamapps/downloading` are bound to the card. Steam measures the library root, so it reports
+internal's free space for a library whose contents are on the card. Files still go to the right
+place - just the number is wrong. It matters once the two diverge, because Steam gates an install
+on that figure and could refuse a card install that would fit, or accept one that would not. The
+fix is to bind the library root itself to a folder on the card and layer `common` over it, which
+also moves the manifests the app writes onto the card. Not done yet.
+
+**Naming the two install locations (2026-09-19).** The user could not tell from the install
+dialog which row was the phone and which was the card, and they were right: the client writes its
+own library entry with an empty label and falls back to showing the mount point, so the default
+read "Local Drive (/)". Both libraries are now labelled every session - "Internal Storage" and
+"SD Card" - rather than only at first registration, since a library registered on an earlier run
+keeps whatever label it was given then, which is why this device still showed "Bannerlator
+(card)". Unit-tested against a sample `libraryfolders.vdf`. Whether the client honours a label on
+its own library the way it does on an added one is unproven; the card row already proves labels
+are used for added libraries.
+
+**Half the labelling worked, and the half that did not explained itself (2026-09-19).** The
+session applied both names - the log carries `labelled /root/.local/share/Steam 'Internal
+Storage'` and `labelled /mnt/bannerlator-sd 'SD Card'` - and the install dialog now reads
+"Internal Storage" with the star on it. The card row still said "Bannerlator (card)".
+
+A library carries its own `libraryfolder.vdf` beside its steamapps folder, and the client takes
+the label from there back into `libraryfolders.vdf`, so editing the list alone is undone. The
+card's marker still held the name it was first registered with; the client's own library has no
+marker at all, which is exactly why that one kept the new name. Both files are now written.
+The prediction going in was the opposite - that the client's own library would be the stubborn
+one - and the card row was what made the real mechanism visible.
+
+**Both libraries now named, device-proven (2026-09-19, `dd270900`).** The card's marker reads
+"SD Card", the list agrees, and the client did not put the old name back:
+`/root/.local/share/Steam` is "Internal Storage" and `/mnt/bannerlator-sd` is "SD Card". Writing
+the label in both files is what it took. The install dialog no longer asks the user to guess
+which of the two places is the phone.
+
+State of the Linux client at the end of the day: FlatOut runs through Proton, the Steam button
+opens the client's in-game menu, library sync holds in all four directions, games install to the
+app's own two folders with internal as the default, and manifests carry real depot data so the
+client stops re-fetching what is already on disk. Two known issues remain, both understood and
+neither blocking: the card library reports internal's free space, and Half-Life 2's three
+episodes appear in the store but not in the client. Nothing on this branch is merged to main.
+
+**The card library's free space, answered where the games are (2026-09-19).** The install dialog
+quoted the same figure against both places - 275.97 GB, which is the phone's - while the card had
+293 GB. The library's `steamapps/common` is bound to the card, but the folder naming the library
+belongs to the runtime image, and that folder is what the client measures. Not only cosmetic: the
+client refuses an install it believes will not fit, so once the phone filled up it would turn
+down a card install with room to spare and give no reason.
+
+Binding the whole library onto the card was the obvious fix and is the wrong one - the prefixes
+under `steamapps/compatdata` want symlinks and file locks, and the card is served over FUSE,
+which gives neither. That is why they live in the runtime image, and moving them would trade a
+wrong number for broken prefixes. So the question is answered where the content is: `space.c` in
+the session shim serves a statfs of a library root named in `BL_LIBRARY_SPACE` from its
+`steamapps/common`, the bind that points at the card, and passes every other path through. Ten
+cases unit-tested on the host, including the near-miss `/mnt/bannerlator-sd-other` and the case
+with the variable unset. The game size and internal storage's figure were already correct and are
+untouched.
+
+**The free-space hook was right; the variable never arrived - and neither had the FEX preset
+(2026-09-19).** The dialog still quoted one figure for both places after `868dc007`. The hook
+itself was fine: with the shim loaded and `BL_LIBRARY_SPACE` set, a statvfs of a library root
+whose `steamapps/common` pointed at the card returned the card's 300,311 MB rather than internal's.
+But `BL_LIBRARY_SPACE` was absent from every process in the session, Steam included.
+
+The session command is `/usr/bin/env -i VAR=VAL ... <script> <args>`, and the script and its
+arguments are appended at line 8822. Two blocks then add to the same list: the FEX preset's
+environment and, as of the last build, this variable. Everything added after the script becomes
+an argument to it. A running Steam process carries every `BL_` and `FAKE_EVDEV_` name set before
+line 8822 and **not one FEX one** - so the FEX preset has never reached a Linux session, which
+makes the store-ordering it configures dead the whole time, the thing meant to stop a
+multithreaded x86 title sitting at its loading screen. Both are now collected and inserted in
+front of the script. Worth watching after this lands: client-launched games get the FEX preset
+applied for the first time, so their behaviour can change.
+
+**Both now reach the session (`98d38931`, device-proven 2026-09-19).** A live Steam process
+carries six FEX variables - `FEX_TSOENABLED`, `FEX_MULTIBLOCK`, `FEX_X87REDUCEDPRECISION` among
+them - and `BL_LIBRARY_SPACE=/mnt/bannerlator-sd`, and the app logs `session env: 17 late
+variable(s) placed before the script`. The FEX count was zero on every build before this one, so
+the preset is configuring a Linux session for the first time. The free-space figure should follow,
+since the hook was already proven to redirect correctly once the variable is set.
+
+**Portal 2 downloaded correctly and then went missing from the store (2026-09-19).** It landed
+where it should - `imagefs/steam_games/Portal 2`, 12,218 MB, internal, nothing on the card - and
+Steam wrote it a proper manifest: StateFlags 4, `SizeOnDisk` 12,788,841,660, buildid 23973718,
+three real depots. Nothing there needed today's manifest repair, which is the point: a game the
+client downloads describes itself correctly.
+
+The store never recorded it. The session-end callback did run - `Linux session [steam] ended:
+137` - and threw nothing, but nothing was adopted and the app process that logged it was gone
+afterwards. Adoption takes the install size by walking the folder, and Portal 2 was the only game
+with a stale row, so it was the only one to reach that walk: twelve gigabytes of files, measured
+synchronously while the activity was being torn down, and the process did not survive it. The
+manifest states the size, so it is read from there now and the walk is only a fallback. The pass
+also logs its result even when it adopts nothing, because a pass that ran and found nothing looked
+exactly like one that never finished - which is what cost the time here.
+
+Also worth recording: reopening the app does not adopt anything. Adoption runs on Linux session
+start and end only, so a game downloaded in the client stays invisible to the store until a
+session runs. Launching the client again is enough, because the start-of-session pass is not
+racing a teardown.
+
+**Round trip closed (`37d4f62a`, device-proven 2026-09-19).** Portal 2 is in the store's database
+as installed at `imagefs/steam_games/Portal 2`, the library shows nine, and the pass logged
+`adopted Portal 2 (620)` followed by `adoption pass: 1 game(s) taken into the store` one
+millisecond apart - the same work that previously outlived the process, now that the size is read
+from the manifest instead of counted. A game downloaded in the Linux client lands in internal
+storage, is taken into the store, and is playable from either side.
+
+Where the Linux client stands at the end of the day, all device-proven on the Pocket FIT: FlatOut
+runs through ARM64 Proton, the Steam button opens the client's in-game menu, library sync holds
+in all four directions, the install dialog names its two places and reports each one's real free
+space, manifests carry real depot data, and the FEX preset reaches a session for the first time.
+Nothing on `feat/linux-gamescope-runtime` is merged to main. Open and cosmetic: Half-Life 2's
+three episodes appear in the store but not the client, and a client download is only taken into
+the store when a session starts or ends rather than while it runs.
+
+**And it plays from the app side (2026-09-19).** Portal 2, downloaded by the Linux Steam client,
+launches through the app's own chain. That is the half of the round trip worth having: the store
+row proved the app had been told about the game, this proves the files themselves are shared -
+one install, either launcher, no copy.
+
+**An adopted game offered an update it did not need (2026-09-19).** Portal 2 launched from the
+app side but asked to update first, twenty minutes after the client downloaded it. The app decides
+that by reading a marker it writes into the install dir when it downloads a game - `<branch>|<buildId>`
+in `.bannerlator_build` - and compares it with the live build. The Linux client naturally writes
+no such marker, so `readInstalledBuild` returned 0 and `SteamGameUpdater.computeStatus` fell to
+its else branch: anything is newer than nothing. The game was current at build 23973718.
+
+Adoption now stamps the marker, taking the build and the branch from the client's own manifest
+rather than from the live catalogue - Steam records what it installed, and on a beta branch that
+is deliberately not the newest build, so looking the answer up would record a lie. The format
+stays in `SteamGameUpdater` behind a new `recordKnownBuild`. This affects every game downloaded
+in the client, so it would have met the user on their first EA title too.
+
+**The stamp reached the new game and not the old one (2026-09-19).** After the fix, Need for
+Speed - adopted on that same pass - carried `public|10351185`, matching its manifest exactly,
+while Portal 2 still had no marker at all. Adoption skips a game whose row already says what it
+should, and the stamp sat after that skip, so anything adopted by an earlier run would never be
+stamped however many sessions ran. The same shortcut would have kept a stale stamp on a game the
+client updated. The stamp is taken before the row is considered now, on every pass, so it follows
+the manifest rather than the adoption.
+
+**Confirmed by hand (2026-09-19).** Writing `public|23973718` into Portal 2's install dir - the
+same fifteen bytes the app writes for its own downloads - removed the update prompt and the game
+launched. The shortcut was never involved: the check reads the game's folder, not the shortcut,
+so recreating it would have cost the user their settings and changed nothing. Need for Speed,
+adopted after the fix, was stamped automatically with `public|10351185`. The marker had to be
+chowned to the app; a root-written one would not have been readable.
+
+**The Steam client's interposer was also every Wine game's interposer (2026-09-19).** The user's
+controller stopped working in Insane 2, and asked the right question: why was Max's work not kept
+to the Linux client in the first place. It was not, and it should have been. One source file,
+`winlator/fakeinput.cpp`, is compiled twice - against bionic for Wine, against glibc for the
+client - so taking his version wholesale put every change written for the Steam client into every
+Windows game. Re-testing the Wine path after that swap was on the list from the morning and never
+happened.
+
+Split now. `winlator/fakeinput.cpp` is restored to the version that shipped before the swap and
+remains the bionic build preloaded into Wine; `winlator/fakeinput_steam.cpp` carries Max's version
+plus today's work on it, and only the two glibc builds point at it. Both compile clean. The Java
+writer publishes the Steam button in snapshot bit 10, which the restored reader simply ignores -
+it loops over ten buttons - so the ring's layout is unchanged for Wine.
+
+What the evidence did and did not show: the app side is healthy - ring 0 carried a live write
+sequence and a published snapshot - but no process in the Wine prefix holds an fd on a ring,
+which is what an opened fake device looks like, so nothing there had a controller open. Identity
+and the trigger remap were ruled out directly: both are gated on FAKE_EVDEV_STEAM_VIRTUAL, which
+the live Wine process does not carry. The ring header layout is byte-identical between the two
+versions, ExternalController's 825-line diff was line endings around a five-line change, and the
+branch is level with main. So the specific mechanism is NOT proven - the separation is right on
+its own terms, and restores a known-good file to the path that regressed.
+
+**Confirmed: the split restored Wine's controllers (2026-09-19, `28922e7c`).** Insane 2 has its
+pad back. So the shared interposer was the cause after all - the uncertainty recorded above was
+honest at the time, and the separation is what proved it. Verified in the shipped APK rather than
+trusted from the build: the Wine copy is 930,632 bytes with no Steam-virtual code in it, the
+client's is 1,426,720 bytes and keeps it.
+
+Still unknown, and now deliberately unimportant: which specific change in the client's version
+broke a Windows game. It stays in `fakeinput_steam.cpp`, where the client wants it and where no
+Wine game can reach it. Worth a sanity check that the client's own controllers still behave, since
+that side kept the code it had rather than changing.
+
+**Both devices clear on `28922e7c` (2026-09-19).** The FIT has its pad back in Insane 2 and still
+has it in the Linux client; the Fold - the device the client's controller problems started on -
+is fine too. The split holds on the flavour that device runs, and nothing the client kept has
+regressed on it.
+
+---
+
+## Linux/gamescope runtime — where 2026-09-19 ended
+
+Branch `feat/linux-gamescope-runtime`, **nothing merged to main**. Last build run 35468909193
+(`28922e7c`); the Fold takes the standard flavour of the same run.
+
+**Proven on device (the Pocket FIT unless noted).** FlatOut runs through ARM64 Proton. The Steam
+button opens the client's in-game menu. Library sync holds in all four directions: the app's games
+reach the client, the client's reach the store, an app-side delete cleans the client's manifest,
+and files vanishing clears the store's record. The install dialog offers "Internal Storage" and
+"SD Card" by name, each with its own real free space, and internal is the default so there is no
+choice to get wrong. Manifests carry real depot data, so the client stops re-fetching what is
+already on disk. The FEX preset reaches a session for the first time. A game downloaded in the
+client lands in internal storage, is taken into the store, and launches from the app side -
+Portal 2, end to end. Controllers work again in Wine on both devices after the interposer split.
+
+**Three things that will bite whoever comes next.** `fakeinput.cpp` is compiled twice, against
+bionic for Wine and against glibc for the client, and one file serving both is what killed Wine's
+controllers today - the client's copy is `fakeinput_steam.cpp` now and must stay separate.
+Adoption runs only when a Linux session starts or ends, so reopening the app does nothing and a
+game downloaded in the client stays invisible until a session runs. And a client-downloaded game
+needs its `.bannerlator_build` marker, owned by the app's uid, or the app offers an update that
+would re-download the whole game.
+
+**Next.** Need for Speed Most Wanted, 6,649 MB in internal storage, stamped and recorded. Its
+folder carries both `Core/ActivationUI.exe` - the bundled EA client the other NFS titles already
+activate through - and `EAappInstaller_installScript.vdf`, which is Steam's instruction to install
+the EA App. So the app side runs `NFS13.exe` and the known-good chain, while the client would hand
+off to the EA App bootstrapper, which nothing here has exercised. App side first. Still open and
+cosmetic: Half-Life 2's episodes appear in the store but not the client, adoption is not live
+during a session, and the on-screen pad has no Steam button.
+
+**EA Desktop works. Need for Speed Most Wanted runs from the Linux client (2026-09-19).** The
+heavy path nobody here had exercised turned out to work end to end. Steam does not launch the
+game's exe: the tracked process is `bannerlator-proton waitforexitandrun
+'steam2ea://launchgame/1262560?platform=steam&theme=nfsmw'`, EA's handoff URL. A fresh prefix was
+made for 1262560, our redist markers were seeded into it, and the app was mapped to
+`bannerlator-proton-arm64` at priority 250. EA Desktop then installed itself into that prefix -
+`EASteamLauncher`, `EASteamAuthHelper`, `EADesktop`, `EABackgroundService`, `EALocalHostSvc`,
+and a Visual C++ redistributable - registered the `steam2ea://` handler, drew its own onboarding
+screen at 101 fps, authenticated, and handed off to `NFS13.exe`.
+
+The game reached its title screen at 63 fps and then the full front end with the user's own online
+profile loaded - Online Speed Level 1, their gamertag, 15,780 SP - rendering at 48 fps with the
+GPU at 84%. An online EA profile means authentication and EA's servers both worked from inside
+the runtime.
+
+Two readings corrected along the way, both recorded because the reasoning was wrong rather than
+merely incomplete. `EAappInstaller_installScript.vdf` in the install was read as a sign Steam
+would install the EA App at launch; it only names a file to delete on uninstall. Then, seeing the
+`steam2ea://` URL, the prediction was that nothing would handle it and the launch would die - EA
+Desktop was already installing itself as that was being written. The `terminate called without an
+active exception` storm and the `KeyboardInterrupt` in Proton's `waitpid` were the shutdown, not a
+crash: they landed seconds after the last screenshot and the launch wrapper exited 0.
+
+**Queued for testing after Most Wanted (2026-09-19).** Grand Theft Auto V Enhanced (3240220) is
+installed in internal storage at build 25261616, and Need for Speed Payback (1262580) has finished
+its 21.9 GB download. Neither is in the store's database yet: adoption runs when a Linux session
+starts or ends, and none has since they arrived, so they will be taken in on the next launch.
+
+These are two different third-party chains, not two of the same. Payback is a second reading of
+the EA route Most Wanted just proved - and a useful one, because on the app side Payback activates
+through its own bundled `Core/ActivationUI.exe` rather than EA Desktop, so the client is likely to
+take it down the `steam2ea://` road instead and show whether Most Wanted was representative or
+lucky. GTA V Enhanced is a different vendor entirely: Rockstar's launcher and Social Club, which
+nothing here has ever exercised, on a title far larger and more modern than anything tested so
+far.
+
+Each game builds its own prefix, so EA Desktop will install itself again for Payback rather than
+reusing Most Wanted's - only 1262560 carries it today. First launches will be slow for that
+reason, which is worth knowing before mistaking it for a hang: Most Wanted took about two and a
+half minutes from Play to its title screen.
+
+**The redist seeder never covered a prefix created mid-session, and that is a hang not a delay
+(2026-09-19).** Need for Speed Payback sat on "Running install script" with `vcredist_x86.exe`
+blocked in `pipe_read` - no disk reads, a tenth of a second of CPU across six, nothing written
+anywhere in the prefix for three minutes, and a five-minute watch that saw no process change at
+all. That is precisely the failure `bannerlator-seed-redists` was written to prevent, and its own
+header describes it: the x86 bundle's main thread exits while a helper stays blocked on a pipe it
+also holds the write end of, so the process never reaps and the client waits for ever.
+
+The seeder marks the shared redistributables as already run in every prefix that exists, and it
+ran once at session start. A game's prefix is not created until the client launches it, so a title
+played for the first time in a session was never covered and its install scripts ran for real.
+Most Wanted escaped only because its prefix was built in an earlier session and seeded in this
+one. The seeder now runs every five seconds alongside the registrar's own refresh, because it is
+racing the gap between the client creating a prefix and running that title's install scripts; it
+stamps each prefix it covers and skips it afterwards, so the extra passes cost almost nothing.
+
+**A soft keyboard could not type any shifted symbol into a session (2026-09-19).** An EA sign-in
+inside Need for Speed Payback took the user's address without its `@` and rejected it. The Wayland
+key path maps an Android key code to an evdev one through a table that holds letters, digits and
+plain punctuation, and falls back to the hardware scan code; a soft keyboard's symbol keys are in
+neither, so `@`, and every other shifted character, reached the session as nothing at all.
+
+Rather than adding twenty more key codes, the character itself is now the way in: work out which
+key carries it and whether Shift is what puts it there, then hold Shift around the key. `@` is
+Shift and `2`, `A` is Shift and `a`, and the same for `! # $ % ^ & * ( ) _ + { } | : " < > ? ~`
+and every capital. Two index-aligned tables hold the pairing, verified to line up.
+
+Worth separating from that: the user's actual complaint was that no keyboard appears by itself.
+Steam's own on-screen keyboard is for Steam's own fields, and an EA activation window is a Wine
+window it knows nothing about, so none is offered and the app's manual keyboard is the only way
+in - which is where the missing `@` then bit. Steam's keyboard can still be summoned over a game
+with the Steam button and X, now that the Steam button reaches the client.
+
+Also learned: Payback does NOT take the `steam2ea://` road Most Wanted did. It reached its own
+bundled `Core/ActivationUI.exe` Qt window instead, which is what memory recorded for it on the
+app side - so the two EA titles tested take different routes, and Most Wanted's EA Desktop path
+is not the only one.
+
+**Both fixes proven on device (2026-09-19, `31834421`).** The redist seeder covering a prefix
+created mid-session took Payback from six minutes wedged on "Running install script" to seven
+seconds from Play to EA's handler, and about thirty to the game process - the install scripts were
+skipped outright. And the sign-in field now reads the user's whole address, `@` included, where
+before it silently dropped every shifted character.
+
+Payback's route is its own: `link2ea://` rather than Most Wanted's `steam2ea://`, handled by
+`Link2EA.exe`, which then brings up EA Desktop and `ActivationUI.exe` beside the game. So the two
+EA titles differ in entry point but both end at EA Desktop - the earlier note that Payback skipped
+EA Desktop entirely was drawn from a run where the chain had already wedged, and is wrong.
+
+**Capitals still came out lowercase, and the first fix was why (2026-09-19).** `@` worked but a
+capital `I` did not. The fallback that rescued the symbols only ran when the key code was missing
+from the table, and a capital uses a key that is in it - `KEYCODE_I` resolves, so the fallback was
+never reached and the key went out without a modifier.
+
+The distinction that matters is not which key it is but where Shift lives. A soft keyboard reports
+Shift in the event's meta state and sends no Shift key of its own, so this side has to make one; a
+hardware keyboard sends its own, and a second would release the modifier while the key is still
+physically held. So Shift is now synthesised whenever the character needs it and the event came
+from a virtual device, whether or not the key code was already known.
+
+**Need for Speed Payback runs from the Linux client (2026-09-19).** Second EA title, second route:
+`link2ea://` to `Link2EA.exe` to EA Desktop and `ActivationUI.exe`, then the game. It reached its
+loading art, its title screen, and Steam's in-game menu opens over it, so the Steam button works
+there too. The sign-in that blocked it went through once the keyboard could type an `@` and a
+capital, which makes both keyboard fixes proven in use rather than just in theory.
+
+Noted for when it is played: Steam's own database says this title has no controller support, so
+Steam Input is off and the game is left to read the pad itself. Ours presents as an Xbox 360 pad
+and may well be read, but if it is not, the Enable Steam Input button on that same screen is the
+answer.
+
+**GTA V Enhanced reaches its loading screen under BattlEye, and the session was killed by
+watching it (2026-09-19).** The whole Rockstar chain worked: `PlayGTAV.exe` to the Rockstar
+launcher, which installed itself, pulled in Social Club and its redistributables, updated itself,
+connected to Rockstar's services and signed in, then started `GTA5_Enhanced.exe` alongside
+`GTA5_Enhanced_BE.exe`. The game took its own rendering surface and drew its loading bar to about
+three quarters. BattlEye did not refuse it.
+
+It then stopped, and not because of anticheat: every process was dropped at 23:49:42, the moment
+the user backgrounded the app to read this session's messages. The Linux session cannot survive
+the app losing foreground when the terminal and the app share a device, which is a hazard already
+recorded here. The narration of each monitor event is what invited the switch - the watching
+killed the thing being watched. Nothing about the launch was rejected; it was interrupted.
+
+Also hit on the way: the Rockstar launcher runs its own `vc_redist.x86.exe`, which wedged in
+`pipe_read` exactly as Steam's copies do. The seeder cannot help there - it marks Steam's shared
+redistributables, and this one is Rockstar's. It cleared, though whether the TERM sent to it
+landed or it finished by itself is not known: the bridge dropped before the result came back.
+
+**GTA V Enhanced: the Rockstar chain works, the client's D3D12 does not (2026-09-19).** With
+`PROTON_LOG=1 VKD3D_DEBUG=warn` set as the game's launch options, the log named it plainly:
+`Feature level 0xc100 is not supported` and `0xc200 is not supported` - VKD3D on Valve's ARM64
+Proton Experimental cannot offer D3D feature level 12_1 or 12_2, which this title wants. The game
+reached its intro and aborted at the same moment every run.
+
+`VKD3D_FEATURE_LEVEL=12_1` did not rescue it: the same crash at the same point. So the game is not
+merely checking for the level, and the answer is not a flag. Everything around it worked - the
+launcher, Social Club, the sign-in, and BattlEye, which never objected - so what is missing is
+translation-layer capability, not anticheat and not the device. The user's own point is the
+practical one: the app side runs this game on its own 11.x bionic Proton layers, whose VKD3D
+manages what the client's cannot. For this title the client is the weaker path.
+
+## Where a Linux-client game's components come from (established 2026-09-19)
+
+Everything but the graphics driver is Valve's, and arrives as a Steam depot the client downloads
+(appid 4427310, `Proton Experimental (ARM64)`, version `experimental-11.0-20260910b-arm64`).
+Inside it: Wine, DXVK as the `d3d9/10/11` DLLs, vkd3d-proton as `d3d12.dll` (917 KB) and
+`d3d12core.dll` (589 KB), and FEX for both widths - `libarm64ecfex` for 64-bit and `libwow64fex`
+for 32-bit, with its config under `files/share/fex-emu`. There is no box64 or wowbox64 in that
+stack at all; Valve's is FEX only. The one component that is ours is the GPU driver: Turnip,
+`usr/lib/libvulkan_freedreno.so`, Mesa 26.2.2, in the runtime we build.
+
+The app's own Wine games use none of that. Every piece is ours and versioned under
+`files/contents/`: DXVK (1.10.3, 1.11.0-async, 1.11.0-async-arm64ec, 2.4.1-gplasync), VKD3D
+(3.0.1, 3.0.1-gamesir, 3.1.0-wave64-relax), FEXCore (2507, 2608, 2609 nightlies), WOWBox64
+(0.4.1, 0.4.5-Hybrid), Box64, our Proton layers (11.0-2-arm64ec, 11.0-2.1-arm64ec,
+11.0-20260703-arm64ec) and Wine 9.5.
+
+So for a client game we choose exactly one thing, the graphics driver, and for an app game we
+choose all of it. That is the whole of the GTA result: app-side it can run on our VKD3D 3.1.0,
+while the client hands it Valve's, which refuses feature level 12_1, and nothing in the client
+lets the user pick otherwise.
+
+**A possible way through, for a later session.** Our VKD3D packages are laid out as
+`system32/d3d12.dll` and `system32/d3d12core.dll` - the same two files Valve's Proton carries -
+so ours could in principle be dropped into that Proton in place of Valve's, the way the app
+already swaps components into its own layers. What has to be checked first is the binary flavour:
+Valve's are arm64ec PEs, and our DXVK packages carry an explicit `arm64ec` tag while the VKD3D
+ones do not. If they are not arm64ec they will not load and the idea stops there. Nothing has
+been tried yet.
+
+**The transplant idea is dead as stated, and what replaces it is better (2026-09-19).** Reading
+the PE headers settles it: Valve's `d3d12.dll`, `d3d12core.dll` and `d3d11.dll` are ARM64EC, with
+the hybrid CHPE marker. Every one of our VKD3D packages - 3.0.1, 3.0.1-gamesir and
+3.1.0-wave64-relax - is plain x86-64. They cannot be dropped into that Proton, and forcing it
+would put the D3D12 translation layer itself under emulation, which is the opposite of the point.
+
+Two things follow. The app side runs GTA with the whole stack emulated, game and translator
+together, on our x86-64 VKD3D 3.1.0 - and that version manages feature level 12_1 where Valve's
+bundled one refuses it. Both sides sit on the same GPU and the same Turnip driver, so the
+difference is the vkd3d-proton version, not the hardware.
+
+So the real route is to build VKD3D as ARM64EC and drop that in. It is not speculative that we
+can: `contents/DXVK/1.11.0-async-arm64ec-0` is x86-64 with the hybrid marker, so the toolchain
+and the practice already exist here for DXVK. Nobody has done it for VKD3D. That would likely
+serve every D3D12 title in the client rather than GTA alone.
+
+**Correction: the ARM64EC VKD3D already exists, and the transplant is feasible (2026-09-19).**
+The entry above is wrong and is left in place only so the mistake is legible. It rested on a
+hand-rolled PE header read that misidentified the machine field; `llvm-readobj` is authoritative
+and says otherwise. `Nightlies` carries a dedicated `build-vkd3d-arm64ec` job in both
+`new-All-in-one-nightly+zips-latest-stable.yml` and `vkd3dProtons-standalone-nightly.yml`, and the
+artifact it produces - `VKD3D-Proton-arm64ec-3.0.1-5d0db741` - reads as `Format: COFF-ARM64EC`,
+`Machine: IMAGE_FILE_MACHINE_ARM64EC (0xA641)`, with CHPE metadata present. The DXVK ARM64EC
+package checks out the same way.
+
+So ours and Valve's are the same architecture and the same two filenames, and dropping ours into
+`Proton Experimental (ARM64)` in place of `d3d12.dll` and `d3d12core.dll` is a real thing to try.
+What is not yet known is whether 3.0.1 does what this needs: the version that runs GTA on the app
+side is 3.1.0-wave64-relax, which is built x86-64 only, so the ARM64EC line is a version behind
+it. If 3.0.1 also refuses feature level 12_1 then the answer is to build 3.1.0 for ARM64EC, which
+the same job already knows how to do.
+
+**The VKD3D swap removed the feature-level blocker (2026-09-19).** Valve's `d3d12.dll` and
+`d3d12core.dll` in `Proton Experimental (ARM64)` were replaced with the ARM64EC build from
+Nightlies, `VKD3D-Proton-arm64ec-3.0.1-5d0db741`, with the originals kept in
+`files/.vkd3d-valve-backup/`. The i386 pair was swapped from the package's `syswow64` too.
+Valve's core is 589 KB against ours at 5.1 MB, which is the difference between a stub and the
+real implementation.
+
+The run after the swap carries **no feature-level complaint at all** - the
+`Feature level 0xc100 is not supported` lines that preceded every earlier crash are simply absent
+- and the game rendered Rockstar's logo animation in engine, bloom and all, which it had never
+reached before. That settles the diagnosis: the refusal was a vkd3d-proton version gap in Valve's
+ARM64 Proton, not the GPU, the Turnip driver, or anticheat.
+
+It still ends in an abort, six signatures and the game stopped, but later and with a different
+cause. One blocker is gone and a new one is exposed; the next step is another `VKD3D_DEBUG=warn`
+run to name it.
+
+**With the feature level out of the way, GTA V fails on address space (2026-09-19).** The run
+after the swap, logged with `VKD3D_DEBUG=warn`, ends at
+`err:virtual:allocate_virtual_memory out of memory for allocation, size 0x14a00000000` - a request
+for about 1.3 TB of virtual address space. The game reserves an enormous range up front, which is
+ordinary on a desktop and refused here. That is also what exhausted the device: RAM went to 93 MB
+free of 15.2 GB with a load average over 10, and the session had to be force-stopped to recover.
+
+Alongside it, `RtlpWaitForCriticalSection` timed out waiting sixty seconds on a lock held by
+another thread, and `d3d12_pipeline_state_init_compute` failed eleven times. Feature-level
+complaints are down from dozens to two, which is the optional 12_2 probe rather than the blocker
+that was there before. The OpenXR, OpenVR and PenDevice errors are noise - absent VR and tablet
+APIs that nothing here wants.
+
+So the swap did what it was meant to and the remaining fault is of a different kind: an address
+space limit under FEX and Wine rather than anything in the graphics path. The swapped DLLs
+survived the crash and Steam has not re-verified the depot; Valve's originals are still in
+`files/.vkd3d-valve-backup/`. The debug log cost 151 MB and should be cleared with the launch
+option when that run is no longer wanted.
+
+**Two more attempts, and the wall is memory (2026-09-19).** The x86-64 VKD3D 3.0.1 was swapped in
+place of the ARM64EC one, on the thought that the app side runs its translator emulated and that
+configuration is known to work, and `-nobattleye` was added so the game would run
+`GTA5_Enhanced.exe` rather than the BattlEye-wrapped build. Neither moved it: the game froze at
+the Rockstar intro with 94 MB free of 15.2 GB and a load average of 11.6, and the session had to
+be force-stopped again.
+
+That also corrects something said earlier. Debug logging was off for this run, so the 151 MB log
+was never the cause of the exhaustion - the game does it on its own, at the same point, whichever
+translator is in place and with or without anticheat. It is the 1.3 TB reservation showing up as
+real memory pressure.
+
+Left in place afterwards: the ARM64EC VKD3D, because it is the better of the three and clears the
+feature-level refusal for every D3D12 title, not only this one. The launch options are cleared,
+the staging folders and the debug log are gone, and Valve's originals remain in
+`files/.vkd3d-valve-backup/` beside the ARM64EC copy in `files/.vkd3d-arm64ec-kept/`.
+
+Four runs, in order: Valve's VKD3D refused the feature level; the ARM64EC build cleared it and
+reached further; the x86-64 build with anticheat skipped froze the same way. The Rockstar chain -
+launcher, Social Club, sign-in - worked every time, and BattlEye never objected once.
+
+**Correction: that swap never took effect, and the result attributed to it was an artefact
+(2026-09-19).** Valve's ARM64 Proton keeps its real translators in their own directories -
+`files/lib/wine/dxvk/` holding DXVK v3.1-12-g8759acd1 and `files/lib/wine/vkd3d-proton/` holding
+vkd3d-1.1-5576-g0bd10357 - and installs those into a game's prefix. What was replaced instead was
+`files/lib/wine/aarch64-windows/d3d12.dll`, which is Wine's builtin. GTA's prefix settles it: its
+`d3d12.dll` is 229,376 bytes and its `d3d12core.dll` 9,277,440, matching Valve's vkd3d-proton
+exactly, while the swapped files are 147,456 and 5,148,672 and were never loaded.
+
+The claim that the swap cleared the feature-level refusal is therefore wrong, and the way it was
+reached is worth recording. Those messages come from vkd3d and only reach the Proton log, which
+exists only when `PROTON_LOG=1` is set. The run after the swap had logging off, so the session log
+was grepped instead and returned nothing - and nothing was read as "fixed" rather than "not
+logged". The later run with logging restored still carried `Feature level ... is not supported`,
+which is what a swap with no effect looks like.
+
+So nothing has yet been proven about substituting components into Valve's Proton. The correct
+target is `files/lib/wine/vkd3d-proton/aarch64-windows/`, the experiment is still worth running,
+and any future comparison has to be logged-run against logged-run.
+
+## Third-party Protons selectable in the Linux client (2026-09-19)
+
+Rather than keep substituting single DLLs into Valve's ARM64 depot, whole Protons can now be
+installed beside it. Both projects the user asked about publish native ARM64 builds, and both
+unpack to an ordinary Proton tree - a python entry point beside `files/` carrying Wine, DXVK and
+VKD3D - which is the same shape as the depot, so this runtime can run them the same way.
+
+| Build | Asset | Bytes |
+| --- | --- | --- |
+| GE-Proton11-7 | `GE-Proton11-7-aarch64.tar.gz` | 645,786,140 |
+| proton-cachyos cachyos-11.0-20260703-slr | `proton-cachyos-11.0-20260703-slr-arm64.tar.xz` | 339,912,088 |
+
+Both are already on the device under `compatibilitytools.d/.bannerlator-download/`, and both were
+checked against the projects' published `.sha512sum` files rather than trusted on size alone:
+
+```
+GE     741cf70256f13b20d44952b590defd68b115814097f911c9ec053a64d33795267e2a982a5ce939407e8b649613eb3943bb2e2ebf4794d302ff96b83b61457cdd
+Cachy  54514fc117f2f74cfbc8e9a321a0432513fd44d875ce1c0c48c72af0518d683f3d16ff755d213c0fb42d6e8a1db2a290e9ab883e3505baccc4f43e5e9e692a09
+```
+
+`bannerlator-proton-extra` installs one: it resolves the newest release that actually carries an
+ARM64 asset (neither project builds one for every tag), downloads it resumably, verifies the
+published sha512, unpacks it and hands over to the registrar. A tarball already on the device is
+taken by path instead, which is how these two will be used - a session that has to pull 646 MB down
+first shows nothing on screen for ten minutes. `~/.bl-proton-extra` holds one request per line and
+is processed before the client starts; a line is dropped on success and kept for a retry on
+failure. The request file is already written with both local paths.
+
+`bannerlator-steam-compat` gained `adopt_extras()`, which is what makes an installed tool
+launchable. Their own manifests declare `require_tool_appid`, so Steam would stack pressure-vessel
+underneath, and pressure-vessel wants unprivileged user namespaces an Android app does not get -
+the same silent failure Valve's own ARM64 depot has here. The shipped manifest is copied once to
+`toolmanifest.vdf.bannerlator-orig` and stays the source of the entry point, so re-running cannot
+wrap the wrapper; the live manifest names `bannerlator-proton-wrap`, which drops the client's
+overlay library from `LD_PRELOAD` for the same reason `bannerlator-proton` does and then execs the
+tool's own entry point in place, since Proton takes its base directory from `dirname(sys.argv[0])`.
+
+One bug was worth the trouble of finding before it shipped. `register_default()` repointed every
+mapping whose tool name began with "proton", and the registrar re-runs every fifteen seconds during
+a session - so picking GE-Proton for a game would have been undone a few seconds later, looking
+like the dropdown simply did not work. Adopted tools are now exempt. proton-cachyos needed this
+specifically: its internal tool name is `proton-cachyos`, which the old prefix test caught. The
+client's own ARM64 and x86_64 Protons are still repointed, because none of them can start anything
+here.
+
+Verified on the host against a fake GE-Proton tree and a fake CachyOS tree with a config.vdf that
+had GTA V deliberately mapped to GE-Proton: both mappings survived, Valve's was repointed, the
+manifests lost `require_tool_appid`, and a second run did not wrap the wrapper. Also tested
+end to end from a tarball. **Nothing is device-proven yet.**
+
+Why this is the right experiment for GTA V: the named blocker is
+`allocate_virtual_memory out of memory, size 0x14a00000000`, about 1.3 TB of address space, which is
+in Wine's memory manager. Substituting a graphics component cannot touch it. A whole Proton
+replaces Wine itself.
+
+Staged for the device: `Bannerlator-1.0-test-pubg.apk`
+sha256 `a74a5294eb95cc1a01f0a4b3c5cd4111f6cfccf15901108fc1b578aa162acab1`, run 35482455341,
+headSha `0386765669a39c2f38a55342789b2e1e86653b0f`. The APK carries the new script as an asset, so
+it reaches the installed rootfs without a runtime re-host.
+
+## Proton builds as a catalog download (2026-09-19)
+
+Tonight's two builds were placed on the device by hand, which is no use to anyone else. They are
+now a catalog row like the runtime itself: `linux-protons.json` in winlator-contents
+(`d03046a`), read by `LinuxProtons`, shown as a "Proton builds" card in the Linux runtime tab.
+
+Two kinds of row, because two different things exist:
+
+| Kind | What it is | What the button does |
+| --- | --- | --- |
+| tarball | a build published as a file (GE-Proton, proton-cachyos) | app downloads it, checks the project's own sha512, queues it |
+| depot | one of Valve's, which is not a file anywhere | asks the Steam client to fetch it |
+
+Unpacking stays in the session. That is where `bannerlator-proton-extra` and the registrar already
+live, and a build cannot run until it has been adopted anyway. So a downloaded row reads "unpacked
+next time you open the Steam client" rather than claiming an install that has not happened. On the
+device that step took twelve seconds. The session gained `~/.bl-steam-urls` for the depot rows:
+steam:// URLs handed to the client at next start, then cleared, because the client either acts on a
+URL or it does not and re-asking every session would never stop.
+
+Only ARM64 builds are listed - an x86_64 Proton cannot start here, so offering one would be
+offering a download that can only fail.
+
+**Valve's two ARM64 rows were reworded almost immediately, and the reason is worth keeping.** The
+user pointed out that the only entry labelled ARM64 that ever worked was ours. That is exactly
+right: Valve's "Proton Experimental (ARM64)" and "Proton 11.0 (ARM64)" fail silently when picked,
+because their manifests ask for the Steam Linux Runtime container. They are the most misleading
+entries in that dropdown precisely because they say ARM64, and listing them as ordinary choices
+repeated the trap in our own UI. They are now "engine only", with notes saying not to pick them in
+Steam: their real job is that `bannerlator-proton-arm64` has nothing to run without one of those
+depots on disk.
+
+The list cannot be filtered from our side - the client builds it from the account's licences, not
+from anything on disk. Two mitigations already exist: Steam's own "Show all compatibility tools"
+toggle sits in the same dialog, and the registrar repoints any mapping aimed at a Proton that is
+neither ours nor an adopted build, so a wrong pick self-corrects within fifteen seconds.
+
+### GTA V Enhanced under GE-Proton — the first swap that actually took effect
+Launched three times. Timeline from `session-20260919-221027.log`:
+
+- both builds installed in 22 s (02:10:28 → 02:10:50)
+- first GE attempt: stopped before the game
+- second GE attempt: **`GTA5_Enhanced.exe` itself ran**, created nine Vulkan swapchains, five
+  reported `pEngineName: DXVK` and four `vkd3d` - so it started both its D3D11 and D3D12 renderers
+- CachyOS attempt: reached `Launcher.exe` and `SocialClubHelper.exe`; the game binary never created
+  a surface
+
+**Proof the swap took, unlike the DLL attempt:** GTA's prefix `d3d12core.dll` is now 8,847,360
+bytes, matching GE-Proton's own vkd3d-proton exactly. Valve's is 9,277,440.
+
+Both runs ended with the Proton script raising `KeyboardInterrupt` inside `os.waitpid`, which is an
+interruption rather than a crash. **Why is unknown and stays unknown**: the runs had no
+`PROTON_LOG`, and Wine's channels never reached the session log - it contains zero `err:` lines of
+any kind, and no `steam-3240220.log` was written. The absence of the 1.3 TB
+`allocate_virtual_memory` message therefore means nothing. Same trap as before, not repeated.
+
+`PROTON_LOG=1 %command%` has now been written into `userdata/2932373/config/localconfig.vdf` for
+3240220 with the client closed (backup at `localconfig.vdf.bak-setlaunch`; brace balance checked,
+772/772). One correction during that edit: the first pass also inserted the key into the
+`controller_config` section, where it does not belong, and that was removed.
+
+## Swapping FEX across Proton trees does not work (2026-09-19)
+
+Four GTA V Enhanced runs on GE-Proton, each logged, each a different outcome:
+
+| Run | Translator | Outcome |
+| --- | --- | --- |
+| 1 | GE's own, `FEX_SMCCHECKS` default (`mtrack`) | `GTA5_Enhanced.exe` ran ~2 min, then jumped to address 0 |
+| 2 | GE's own, `FEX_SMCCHECKS=full` | launcher only; the game binary never started |
+| 3 | ours, FEX-2609+96-Nightly-48d71752e | never loaded (my error, see below) |
+| 4 | ours, permissions fixed | loaded, died dispatching its first exception |
+
+**Run 2 - full SMC checking is not a fix and the missing crash is not good news.** The address-zero
+fault is absent from that log only because the game never reached the code that caused it. It got
+*less* far than the default. Full checking is expensive and the launcher stage is .NET doing a lot
+of JIT, so slow-enough-to-fall-over-earlier is as good an explanation as anything the checking
+revealed. Inconclusive, leaning negative; reverted.
+
+**Run 3 was my mistake, and it is the kind that reads like a result.** The log said
+
+```
+err:module:load_arm64ec_module could not load L"C:\windows\system32\libarm64ecfex.dll", status c0000022
+```
+
+`c0000022` is STATUS_ACCESS_DENIED. `chown --reference` and `chmod --reference` silently do nothing
+through the root bridge, so the file landed `root:root` with no execute bit and the app could not
+read its own file. **Always chown/chmod with explicit numbers (uid 10249) and compare `ls -la`
+against a file that already worked.** Nothing was learned about the translator in that run.
+
+**Run 4 is the real answer.** With permissions fixed it loaded, then:
+
+```
+err:seh:call_seh_handlers invalid frame 1000ffcd0 (0000000000022000-0000000000120000)
+err:seh:NtRaiseException Exception frame is not in stack limits => unable to dispatch exception.
+```
+
+Our build and GE's Wine disagree about where exception frames sit on the stack, and the first
+exception Wine tries to dispatch is unrecoverable. That is an interface mismatch, not a fault in
+either piece alone: we build that translator against our own bionic ARM64EC Wine, and GE-Proton
+carries its own Wine 11 tree. **A whole Proton swaps cleanly because everything inside it matches;
+one piece does not travel between trees.** Reverted, checksums verified against the backup.
+
+Worth recording for any future swap: GTA's prefix does **not** hold its own copy of the translator.
+Those `system32` entries are symlinks into the Proton tree, so replacing the tree file is the whole
+job - the opposite of vkd3d-proton, where the prefix holds real copies and the earlier swap was
+never loaded.
+
+Best result of the night remains run 1, and its crash is still unexplained. Next: GTA V Legacy
+(appid 271590, D3D11) on GE-Proton, which takes vkd3d out of the picture.
+
+## Where things stand, end of 2026-09-19
+
+Branch `feat/linux-gamescope-runtime`, nothing merged. Staged APK
+`80ab76a8da6a97702b7281f387fd5762f7afccec113a94d08561d4fcbe0b0234` (run 35486662947).
+
+**Shipped and device-proven today:** third-party Protons are selectable in the client and are now
+an ordinary catalog download - `linux-protons.json` in winlator-contents, a "Proton builds" card in
+the Linux runtime tab, the app fetching and checksumming, the session unpacking and registering in
+about twelve seconds. Both GE-Proton 11-7 and proton-cachyos are installed and appear in Steam's
+Compatibility list. The card listed Valve's own ARM64 depots for about an hour until the user
+pointed out they were two entries nobody should pick sitting beside two they should; they are gone
+and the warning moved into the card's description.
+
+One regression shipped and was fixed within the hour: the card crashed the app for anyone whose
+runtime had never been asked for a Proton, because `FileUtils.readString` throws on a missing file
+rather than returning null.
+
+**What we now know about GTA V Enhanced, and what we were wrong about.**
+
+Two long-held theories died today. The 1.3 TB `allocate_virtual_memory` failure is not the blocker:
+it is a backing-off ladder of 1.3 TB, 512 GB and 256 GB, all failing inside the first thirty
+seconds, after which the game ran for another two and a half minutes. And the D3D feature-level
+refusal is simply gone under GE-Proton - every "not supported" line in that log is a DLSS warning.
+
+The best run reached `GTA5_Enhanced.exe` itself, with DXVK and vkd3d both initialised, and ended
+with an execute access violation at address zero: `rip=0000000000000000`, no stack frame, no module
+name. That is a call through a null function pointer, not a data dereference.
+
+**The live lead is a Turnip bug in our own driver, not FEX.** Max's branch carries a fix for
+exactly this: the KGSL build advertises `VK_EXT_present_timing` while withholding
+`VK_KHR_calibrated_timestamps`, so vkd3d-proton enables present timing and calls the entry point
+through a null pointer - his report is Monster Hunter Rise dying a minute into every run. We build
+the same KGSL Turnip and apply every patch in `tools/linuxfs/turnip/`; he has two patches there and
+we have one. The one we lack is the fix. It is saved at `/home/claude-user/max-port/` along with a
+list of his twenty newest commits.
+
+It is a hypothesis, not a proven cause: our run carried `PROTON_LOG=1` only, so the log has nothing
+to say about present timing either way.
+
+Two other commits of his are worth taking. Seeding the redistributable markers into Proton's prefix
+template is strictly better than the five-second racing seeder we shipped this morning, and
+shipping Turnip with the app and refreshing it at session start is what would let the Turnip fix
+reach a device by APK rather than a whole runtime re-host.
+
+**Next, at the user's direction:** delete GTA V Enhanced (96 GB, and only 106 GB free so the two
+cannot coexist) and test GTA V Legacy, appid 271590, on GE-Proton. Legacy is D3D11 and therefore
+goes through DXVK rather than vkd3d, so a clean run there would neither prove nor disprove the
+present-timing theory. Legacy will arrive mapped to `bannerlator-proton-arm64` with no launch
+options, so it needs GE chosen by hand and `PROTON_LOG=1 %command%` added.
+
+## GTA V Legacy plays from the Linux Steam client (2026-09-20)
+
+Appid 271590 on GE-Proton 11-7, Direct3D 11 through DXVK. The whole chain ran unattended: Rockstar
+launcher, Social Club, "Entering Story Mode", then into the Ludendorff prologue heist and playing.
+No crash and no intervention. This is the first time GTA V has run from the client side at all.
+
+From the on-screen HUD, mid-gameplay:
+
+| | |
+| --- | --- |
+| FPS | 32 |
+| CPU | 58% at 90 °C |
+| GPU | 77% at 69 °C |
+| RAM | 4.6 GB |
+| Battery | 78% |
+
+The CPU temperature is the number worth looking at twice. 90 °C is throttling territory, so 32 fps
+is a throttled figure rather than a ceiling - worth a second run from cold, and worth pointing the
+FPS limiter and big-core affinity work at.
+
+This is consistent with the Turnip present-timing theory without proving it. Legacy is D3D11 and
+therefore DXVK; the bug Max found is vkd3d-proton enabling `VK_EXT_present_timing` without the
+extension it depends on. Enhanced, which is vkd3d, died on a call through a null pointer. Legacy,
+which is not, plays. The pattern fits, but only Enhanced can test it and it has been deleted - at
+96 GB against 106 GB free, the two cannot coexist.
+
+No Proton log exists for this run: the launch happened before `PROTON_LOG=1 %command%` was added for
+this appid. That costs nothing while it works and everything if it later misbehaves.
+
+Proven from the client so far: NFS Most Wanted via `steam2ea://` at 48 fps, NFS Payback via
+`link2ea://`, Portal 2, FlatOut, and now GTA V Legacy at 32 fps. GTA V Enhanced remains unsolved.
+
+### The proven-from-the-client list, audited (2026-09-20)
+
+A `compatdata/<appid>` prefix only exists if the client actually launched that title through
+Proton, so the prefix directory is the evidence rather than anyone's memory of it. On that basis:
+
+| appid | title | |
+| --- | --- | --- |
+| 291550 | Brawlhalla | prefix plus a 229 MB Proton log; the game itself was later deleted |
+| 6220 | FlatOut | the first client launch we had to fix |
+| 620 | Portal 2 | proved the client-download to app-launch round trip |
+| 70 | Half-Life | |
+| 1262560 | NFS Most Wanted | `steam2ea://` into EA Desktop, 48 fps |
+| 1262580 | NFS Payback | `link2ea://` into Link2EA and EA Desktop |
+| 271590 | GTA V Legacy | 32 fps, plays |
+| 3240220 | GTA V Enhanced | launched, never completed |
+
+Two entries could not be confirmed, and both are worth stating precisely rather than rounding up.
+
+**Half-Life 2 has no prefix, and that is not evidence against it.** HL2 and the Orange Box titles
+beside it - Lost Coast, Episode One, Episode Two, all installed - ship native Linux x86 builds.
+Steam runs those through Valve's FEX compatibility tool, which is installed here, rather than
+through Proton, so no prefix is created. If HL2 ran, it ran by that route, which is a different
+capability from the Windows path and arguably a more interesting one. It needs a run to confirm.
+
+**Dead Space has no evidence on hand at all.** It is not in the internal library's app list. It is
+either on the card library, which is only mounted inside a session and therefore invisible from
+outside one, or it is app-side only. Worth checking inside a session before it goes on the list.
+
+### Correction: GTA V Legacy ran on Valve's Proton, not GE (2026-09-20)
+
+I recorded Legacy as running on GE-Proton 11-7. That was an assumption, not a reading. The
+CompatToolMapping in `config.vdf` maps 271590 to `bannerlator-proton-arm64`, which is Valve's ARM64
+depot through our own wrapper; only 3240220, the Enhanced build, is mapped to
+`GE-Proton11-7-aarch64`. GE was chosen for Enhanced and I carried that assumption across to Legacy
+without checking.
+
+The corrected result is a better one: **Valve's own ARM64 Proton plays GTA V Legacy at 32 fps.** GE
+was never needed for it.
+
+### The registrar forces Proton onto native Linux titles
+
+Found while preparing a Half-Life 2 run. `register_default()` writes a priority-250 mapping to
+`bannerlator-proton-arm64` for every installed appid, and `config.vdf` confirms 220, 340, 380, 420
+and 70 are all mapped to it. Those are native Linux x86 titles which would otherwise run through
+Valve's FEX compatibility tool with no Wine involved at all.
+
+Worse, clearing such a mapping by hand does not stick. The registrar runs every fifteen seconds
+during a session and its skip condition is whether an app already has an entry, not whether it
+should have one, so it puts the mapping straight back.
+
+The behaviour was correct while the only goal was getting Windows games to launch. It now needs a
+way to leave a native title alone - an exclusion list of appids, or detecting a Linux launcher in
+the install directory at session time. Not yet fixed, and it means the native path cannot currently
+be tested without changing the registrar.
+
+### Retraction: the registrar mapping every appid is not a bug (2026-09-20)
+
+I wrote up the registrar forcing Proton onto native Linux titles as a defect needing a fix. That
+was wrong, and the SteamDeck session caught it by asking the right question: has a native Linux x86
+title ever actually launched through Valve's FEX tool in this runtime?
+
+It has not, and the reason is worse than a namespace wall. The session script reads
+
+```sh
+[ -d /usr/share/guestos/fex-mesa ] && export FEX_ROOTFS=/usr/share/guestos/fex-mesa
+```
+
+and **nothing in the build ever creates that directory**. There is no reference to `guestos` in
+`build-linuxfs.sh`, in the overlay, or anywhere in the app - only the guard itself - and it does not
+exist on the device. So `FEX_ROOTFS` is never set and the guard silently does nothing. The native
+path fails exactly as it did on 2026-09-18: FEX starts with no rootfs, every x86_64 library lookup
+falls through to the host, and the guest shell dies on `libreadline.so.8: cannot open` before the
+game is reached.
+
+Which means the blanket mapping is load-bearing. It is what makes Half-Life 2, Lost Coast, both
+episodes and Half-Life playable here, by putting them on the Windows build instead. An exclusion
+list or launcher detection would have sent all five back to a dead end, and I would have shipped
+that as a fix.
+
+The real defect is the missing rootfs. Build or ship `/usr/share/guestos/fex-mesa` first; only once
+a native x86 title actually launches does it make sense to teach the registrar to leave such titles
+alone. Until then the mapping stays exactly as it is.
+
+Worth keeping as a general lesson: a guard of the form `[ -d X ] && export …` fails silently when X
+is never created. It reads as working code and it is a no-op. Check the thing exists before
+trusting the mechanism built on it.
+
+### Half-Life 2 runs from the client at 79 fps (2026-09-20)
+
+Appid 220, the Windows build, on `bannerlator-proton-arm64` - Valve's ARM64 depot through our own
+wrapper - and running off the card library rather than internal storage, which proves that second
+library works end to end. A `compatdata/220` prefix now exists, so it is on the confirmed list by
+the same standard as the rest.
+
+At 79 fps it is the fastest title measured from the client so far, better than twice GTA V Legacy's
+throttled 32.
+
+It did not take the native Linux route, and could not have: the retraction above explains why that
+path is dead. The blanket Proton mapping is precisely what made this run possible.
+
+### Linux shortcut editor stripped and explained — device-proven (2026-09-20)
+
+`dd4cbb9a` hides every setting that does nothing on the gamescope path, and `e429caf1` gives each
+remaining one a "?" saying what it controls and whether it affects the Steam client, the games the
+client launches, or both. Installed and checked on the FIT, APK
+`8f643f1f12a93e3eda2d0edb672ae517280d0955f1973ec7d218febb3d5296ca`: a GOG game's tabs behave
+normally, and the Linux entry's help buttons work.
+
+The GOG check was the one that mattered. Dropping a whole tab meant separating "which tab is
+selected" from "which position it occupies", and that code runs for every shortcut rather than only
+the Linux one. It is the only part of this that could have reached a normal game, and it did not.
+
+Scope recorded in the help text, from tracing each one:
+
+| Setting | Affects |
+| --- | --- |
+| Screen size, alignment, fullscreen mode, HDR, FPS limiter | both |
+| Environment variables | both |
+| Controls profile, touchscreen mode, auto-hide, player slots, motion aim | both |
+| Processor affinity | both |
+| Audio driver | both, but only PulseAudio carries sound; anything else is silence |
+| FEXCore preset | games only - the client is native ARM64 and never goes through FEX |
+| Prefer game-folder DLLs | games only, and session-wide rather than per-game |
+| Microphone | games only, and does nothing on this path yet |
+
+Hidden: the whole Win Components tab, Wine layer, DXVK/VKD3D, DX wrapper, box64/WOWBox64, renderer,
+render scale, graphics and compositor driver, display backend, MIDI, exec args, storage, executable,
+and the XInput/DInput options.
+
+⚠️ One live setting is now invisible: the **compositor driver**. It is not inert - the compositor
+uses it to import the session's frames, and "System" there is a black screen. A Linux entry carries
+no per-game override so the container's value governs, which is why hiding it changes nothing
+today. Worth putting back if a per-game override is ever wanted.
+
+⚠️ Frame generation is kept and honoured, but `prepareLsfgNative()` sits past the gamescope early
+return, so the lsfg-native engine specifically may not work in a Linux session. Not yet tested, and
+deliberately not claimed in the help text.
+
+## DirectAudio for the Linux client — checkpoint (2026-09-20)
+
+Three commits in, one to go. Branch `feat/linux-gamescope-runtime`.
+
+| | |
+| --- | --- |
+| `0e85efad` | PulseAudio wired unconditionally; driver + helper ship as app assets, staged each session |
+| `8a7aae0f` | PulseAudio gained an optional microphone fed from a pipe |
+| `6e265fd9` | both Proton wrappers offer DirectAudio to a game, and refuse when it would be silent |
+
+**The silence bug is fixed and stands on its own.** A Linux session used to wire audio only when the
+container's driver said "pulseaudio"; anything else launched the client mute, which read as
+"DirectAudio broke the client" when nothing had been set up at all. PulseAudio now runs for every
+Linux session. On this path the two were never alternatives: the client is a native Linux program
+and DirectAudio replaces the audio driver *inside Wine*, so it changes games and leaves the client
+alone.
+
+**Two microphone paths, one stream.** The other session added `--mic-fifo` to the helper
+(directaudio `565c879e`, restaged, sha `599f769f…`, now our `libdirectaudiorelay.so`). A game gets
+the mic through Wine and the relay; the Steam client gets it through `module-pipe-source`, which we
+already shipped and had never loaded. The helper fans one Android input stream out to both. Format
+is fixed at s16le/48000/mono - it resamples when the device grants another rate, so the daemon is
+never told a rate the bytes are not. If PulseAudio suspends an idle source and stops reading, the
+helper releases its share of the mic after 2 s (Android's recording indicator goes off) and probes
+until reads resume.
+
+**The version gate is the point, not a nicety.** The mmdevapi interface the driver implements is
+private and unversioned, so pairing it with the wrong Wine does not fail - it goes quiet, which is
+indistinguishable from us having broken the sound. The wrapper reads the Proton's own Wine version
+and leaves DirectAudio off unless it matches, and says why.
+
+### Still to do
+- Nothing sets `BL_DIRECTAUDIO`, so the wrapper takes its early return on every launch today.
+- Nothing starts the helper. It needs to run under the app's uid, before the client, with
+  `--socket` and `--mic-fifo`, and PulseAudio needs the fifo path passed to it.
+- First launch of a game creates the prefix *after* the wrapper runs, so the registry key lands on
+  the second launch. Logged out loud rather than left looking like a fault; worth improving.
+
+### Verified on the host, not yet on a device
+Registrar still adopts a tool; both generated wrappers pass `bash -n`; the gate exports
+`WINEDLLPATH` on a Wine 11 tree and returns cleanly with no driver directory. A rendering bug was
+caught here and fixed: splicing the shell function into the adopted-tool wrapper added a second
+`%s`, which would have crashed the registrar at runtime. It is now spliced after the formatting,
+as the Valve launcher already did.
+
+## DirectAudio in the Linux client — end of session, 2026-09-20
+
+**Working and device-proven: DirectAudio for games.** With it selected on the Linux shortcut, the
+helper runs under the app's uid, the socket and pipe are created, the wrapper passes its Wine 11
+check, and the registry key is written into the game's prefix. The session log says
+`DirectAudio ready (Wine 11)` and `DirectAudio selected in the prefix`. The Steam client keeps
+PulseAudio throughout, as intended - DirectAudio replaces the audio driver inside Wine, so it
+changes games and leaves the client alone.
+
+**Not yet proven: the microphone for the Steam client.** Three faults stacked behind it, all three
+now fixed, none of them tested together.
+
+| | |
+| --- | --- |
+| `ac_cv_func_mkfifo=no` in our PulseAudio build | a bionic override carried from an older script. bionic has had mkfifo since API 21 and we build at 26, so PulseAudio dropped module-pipe-sink and module-pipe-source from the build entirely |
+| the bundle carried a 17.0 pipe-source | with nothing building one at 13.0, a foreign copy filled the gap. PulseAudio refuses a module from another release on sight, with nothing in any log |
+| the bundle was never refreshed on device | it unpacks only when the app's version code changes, and dev builds freeze that - so the correct module shipped twice and the device kept using the one unpacked months ago |
+
+That last one is why two rounds of fixing this changed nothing on the device. Confirmed directly:
+the APK carried a 20,272-byte 13.0 module while the phone held a 68,056-byte 17.0 one.
+
+**Staged and untested: `acbfc4943cb8c78f5e152d8f2966d21098b45b9bd70bd25b4697c8103d9e619f`**
+(run 35498185408, `980c4220`).
+
+### First thing next session
+1. Install it, launch the Linux client once with DirectAudio and the microphone on.
+2. **Before testing anything**, check the module on the device: it must be about 20 KB and report
+   13.0. If it is still 68 KB / 17.0 the refresh did not work and Steam's audio page will tell you
+   nothing.
+3. If it is right, open Steam's Audio settings. "No input devices detected" becoming a microphone
+   is the whole result.
+
+### Still open
+- The three ARM64 driver files stage every session; the PulseAudio bundle now does too. Neither is
+  version-checked, they are simply copied. Fine, but worth knowing.
+- A game's prefix is created after the wrapper runs, so on a game's **first** launch under
+  DirectAudio the registry key lands too late and it takes effect on the second. Logged out loud.
+- Frame generation is honoured on this path but `prepareLsfgNative()` sits past the gamescope early
+  return, so lsfg-native specifically may not work. Untested, and deliberately not claimed in the
+  help text.
+- The compositor driver row is hidden but not inert; the container's value governs.
+
+## The Steam client has a microphone (2026-09-20, afternoon) — DEVICE-PROVEN
+
+Steam's Audio page now shows a **Voice** section with a level slider and
+**Input Device: Default (DirectAudioMic)**, where it had said "No input devices detected" since the
+Linux client first existed. The daemon's own log agrees: source created, set as default, pipe held
+open, `Daemon startup complete`, no errors. Sound is back as well.
+
+Behind that one line sat **five** separate faults, each invisible in the only place anyone would
+look, fixed in this order:
+
+| | fault | fix |
+| --- | --- | --- |
+| 1 | `ac_cv_func_mkfifo=no` in our PulseAudio build | bionic has had mkfifo since API 21; the flag now tells the truth, so the pipe modules build |
+| 2 | bundle carried a 17.0 pipe-source against a 13.0 daemon | swapped only the two modules into the existing 74-file bundle |
+| 3 | bundle never refreshed on a frozen versionCode | re-extracted every Linux session |
+| 4 | module refuses an existing pipe (EEXIST) and ours persisted | deleted before the daemon starts |
+| 5 | helper's mkfifo raced the daemon's | helper waits for the daemon to make the pipe |
+
+And one that was not a fault in the build at all: **my by-hand diagnostics ran as root** and left a
+root-owned `.config/pulse/` in the app's audio directory, so the app's own daemon died on EACCES at
+startup with no log. That was the "no sound" on the last three builds - the builds were fine and I
+had broken the phone underneath them. Ownership repaired; recorded as a standing rule.
+
+The daemon now writes `pulse.log` beside its config on every start, so none of this can be
+invisible again.
+
+Installed build `e14a6e4db27d7be361df720177a919826cd0cd8d93e97e8db963e7f28d2b56b3` (run 35527019006,
+`6db75ca9`). Whole chain: one Android microphone owned by the relay helper, fanned out to games
+through Wine/DirectAudio and to the Steam client through PulseAudio's pipe source.
+
+Not yet done: an actual voice test (Steam's mic test, or TF2 `voice_loopback 1`) to hear it.
+
+### Voice proven end to end (2026-09-20)
+Team Fortress 2 runs from the client and **voice works in Steam's voice chat tester** - the
+microphone owned by the relay helper, fanned out through PulseAudio to the client, heard back. So
+"shows a microphone" is now "hears you". Games' own capture through Wine/DirectAudio uses the same
+helper and the same stream.
+
+## Where to pick this up (2026-09-20, end of session)
+
+### Done and device-proven today
+DirectAudio for games; the Steam client's microphone (`Input Device: DirectAudioMic`); **voice
+proven in Steam's own voice chat tester with TF2 running**; GTA V Legacy and Half-Life 2 playing
+from the client; the Linux shortcut editor stripped to settings that work, each with a "?" saying
+whether it affects the client, its games, or both.
+
+### VAC / insecure — where we actually are
+**Not an evasion problem and should not be treated as one.** What the evidence says:
+- TF2 carries **no launch options**, so nothing is forcing insecure mode.
+- Steam launched it through its own `steam-launch-wrapper`, registered the processes against app
+  440 (`SSGL: change [440] ...`), tracked and released them. Steam's supervision is intact - our
+  wrapper is not taking the game out from under it.
+- **Nothing in any log mentions VAC, secure or insecure** - not the session log, not any of Steam's
+  own logs under `logs/`.
+- The `gameoverlayrenderer.so` preload errors are for the **32-bit** path, which does not exist on
+  ARM64. Normal, unrelated to our stripping.
+
+So the insecure state is TF2's own report and we were not capturing anything TF2 says. **`-condebug`
+is now set on 440**, which makes Source write its console to `console.log` in the game folder. Next
+session: run TF2, read that file, and let the game say why.
+
+This is the same shape as the SteamLite "VAC issue", which turned out to be **our own diagnostics
+reading the wrong log** and reporting a false INSECURE - the client had been secure all along.
+The user's plan is to start from a known-good secure connection on the app side with SteamLite and
+compare behaviour from there.
+
+⛔ Boundary held throughout: making Valve's own anti-cheat **run** (fixing missing libraries, paths,
+components that fail with an ordinary error) is ordinary compatibility work. Working out what VAC
+checks in order to make the client present it is not, and was declined.
+
+### Also outstanding
+- GTA V entries still show installed on both sides. Two fixes now: release a row whose folder is a
+  shell, and run that check at session start rather than only at a clean shutdown. The second fix
+  (`fe03c0ec`) widens "shell" to ignore dotfiles and `.cache` - the real folder held
+  `vkd3d-proton.cache`. **Not yet verified: needs one Linux session start after installing it.**
+- GameHub (`com.xiaoji.egggame`) has four boot receivers, restarts itself, and steals the Steam
+  login. The app should force-stop it when a Linux session starts.
+- A game's first launch under DirectAudio gets the registry key one launch late.
+- Frame generation: `prepareLsfgNative()` sits past the gamescope early return, so lsfg-native may
+  not work in a Linux session. Untested.
+
+## 🔖 KNOWN-GOOD ROLLBACK POINT — 2026-09-20
+
+Everything below is working on the device. If something later breaks, come back here.
+
+```
+branch  feat/linux-gamescope-runtime
+commit  44b6d914          (code identical to fe03c0ec; 44b6d914 is docs only)
+ref     refs/backup/20260920/linux-gamescope-known-good   (pushed)
+APK     36768d1cc57c4e1abf4dba3804bdd1071a137631e949b772d1b38f8d64fa874d
+        run 35530176867 - staged AND installed, verified equal
+```
+
+### Proven on the device at this point
+- **Games play from the Linux Steam client:** Half-Life 2 (79 fps, Windows build off the card
+  library), GTA V Legacy (32 fps), NFS Most Wanted (48 fps), NFS Payback, Portal 2, FlatOut,
+  Half-Life, Brawlhalla, TF2.
+- **Third-party Protons** are a catalog download and selectable per game; GE-Proton 11-7 and
+  proton-cachyos installed and adopted. GE ran the GTA V Enhanced binary further than anything else.
+- **DirectAudio for games**, wrapper gate on Wine 11, registry key written into the prefix.
+- **Microphone for the Steam client** - `Input Device: DirectAudioMic` - and **voice proven in
+  Steam's own voice chat tester with TF2 running**. One Android mic owned by the relay helper,
+  fanned out to games through Wine and to the client through PulseAudio's pipe source.
+- **Session teardown** asks proot to stop and sweeps what it leaves, instead of orphaning a tree
+  that spins on ENOSYS.
+- **Library sync** releases a game the client uninstalled even though its folder remains, and runs
+  at session start rather than only at a clean shutdown. Both GTA entries verified cleared.
+- **The Linux shortcut editor** shows only settings that do something, each with a "?" saying
+  whether it affects the client, its games, or both. A GOG game's editor verified unchanged.
+
+### Known-not-working, deliberately
+- **VAC:** TF2 reports `You are in insecure mode.` at connect. Everything around it is correct -
+  logged on, tracked by Steam, no insecure flag anywhere, nothing failing with an error. The cause
+  sits in engine startup before the console log begins. **Not an evasion problem to solve; the
+  honest paths are environment fidelity (restore the overlay, close the gap to Valve's launch path)
+  or requirements from Valve.** Games not gated on VAC are online and fine - Brawlhalla, Stumble
+  Guys - and BattlEye did not block GTA V, so the runtime is not hostile to anti-cheat generally.
+- GameHub restarts itself at boot (four boot receivers) and steals the Steam login.
+- A game's first launch under DirectAudio gets its registry key one launch late.
+- lsfg-native frame generation may not work on this path; untested.
+
+### If you need to roll back
+```
+git reset --hard refs/backup/20260920/linux-gamescope-known-good
+```
+and reinstall APK `36768d1c…`. Nothing in this state depends on an unmerged change elsewhere; the
+relay helper binary and the driver files are committed in-tree.
+
+## Autonomous run: overlay restored, GameHub stopped, VAC still open (2026-09-20)
+
+Installed build `76319254e73fe9b61d28747ed25a04adb968b9b58bb4e37cac42d3038a74f63c`
+(`334955ea`, run 35531625164), driven and tested on the device without the user present.
+
+### ✅ Steam's overlay is back, and we were stripping a working one
+`.steam/bin64` → `steamrtarm64`, which holds a genuine **ELF arm64** `gameoverlayrenderer.so`.
+`.steam/bin32` does not exist, so the bin32 entry in Steam's LD_PRELOAD fails harmlessly - that is
+the "cannot be preloaded" noise in every log, and it is normal on ARM64. The overlay we were
+dropping was real and functioning.
+
+It was dropped because it landed in front of `open()`/`read()` on `/dev/input` and answered every
+read of the session's pad with nothing. That was the wrong cure for an ordering problem: **glibc
+reads `LD_PRELOAD` before `/etc/ld.so.preload`**, and the interposer lives in the latter. Both
+wrappers now prepend the interposer to `LD_PRELOAD` instead of removing the overlay.
+
+**Verified on the device, in a live TF2 process:** `gameoverlayrenderer` and `libfakeinput` both
+mapped into the game, and a Wine process holding four fake-input ring fds - so the interposer is
+serving the pad with the overlay loaded. The deviation is closed and input survived it.
+
+### ✅ GameHub is stopped when a session starts
+`ActivityManager.killBackgroundProcesses` on the competing client, with
+`KILL_BACKGROUND_PROCESSES` in the manifest. The old comment said an app cannot force-stop another
+without root; that is true of Settings' force-stop but not of background processes, which is
+exactly GameHub's case - it declares boot receivers, so it runs from power-on having never been
+opened, and takes the Steam login seconds after every sign-in.
+
+### ❌ VAC: unchanged, and my test was inconclusive by construction
+Confirmed along the way: the game's own command line is `tf_win64.exe -steam -condebug` - **no
+insecure flag from anyone** - Proton's Steam integration in the prefix is complete (steam.exe,
+steamclient.dll, steamclient64.dll, Steam.dll, GameOverlayRenderer64.dll), and TF2 reaches
+`Connection to game coordinator established`.
+
+I drove TF2 with `+connect 127.0.0.1:27015` to exercise the secure check locally. The console shows
+`Connecting…`, four retries, `Connection failed after 4 retries` and **no insecure notice** - but
+that proves nothing: with nothing listening, the secure negotiation never happens. Only a live
+secure server produces the verdict, which is a normal in-game connect and takes ten seconds.
+
+The remaining difference from Valve's official path is the **Steam Linux Runtime container**, which
+we skip because Android denies apps the user namespaces pressure-vessel needs. That is the largest
+gap and it is not mine to close.
+
+TF2's launch options restored to `-condebug`; the autolaunch hook cleared.
+
+### 2026-09-20 — The third driver: a glibc Turnip for the Linux runtime, and a row that picks it
+
+> Every Turnip we ship came in two builds and **both are bionic**: the AdrenoTools zip
+> (`-Dplatforms=android`, the only one with the Android surface WSI, so the only one that can hand a
+> frame to SurfaceFlinger) and the `-Wayland` zip for Wine containers. The Linux runtime could use
+> neither: the Steam client and every game it launches are glibc processes and cannot load a bionic
+> object at all. So a Linux session drew with whatever Turnip the runtime *image* was built with, and
+> a driver fix could not reach an installed runtime without a new ~790 MB image.
+>
+> **Banners-Turnip now builds a third leg per driver** (branch `feat/linux-driver`, commit
+> `8f1f91d`, **not merged to `A8xx`**): `Turnip-<tag>[-variant]-Linux.zip`.
+> `build_turnip_linux.sh` cross-builds with `aarch64-linux-gnu-*` against a sysroot assembled from
+> the **same Arch Linux ARM packages the runtime itself is made of** — a 44-package dependency
+> closure over the core/extra/alarm databases, the resolver lifted from `build-linuxfs.sh` — so the
+> `libdrm` / `wayland` / `libxcb` it links against are the ones on the device. KGSL backend,
+> `-Dplatforms=wayland,x11`: both WSIs are in the chain, because gamescope reaches the app with
+> `--backend wayland` while the client and its games are X11 clients of gamescope's own Xwayland.
+> `patches/linux/` carries the two KGSL fixes (DRM-node report, and gating calibrated timestamps and
+> present timing on the kernel interface actually implementing the counter read), both verified to
+> apply to Mesa main `366b006c` with offsets only.
+>
+> **Why no distro build would do.** Mesa's `meson.options` defaults `freedreno-kmds` to `['msm']`
+> and every distro package takes that default, so a stock Arch/Fedora Turnip finds no GPU on an
+> Android kernel (`/dev/kgsl-3d0`, not a DRM node). The two fixes are not upstream either. Nobody
+> publishes a KGSL-capable aarch64 Linux Turnip; that is the gap.
+>
+> First CI run built all three and failed one check: Arch's `libc.so` is a linker script naming
+> `ld-linux-aarch64.so.1` AS_NEEDED, which my allow-list did not know. Everything else passed on the
+> real binary — **26 `wl_` and 99 `xcb_` symbols** (both WSIs compiled in), **minimum glibc 2.38**
+> read back out of the ELF, both KGSL patch markers present, nothing bionic linked.
+>
+> **App side:** `LinuxVulkanDriverManager` imports a `-Linux` zip into
+> `files/linux_vulkan_drivers/<id>/`; the check that separates the three kinds is the libc soname in
+> the driver's `.dynstr` (glibc's is versioned, bionic's is not), so a bionic zip is refused with a
+> reason rather than loading into nothing. The shortcut editor gains **Draw driver (Linux runtime)**
+> beneath the display-driver row, Contents → Installed gains a **Linux runtime drivers** section, and
+> the session is handed `BL_VK_DRIVER` and points the loader at it with `VK_DRIVER_FILES`. Nothing
+> inside the runtime is modified, so switching back is instant. `VK_DRIVER_FILES` *replaces* the
+> loader's search, so an unreadable manifest or library would leave the session with no Vulkan at
+> all — both are checked in `bannerlator-session` before it is set, and ignored loudly otherwise
+> (tested against absolute and relative `library_path`).
+>
+> **A claim I made here earlier and then disproved, recorded so it is not believed twice:** I said
+> nothing in `proton-wine` reads `BANNER_WAYLAND_VK_ICD`, so importing a Wayland game driver had no
+> effect. That came from grepping the wrong worktree (`p10-2c-aio-refresh`). It **is** implemented -
+> `dlls/winewayland.drv/waylanddrv_main.c` `use_bundled_drivers`, commit `ccc31af185f` on the Wayland
+> layer line - it takes the path when it is absolute and readable, prefers it over the bundled
+> variant, and logs `winewayland: Vulkan driver <manifest>` either way. Device-verified in the
+> INSTALLED layer `Proton/11.0-2.1-arm64ec-16`: both strings are in its `winewayland.so` and it ships
+> all eight bundled variant manifests. So the Wayland side needed no work; only the log line is
+> untested with a real imported zip.
+>
+> Untested on device. App build `35549635663` (sha `e1701623`), Turnip dry run `35549416109`.
+
+### 2026-09-21 — 🔖 ROLLBACK POINT, and what the ports from WinNative cost
+
+> **Go here if the Linux client will not start:** commit **`17663f36`**, ref
+> `refs/backup/20260921/linux-pre-max-ports` (pushed), APK **`9ee955fab660ab7e4c3b0b6e33cc2f94a1ea5c7bece8111fd55f4c3e4dc2f974`**
+> (run 35577699317). That build is **device-proven**: the imported glibc Turnip loads
+> (`== vulkan driver: imported …`, and it is mapped in `gamescope-wl`, `steam` and `steamwebhelper`
+> with the runtime's own at zero), the client logs in, and the in-game drawer names both drivers.
+> `git reset --hard refs/backup/20260921/linux-pre-max-ports`, then install that APK.
+>
+> `ba8851cb` (the HUD API label for Linux sessions) is one commit later and looks safe - it only
+> changes which resolver a Linux session uses - but it was staged (`3b676086…`) and **never
+> confirmed installed**, so it is not the rollback target.
+>
+> **What came after, and what it did to the device.** Six fixes were taken from WinNative
+> (maxjivi05, `feature/wayland-gamescope`) in `20b1236e` and `ba07c7c7`: the HUD's frame counter
+> (`f467345c`), the seat's modifiers and the session's time zone (`cb52935c`), a NetworkManager
+> stand-in so the client stops showing no connection (`e7a224ae`), a seccomp probe (`2e8b31a8`),
+> and a bundled-driver fallback in our own shape (`c01a89f0`). Five of those are quiet. The
+> **seccomp probe broke every Linux session, twice**:
+>
+> - First as `ba07c7c7`: the probe execs proot from the app's data directory with a plain
+>   ProcessBuilder, which Android refuses (W^X), and I had written "could not run" as "this kernel
+>   is broken". `PROOT_NO_SECCOMP` went on, `getcwd`/`mkdir`/`statx` all returned **ENOSYS**, and
+>   gamescope threw `filesystem error: status: Function not implemented [/etc/gamescope/scripts]`
+>   before the client existed. The good log for comparison has **zero** "Function not implemented".
+> - Then again as `ecb8c093`: with the exec fixed, proot died in the **linker** instead -
+>   `CANNOT LINK EXECUTABLE … library "libtalloc.so.2" not found` - because the probe did not set
+>   `LD_LIBRARY_PATH`, which the session has always set. My "ran and said nothing" branch took that
+>   as the same broken kernel. Same ENOSYS storm.
+> - `8d5ac999` runs proot the way the session does and makes silence inconclusive: only output
+>   showing an exec refused under the filter disables seccomp.
+>
+> **The lesson, written down because it cost two installs:** a probe that fails for its own reasons
+> must never be read as a verdict about the machine. Both times the log said exactly what had
+> happened and both times the code had already decided.
+>
+> Also this session: the proot termios2 fix (`c347fac8`, terminals under glibc 2.42+ - our rootfs is
+> **2.43**, so it is live for us) was applied to `app/src/main/cpp/proot` and **reverted**: that tree
+> is the dead 5.1.0 snapshot, while the shipped binary is built by `build-proot.yml` from a fresh
+> download of termux/proot. Delivering it means patching in that workflow and then settling the open
+> question of whether our own build still aborts GTK - the prebuilts are Termux's deliberately.
+
+### 2026-09-21 — ✅ The Linux client runs without a Wine container (device-proven, `db10530b`)
+
+> **What a user does now:** install the app, download the runtime under Contents, launch
+> `Steam (Linux)`. No container is created, touched or needed. The entry lives in the runtime's own
+> settings - a `Container` with the reserved id **-7** rooted at `files/linux/`, no prefix beneath
+> it, its config in `files/linux/.container` (720p, Wayland, gamescope). `ContainerManager` hands it
+> out by id, so the activity, the editors and every launch intent work on it unchanged; it is never in
+> `getContainers()`, so no container screen offers to copy, back up or delete it. Global on purpose:
+> one Steam client, one set of settings, which is how Steam itself thinks.
+>
+> **Proven on the FIT** (APK `a100e62d…`, run 35673470153): the runtime tab moved the entry out of
+> container 8 as it was (its extras are the user's settings), `Final Container ID: -7`, session
+> `210249` 472 lines with 0 ENOSYS, imported Turnip loaded, NetworkManager stand-in up, logged in at
+> 21:03:07. Library sync is unaffected: app→client scans every REAL Wine container's steamapps
+> (`prepare(…, getContainers(), …)`), client→app reads the runtime's manifests into the store
+> database; neither ever touched the entry's container. `syncClientGames` has no caller.
+>
+> **Three things it took to get there, each found on the device, not guessed:**
+> 1. The migration only ran from the install-success path, so an already-installed runtime kept its
+>    entry in container 8 (`getLinuxContainer()` built the settings file, nothing moved). The tab now
+>    runs the idempotent step on open.
+> 2. "Preparing Wine & graphics driver" writes the display driver into the prefix's `user.reg` and
+>    runs BEFORE the Linux branch - `WineRegistryEditor.getValueLocation` NPE'd on a prefix that does
+>    not exist. Container 8's unused prefix had absorbed the whole stage all along. Skipped in
+>    `gamescopeMode`; nothing in it is read by a Linux session.
+> 3. One pubg CI job hung 25+ min in the informational Rust unit-test step (siblings: 11 s) with no
+>    timeout - it would have held the build to GitHub's 6-hour cap. Capped at 8 min.
+>
+> Container 8 is still there, untouched, until the user deletes it. Merge gate before `main`: a Wine
+> game in a Wayland container to confirm the two compositor ports (frame counting, seat modifiers)
+> did not regress the shipped path.
+
+### 2026-09-21 (evening) — what the container had been quietly holding, and the 90-vs-66 fps answer
+
+> **Container-level settings did not travel with the entry.** The shortcut's extras did (drivers,
+> LSFG engine, DirectAudio, the HUD's saved position); what the container carried did not, and the
+> first casualty was the HUD: its launch gate `container.isShowFPS()` is unchanged, but `container`
+> is now the Linux settings, created from the app's defaults, where `showFPS` is false. Diffed key by
+> key on the device: also HUD skin/opacity/scale, `lsfgAutoEnable`/performance mode, the container's
+> audio and display driver. Fix: the Linux settings are **seeded once from the container the entry
+> came out of** - its whole config copied over, keeping id/root/name/runtime, the source recorded.
+> The seed needs a source: on the FIT the entry had already moved and the container's other Linux
+> entry had been deleted, so the first version found nothing and did nothing, silently. The move now
+> records `linuxMovedFrom`, the lookup falls back through it and to any gamescope-marked container,
+> and a miss is logged. The FIT was seeded by hand over the bridge (backup at `.container.pre-seed`).
+>
+> **Two editor rows greyed out while the session honoured them.** DirectAudio was gated on the
+> container's Wine version (a Linux entry's DirectAudio is the relay driver, no layer of ours
+> involved) and frame generation on renderer/Wayland resolution (a Linux session always presents
+> through the Vulkan compositor). Both gates now pass for a Linux entry. The settings also reported
+> X11: `getDisplayBackend()` reads extras and the fresh-create wrote a top-level key - fixed.
+>
+> **The client-menu fps gap, measured rather than argued.** With only the client running, our
+> `steamwebhelper` sat on affinity **`0x7c`** - cores 2..6, five of eight, without core 7, the
+> fastest - because `BL_CLIENT_CPUS` was unset: my `cpuListOrEmpty` dropped the list whenever it
+> covered every core, and the session's re-pinning beat only runs when it is set. The standalone
+> SteamDeck app (our own code, same runtime, same driver) exports it and its webhelper sits on
+> **`0xff`**. Menus: 66 fps here, 90+ there. The client list is now always exported for a Linux
+> session (`61a41403`). The earlier 23.6 fps reading had HL2 running behind the menu - a confound.
+>
+> Also: the informational Rust unit-test step in CI hung 25 minutes on one flavour with no
+> timeout; capped at 8. And `com.steamdeck.launcher` on the device is OUR standalone app, recorded
+> under the Bannerlator index all along - I compared against it for an hour thinking it was Max's.
+
+### 2026-09-21 — ✅ Session log bundles, device-proven (`8deba310`, APK `ca24163e…`)
+
+> One folder per Linux session, the SteamDeck app's shape: `device.txt`, `network.txt`,
+> `session.log`, `fake-input.txt`, `app.log` (launch-logging only), `audio.log`, `crash.log`,
+> `steam/` scrubbed. Proven on the FIT: 45 of 45 Steam logs, 60 `Using JWT` lines redacted and none
+> raw, SteamIDs masked, `loginusers.vdf`/`config.vdf`/`ssfn*` never copied, six multi-megabyte logs
+> reduced to their last 3000 lines with a header saying so.
+>
+> Two rounds to get the teardown right, both found on the device. The collection first ran from the
+> exit callback - which fires from the monitor thread after `stopEnvironmentComponents()` kills the
+> session, while `exit()` carries on to finish the process: one of forty-five files landed. Moved to
+> the close path, before the components stop, on a worker with a bounded wait. Then forty-five files
+> through ten regexes a line took longer than the wait: twenty-five landed and neither the crash
+> buffer nor the audio log. Crash buffer and audio log now go first, Steam's logs smallest-first, and
+> anything over 512 KB by its tail. Nothing in this costs a frame: everything runs before the
+> session starts or after it ends, and `app.log` is gated on the launch-logging switch.
+>
+> Steam's logs used to be copied raw into Download, with the account's session token in
+> `connection_log.txt`, and only on a clean exit. Neither is true any more.
+
+### 2026-09-21 — 🔖 END OF DAY: the branch is ready; merge to main on 2026-09-22 after one test
+
+> **State:** `feat/linux-gamescope-runtime` at `8deba310`, APK `ca24163e…` installed and proven on the
+> FIT. Nothing merged. `main` is `fb7cfc99`.
+>
+> **Proven today, in order:** the glibc Turnip built and published from Banners-Turnip, imported and
+> loaded by the client; driver-import routing that keeps each kind in the list that can load it; the
+> Linux draw-driver row and an honest drawer/HUD for Linux sessions; six fixes taken from WinNative;
+> the client running with **no Wine container** (global settings, seeded from the old one); the
+> client on **all eight cores**; and session log bundles that match the SteamDeck app's, scrubbed.
+>
+> **The one test before merging:** a Wine game in a Wayland container. Two of the WinNative ports
+> changed the compositor - window-based frame counting and seat modifiers - and that compositor is
+> the shipped Wine/Wayland path, untested there since. Sane fps number, Shift works, no black screen
+> = merge. If not, revert only those two compositor hunks (`20b1236e`) and merge the rest.
+>
+> **Rollback:** `refs/backup/20260921/linux-pre-max-ports` (`17663f36`), APK `9ee955fa…`.
+>
+> **Carried over:** the idle-menu fps reading on the 8-core build; the Thor black-screen report
+> (device + bundle needed - the new bundle makes that a one-look diagnosis); proot's termios2 fix
+> via `build-proot.yml` and the GTK A/B, proot staying in the runtime; the WinNative features not
+> taken (non-Steam games through the client, Epic, client updates, logs manager, tap accuracy).
+
+### 2026-09-22 — ✅ MERGED TO MAIN: `af360838`
+
+> `feat/linux-gamescope-runtime` at `60f3a166` merged into `main` (from `eb5812d3`, the 3.1.2
+> stable), no-ff, ~270 commits. Gate before merging: DiRT Showdown on the Wayland/Wine path presented
+> zero-copy with no compositor errors (proving the frame-counting change on the shipped path), the
+> Linux client came up container-free on all eight cores. Three of Max's last-day fixes went in first:
+> the seccomp probe removed outright, the account's owned games (132 here) and the BattlEye/EAC
+> runtimes mapped to the ARM64 tool before the client can fetch anything x86 - verified on the FIT as
+> "default and 134 app(s) set to bannerlator-proton-arm64".
+>
+> **Next:** a fresh-install end-to-end test as a new user on the STANDARD flavour
+> (`com.winlator.banner`, its own package, so it sits beside the pubg install and starts from nothing):
+> setup wizard, Contents → Linux Runtime download, Steam (Linux) launch with no container ever
+> created, sign-in, a game. Both APKs from the main build are staged in Download.
+
+## 2026-09-22 — the new-user test found two blockers; both fixed in main `0904fa71`
+
+> A clean install of the standard flavour (`com.winlator.banner`, from nothing) downloaded the
+> runtime and launched the client to **sound over a black screen**, and **opening the Steam (Linux)
+> entry's settings crashed the app**. Neither shows on a seeded device, which is the whole point of
+> the test.
+>
+> **Black screen** — no draw driver had ever been picked, so the launch fallback took the first
+> bundled entry the GPU supports: `v819`, the proprietary `vulkan.ad8191.so`. The compositor imports
+> every frame as a dma-buf and the blob has no `VK_EXT_external_memory_dma_buf` /
+> `VK_EXT_image_drm_format_modifier` (compositor log: `vkCreateDevice failed`); only Turnip carries
+> them. `LinuxSettings.defaultDrawDriver()` now prefers a supported Turnip entry (turnip-sdk36); a
+> fresh settings container stores it so the editor shows the real default, and the launch fallback
+> uses the same choice.
+>
+> **Crash** — the editor's `selectedBox64Version` / `selectedFexCoreVersion` / emulator id were
+> initialised from the container's value, and the Linux runtime's settings container has none (a
+> Linux session runs no Box64, no FEX). Null reached `.isEmpty()`. Now `?: ""`.
+>
+> **Next:** repeat the clean-install flow on the `0904fa71` standard APK: wizard → Linux Runtime
+> download → Steam (Linux) launch → sign-in → open its settings → a game.
+
+## 2026-09-22 — new-user flow complete on `2cc25217`; one more first-run fault, fixed on the branch
+
+> Clean standard install → runtime download → Steam (Linux) → sign-in → FlatOut installed → FlatOut
+> running, on main `2cc25217` (both APKs staged and installed). Also added on the way: the Linux
+> session's loading screen (milestones, the client's download percentage, a clock, hints; uncovered
+> on the client's first frame - "timing is perfect now").
+>
+> **The fault:** the client segfaulted (rc=139, "Failed writing minidump") the moment the first game
+> install was confirmed. The session asks the client to fetch the ARM64 Proton depot (4427310) on
+> its command line at startup; on a clean install nobody is signed in yet and a signed-out client
+> drops the request - `content_log` was empty for six minutes. Our tool was the default but
+> incomplete, so the client fell back to its own chain (Proton Experimental → SLR 4.0 → FEX), queued
+> Proton Experimental twice ("same game folder as installed app 1493710"), and died in
+> "Reconfiguring". A relaunch signed in made the same request land: the "Proton Experimental
+> (ARM64)" install dialog, 1.94 GB, and FlatOut then installed and ran through our tool.
+>
+> **The fix** (`bannerlator-session`): with no remembered sign-in in `loginusers.vdf`, a background
+> watcher waits for the sign-in (a new "processing complete" logon line in `connection_log.txt`),
+> gives the interface 15 s, and asks again by starting the client binary with the same URL - which
+> hands it to the running instance (steam.pid + steam.pipe) and exits. Shipped by the app's own copy
+> of the session scripts, so no runtime re-host.
+
+## 2026-09-22 — first run made fluid: the client restarts itself once when the layer lands
+
+> Retest of `7f411dbc` on a clean install: the sign-in re-request worked (18 s after sign-in the
+> ARM64 Proton was downloading, same session), but a game installed inside that download window
+> (FlatOut 2, 16 s later) got the client's own chain assigned - the client decides a title's tool
+> when the title is installed and keeps that decision for its run - and launching it failed (FEX
+> with no rootfs). No crash this time; relaunching the client, or picking our tool in the game's
+> Compatibility page, fixed it. That is not a first run a user should have to understand.
+>
+> Now: once `appmanifest_4427310.acf` reads fully installed, the session runs the registrar, logs
+> "compatibility layer installed: restarting the Steam client once", asks the client to shut down
+> (its `-shutdown` switch) and the existing restart loop brings it back - the same path as its
+> self-update, with the URL arguments dropped since they were acted on. The app sees that milestone,
+> puts the loading screen back ("Steam is restarting once…", clock reset) and re-arms the
+> compositor's first-frame signal (`nativeResetFirstFrame`, `vkp_reset_first_frame`), so the
+> restart is covered instead of black and the screen leaves on the first frame as before. Armed only
+> when the depot was missing at session start: a seeded device never sees it.
+
+## 2026-09-22 — merged to main `856ff6dd`: the clean-install flow proven end to end
+
+> Clean standard install → runtime → Steam (Linux) → sign-in → the layer downloads on its own →
+> the client restarts itself once → FlatOut installed → FlatOut running. Nothing chosen by hand.
+> Main is a fast-forward of the branch; both APKs from main's build staged.
+
+## 2026-09-22 — checkpoint: 3.1.3 pre-release 1 published (the Linux Steam client)
+
+> **Known-good point.** main `0e9b7cbc` = tag `3.1.3-pre1` = backup ref
+> `refs/backup/20260922/linux-313-pre1-known-good`. versionCode 87. Release page live, pre-release,
+> Latest stays 3.1.2; `update.json` offers it to "Include pre-releases" testers only. The released
+> APKs were staged from the page itself (standard `1123c802…`, pubg `88baff42…`).
+>
+> **Proven today, from a clean standard install:** runtime download → client (self-download,
+> self-update) → sign-in → the ARM64 Proton fetched on its own → the client's one-time restart →
+> FlatOut installed and running through our tool; the loading screen covers every wait and leaves on
+> the first frame; the Steam (Linux) settings open; Turnip is the fresh-install default. On the
+> seeded device: FlatOut 2 as well, and the app's Installed list, its database and the client's
+> manifests agree exactly (11 games).
+>
+> **Found and fixed today, in order:** v819 default → black screen; editor crash on a fresh Linux
+> entry; the client segfault on a first game install (request made before sign-in → Valve's chain →
+> "Reconfiguring" crash) → re-ask after sign-in → one-time restart when the layer lands; the
+> loading screen's 5 s grace over the start-up chime.
+>
+> **Lessons that cost time:** `git add -A` in the worktree swept four 535 MB APKs (stager download
+> folders) into a commit and a 12-minute "push" — `art*/` is ignored now and the stagers download
+> into the scratchpad; `git gc --auto` on the handheld repacks 2 GB and cooks the device (auto-gc
+> off); a `timeout 90` on a push of this repo is too short. A cancelled release run leaves a DRAFT
+> release behind — delete it. Published pre-releases now bump versionCode (87) so the updater can
+> offer them; the next stable must be ≥ 88.
+>
+> **Open, in the order the notes promise:** the process-limit ("Disable child process
+> restrictions") warning card + root/Shizuku fix; a non-Adreno gate; closing the first-run window
+> (Valve's chain pulled in when a game is installed before the layer lands); TF2 "insecure";
+> then custom games and GOG / Epic / Amazon titles inside the client's library.
+
+### 2026-09-22 evening — `fix/linux-proot-and-gates`: the Steam UI was never on the GPU
+
+Branch off `feat/linux-gamescope-runtime`, tip `38996ea1`, every build green, **nothing
+device-proven yet**. Staged `Bannerlator-deckfix-38996ea1-pubg.apk` sha `527a0197…`.
+
+**The big one — Chromium's GPU process was dying, ported from WinNative (maxjivi05, `deff1ac6`).**
+libpci picks its procfs backend on whether it can read the `/proc/bus/pci` directory, which the app
+can, then opens the devices file inside it, which Android denies. libpci's error path is `die()`, so
+the process calling it `exit(1)`s — and Chromium loads libpci in its GPU process to name the video
+card. The GPU process therefore died on the way up, and after a few tries CEF gave up on hardware and
+drew the rest of the session on SwiftShader: the client's interface rendered on the CPU. One row in
+the fake-`/proc` table binding an empty file over it answers the scan truthfully. His measured A/B on
+a OnePlus 15, same rootfs and same library scroll: **~44 → ~85 fps, `pcilib:` messages 6 → 0,
+GPU-process deaths 12 → 0.** Our own HUD read 117–138 fps on the Steam UI afterwards, which is
+promising but was not an A/B. This also corrects the earlier diagnosis in this log: the menu was not
+bound in Chromium→ANGLE→Zink translation cost, it was not on the GPU at all.
+
+**Steam Deck mode, and the restart loop it first shipped with.** A Steam Deck mode switch was added
+to the entry's settings, and on device it gives Steam's own Quick Access Menu: the native performance
+overlay, a frame limiter reading `144 FPS (144 Hz)` from the panel, scaling mode and filter, battery
+and wattage. It first passed `-steamdeck` and `-steamos3` together. `-steamos3` makes the client
+manage itself the way SteamOS does: it calls `steamos-select-branch`, which this rootfs has not got
+(30 failures in one session), and it opts the install into the `steamdeck_stable` client branch,
+written to `package/beta`. That file outlives the setting and then loses to the `-clientbeta
+publicbeta` the session has always forced, so the updater found `installed version 0` against a
+package set installed from the other branch, marked an update pending and exited 42 to apply it —
+every launch, for ever. On device that was four client restarts in one session, the side menu opening
+and closing by itself, and FlatOut 2 left running with no controller because Steam Input goes away
+with each restart. Deck mode now passes only `-steamdeck`; `package/beta` is forced to agree with the
+command line before the client starts; the rc=42 loop is capped at three and says why it stopped.
+**That beta file is sticky — turning the switch off does not undo it.**
+
+**Also on the branch.** The apk's own proot was being handed `-i uid:gid`, which only the runtime's
+build takes: its option table is `-r`/`-b`/`-w`/`--kill-on-exit`/`-v`/`-V`/`-h`, and an unknown option
+is fatal in `cli.c` before a guest process starts, so any session that fell back to it died instantly
+with no window and nothing in the log. The apk copy answers `set*id` from its own seccomp handler and
+never needed the flag. proot also reads and writes the tracee's memory in one `process_vm_readv` or
+`process_vm_writev` instead of a word per ptrace call, and untags arm64 pointers first (maxjivi05,
+`290c5314` + `0c71304a`). Contents → Linux Runtime now warns before the 755 MB download when Android's
+phantom-process limit is on (with the Developer-options button, or the adb line where there is no
+switch) and when the GPU is not an Adreno. Session logs keep the first 600 lines of a big log as well
+as the last 3000, because the GPU-process deaths above only ever write their reason on the way up and
+a tail-only `cef_log.txt` could not answer whether they had happened.
+
+**Still open.** None of it is device-proven: the libpci gain has no A/B on our hardware, the proot
+fallback needs a device with no runtime installed, and the non-Adreno gate needs a non-Adreno device.
+The three GL switches beside Deck mode tune a path a SwiftShader session never took, so they are
+worth measuring only now that the client is on the GPU.
+
+### 2026-09-22 late — Deck mode behind a warning, and gamescope's own frame limit and scaling
+
+Branch `fix/linux-proot-and-gates`, tip `7443b667`, CI green, pubg staged as
+`Bannerlator-scaling-7443b667-pubg.apk` sha `03805ef5…`. Not device-tested.
+
+**Deck mode breaks games, and why.** A clean A/B on device, with only the real pad listed both times:
+Deck mode off, FlatOut 2 plays; on, it sits on its title screen at 101 fps while the pad still drives
+Steam's own menus. Steam's `controller.txt` shows the switch — `mapping uses xinput : false` off,
+`uses xinput : true` on. With Deck mode, Steam Input takes the pad the way it does on a real Deck, hides
+it from the game and hands the game a virtual one, and that virtual pad never arrives here. Where it dies
+is not proven: nothing mentions `uinput` in any log. Fixing it is **parked** by the user; the first step
+when it is picked up is to press "Enable Steam Input" with Deck mode off and see whether every game breaks.
+
+**Also found on the way.** `-steamdeck` on its own, not only `-steamos3`, opts the install into the
+`steamdeck_stable` client branch during a run, so the branch guard now runs before every client start
+rather than once (`252edc01`). And the session only lists the pads a device holds now (`d59c78c9`) —
+four were listed with one real, though that turned out not to be the Deck-mode cause.
+
+**What the user chose.** Deck mode stays, off by default, and is only turned on through a dialog that
+lists what it breaks. The useful half of the Quick Access Menu is gamescope's, so it is offered on the
+entry itself: a frame limit (gamescope's nested refresh — exact, where `--framerate-limit` would turn
+60 into 72 on a 144 Hz panel), a scaling mode and a scaling filter including FSR, NIS and SGSR. Every
+value is checked against this gamescope's own `--help` in both the app and the session script, because
+an unknown one stops the session from starting.
+
+**FlatOut shrinks to the top-left after the Steam menu → Resume; FlatOut 2 does not.** FlatOut is a
+D3D9 game that rebuilds its swapchain on focus loss, which is the moment
+`vk_wsi_force_swapchain_to_current_extent` pins it to a momentarily tiny surface. The launch-option test
+`vk_wsi_force_swapchain_to_current_extent=false %command%` is still to be run.
+
+### 2026-09-22 night — merged to main, and 3.1.3 pre-release 2 prepared (not tagged)
+
+`main` fast-forwarded `0e9b7cbc` → `4e904851` on the user's word, 16 commits, and `build-artifacts.yml`
+on main went green (run 35813529322). The working branch `feat/linux-gamescope-runtime` moved with it.
+
+**Correction to the entry above:** the frame limit it describes was removed again before the merge
+(`4e904851`), at the user's request — the in-game drawer's FPS limit already caps a Linux session. Only
+the scaling mode and filter stayed. `BL_FPS` is 0 again, as it was before.
+
+Prepared for **3.1.3 pre-release 2**, on the working branch only: versionCode 88 and versionName
+3.1.3-pre2 (a pre-release bumps it so "Include pre-releases" testers are offered the update, so the next
+stable is ≥ 89), `docs/releases/3.1.3-pre2.md` in the house layout with pre-release 1's changes collapsed
+underneath, and the README's pre-release section pointing at it. `release_notes.py 3.1.3-pre2
+--prerelease` passes. Nothing tagged or published: that waits on the user's go.

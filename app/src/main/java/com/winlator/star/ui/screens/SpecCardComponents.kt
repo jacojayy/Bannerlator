@@ -37,6 +37,7 @@ internal val ChipDxvkColor = Color(0xFF5BD6A6)
 internal val ChipVkd3dColor = Color(0xFFC08CFF)
 internal val ChipFgColor = Color(0xFFFF6FAE)
 internal val ChipCpuColor = Color(0xFFFF8A5C)
+internal val ChipEosColor = Color(0xFF1A73E8) // Epic Online Services blue (matches the library EOS badge)
 
 // Parse a dxwrapperConfig string ("version=2.4,vkd3dVersion=2.8,...") into (DXVK, VKD3D) versions.
 internal fun parseDxwrapperConfig(cfg: String): Pair<String, String> {
@@ -47,18 +48,31 @@ internal fun parseDxwrapperConfig(cfg: String): Pair<String, String> {
     return (map["version"] ?: "") to (map["vkd3dVersion"] ?: "")
 }
 
-// Map a renderer id (vulkan/surfaceflinger/opengl) to a display label, or "" if unknown.
-internal fun rendererLabelOf(renderer: String): String = when (renderer.lowercase()) {
-    "vulkan" -> "Vulkan"
-    "surfaceflinger" -> "SurfaceFlinger"
-    "opengl" -> "OpenGL"
-    else -> ""
-}
+// What a Wayland container/shortcut really renders through. The stored renderer id is the X11
+// setting and nothing runs it on Wayland: every frame goes through the embedded compositor, which
+// is always Vulkan. The editors spell this out as "Vulkan (Wayland compositor)"; a chip has room
+// for two words.
+internal const val WAYLAND_RENDERER_CHIP = "Vulkan (Wayland)"
 
-// Map a frame-gen engine id (bionic/lsfg/off) to a display label, or "" if off/unknown.
+// Map a renderer id (vulkan/surfaceflinger/opengl) to a display label, or "" if unknown. Pass
+// [wayland] = does this container/shortcut effectively run on Wayland (WineWaylandSupport
+// .runsOnWayland — never re-derive it here): the stored id is then meaningless and the chip shows
+// the compositor instead. Every renderer id is an X11 present path, so the chip names the backend
+// on both sides and two cards can be told apart at a glance.
+internal fun rendererLabelOf(renderer: String, wayland: Boolean): String =
+    if (wayland) WAYLAND_RENDERER_CHIP else when (renderer.lowercase()) {
+        "vulkan" -> "Vulkan (X11)"
+        "surfaceflinger" -> "SurfaceFlinger (X11)"
+        "opengl" -> "OpenGL (X11)"
+        else -> ""
+    }
+
+// Map a frame-gen engine id (bionic/lsfg/lsfg-native/off) to a display label,
+// or "" if off/unknown.
 internal fun frameGenLabelOf(engine: String): String = when (engine) {
-    "bionic" -> "Win-FG"
+    "bionic" -> "Win-FG Native"
     "lsfg" -> "LSFG-VK"
+    "lsfg-native" -> "LSFG Native"
     else -> ""
 }
 
@@ -73,8 +87,9 @@ internal fun SpecChipRows(
     driverLabel: String,
     vkd3dVersion: String,
     backendLabel: String,
+    eosEnabled: Boolean = false,
 ) {
-    val hasPrimary = rendererLabel.isNotEmpty() || dxvkVersion.isNotEmpty() || frameGenLabel.isNotEmpty()
+    val hasPrimary = rendererLabel.isNotEmpty() || dxvkVersion.isNotEmpty() || frameGenLabel.isNotEmpty() || eosEnabled
     if (hasPrimary) {
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -87,6 +102,8 @@ internal fun SpecChipRows(
             if (rendererLabel.isNotEmpty()) CompChip(rendererLabel, MaterialTheme.colorScheme.primary)
             if (dxvkVersion.isNotEmpty()) CompChip("DXVK $dxvkVersion", MaterialTheme.colorScheme.primary)
             if (frameGenLabel.isNotEmpty()) CompChip(frameGenLabel, ChipFgColor)
+            // EOS auth-injection active for this Epic launch — its own blue identity chip.
+            if (eosEnabled) CompChip("EOS", ChipEosColor)
         }
     }
     val secondary = buildList {

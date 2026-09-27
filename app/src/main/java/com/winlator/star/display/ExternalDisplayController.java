@@ -222,6 +222,13 @@ public class ExternalDisplayController {
         }
     }
 
+    /** The external display the game is on right now, or null when it is on the handheld. HDR
+     *  capability is a property of the connector, so the report has to name the right display. */
+    public Display getExternalGameDisplay() {
+        if (!gameOnExternal) return null;
+        return presentation != null ? presentation.getDisplay() : findPresentationDisplay();
+    }
+
     /** User tapped "Move game to TV" in the TV tab. */
     public void requestMoveToExternal() {
         Display target = findPresentationDisplay();

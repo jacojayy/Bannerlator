@@ -86,31 +86,67 @@ public class AdrenotoolsManager {
         return driverVersion;
     }
 
+    // meta.json "vendor" ("Mesa", "Qualcomm", ...), or "" when the package doesn't declare one
+    // (the bundled turnip-sdk36 meta.json carries only libraryName).
+    public String getDriverVendor(String adrenoToolsDriverId) {
+        String vendor = "";
+        File driverPath = new File(adrenotoolsContentDir, adrenoToolsDriverId);
+        try {
+            File metaProfile = new File(driverPath, "meta.json");
+            if (!metaProfile.exists()) return "";
+            JSONObject jsonObject = new JSONObject(FileUtils.readString(metaProfile));
+            vendor = jsonObject.optString("vendor", "");
+        }
+        catch (Exception e) {
+        }
+        return vendor;
+    }
+
     public String getDriverPath(String adrenotoolsDriverId) {
         return adrenotoolsContentDir.getAbsolutePath() + "/" + adrenotoolsDriverId + "/";
     }
 
+    // Migrate every container/shortcut still pointing at the driver being removed onto the default
+    // wrapper. Matching is by the driver's NAME, read from its meta.json.
+    //
+    // Two guards, because this is the one place that rewrites configuration the user never touched:
+    //  • an absent/unreadable meta.json makes getDriverName() return "", and String.contains("") is
+    //    true for EVERY container and EVERY shortcut — that reset the whole library's graphics
+    //    driver on a single driver delete. Nothing to match against means nothing to migrate.
+    //  • a shortcut with no graphicsDriverConfig of its own INHERITS the container's. Rewriting it
+    //    pinned a per-game override onto a game that never had one; the container was already
+    //    migrated above, so leaving it alone is both correct and lossless.
     private void reloadContainers(String adrenoToolsDriverId) {
+        String driverName = getDriverName(adrenoToolsDriverId);
+        if (driverName.isEmpty()) {
+            Log.w("AdrenotoolsManager", "No driver name for " + adrenoToolsDriverId + " (missing meta.json?) - skipping container migration");
+            return;
+        }
+        String fallback = GPUInformation.isDriverSupported(DefaultVersion.WRAPPER_ADRENO, mContext)
+                ? DefaultVersion.WRAPPER_ADRENO : DefaultVersion.WRAPPER;
+
         ContainerManager containerManager = new ContainerManager(mContext);
         for (Container container : containerManager.getContainers()) {
             HashMap<String, String> config = GraphicsDriverConfigDialog.parseGraphicsDriverConfig(container.getGraphicsDriverConfig());
-            Log.d("AdrenotoolsManager", "Checking if container driver version " + config.get("version") + " matches " + getDriverName(adrenoToolsDriverId));
-            if (config.get("version").contains(getDriverName(adrenoToolsDriverId))) {
-                Log.d("AdrenotoolsManager", "Found a match for container " + container.getName());
-                config.put("version", GPUInformation.isDriverSupported(DefaultVersion.WRAPPER_ADRENO, mContext) ? DefaultVersion.WRAPPER_ADRENO : DefaultVersion.WRAPPER);
-                container.setGraphicsDriverConfig(GraphicsDriverConfigDialog.toGraphicsDriverConfig(config));
-                container.saveData();
-            }     
+            String version = config.get("version");
+            Log.d("AdrenotoolsManager", "Checking if container driver version " + version + " matches " + driverName);
+            if (version == null || !version.contains(driverName)) continue;
+            Log.d("AdrenotoolsManager", "Found a match for container " + container.getName());
+            config.put("version", fallback);
+            container.setGraphicsDriverConfig(GraphicsDriverConfigDialog.toGraphicsDriverConfig(config));
+            container.saveData();
         }
         for (Shortcut shortcut : containerManager.loadShortcuts()) {
-            HashMap<String, String> config = GraphicsDriverConfigDialog.parseGraphicsDriverConfig(shortcut.getExtra("graphicsDriverConfig", shortcut.container.getGraphicsDriverConfig()));
-            Log.d("AdrenotoolsManager", "Checking if shortcut driver version " + config.get("version") + " matches " + getDriverName(adrenoToolsDriverId));
-            if (config.get("version").contains(getDriverName(adrenoToolsDriverId))) {
-                Log.d("AdrenotoolsManager", "Found a match for shortcut " + shortcut.name);
-                config.put("version", GPUInformation.isDriverSupported(DefaultVersion.WRAPPER_ADRENO, mContext) ? DefaultVersion.WRAPPER_ADRENO : DefaultVersion.WRAPPER);
-                shortcut.putExtra("graphicsDriverConfig", GraphicsDriverConfigDialog.toGraphicsDriverConfig(config));
-                shortcut.saveData();
-            }
+            String own = shortcut.getExtra("graphicsDriverConfig", "");
+            if (own.isEmpty()) continue;   // inherits the container, which was just migrated
+            HashMap<String, String> config = GraphicsDriverConfigDialog.parseGraphicsDriverConfig(own);
+            String version = config.get("version");
+            Log.d("AdrenotoolsManager", "Checking if shortcut driver version " + version + " matches " + driverName);
+            if (version == null || !version.contains(driverName)) continue;
+            Log.d("AdrenotoolsManager", "Found a match for shortcut " + shortcut.name);
+            config.put("version", fallback);
+            shortcut.putExtra("graphicsDriverConfig", GraphicsDriverConfigDialog.toGraphicsDriverConfig(config));
+            shortcut.saveData();
         }
     }
     
@@ -185,6 +221,19 @@ public class AdrenotoolsManager {
                 entry = zis.getNextEntry();
             }
             zis.close();
+            // An AdrenoTools driver is one the Android Vulkan loader can be pointed at: meta.json
+            // names the library in "libraryName" and that library is in the zip. Without this check
+            // ANY zip carrying a meta.json installed here - including our own "-Linux" (glibc) and
+            // "-Wayland" Turnip zips, which name no library on purpose. They then appeared in the
+            // Android display-driver list, where setDriverById quietly sets nothing because
+            // libraryName is empty, so picking one left the compositor on the system Vulkan: a
+            // black screen wearing a driver's name. Refuse them here and say which list they belong in.
+            String rejected = rejectionReason(tmpDir);
+            if (rejected != null) {
+                Log.d("AdrenotoolsManager", "not an AdrenoTools driver: " + rejected);
+                FileUtils.delete(tmpDir);
+                return "";
+            }
             if (new File(tmpDir, "meta.json").exists()) {
                 name = getDriverName(tmpDir.getName());
                 File dst = new File(adrenotoolsContentDir, name);
@@ -208,6 +257,33 @@ public class AdrenotoolsManager {
         return name;
     }
     
+    /**
+     * Why this extracted zip is not an AdrenoTools driver, or null when it is one. Reads the zip's
+     * own meta.json rather than the installed-driver accessors, which key off an installed id.
+     */
+    private static String rejectionReason(File dir) {
+        File metaFile = new File(dir, "meta.json");
+        if (!metaFile.isFile()) return "no meta.json";
+        String libraryName = "", kind = "";
+        try {
+            JSONObject meta = new JSONObject(FileUtils.readString(metaFile));
+            libraryName = meta.optString("libraryName", "");
+            kind = meta.optString("kind", "");
+        }
+        catch (Exception e) {
+            return "meta.json is unreadable (" + e.getMessage() + ")";
+        }
+        if ("linux-vulkan-icd".equals(kind))
+            return "this is a Linux runtime driver (import it under \"Linux runtime drivers\")";
+        if ("wayland-game-driver".equals(kind))
+            return "this is a Wayland game driver (import it under \"Wayland game drivers\")";
+        if (libraryName.isEmpty())
+            return "meta.json names no libraryName, so nothing could be handed to AdrenoTools";
+        if (!new File(dir, libraryName).isFile())
+            return "meta.json names " + libraryName + ", which is not in the zip";
+        return null;
+    }
+
     public void setDriverById(EnvVars envVars, ImageFs imagefs, String adrenotoolsDriverId) {
         boolean isFromResources = isFromResources(adrenotoolsDriverId);
 

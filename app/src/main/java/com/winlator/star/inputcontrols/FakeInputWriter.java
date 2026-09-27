@@ -45,6 +45,7 @@ public class FakeInputWriter {
     public static final short BTN_SELECT = 0x13A;
     public static final short BTN_START = 0x13B;
     public static final short BTN_THUMBL = 0x13D;
+    public static final short BTN_MODE = 0x13C;
     public static final short BTN_THUMBR = 0x13E;
 
     // Absolute axis codes
@@ -60,8 +61,12 @@ public class FakeInputWriter {
     // Button mapping (bit i of the snapshot buttons word)
     private static final short[] BUTTON_MAP = {
             BTN_A, BTN_B, BTN_X, BTN_Y, BTN_TL, BTN_TR,
-            BTN_SELECT, BTN_START, BTN_THUMBL, BTN_THUMBR
+            BTN_SELECT, BTN_START, BTN_THUMBL, BTN_THUMBR,
+            BTN_MODE
     };
+    /** Bit 10 of the snapshot word. The first ten are GamepadState's own bit order; the Steam
+     *  button is not, because GamepadState keeps 10 and 11 for the triggers. */
+    private static final int SNAPSHOT_IDX_MODE = 10;
 
     private static final int EVENT_SIZE = 24;
     static final int MAX_EVENTS_PER_UPDATE = 32;
@@ -610,6 +615,11 @@ public class FakeInputWriter {
         for (int i = 0; i < 10; i++) {
             writeButton(i, state.isPressed((byte) i));
         }
+        // The Steam button. In a Linux session this is what opens the client's own in-game menu,
+        // and the client looks for it where an Xbox pad keeps it: evdev BTN_MODE, which SDL then
+        // reports as button 8 - exactly the "guide:b8" in the mapping Steam writes for this pad.
+        writeButton(SNAPSHOT_IDX_MODE,
+                state.isPressed(com.winlator.star.inputcontrols.ExternalController.IDX_BUTTON_MODE));
 
         // Sticks
         int lx = (int) (state.thumbLX * 32767);

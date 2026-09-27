@@ -2538,4 +2538,44 @@ trying for speed, <b>notemplates</b> if you get driver crashes.
         <b>Microphone</b><br /><br />
         Lets a game use the microphone for voice chat. It is meant for the <b>games the client launches</b>, not for the Steam client. It does nothing in a Linux session yet: the switch is wired for the Windows side, and the Linux side that would carry the sound in is not in place.
     ]]></string>
+
+    <!-- ── Social Hub (in-game drawer tab): GitHub-backed community feed. See ui/XServerSocialTab.kt ── -->
+    <string name="social_hub_tab_label">Social Hub</string>
+    <string name="social_hub_help_title">Social Hub</string>
+    <string name="social_hub_help_body">A shared feed for everyone playing WinHub. Posts live in a public GitHub repository, so anyone can read them from a browser too. Sign in with GitHub to post and reply; images you attach are uploaded to a public image host so everybody can see them.</string>
+    <string name="social_hub_welcome_tagline">The shared feed for WinHub players — post, reply, and drop screenshots without leaving your game.</string>
+    <string name="social_hub_continue_github">Continue with GitHub</string>
+    <string name="social_hub_retry">Try again</string>
+    <string name="social_hub_enter_code">Enter this code on GitHub</string>
+    <string name="social_hub_open_device">Open github.com/login/device</string>
+    <string name="social_hub_sign_in_hint">Sign in with GitHub to post and reply.</string>
+    <string name="social_hub_refresh">Refresh</string>
+    <string name="social_hub_sign_out">Sign out</string>
+    <string name="social_hub_loading_feed">Loading the feed…</string>
+    <string name="social_hub_empty_feed">No posts yet</string>
+    <string name="social_hub_empty_feed_hint">Start the conversation — everyone playing WinHub can see it.</string>
+    <string name="social_hub_new_post">New post</string>
+    <string name="social_hub_new_post_title">New post</string>
+    <string name="social_hub_post_title_field">Title</string>
+    <string name="social_hub_post_body_field">What\'s on your mind?</string>
+    <string name="social_hub_attach_hint">Attach an image (uploaded publicly)</string>
+    <string name="social_hub_pick_image">Attach an image</string>
+    <string name="social_hub_uploading">Uploading image…</string>
+    <string name="social_hub_post_action">Post</string>
+    <string name="social_hub_posting">Posting…</string>
+    <string name="social_hub_no_replies">No replies yet. Start the conversation.</string>
+    <string name="social_hub_reply_hint">Reply…</string>
+    <string name="social_hub_send">Send</string>
+    <string name="social_hub_back">Back to feed</string>
+    <string name="social_hub_delete_post_title">Delete this post?</string>
+    <string name="social_hub_delete_post_body">It disappears from the feed for everyone. This is a soft delete — the record stays on GitHub.</string>
+    <string name="social_hub_delete_reply_title">Delete this reply?</string>
+    <string name="social_hub_delete_reply_body">Your reply is removed from the thread for everybody.</string>
+    <string name="social_hub_delete">Delete</string>
+    <string name="social_hub_delete_post">Delete post</string>
+    <string name="social_hub_delete_reply">Delete reply</string>
+    <string name="social_hub_attachments">Images attached to this post</string>
+    <string name="social_hub_reply_count_one">%d reply</string>
+    <string name="social_hub_reply_count_many">%d replies</string>
+    <string name="social_hub_images_more">+%1$d more</string>
 </resources>

@@ -225,6 +225,7 @@ fun XServerDrawer() {
                         add(TabType.CONTROLS)
                         add(TabType.AUDIO)
                         add(TabType.ADVANCED)
+                        add(TabType.SOCIAL)
                         if (friendsSource.tabVisible) add(TabType.FRIENDS)
                         if (com.winlator.star.FeatureFlags.TV_OUTPUT_ENABLED && (tvConnected || castSupported)) add(TabType.TV)
                     }
@@ -267,6 +268,9 @@ fun XServerDrawer() {
                                     isSelected = selectedTab == TabType.FRIENDS,
                                     unread = friendsUnread.values.any { it > 0 },
                                 ) { handleTabClick(TabType.FRIENDS, state) }
+                                TabType.SOCIAL -> SocialTabButton(selectedTab == TabType.SOCIAL) {
+                                    handleTabClick(TabType.SOCIAL, state)
+                                }
                                 TabType.TV -> TvTabButton(selectedTab == TabType.TV) {
                                     handleTabClick(TabType.TV, state)
                                 }
@@ -322,13 +326,17 @@ fun XServerDrawer() {
             // The selected tab's menu, stacked below the strip. The Friends tab owns its own
             // scrolling (a LazyColumn roster/thread with the send box pinned at the bottom) —
             // nesting that inside the pane's verticalScroll is illegal in Compose, so that one
-            // tab skips it, exactly as the old rail layout did.
+            // tab skips it, exactly as the old rail layout did. Social Hub skips it for the same
+            // reason (LazyColumn feed/thread with its own pinned composer).
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
                     .fillMaxWidth()
-                    .then(if (selectedTab == TabType.FRIENDS) Modifier else Modifier.verticalScroll(rememberScrollState()))
+                    .then(
+                        if (selectedTab == TabType.FRIENDS || selectedTab == TabType.SOCIAL) Modifier
+                        else Modifier.verticalScroll(rememberScrollState())
+                    )
                     .padding(horizontal = 4.dp),
             ) {
                 when (selectedTab) {
@@ -341,6 +349,7 @@ fun XServerDrawer() {
                     TabType.TV -> TvContent(state)
                     TabType.AUDIO -> AudioContent(state)
                     TabType.FRIENDS -> FriendsContent(state)
+                    TabType.SOCIAL -> SocialContent(state)
                 }
             }
         }

@@ -14,7 +14,11 @@ enum class TabType {
     GRAPHICS, HUD, RESHADE, CONTROLS, ADVANCED, TASK_MANAGER, TV, AUDIO,
     // Steam friends + chat while playing. Only in the rail while InGameFriendsSource says a live
     // source exists (see ui/XServerFriendsTab.kt).
-    FRIENDS
+    FRIENDS,
+    // GitHub-backed community feed (posts = issues on winhub-emu/social-hub). Always in the rail;
+    // the tab shows its own sign-in screen until a GitHub device-flow session exists.
+    // See ui/XServerSocialTab.kt + store/SocialHubStore.kt.
+    SOCIAL
 }
 
 object XServerDrawerState {

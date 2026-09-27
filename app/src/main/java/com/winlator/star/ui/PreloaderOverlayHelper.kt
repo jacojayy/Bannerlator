@@ -27,12 +27,11 @@ object PreloaderOverlayHelper {
 
     @JvmStatic
     fun attach(activity: AppCompatActivity) {
-        val overlay = object : ComposeView(activity) {
-            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-                val handled = super.dispatchTouchEvent(event)
-                return handled || PreloaderState.isVisible()
-            }
-        }.apply {
+        // androidx.compose.ui.platform.ComposeView is FINAL, so it cannot be subclassed to
+        // swallow unhandled touches. The touch sink therefore lives on a thin FrameLayout host
+        // that wraps the Compose content view: the host dispatches to the overlay child first
+        // and only then falls back to "a status is on screen, so eat the event anyway".
+        val overlay = ComposeView(activity).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
                 WinlatorTheme {
@@ -40,10 +39,15 @@ object PreloaderOverlayHelper {
                 }
             }
         }
-        val params = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT,
-        )
-        (activity.window.decorView as ViewGroup).addView(overlay, params)
+        val host = object : FrameLayout(activity) {
+            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                val handled = super.dispatchTouchEvent(event)
+                return handled || PreloaderState.isVisible()
+            }
+        }
+        val matchParent = ViewGroup.LayoutParams.MATCH_PARENT
+        host.addView(overlay, FrameLayout.LayoutParams(matchParent, matchParent))
+        val params = FrameLayout.LayoutParams(matchParent, matchParent)
+        (activity.window.decorView as ViewGroup).addView(host, params)
     }
 }

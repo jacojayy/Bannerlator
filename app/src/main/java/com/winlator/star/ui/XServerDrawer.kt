@@ -232,12 +232,16 @@ fun XServerDrawer() {
                     // Keep the selected chip in view when the selection changes from elsewhere (the
                     // task-manager action, a deep link); a tap on a chip is already on screen.
                     val stripIndex = stripTabs.indexOf(selectedTab)
+                    // LocalDensity.current is a @Composable read: capture it HERE, in the
+                    // composable scope, then use it inside the LaunchedEffect below (a plain
+                    // suspend lambda, where composable reads are a compile error).
+                    val stripDensity = LocalDensity.current
                     LaunchedEffect(stripIndex, stripState.maxValue) {
                         if (stripIndex >= 0 && stripState.maxValue > 0) {
-                            val chip = with(LocalDensity.current) { 50.dp.toPx() }
+                            val chip = with(stripDensity) { 50.dp.toPx() }
                             val start = chip * stripIndex
-                            val end = start + with(LocalDensity.current) { 44.dp.toPx() }
-                            val view = with(LocalDensity.current) { maxWidth.toPx() }
+                            val end = start + with(stripDensity) { 44.dp.toPx() }
+                            val view = with(stripDensity) { maxWidth.toPx() }
                             if (start < stripState.value) {
                                 stripState.animateScrollTo(start.roundToInt())
                             } else if (end > stripState.value + view) {

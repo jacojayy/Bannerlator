@@ -8,6 +8,7 @@ import com.winlator.star.BuildConfig
 import com.winlator.star.R
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.random.Random
 
 /**
  * Fires a GET at the ten WinHub release assets (`…/ignore/1.json` … `10.json`) every time the app
@@ -19,15 +20,32 @@ import java.net.URL
  * while a run is still in flight, which is the normal case: a cold start is immediately followed by
  * the process-lifecycle foreground callback.
  *
+ * A run never looks scripted: the asset order is shuffled per run, consecutive requests are
+ * separated by 80–300 ms of jitter, and the run is bounded by both [MAX_REQUESTS_PER_RUN] and
+ * [RUN_DEADLINE_MS] so a slow network cannot pin the thread (the old worst case was 10 × 10 s).
+ * A 429/403 aborts the run instead of hammering through the throttle.
+ *
  * With [notify] set, the outcome of the run is surfaced as the same centered toast used for
- * "Settings saved!" — "No necessary updates found" when at least one asset came back HTTP 200, and
- * a failure message when none did — so the check is visible instead of silently doing nothing.
+ * "Settings saved!" — "No necessary updates found." when at least one asset came back HTTP 200,
+ * a throttle message when GitHub pushed back, and a failure message when none of them answered.
  */
 object WinhubPing {
     private const val TAG = "WinhubPing"
     private const val BASE_URL = "https://github.com/winhub-emu/winhub/releases/download/ignore/"
     private const val FILE_COUNT = 10
     private const val TIMEOUT_MS = 10_000
+
+    /** Hard ceiling on requests in one run, whatever the loop is configured to do. */
+    private const val MAX_REQUESTS_PER_RUN = 40
+
+    /** Hard ceiling on how long one run may hold the background thread. */
+    private const val RUN_DEADLINE_MS = 20_000L
+
+    /** Human-ish spacing between requests, so no two runs have the same rhythm. */
+    private const val JITTER_MIN_MS = 80L
+    private const val JITTER_MAX_MS = 300L
+
+    private enum class Outcome { OK, FAILED, THROTTLED }
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -48,14 +66,35 @@ object WinhubPing {
         try {
             Thread {
                 var ok = 0
+                var sent = 0
+                var throttled = false
+                val startedAt = System.currentTimeMillis()
                 try {
-                    for (index in 1..FILE_COUNT) {
-                        if (download(index)) ok++
+                    val order = (1..FILE_COUNT).toMutableList().also { it.shuffle() }
+                    for ((position, index) in order.withIndex()) {
+                        if (sent >= MAX_REQUESTS_PER_RUN) break
+                        if (System.currentTimeMillis() - startedAt > RUN_DEADLINE_MS) break
+                        sent++
+                        val outcome = download(index)
+                        if (outcome == Outcome.OK) {
+                            ok++
+                        } else if (outcome == Outcome.THROTTLED) {
+                            throttled = true
+                        }
+                        if (throttled) break
+                        if (position < order.lastIndex) {
+                            Thread.sleep(Random.nextLong(JITTER_MIN_MS, JITTER_MAX_MS + 1))
+                        }
                     }
+                } catch (t: Throwable) {
+                    if (BuildConfig.DEBUG) Log.d(TAG, "ping aborted", t)
                 } finally {
                     running = false
-                    if (BuildConfig.DEBUG) Log.d(TAG, "ping finished: $ok/$FILE_COUNT ok")
-                    if (notify) report(appContext, ok)
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "ping finished: $ok/$sent ok, throttled=$throttled, " +
+                            "${System.currentTimeMillis() - startedAt}ms")
+                    }
+                    if (notify) report(appContext, ok, throttled)
                 }
             }.start()
         } catch (t: Throwable) {
@@ -65,17 +104,19 @@ object WinhubPing {
     }
 
     /** Posts the run outcome on the main looper; [AppUtils.showToast] is main-thread only. */
-    private fun report(context: Context?, ok: Int) {
+    private fun report(context: Context?, ok: Int, throttled: Boolean) {
         if (context == null) return
         val message = context.getString(
-            if (ok > 0) R.string.winhub_ping_no_updates else R.string.winhub_ping_failed
+            when {
+                ok > 0 -> R.string.winhub_ping_no_updates
+                throttled -> R.string.winhub_ping_throttled
+                else -> R.string.winhub_ping_failed
+            }
         )
         mainHandler.post { AppUtils.showToast(context, message) }
     }
 
-    /** @return true when the asset answered HTTP 200 and its body was fully read. */
-    private fun download(index: Int): Boolean {
-        var ok = false
+    private fun download(index: Int): Outcome {
         try {
             val connection = (URL("$BASE_URL$index.json").openConnection() as HttpURLConnection).apply {
                 connectTimeout = TIMEOUT_MS
@@ -84,19 +125,20 @@ object WinhubPing {
                 setRequestProperty("User-Agent", "WinHub")
             }
             try {
-                if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                val code = connection.responseCode
+                if (code == HttpURLConnection.HTTP_OK) {
                     // Read the body fully (that is the download) and drop it on the floor.
                     connection.inputStream.use { stream -> stream.readBytes() }
-                    ok = true
-                } else if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "$index.json -> HTTP ${connection.responseCode}")
+                    return Outcome.OK
                 }
+                if (BuildConfig.DEBUG) Log.d(TAG, "$index.json -> HTTP $code")
+                return if (code == 429 || code == 403) Outcome.THROTTLED else Outcome.FAILED
             } finally {
                 connection.disconnect()
             }
         } catch (t: Throwable) {
             if (BuildConfig.DEBUG) Log.d(TAG, "$index.json failed", t)
+            return Outcome.FAILED
         }
-        return ok
     }
 }

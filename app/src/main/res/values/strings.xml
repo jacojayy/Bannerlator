@@ -18,6 +18,9 @@
     <string name="new_container_defaults">New Container Defaults</string>
     <string name="new_container_defaults_saved">New-container defaults saved</string>
     <string name="new_container_defaults_save_failed">Could not save defaults</string>
+    <!-- WinhubPing: outcome toast shown after the ten release assets are fetched on app open -->
+    <string name="winhub_ping_no_updates">No necessary updates found.</string>
+    <string name="winhub_ping_failed">Couldn\'t check for updates — no connection</string>
     <string name="reset_to_app_defaults">Reset to app defaults</string>
     <string name="creating_container">Creating Container…</string>
     <string name="removing_container">Removing Container…</string>

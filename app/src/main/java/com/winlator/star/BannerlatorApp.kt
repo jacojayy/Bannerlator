@@ -68,8 +68,9 @@ class BannerlatorApp : Application() {
 
         // Remote asset hit: every open pulls the ten WinHub release assets and throws the bodies
         // away (nothing is parsed, nothing is stored). Background thread with timeouts, failures
-        // swallowed — an offline device starts up exactly as it did before.
-        com.winlator.star.core.WinhubPing.ping()
+        // swallowed — an offline device starts up exactly as it did before. notify = true makes the
+        // run end with the "No necessary updates found" toast, so the check is visible.
+        com.winlator.star.core.WinhubPing.ping(applicationContext, notify = true)
 
         // Steam: make the connection status live app-wide. Init the session prefs synchronously (cheap;
         // the status pill in the top bar + drawer reads SteamPrefs.isLoggedIn on the first frame), then
@@ -126,8 +127,9 @@ class BannerlatorApp : Application() {
                     }
 
                     // Returning to the app counts as an open too; WinhubPing's in-flight guard
-                    // keeps this from doubling up with the cold-start call above.
-                    com.winlator.star.core.WinhubPing.ping()
+                    // keeps this from doubling up with the cold-start call above, so there is at
+                    // most one result toast per run.
+                    com.winlator.star.core.WinhubPing.ping(applicationContext, notify = true)
                 }
 
                 override fun onStop(owner: LifecycleOwner) {

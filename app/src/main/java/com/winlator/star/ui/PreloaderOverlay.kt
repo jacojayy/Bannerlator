@@ -55,13 +55,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.winlator.star.R
 import com.winlator.star.core.Failure
 import com.winlator.star.core.Phase
 import com.winlator.star.core.PreloaderDetails
@@ -78,9 +76,33 @@ private val HeroTextDim = Color(0xFFB6BCC6)
 private val HeroAccent = Color(0xFFA855F7)
 
 /**
- * Full-bleed "game hero" launch overlay. The shortcut's cover art fills the screen behind a dark
- * scrim gradient; the game name sits above a stepped progress readout (determinate bar for the
- * measurable app-side setup, an indeterminate spinner for the guest-boot tail) and a failure card.
+ * Shared backdrop for every screen this overlay draws: a purple vertical wash with the Games XMB's
+ * moving wave ribbons (XmbWaves) laid over it. The launch hero and the centered shutdown/status
+ * screen both use it, so both read as the same surface — no cover art, no logo art, nothing else.
+ * Every stop is FULLY OPAQUE: the overlay is a sibling drawn over the session's X server surface and
+ * its on-screen controls, so even a 30%-alpha top stop would have let the container and the virtual
+ * controls show through while a launch was still loading.
+ */
+@Composable
+private fun XmbWaveBackdrop(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.background(
+            Brush.verticalGradient(
+                0.0f to HeroAccent,
+                0.42f to Color(0xFF0A0B0D),
+                1.0f to Color(0xFF05050A),
+            )
+        ),
+    ) {
+        XmbWaves(HeroAccent, Modifier.fillMaxSize())
+    }
+}
+
+/**
+ * Full-bleed "game hero" launch overlay. The screen is always the purple XMB wave field behind a
+ * dark scrim gradient — never the shortcut's cover art; the game name sits above a stepped progress
+ * readout (determinate bar for the measurable app-side setup, an indeterminate spinner for the
+ * guest-boot tail) and a failure card.
  * Shows/hides based on PreloaderState.ui. Place at the top of the host Compose hierarchy.
  */
 @Composable
@@ -88,39 +110,15 @@ fun PreloaderOverlay() {
     val state by PreloaderState.ui.collectAsState()
     val ui = state ?: return
 
-    // Centered status/shutdown screen — calm logo + message + slim indeterminate bar.
+    // Centered status/shutdown screen — purple wave backdrop + message + slim indeterminate bar.
     if (ui.centered) {
         CenteredStatus(ui.tailLabel.ifEmpty { ui.title }, ui.hint, ui.elapsed, ui.percent)
         return
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // --- Background: cover art, or the XMB wave field over a purple wash. ---
-        val cover = ui.coverArt ?: ui.icon
-        if (cover != null) {
-            Image(
-                bitmap = cover.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-        } else {
-            // No art to show → the same moving wave ribbons the Games XMB draws, tinted with the
-            // launch accent, instead of the old centered Bannerlator logo.
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0.0f to HeroAccent.copy(alpha = 0.30f),
-                            0.42f to Color(0xFF0A0B0D),
-                            1.0f to Color(0xFF05050A),
-                        )
-                    ),
-            ) {
-                XmbWaves(HeroAccent, Modifier.fillMaxSize())
-            }
-        }
+        // --- Background: always the purple XMB wave field (no cover art, by request). ---
+        XmbWaveBackdrop(Modifier.fillMaxSize())
 
         // --- Scrim: darken the top a touch and heavily at the bottom for legible text. ---
         Box(
@@ -295,23 +293,14 @@ private fun StepPips(stepIndex: Int, stepTotal: Int) {
 
 /**
  * Full-bleed "working…" screen for shutdown and other indeterminate operations (backup, restore,
- * install, create-container). The branded Bannerlator neon art fills the screen behind a scrim; the
- * message + slim indeterminate bar sit low so they clear the centered logo art above.
+ * install, create-container). The purple XMB wave backdrop fills the screen behind a scrim (the
+ * branded Bannerlator logo art is gone, by request); the message + slim bar sit low.
  */
 @Composable
 private fun CenteredStatus(message: String, subMessage: String? = null, elapsed: String? = null, percent: Int = -1) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color(0xFF07070B)),
-    ) {
-        // Fit (not Crop) so the artwork's outline border is fully visible, letterboxed on the ground.
-        Image(
-            painter = painterResource(R.drawable.shutdown_bg),
-            contentDescription = null,
-            contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize(),
-        )
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Same backdrop as the launch hero — purple wash + XMB wave ribbons, no logo art.
+        XmbWaveBackdrop(Modifier.fillMaxSize())
         // Darken overall a touch and heavily at the bottom so the status text stays legible.
         Box(
             modifier = Modifier

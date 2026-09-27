@@ -5160,7 +5160,8 @@ private fun TmContainerPanel(info: XServerDialogState.TmContainerInfo?) {
                 // launches brings Valve's Proton with its own DXVK/VKD3D, which we do not pick and
                 // cannot name from here. Say what is true and leave out what would be invented.
                 ContainerInfoRow(if (info.linuxRuntime) "Runtime" else "Wine", info.wine)
-                ContainerInfoRow("Display backend", info.displayBackend)
+                // "Display backend" row removed — hidden by request (the X11/Wayland choice is no
+                // longer surfaced anywhere in the UI); `wayland` below still drives the Renderer line.
                 if (!info.linuxRuntime) ContainerInfoRow("DX wrapper", prettyDxWrapper(info.dxWrapper), accent)
                 // Wayland: the game presents through the embedded compositor's Vulkan backend, and the
                 // driver value is the "compositor: … · game: …" pair the activity resolved (wraps).

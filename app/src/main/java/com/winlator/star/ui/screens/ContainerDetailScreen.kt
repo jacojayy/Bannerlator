@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.asImageBitmap
@@ -491,8 +492,9 @@ private fun topTabLabel(title: String): String = when (title) {
 }
 
 /**
- * Portrait-only: the container-editor tabs as a horizontal icon bar across the top (landscape keeps
- * the collapsible left rail instead). Same icons/labels as the rail — just repositioned. The help /
+ * Portrait-only: the container-editor tabs as a horizontal TEXT strip across the top (landscape keeps
+ * the collapsible left rail instead). No icons — just the uppercase titles with the accent underline
+ * under the active one (by request, so the strip reads as a single minimal row). The help /
  * reset-to-defaults buttons are appended INLINE at the end of the same row (a faint divider hints
  * they're actions, not tabs). Every cell gets equal weight, so the tabs + buttons evenly fill the
  * full width. Used by all 3 container screens (New / Edit = tabs + help; Defaults = tabs + help +
@@ -513,7 +515,6 @@ private fun ContainerTopTabs(
             tabs.forEachIndexed { index, tab ->
                 val active = index == selected
                 TopCell(
-                    icon = tabIcon(tab),
                     label = topTabLabel(tab),
                     tint = if (active) MaterialTheme.colorScheme.primary
                            else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -534,7 +535,6 @@ private fun ContainerTopTabs(
                 )
                 links.forEach { link ->
                     TopCell(
-                        icon = link.icon,
                         label = topActionLabel(link.icon),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         highlight = false,
@@ -549,11 +549,11 @@ private fun ContainerTopTabs(
     }
 }
 
-/** One cell of the portrait top bar — a tab or an action button (icon over a small label). The
- *  active underline collapses to zero width when off, so every cell keeps the same height. */
+/** One cell of the portrait top bar — a tab or an action button. TEXT ONLY (no icons, by request):
+ *  the uppercase title sits on one line with the accent underline under it. The underline collapses
+ *  to zero width when off, so every cell keeps the same height. */
 @Composable
 private fun TopCell(
-    icon: ImageVector,
     label: String,
     tint: Color,
     highlight: Boolean,
@@ -567,19 +567,18 @@ private fun TopCell(
             .clip(RoundedCornerShape(9.dp))
             .background(if (highlight) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent)
             .clickable { onClick() }
-            .padding(vertical = 6.dp, horizontal = 1.dp),
+            .padding(vertical = 9.dp, horizontal = 2.dp),
     ) {
-        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.height(3.dp))
         Text(
-            label,
+            label.uppercase(),
             color = tint,
-            fontSize = 8.5.sp,
+            fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
-            letterSpacing = 0.2.sp,
+            letterSpacing = 0.5.sp,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
-        Spacer(Modifier.height(2.dp))
+        Spacer(Modifier.height(5.dp))
         Box(
             modifier = Modifier
                 .height(2.dp)
@@ -877,67 +876,9 @@ private fun TopLevelFields(
         }
         Spacer(Modifier.height(8.dp))
 
-        // Display backend: X11 (Java X server + libwinlator) vs the embedded Wayland
-        // compositor (winewayland.drv). Wayland routes launches through our compositor and
-        // greys out the whole Renderer group below, which the compositor replaces. On Wayland
-        // the game renders on the Turnip bundled with the Proton wcp (winewayland picks it via
-        // VK_ICD_FILENAMES); the Graphics Driver picker only feeds the compositor, and its
-        // config dialog is X11-only. The DX Wrapper (DXVK/VKD3D) applies on both backends.
-        //
-        // Wayland is only selectable on a layer that ships winewayland.so + its bundled Wayland Turnip
-        // (WineWaylandSupport). On any other layer the item is disabled and the dropdown shows the
-        // EFFECTIVE backend (X11) — including for a container saved as "wayland" whose layer was since
-        // removed/replaced, which the save path then persists as X11. Keyed on the wine version so the
-        // cached probe only re-runs when the layer changes.
-        run {
-            val backendLabels = listOf("X11", "Wayland")
-            val backendValues = listOf(Container.DISPLAY_BACKEND_X11, Container.DISPLAY_BACKEND_WAYLAND)
-            val waylandCapable = remember(viewModel.selectedWineVersion) {
-                viewModel.isWineWaylandCapable(viewModel.selectedWineVersion)
-            }
-            val selIdx = if (viewModel.isWaylandBackend) 1 else 0
-            LabeledDropdown(
-                label = "Display backend",
-                options = backendLabels,
-                selectedOption = backendLabels[selIdx],
-                disabledOptions = if (waylandCapable) emptySet() else setOf(backendLabels[1]),
-                onSelect = {
-                    val picked = backendValues[backendLabels.indexOf(it)]
-                    viewModel.onDisplayBackendChanged(
-                        if (picked == Container.DISPLAY_BACKEND_WAYLAND && !waylandCapable) Container.DISPLAY_BACKEND_X11
-                        else picked
-                    )
-                }
-            )
-            if (viewModel.isWaylandBackend) {
-                Text(
-                    "Wayland (experimental): games render through the embedded compositor " +
-                        "(winewayland). Needs " + com.winlator.star.core.WineWaylandSupport.LAYER_HINT +
-                        ". Games render on the Turnip bundled with that Proton — the " +
-                        "graphics-driver picker only affects the compositor. DX wrapper " +
-                        "(DXVK/VKD3D) settings apply as on X11. The Renderer options below " +
-                        "don't apply and are disabled.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else if (!waylandCapable) {
-                Text(
-                    "Wayland needs " + com.winlator.star.core.WineWaylandSupport.LAYER_HINT +
-                        ". The selected layer does not include winewayland and its Wayland Turnip.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                if (viewModel.isWaylandStored) {
-                    Text(
-                        "This container was saved on Wayland, but its Proton layer is no longer Wayland-capable: it runs on X11 and will be saved as X11.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-
+        // Display backend (X11 / Wayland) is deliberately NOT offered here — hidden by request.
+        // The stored value is left exactly as saved (see ContainerDetailViewModel.displayBackend);
+        // only the picker and its Wayland explainer were removed, nothing else changes.
         // Graphics Driver + wrapper manager (cloud) + config button. Under Wayland the wrapper
         // flavour is irrelevant: the compositor loads the installed Turnip named by the "version"
         // key of graphicsDriverConfig (XServerDisplayActivity's Wayland resolve → adrenotools), and

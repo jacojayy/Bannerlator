@@ -7454,64 +7454,9 @@ internal fun ShortcutSettingsDialogScreen(
                         Text("❔  What is all this?")
                     }
 
-                    // Display backend override (per-game): default to the container, or force
-                    // X11 / Wayland. Wayland greys the Renderer group below (compositor replaces it)
-                    // and the driver-config button (the game runs on the Proton's bundled Turnip).
-                    // gamescope is a Wayland client and the launch path pins the backend to Wayland
-                    // for a Linux entry whatever this says, so there is no choice left to offer.
-                    if (!isLinuxEntry) {
-                        val dbLabels = listOf("Use container default", "Force X11", "Force Wayland")
-                        val dbValues = listOf("", Container.DISPLAY_BACKEND_X11, Container.DISPLAY_BACKEND_WAYLAND)
-                        // A stored "Force Wayland" the container's layer can't honour shows as the
-                        // effective backend (Force X11); see containerWaylandCapable above.
-                        val waylandStoredUnusable =
-                            displayBackendOverride == Container.DISPLAY_BACKEND_WAYLAND && !containerWaylandCapable
-                        val dbIdx = if (waylandStoredUnusable) 1
-                                    else dbValues.indexOf(displayBackendOverride).coerceAtLeast(0)
-                        DpDrop(
-                            dp, "displayBackend",
-                            label = "Display backend",
-                            options = dbLabels,
-                            selected = dbLabels[dbIdx],
-                            disabledOptions = if (containerWaylandCapable) emptySet() else setOf(dbLabels[2]),
-                            onSelect = {
-                                val picked = dbValues[dbLabels.indexOf(it)]
-                                displayBackendOverride =
-                                    if (picked == Container.DISPLAY_BACKEND_WAYLAND && !containerWaylandCapable) Container.DISPLAY_BACKEND_X11
-                                    else picked
-                            }
-                        )
-                        if (effectiveWaylandShortcut) {
-                            Text(
-                                "Wayland (experimental): renders through the embedded compositor " +
-                                    "(winewayland). Needs " + com.winlator.star.core.WineWaylandSupport.LAYER_HINT +
-                                    ". The game renders on the Turnip bundled with that " +
-                                    "Proton — the graphics-driver picker only affects the compositor. " +
-                                    "DX wrapper (DXVK/VKD3D) settings apply as on X11. Renderer " +
-                                    "options below don't apply.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else if (!containerWaylandCapable) {
-                            Text(
-                                "Wayland needs " + com.winlator.star.core.WineWaylandSupport.LAYER_HINT +
-                                    ". The selected layer does not include winewayland and its Wayland Turnip.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            if (waylandStoredUnusable || shortcut.container.isWaylandBackend) {
-                                Text(
-                                    if (waylandStoredUnusable)
-                                        "This game was set to Force Wayland, but the container's Proton layer is not Wayland-capable: it runs on X11 and will be saved as Force X11."
-                                    else
-                                        "The container is set to Wayland, but its Proton layer is not Wayland-capable: the game runs on X11.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-                    }
-
+                    // Display backend override (container default / Force X11 / Force Wayland) is
+                    // deliberately NOT offered here — hidden by request. The stored extra is left
+                    // untouched, so a game that already carried one keeps exactly what it had.
                     // Graphics Driver + wrapper manager (cloud). Under Wayland the wrapper flavour is
                     // irrelevant: the compositor loads the installed Turnip named by the "version" key of
                     // graphicsDriverConfig (XServerDisplayActivity's Wayland resolve → adrenotools), and the
@@ -8832,8 +8777,9 @@ internal fun ShortcutSettingsDialogScreen(
                 }
 
                 // ── Responsive tab layout ────────────────────────────────────────────────────────
-                // Portrait: the tab strip is pinned across the TOP (mirrors the container editor's
-                // top tab bar via the shared RailTopTabs). Landscape: the shared collapsible left rail
+                // Portrait: the tab strip is pinned across the TOP as a text-only uppercase strip
+                // (no icons — mirrors the container editor's top tab bar via the shared RailTopTabs).
+                // Landscape: the shared collapsible left rail
                 // beside the content. Left/Right on the focused "tabs" node still switches tabs for
                 // D-pad/controller users in both orientations, and L1/R1 switch from anywhere.
                 val railState = rememberRailState("shortcut")

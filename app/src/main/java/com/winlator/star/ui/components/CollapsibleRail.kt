@@ -381,8 +381,7 @@ fun RailTopTabs(
         ) {
             items.forEach { item ->
                 TopTabCell(
-                    icon = item.icon,
-                    label = item.label,
+                    label = topTabLabel(item.label),
                     selected = item.selected,
                     onClick = item.onClick,
                     modifier = Modifier.weight(1f),
@@ -398,7 +397,7 @@ fun RailTopTabs(
                         .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
                 )
                 links.forEach { link ->
-                    TopTabCell(link.icon, link.label, selected = false, onClick = link.onClick, modifier = Modifier.weight(1f))
+                    TopTabCell(link.label, selected = false, onClick = link.onClick, modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -406,11 +405,20 @@ fun RailTopTabs(
     }
 }
 
-/** One cell of [RailTopTabs] — icon over a small label, with an accent underline (zero-width when
- *  unselected, so every cell keeps the same height). Mirrors the container editor's TopCell. */
+/** Uppercase tab title for the horizontal strip, with the long ones abbreviated so five or six
+ *  cells still fit a phone width without ellipsizing (same rule as [collapsedLabel]). */
+private fun topTabLabel(label: String): String = when (label) {
+    "Win Components" -> "WIN COMP"
+    "Env Vars" -> "ENV VARS"
+    "Controller" -> "CTRL"
+    else -> label.uppercase()
+}
+
+/** One cell of [RailTopTabs] — TEXT ONLY (no icons, by request): the uppercase title on one line
+ *  with an accent underline under the selected one (zero-width when unselected, so every cell keeps
+ *  the same height). Mirrors the container editor's TopCell. */
 @Composable
 private fun TopTabCell(
-    icon: ImageVector,
     label: String,
     selected: Boolean,
     onClick: () -> Unit,
@@ -423,25 +431,23 @@ private fun TopTabCell(
             .clip(RoundedCornerShape(9.dp))
             .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(vertical = 6.dp, horizontal = 1.dp),
+            .padding(vertical = 9.dp, horizontal = 2.dp),
     ) {
-        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(20.dp))
-        Spacer(Modifier.height(3.dp))
         Text(
             label,
             color = tint,
-            fontSize = 8.5.sp,
+            fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
-            letterSpacing = 0.2.sp,
+            letterSpacing = 0.5.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
         )
-        Spacer(Modifier.height(2.dp))
+        Spacer(Modifier.height(5.dp))
         Box(
             modifier = Modifier
                 .height(2.dp)
-                .width(if (selected) 16.dp else 0.dp)
+                .width(if (selected) 18.dp else 0.dp)
                 .clip(RoundedCornerShape(3.dp))
                 .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent),
         )

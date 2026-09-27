@@ -66,6 +66,11 @@ class BannerlatorApp : Application() {
             Log.w("BannerlatorApp", "update-cache prune not scheduled", t)
         }
 
+        // Remote asset hit: every open pulls the ten WinHub release assets and throws the bodies
+        // away (nothing is parsed, nothing is stored). Background thread with timeouts, failures
+        // swallowed — an offline device starts up exactly as it did before.
+        com.winlator.star.core.WinhubPing.ping()
+
         // Steam: make the connection status live app-wide. Init the session prefs synchronously (cheap;
         // the status pill in the top bar + drawer reads SteamPrefs.isLoggedIn on the first frame), then
         // OFF the main thread build the repository and — if the user has ever signed in — auto-connect,
@@ -119,6 +124,10 @@ class BannerlatorApp : Application() {
                     } catch (t: Throwable) {
                         Log.w("BannerlatorApp", "foreground reconnect failed", t)
                     }
+
+                    // Returning to the app counts as an open too; WinhubPing's in-flight guard
+                    // keeps this from doubling up with the cold-start call above.
+                    com.winlator.star.core.WinhubPing.ping()
                 }
 
                 override fun onStop(owner: LifecycleOwner) {

@@ -170,14 +170,16 @@ fun XServerDrawer() {
     val surface = MaterialTheme.colorScheme.surface
 
     // ── Shell: Command Center / Game Bar style — a floating rounded card inset from the screen
-    // edges instead of the old edge-to-edge panel (the gutters carry the drawer scrim's own dim so
-    // the card reads as floating over the game). Inside: a top rounded-rectangle strip of selectable
-    // tab chips (horizontally scrollable, with the task/pause/exit actions trailing after a
-    // divider), then the accent seam, then the selected tab's menu stacked underneath.
+    // edges instead of the old edge-to-edge panel. The gutters are deliberately UNPAINTED: this
+    // view used to lay its own black-60% frame there, on top of the DrawerLayout's scrim (also
+    // 60%), and the two stacked into a much darker rectangle hugging the card — the gray "box"
+    // around the drawer. Leaving the gutters clear lets the host's single scrim show through
+    // evenly, so the card reads as floating on one uniform dim. Inside: a top rounded-rectangle
+    // strip of selectable tab chips (horizontally scrollable, with the task/pause/exit actions
+    // trailing after a divider), then the accent seam, then the selected tab's menu underneath.
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.6f))
             .padding(horizontal = 14.dp, vertical = 14.dp),
     ) {
         // Touch sink, bottom-most child: the card deliberately isn't clickable (its chips, rows and

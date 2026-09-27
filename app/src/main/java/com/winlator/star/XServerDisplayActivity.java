@@ -1909,6 +1909,10 @@ public class XServerDisplayActivity extends AppCompatActivity {
         contentsManager.syncContents();
 
         drawerLayout = findViewById(R.id.DrawerLayout);
+        // No gray slab behind the drawer: DrawerLayout dims the whole content area with its
+        // default scrim (0x99000000) while a drawer is open, which reads as a huge gray
+        // rectangle behind the panel. The drawer carries itself — the game stays visible.
+        drawerLayout.setScrimColor(android.graphics.Color.TRANSPARENT);
 
         drawerLayout.addDrawerListener(new DrawerLayout.SimpleDrawerListener() {
             @Override public void onDrawerOpened(@NonNull View drawerView) {

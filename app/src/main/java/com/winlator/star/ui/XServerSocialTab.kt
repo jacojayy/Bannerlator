@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -75,65 +74,22 @@ import com.winlator.star.store.SocialHubStore
 import com.winlator.star.store.SocialHubStore.Comment
 import com.winlator.star.store.SocialHubStore.Post
 import com.winlator.star.ui.screens.XmbWaves
-import com.winlator.star.ui.theme.LocalAccentDim
 import com.winlator.star.util.InAppFilePicker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-// ───── Social Hub tab (in-game drawer) ─────
+// ───── Social Hub screen (app menu) ─────
 // A feed over GitHub Issues on winhub-emu/social-hub: posts = issues, replies = issue comments,
 // soft-delete = a marker body (GitHub exposes no delete-issue API for non-owners). Renders off
 // SocialHubStore's flows — the same store that owns the device-flow sign-in and the credential
 // file at Downloads/WinHub-Credentials. See store/SocialHubStore.kt for the mapping, and why
 // images ride on catbox.moe (public host) rather than the repo.
 //
-// The tab owns its own scrolling (a LazyColumn feed/thread with a pinned composer), exactly as
-// the Friends tab does — nesting that inside the pane's verticalScroll is illegal in Compose, so
-// XServerDrawer skips it for both tabs.
-
-/** Rail button: the TabIconButton look with a Forum glyph. */
-@Composable
-internal fun SocialTabButton(isSelected: Boolean, onClick: () -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
-    val accentDim = LocalAccentDim.current
-    val bgBrush = if (isSelected)
-        Brush.verticalGradient(listOf(accent, accentDim))
-    else
-        Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
-    val borderColor = if (isSelected) accent.copy(alpha = 0.6f) else Color(0xFF333333)
-    val tintColor = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-
-    Box(
-        modifier = Modifier
-            .size(44.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(bgBrush, RoundedCornerShape(12.dp))
-            .border(1.5.dp, borderColor, RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (isSelected) {
-            Canvas(Modifier.size(44.dp)) {
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(accent.copy(alpha = 0.25f), Color.Transparent),
-                        radius = size.minDimension / 2f
-                    ),
-                    radius = size.minDimension / 2f
-                )
-            }
-        }
-        Icon(
-            imageVector = Icons.Filled.Forum,
-            contentDescription = stringResource(R.string.social_hub_tab_label),
-            tint = tintColor,
-            modifier = Modifier.size(22.dp),
-        )
-    }
-}
+// The screen owns its own scrolling (a LazyColumn feed/thread with a pinned composer), so it
+// does not depend on any host pane's verticalScroll.
 
 @Composable
-internal fun SocialContent(state: XServerDrawerState) {
+internal fun SocialContent() {
     val ctx = LocalContext.current
     val account by SocialHubStore.account.collectAsState()
     val posts by SocialHubStore.posts.collectAsState()
@@ -209,17 +165,21 @@ internal fun SocialContent(state: XServerDrawerState) {
             )
         }
 
-        when {
-            accountOrNull == null -> SocialSignIn(loginState)
-            openPost != null -> SocialThread(
-                accountLogin = accountOrNull.login,
-                post = posts.firstOrNull { it.number == openPost },
-            )
-            else -> SocialFeed(
-                posts = posts,
-                loading = loading,
-                onOpen = { SocialHubStore.openPost(it.number) },
-            )
+        // Panes fill the remaining height only: a bare fillMaxSize here would be measured against
+        // the whole column and push the header off-screen.
+        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            when {
+                accountOrNull == null -> SocialSignIn(loginState)
+                openPost != null -> SocialThread(
+                    accountLogin = accountOrNull.login,
+                    post = posts.firstOrNull { it.number == openPost },
+                )
+                else -> SocialFeed(
+                    posts = posts,
+                    loading = loading,
+                    onOpen = { SocialHubStore.openPost(it.number) },
+                )
+            }
         }
     }
 }

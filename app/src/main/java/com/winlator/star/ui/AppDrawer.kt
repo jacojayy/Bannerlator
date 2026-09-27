@@ -72,6 +72,7 @@ private fun iconFor(screen: Screen): Int = when (screen) {
     Screen.FileManager   -> R.drawable.icon_menu_file_manager
     Screen.Settings      -> R.drawable.icon_settings
     Screen.Appearance    -> R.drawable.icon_palette
+    Screen.SocialHub     -> R.drawable.icon_group
     else                 -> R.drawable.icon_container
 }
 
@@ -128,6 +129,11 @@ fun AppDrawerContent(
         DrawerItem(Screen.Settings,      currentRoute, onNavigate)
         DrawerItem(Screen.InputControls, currentRoute, onNavigate)
         DrawerItem(Screen.Contents,      currentRoute, onNavigate)
+
+        // Community feed over GitHub Issues (winhub-emu/social-hub). Own sign-in screen until a
+        // GitHub device-flow session exists — see ui/XServerSocialTab.kt.
+        DrawerSectionHeader("Community", showDivider = true)
+        DrawerItem(Screen.SocialHub,     currentRoute, onNavigate)
 
         // Hideable from Settings → Side Menu — the whole section, header included, so turning
         // it off leaves no orphaned divider behind.

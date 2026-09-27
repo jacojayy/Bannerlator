@@ -13,6 +13,10 @@ sealed class Screen(val route: String, val label: String, val iconName: String) 
     object Settings      : Screen("settings",       "Settings",               "settings")
     object Appearance    : Screen("appearance",     "Appearance",             "palette")
 
+    // Community feed over GitHub Issues on winhub-emu/social-hub. Own sign-in + own scrolling
+    // (see ui/XServerSocialTab.kt), so it is a route like the others rather than a dialog.
+    object SocialHub     : Screen("social_hub",     "Social Hub",             "group")
+
     object Gog    : Screen("gog",    "GOG",          "storefront")
     object Epic   : Screen("epic",   "Epic Games",   "storefront")
     object Amazon : Screen("amazon", "Amazon Games", "storefront")
@@ -30,7 +34,7 @@ sealed class Screen(val route: String, val label: String, val iconName: String) 
             // ☁ cloud button in container/game settings) but is intentionally NOT listed in the drawer.
             // Screen.Appearance is registered as a route too but is intentionally NOT listed either:
             // the theme is forced to Amethyst, so the picker has no entry point.
-            listOf(Games, Containers, FileManager, Settings, InputControls, Contents, Saves)
+            listOf(Games, Containers, FileManager, Settings, InputControls, Contents, Saves, SocialHub)
         }
         val storeItems by lazy {
             listOf(Gog, Epic, Amazon, Steam)

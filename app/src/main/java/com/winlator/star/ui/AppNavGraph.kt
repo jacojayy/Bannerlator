@@ -121,5 +121,9 @@ fun AppNavGraph(
         composable(Screen.SaveManager.route) {
             SaveManagerScreen()
         }
+
+        composable(Screen.SocialHub.route) {
+            SocialContent()
+        }
     }
 }

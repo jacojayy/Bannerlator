@@ -88,6 +88,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -96,6 +97,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
@@ -167,145 +169,173 @@ fun XServerDrawer() {
     val accent = MaterialTheme.colorScheme.primary
     val surface = MaterialTheme.colorScheme.surface
 
-    Row(
+    // ── Shell: Command Center / Game Bar style — a floating rounded card inset from the screen
+    // edges instead of the old edge-to-edge panel (the gutters carry the drawer scrim's own dim so
+    // the card reads as floating over the game). Inside: a top rounded-rectangle strip of selectable
+    // tab chips (horizontally scrollable, with the task/pause/exit actions trailing after a
+    // divider), then the accent seam, then the selected tab's menu stacked underneath.
+    Box(
         modifier = Modifier
-            .fillMaxHeight()
-            .width(380.dp)
-            .background(surface)
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.6f))
+            .padding(horizontal = 14.dp, vertical = 14.dp),
     ) {
-        BoxWithConstraints(
+        // Touch sink, bottom-most child: the card deliberately isn't clickable (its chips, rows and
+        // sliders own their own taps), so a tap on the empty panel or the gutters would fall through
+        // this drawer view to the game surface and the virtual controls underneath. Eating every
+        // event here keeps the drawer modal without touching anything above it.
+        Box(
             modifier = Modifier
-                .width(60.dp)
-                .fillMaxHeight()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(surface, MaterialTheme.colorScheme.surface, surface),
-                        startY = 0f,
-                        endY = Float.POSITIVE_INFINITY
-                    )
-                ),
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            awaitPointerEvent().changes.forEach { it.consume() }
+                        }
+                    }
+                },
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .shadow(10.dp, RoundedCornerShape(22.dp), clip = false)
+                .clip(RoundedCornerShape(22.dp))
+                .background(surface)
+                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f), RoundedCornerShape(22.dp))
+                .padding(12.dp),
         ) {
-            // The rail scrolls when the screen is too short to fit every icon
-            // (so the bottom Exit/Pause buttons stay reachable). When it does
-            // fit, heightIn(min) + SpaceEvenly reproduces the distributed look.
-            val railMinHeight = maxHeight
-            Column(
+            // ── Top strip: one rounded rectangle holding the tab chips ──
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = railMinHeight)
-                        .padding(vertical = 8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.SpaceEvenly,
-                ) {
-                    // Top group: section tabs
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        TabIconButton(R.drawable.icon_display, selectedTab == TabType.GRAPHICS) {
-                            handleTabClick(TabType.GRAPHICS, state)
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        FpsTabButton(isSelected = selectedTab == TabType.HUD) {
-                            handleTabClick(TabType.HUD, state)
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        TabIconButton(R.drawable.icon_screen_effect, selectedTab == TabType.RESHADE) {
-                            handleTabClick(TabType.RESHADE, state)
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        TabIconButton(R.drawable.icon_input_controls, selectedTab == TabType.CONTROLS) {
-                            handleTabClick(TabType.CONTROLS, state)
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        TabIconButton(R.drawable.icon_audio, selectedTab == TabType.AUDIO) {
-                            handleTabClick(TabType.AUDIO, state)
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        TabIconButton(R.drawable.icon_debug, selectedTab == TabType.ADVANCED) {
-                            handleTabClick(TabType.ADVANCED, state)
-                        }
-                        if (friendsSource.tabVisible) {
-                            Spacer(Modifier.height(6.dp))
-                            FriendsTabButton(
-                                isSelected = selectedTab == TabType.FRIENDS,
-                                unread = friendsUnread.values.any { it > 0 },
-                            ) {
-                                handleTabClick(TabType.FRIENDS, state)
-                            }
-                        }
-                        // TV / Cast tab: shown while a TV is wired-connected OR wireless casting is
-                        // available (so the "Cast to a TV" button is always reachable). Gated behind
-                        // FeatureFlags.TV_OUTPUT_ENABLED so the whole tab disappears while the feature
-                        // is disabled (issue #339) — belt-and-braces on top of the controller/caster
-                        // never being constructed (which already leaves tvConnected/castSupported false).
-                        if (com.winlator.star.FeatureFlags.TV_OUTPUT_ENABLED && (tvConnected || castSupported)) {
-                            Spacer(Modifier.height(6.dp))
-                            TvTabButton(selectedTab == TabType.TV) {
-                                handleTabClick(TabType.TV, state)
+                // Up to nine 44dp chips never fit the 380dp shell, so the tab group scrolls sideways.
+                val stripTabs = remember(friendsSource.tabVisible, tvConnected, castSupported) {
+                    buildList {
+                        add(TabType.GRAPHICS)
+                        add(TabType.HUD)
+                        add(TabType.RESHADE)
+                        add(TabType.CONTROLS)
+                        add(TabType.AUDIO)
+                        add(TabType.ADVANCED)
+                        if (friendsSource.tabVisible) add(TabType.FRIENDS)
+                        if (com.winlator.star.FeatureFlags.TV_OUTPUT_ENABLED && (tvConnected || castSupported)) add(TabType.TV)
+                    }
+                }
+                BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                    val stripState = rememberScrollState()
+                    // Keep the selected chip in view when the selection changes from elsewhere (the
+                    // task-manager action, a deep link); a tap on a chip is already on screen.
+                    val stripIndex = stripTabs.indexOf(selectedTab)
+                    LaunchedEffect(stripIndex, stripState.maxValue) {
+                        if (stripIndex >= 0 && stripState.maxValue > 0) {
+                            val chip = with(LocalDensity.current) { 50.dp.toPx() }
+                            val start = chip * stripIndex
+                            val end = start + with(LocalDensity.current) { 44.dp.toPx() }
+                            val view = with(LocalDensity.current) { maxWidth.toPx() }
+                            if (start < stripState.value) {
+                                stripState.animateScrollTo(start.roundToInt())
+                            } else if (end > stripState.value + view) {
+                                stripState.animateScrollTo((end - view).roundToInt())
                             }
                         }
                     }
-
-                    // Bottom group: task manager / pause / exit
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Box(
-                            modifier = Modifier
-                                .width(36.dp)
-                                .height(2.dp)
-                                .background(accent, RoundedCornerShape(1.dp))
-                        )
-
-                        Spacer(Modifier.height(10.dp))
-
-                        TabIconButton(R.drawable.icon_task_manager, selectedTab == TabType.TASK_MANAGER) {
-                            state.selectTab(TabType.TASK_MANAGER)
-                            state.onTaskManager?.run()
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        TabIconButton(pauseIcon, isSelected = false) {
-                            state.onPauseResume?.run(); state.onClose?.run()
-                        }
-                        Spacer(Modifier.height(6.dp))
-                        TabIconButton(R.drawable.icon_exit, isSelected = false) {
-                            state.onExit?.run()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(stripState),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        stripTabs.forEach { tab ->
+                            when (tab) {
+                                TabType.HUD -> FpsTabButton(selectedTab == TabType.HUD) {
+                                    handleTabClick(TabType.HUD, state)
+                                }
+                                TabType.FRIENDS -> FriendsTabButton(
+                                    isSelected = selectedTab == TabType.FRIENDS,
+                                    unread = friendsUnread.values.any { it > 0 },
+                                ) { handleTabClick(TabType.FRIENDS, state) }
+                                TabType.TV -> TvTabButton(selectedTab == TabType.TV) {
+                                    handleTabClick(TabType.TV, state)
+                                }
+                                else -> {
+                                    val icon = when (tab) {
+                                        TabType.RESHADE -> R.drawable.icon_screen_effect
+                                        TabType.CONTROLS -> R.drawable.icon_input_controls
+                                        TabType.AUDIO -> R.drawable.icon_audio
+                                        TabType.ADVANCED -> R.drawable.icon_debug
+                                        else -> R.drawable.icon_display
+                                    }
+                                    TabIconButton(icon, selectedTab == tab) { handleTabClick(tab, state) }
+                                }
+                            }
                         }
                     }
                 }
+
+                // Trailing actions: task manager / pause / exit stay out of the tab scroll.
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 5.dp)
+                        .width(1.dp)
+                        .height(28.dp)
+                        .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)),
+                )
+                TabIconButton(R.drawable.icon_task_manager, selectedTab == TabType.TASK_MANAGER) {
+                    state.selectTab(TabType.TASK_MANAGER)
+                    state.onTaskManager?.run()
+                }
+                Spacer(Modifier.width(5.dp))
+                TabIconButton(pauseIcon, isSelected = false) {
+                    state.onPauseResume?.run(); state.onClose?.run()
+                }
+                Spacer(Modifier.width(5.dp))
+                TabIconButton(R.drawable.icon_exit, isSelected = false) {
+                    state.onExit?.run()
+                }
             }
-        }
 
-        // Accent seam between the tab rail and its content — mirrors the HUD's "Accent" outline
-        // (full-height cyan), matching the prototype's rail/drawer divider.
-        Box(
-            modifier = Modifier
-                .width(1.5.dp)
-                .fillMaxHeight()
-                .background(accent)
-        )
+            Spacer(Modifier.height(10.dp))
 
-        // The Friends tab owns its own scrolling (a LazyColumn roster / thread with the send box
-        // pinned at the bottom) — nesting that inside the pane's verticalScroll is illegal in
-        // Compose, so that one tab gets the pane without it.
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .then(if (selectedTab == TabType.FRIENDS) Modifier else Modifier.verticalScroll(rememberScrollState()))
-                .padding(14.dp),
-        ) {
-            when (selectedTab) {
-                TabType.GRAPHICS -> GraphicsContent(state)
-                TabType.HUD -> HudContent(state)
-                TabType.RESHADE -> ReshadeContent(state)
-                TabType.CONTROLS -> ControlsContent(state)
-                TabType.ADVANCED -> AdvancedContent(state)
-                TabType.TASK_MANAGER -> TmContent()
-                TabType.TV -> TvContent(state)
-                TabType.AUDIO -> AudioContent(state)
-                TabType.FRIENDS -> FriendsContent(state)
+            // Accent seam under the strip — the old full-height rail seam, turned horizontal.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.5.dp)
+                    .background(accent),
+            )
+
+            Spacer(Modifier.height(10.dp))
+
+            // The selected tab's menu, stacked below the strip. The Friends tab owns its own
+            // scrolling (a LazyColumn roster/thread with the send box pinned at the bottom) —
+            // nesting that inside the pane's verticalScroll is illegal in Compose, so that one
+            // tab skips it, exactly as the old rail layout did.
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .fillMaxWidth()
+                    .then(if (selectedTab == TabType.FRIENDS) Modifier else Modifier.verticalScroll(rememberScrollState()))
+                    .padding(horizontal = 4.dp),
+            ) {
+                when (selectedTab) {
+                    TabType.GRAPHICS -> GraphicsContent(state)
+                    TabType.HUD -> HudContent(state)
+                    TabType.RESHADE -> ReshadeContent(state)
+                    TabType.CONTROLS -> ControlsContent(state)
+                    TabType.ADVANCED -> AdvancedContent(state)
+                    TabType.TASK_MANAGER -> TmContent()
+                    TabType.TV -> TvContent(state)
+                    TabType.AUDIO -> AudioContent(state)
+                    TabType.FRIENDS -> FriendsContent(state)
+                }
             }
         }
     }

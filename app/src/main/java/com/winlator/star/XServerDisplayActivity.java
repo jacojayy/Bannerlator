@@ -5891,7 +5891,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
         String r = reason.toLowerCase();
         if (r.contains("concurrency") || r.contains("limit"))
             return "EA's activation limit for this game was hit: too many activations in a short time, or too many "
-                    + "computers holding it (every Bannerlator container counts as a separate PC to EA).";
+                    + "computers holding it (every WinHub container counts as a separate PC to EA).";
         if (r.contains("entitle") || r.contains("not owned") || r.contains("ownership"))
             return "EA reports this account does not own the game.";
         if (r.contains("offline") || r.contains("network") || r.contains("connect"))

@@ -252,3 +252,7 @@ val themePresets: List<ThemePreset> = listOf(
 // "Custom" is always the last entry, so its index tracks the list size. New named presets
 // are inserted *before* it, so existing saved indices 0..6 keep pointing at the same preset.
 val CUSTOM_PRESET_INDEX = themePresets.size - 1
+
+// The app's default theme. Resolved by name so reordering or adding presets above it can never
+// silently point the app at a different colour scheme.
+val AMETHYST_PRESET_INDEX = themePresets.indexOfFirst { it.name == "Amethyst" }.coerceAtLeast(0)

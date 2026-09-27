@@ -296,7 +296,7 @@ private fun ProtonBuildsCard() {
             Text(
                 "Steam's own list will also offer Protons that cannot start a game here, "
                     + "including some labelled ARM64. The ones that work are the builds listed "
-                    + "below and \"Bannerlator Proton (ARM64)\".",
+                    + "below and \"WinHub Proton (ARM64)\".",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

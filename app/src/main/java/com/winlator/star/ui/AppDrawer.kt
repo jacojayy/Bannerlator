@@ -117,7 +117,6 @@ fun AppDrawerContent(
 
         DrawerSectionHeader("System", showDivider = true)
         DrawerItem(Screen.Settings,      currentRoute, onNavigate)
-        DrawerItem(Screen.Appearance,    currentRoute, onNavigate)
         DrawerItem(Screen.InputControls, currentRoute, onNavigate)
         DrawerItem(Screen.Contents,      currentRoute, onNavigate)
 

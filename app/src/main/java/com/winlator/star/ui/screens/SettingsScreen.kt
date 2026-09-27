@@ -1228,7 +1228,7 @@ fun SettingsScreen(onSaved: () -> Unit = {}) {
         FieldSetLabel("Developer — Frame-gen training capture")
         FieldSet {
             Text(
-                "Help improve Bannerlator's open frame generation. When on, the win-fg frame-gen layer " +
+                "Help improve WinHub's open frame generation. When on, the win-fg frame-gen layer " +
                 "records raw in-game frames while you play and saves them to Download/win-fg for you to " +
                 "share with us. It records only the game's rendered image — no personal info, no " +
                 "account, no Android system data, no audio. It lowers FPS while recording.",

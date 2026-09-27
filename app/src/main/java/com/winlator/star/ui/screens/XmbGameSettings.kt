@@ -565,7 +565,7 @@ private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<Xmb
         subtitle = "Let games use the mic (DirectAudio captures input)",
         disabledReason = if (micActive) null else "Available on the DirectAudio driver") { want ->
         if (want && ContextCompat.checkSelfPermission(p.context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            Toast.makeText(p.context, "Allow the microphone permission for Bannerlator first (Android settings).", Toast.LENGTH_LONG).show()
+            Toast.makeText(p.context, "Allow the microphone permission for WinHub first (Android settings).", Toast.LENGTH_LONG).show()
         } else {
             xmb.set(p, "envVars", DirectAudioSupport.withMicEnabled(p.ex("envVars", ""), want).ifEmpty { null })
         }

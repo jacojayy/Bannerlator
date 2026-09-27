@@ -445,9 +445,9 @@ object InstallScriptExecutor {
             val exitMarker = "C:\\bl_installscript_$safe.exit"
             val lines = ArrayList<String>()
             lines += "@echo off"
-            lines += "title Bannerlator setup - ${rp.name}"
+            lines += "title WinHub setup - ${rp.name}"
             lines += "if exist $exitMarker del $exitMarker"
-            lines += "echo Bannerlator: running the Steam install script step \"${rp.name}\"."
+            lines += "echo WinHub: running the Steam install script step \"${rp.name}\"."
             lines += "echo This window closes by itself when everything has finished. Please wait."
             val total = preMsis.size + 1
             preMsis.forEachIndexed { i, msi ->

@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.combine
 object AppThemeState {
     private lateinit var themePrefs: SharedPreferences
 
-    private val _presetIndex = MutableStateFlow(1)
+    private val _presetIndex = MutableStateFlow(AMETHYST_PRESET_INDEX)
     val presetIndex: StateFlow<Int> = _presetIndex
 
     private val _customAccent = MutableStateFlow(Color(0xFF0055FF))
@@ -83,7 +83,13 @@ object AppThemeState {
             themePrefs.edit().putBoolean("preset_schema_v2", true).apply()
         }
 
-        _presetIndex.value = themePrefs.getInt("preset_index", 1).coerceIn(0, themePresets.size - 1)
+        // Forced preset: the Appearance tab (the only theme picker) is hidden, so there is no UI
+        // to change the theme back with. Saved values are deliberately ignored, and rewritten so
+        // prefs never contradict what is on screen.
+        if (themePrefs.getInt("preset_index", -1) != AMETHYST_PRESET_INDEX) {
+            themePrefs.edit().putInt("preset_index", AMETHYST_PRESET_INDEX).apply()
+        }
+        _presetIndex.value = AMETHYST_PRESET_INDEX
         val savedAccent = themePrefs.getInt("custom_accent", Color(0xFF0055FF).toArgb())
         _customAccent.value = Color(savedAccent)
         _customBaseIndex.value = themePrefs.getInt("custom_base_index", 1).coerceIn(0, CUSTOM_PRESET_INDEX)

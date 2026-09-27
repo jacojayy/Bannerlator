@@ -28,7 +28,9 @@ sealed class Screen(val route: String, val label: String, val iconName: String) 
         val drawerItems by lazy {
             // Screen.Wrappers stays registered as a route (the wrapper manager is now reached via the
             // ☁ cloud button in container/game settings) but is intentionally NOT listed in the drawer.
-            listOf(Games, Containers, FileManager, Settings, Appearance, InputControls, Contents, Saves)
+            // Screen.Appearance is registered as a route too but is intentionally NOT listed either:
+            // the theme is forced to Amethyst, so the picker has no entry point.
+            listOf(Games, Containers, FileManager, Settings, InputControls, Contents, Saves)
         }
         val storeItems by lazy {
             listOf(Gog, Epic, Amazon, Steam)

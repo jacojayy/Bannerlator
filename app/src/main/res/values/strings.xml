@@ -4,7 +4,7 @@
     <!ENTITY TERMUX_X11_APP_NAME "Winlator:X11">
     ]>
 <resources>
-    <string name="app_name">Bannerlator Bionic</string>
+    <string name="app_name">WinHub</string>
     <string name="run">Run</string>
     <string name="edit">Edit</string>
     <string name="remove">Remove</string>
@@ -521,7 +521,7 @@
         <b>FIFO (default):</b> \'Vsync on.\' Every frame waits its turn and is shown on the next refresh — smooth, tear-free and the most power-efficient. Downside: it makes the game wait for the display, which can hold back frame generation.<br /><br />
         <b>Mailbox:</b> \'Fast vsync.\' The screen always grabs the newest frame and never makes the game wait — tear-free like FIFO but lower lag. Best for frame generation, since its extra generated frames actually reach the screen. Costs a little more battery (it may render frames it discards).<br /><br />
         <b>Immediate:</b> \'Vsync off.\' Frames appear the instant they\'re ready — lowest lag, but you may see tearing. Rarely worth it on a high-refresh screen.<br /><br />
-        <b>Tip:</b> Bannerlator automatically switches to Mailbox while frame generation is multiplying, then back to your setting when it\'s off.
+        <b>Tip:</b> WinHub automatically switches to Mailbox while frame generation is multiplying, then back to your setting when it\'s off.
     ]]></string>
     <string name="renderer_present_mode_fg_note">LSFG Native and Win-FG Native switch this to FIFO while they\'re generating, then restore your choice — they send the real and made-up frames together and need FIFO to show them one per refresh.</string>
 
@@ -567,7 +567,7 @@
     ]]></string>
     <string name="help_turnip_deck_emu"><![CDATA[
         <b>deck_emu</b><br /><br />
-        Makes the GPU report itself to the game as a Steam Deck, which can unlock better graphics settings or code paths in some games. Only works on Bannerlator\'s own (Banners-Turnip) drivers — ignored on stock Turnip.
+        Makes the GPU report itself to the game as a Steam Deck, which can unlock better graphics settings or code paths in some games. Only works on WinHub\'s own (Banners-Turnip) drivers — ignored on stock Turnip.
     ]]></string>
     <string name="help_disable_present_wait"><![CDATA[
         <b>Disable KHR_present_wait</b><br /><br />
@@ -601,7 +601,7 @@
     ]]></string>
     <string name="help_show_incompatible_drivers"><![CDATA[
         <b>Show incompatible drivers</b><br /><br />
-        Also lists driver versions that Bannerlator thinks won\'t work with your phone\'s GPU. They\'re hidden by default to keep you from picking one that fails. Turn this on only if you want to experiment — an incompatible driver may crash or show a black screen.
+        Also lists driver versions that WinHub thinks won\'t work with your phone\'s GPU. They\'re hidden by default to keep you from picking one that fails. Turn this on only if you want to experiment — an incompatible driver may crash or show a black screen.
     ]]></string>
     <string name="help_gpu_name"><![CDATA[
         <b>GPU Name (spoofing)</b><br /><br />
@@ -637,7 +637,7 @@
     ]]></string>
     <string name="help_renderer_native"><![CDATA[
         <b>Native Renderer</b><br /><br />
-        Sends the game\'s image straight to the screen instead of through Bannerlator\'s compositor. This lowers latency and can improve performance, but disables features that need the compositor — colour swapping (RGBA) and the present-mode control. Turn it off if a game shows the wrong colours or won\'t display correctly.
+        Sends the game\'s image straight to the screen instead of through WinHub\'s compositor. This lowers latency and can improve performance, but disables features that need the compositor — colour swapping (RGBA) and the present-mode control. Turn it off if a game shows the wrong colours or won\'t display correctly.
     ]]></string>
     <string name="help_renderer_native_backend"><![CDATA[
         <b>Native backend</b><br /><br />
@@ -1298,7 +1298,7 @@
     <string name="frame_generation_model_fsr3_v2">Optical flow · bidirectional</string>
     <string name="frame_generation_model_experimental_hint">Experimental model — may render incorrectly or cost more performance than it gains. Switch back to Default if a game misbehaves.</string>
     <string name="frame_generation_lsfg_hint">Uses your imported Lossless.dll (set it at the bottom of Settings). Tune the multiplier &amp; flow scale live from the in-game side menu.</string>
-    <string name="frame_generation_lsfg_native_hint">Runs the Lossless Scaling shaders inside Bannerlator itself instead of inside the game, so the extra frames reach the screen directly. Needs your imported Lossless.dll, the Vulkan renderer, and a Renderer Driver with Vulkan 1.3 (on older Adreno GPUs, pick a Turnip driver under Renderer Driver). Smoother motion; adds about one frame of input delay, as all frame interpolation does.</string>
+    <string name="frame_generation_lsfg_native_hint">Runs the Lossless Scaling shaders inside WinHub itself instead of inside the game, so the extra frames reach the screen directly. Needs your imported Lossless.dll, the Vulkan renderer, and a Renderer Driver with Vulkan 1.3 (on older Adreno GPUs, pick a Turnip driver under Renderer Driver). Smoother motion; adds about one frame of input delay, as all frame interpolation does.</string>
     <string name="frame_generation_lsfg_native_unsupported">LSFG Native is unavailable on this device: %1$s</string>
     <string name="fg_experimental_header">Experimental (LSFG Native)</string>
     <string name="fg_capture_resolution">Capture resolution</string>

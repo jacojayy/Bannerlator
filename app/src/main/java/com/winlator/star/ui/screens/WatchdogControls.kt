@@ -38,7 +38,7 @@ private const val WATCHDOG_WHATS_THIS =
     "A safety backstop. If your device gets too hot, it automatically undoes the performance " +
     "settings you've turned on and restores your device to how it was.\n\n" +
     "It is NOT what throttles your device. Your device has its own built-in thermal protection " +
-    "that lowers clocks when it heats up. The watchdog is separate — it only reverts Bannerlator's " +
+    "that lowers clocks when it heats up. The watchdog is separate — it only reverts WinHub's " +
     "changes.\n\n" +
     "It only becomes important once you enable \"Disable thermal throttling,\" which removes your " +
     "device's own protection — then the watchdog is your only software safety net.\n\n" +

@@ -248,7 +248,7 @@ object UpdateManager {
             return
         }
         if (!canInstallPackages(activity)) {
-            AppUtils.showToast(activity, "Allow installing apps from Bannerlator, then tap Update again")
+            AppUtils.showToast(activity, "Allow installing apps from WinHub, then tap Update again")
             requestInstallPermission(activity)
             onDone(false)
             return

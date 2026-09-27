@@ -1928,7 +1928,7 @@ private fun FgOverLimitWarning(
         )
         if (screen.held) {
             Text(
-                "Your device is keeping the screen at ${screen.hz} Hz (Bannerlator asked for ${screen.asked} Hz). " +
+                "Your device is keeping the screen at ${screen.hz} Hz (WinHub asked for ${screen.asked} Hz). " +
                     "Battery saver or your device's own refresh-rate setting may be holding it.",
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
                 fontSize = 11.sp
@@ -3356,7 +3356,7 @@ private fun HudContent(state: XServerDrawerState) {
                     "gamehub" -> "Rich overlay: skins, colored fields, live FPS graph. Style change applies on next launch."
                     "gamenative" -> "GameNative-style overlay: compact pill or stacked list with live graphs. Style change applies on next launch."
                     "fusion" -> "Fusion overlay: one color-coded look in 5 sizes with percentile lows, VRAM + a Mega everything-view. Tap the HUD to cycle size."
-                    else -> "Classic Bannerlator overlay."
+                    else -> "Classic WinHub overlay."
                 },
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), fontSize = 11.sp,
                 modifier = Modifier.padding(start = 4.dp, top = 2.dp, bottom = 4.dp)

@@ -540,7 +540,7 @@ internal fun xmbCommunityConfigsMenu(xmb: XmbScope, shortcut: Shortcut): XmbMenu
                 val pick = CommunityPick.File(game, CommunityConfigRef(game, folder, e.filename, e.sha.ifBlank { null }, ns = ns), e)
                 val sub = listOf(
                     e.soc, e.date,
-                    if (e.appSource == "bannerlator") "Bannerlator" else "",
+                    if (e.appSource == "bannerlator") "WinHub" else "",
                     if (isMatch) "your device" else "",
                 ).filter { it.isNotBlank() }.joinToString(" · ")
                 rows += XmbRow.Link(
@@ -898,7 +898,7 @@ private fun xmbCommunityExportMenu(xmb: XmbScope, res: ShortcutExporter.ExportRe
                     type = "application/json"
                     putExtra(Intent.EXTRA_STREAM, uri)
                     putExtra(Intent.EXTRA_SUBJECT, res.game)
-                    putExtra(Intent.EXTRA_TEXT, "Bannerlator config for ${res.game}")
+                    putExtra(Intent.EXTRA_TEXT, "WinHub config for ${res.game}")
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 XmbTools.start(ctx, Intent.createChooser(send, "Share config"))

@@ -172,7 +172,7 @@ fun GamesWallScreen(navController: NavController) {
     var showAccount by remember { mutableStateOf(false) }
 
     // Optional community account — the brand in the header shows the user's avatar + username when signed
-    // in (tap → the same MyAccountDialog the phone library uses), and the app logo + "Bannerlator" when
+    // in (tap → the same MyAccountDialog the phone library uses), and the app logo + "WinHub" when
     // logged out. AccountUiBus mirrors AccountManager as Compose state and MyAccountDialog refreshes it on
     // every login/logout/avatar change, so the header swaps live. Refresh once on entry to pick up an
     // existing session.
@@ -551,7 +551,7 @@ private fun WallHeader(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // Brand doubles as the account entry point: the user's avatar + username when signed in, the app
-        // logo (bolt) + "Bannerlator" when logged out. Tapping either opens the My-account sheet (login /
+        // logo (bolt) + "WinHub" when logged out. Tapping either opens the My-account sheet (login /
         // create / logout / profile).
         Row(
             modifier = Modifier
@@ -570,7 +570,7 @@ private fun WallHeader(
             }
             Spacer(Modifier.width(12.dp))
             Text(
-                username?.takeIf { it.isNotBlank() } ?: "Bannerlator",
+                username?.takeIf { it.isNotBlank() } ?: "WinHub",
                 color = TXT,
                 fontSize = 19.sp,
                 fontWeight = FontWeight.ExtraBold,

@@ -152,7 +152,7 @@ private const val HELP_REMEMBER =
 private const val HELP_DETAILS =
     "Opens the full Steam game page — achievements grid, DLC and cloud saves."
 private const val HELP_STEAMLITE_CLIENT =
-    "Bannerlator's small Steam client for online (VAC) launches. Newer versions add features the app " +
+    "WinHub's small Steam client for online (VAC) launches. Newer versions add features the app " +
         "relies on (live launch status, in-game friends). Update downloads ~18 MB and re-stages it into " +
         "your container."
 private const val HELP_GOLDBERG_MODE =

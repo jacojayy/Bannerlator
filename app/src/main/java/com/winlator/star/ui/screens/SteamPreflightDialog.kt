@@ -114,7 +114,7 @@ private const val HELP_UPDATE_OFFER =
         "Launch anyway — play the build you have (real Steam may refuse it online).\n" +
         "Cancel — go back without launching."
 private const val HELP_CLIENT =
-    "Bannerlator's small Steam client for online (VAC) launches. Newer versions add features the app " +
+    "WinHub's small Steam client for online (VAC) launches. Newer versions add features the app " +
         "relies on (live launch status, in-game friends). Update downloads ~18 MB and re-stages it " +
         "into your container."
 private const val HELP_CLIENT_OFFER =
@@ -463,7 +463,7 @@ private fun failCardFor(
             FailCardModel(
                 if (clientOffer.required) "SteamLite update required" else "SteamLite update available",
                 if (clientOffer.required)
-                    "This version of Bannerlator needs SteamLite v${clientOffer.latestVersion} for live launch " +
+                    "This version of WinHub needs SteamLite v${clientOffer.latestVersion} for live launch " +
                         "status and in-game friends. Update now$size; if the download fails, the " +
                         "installed $installed launches instead."
                 else

@@ -706,7 +706,7 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                         type = "application/json"
                         putExtra(Intent.EXTRA_STREAM, uri)
                         putExtra(Intent.EXTRA_SUBJECT, res.game)
-                        putExtra(Intent.EXTRA_TEXT, "Bannerlator config for ${res.game}")
+                        putExtra(Intent.EXTRA_TEXT, "WinHub config for ${res.game}")
                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
                     context.startActivity(Intent.createChooser(send, "Share config"))
@@ -2970,7 +2970,7 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
             text = {
                 Text(
                     "\"${s.name}\" ships EA Javelin anti-cheat, which needs a Windows kernel driver. " +
-                        "It cannot run under Wine on any Android emulator, so Bannerlator won't start the EA setup for it."
+                        "It cannot run under Wine on any Android emulator, so WinHub won't start the EA setup for it."
                 )
             },
             confirmButton = { TextButton(onClick = { eaUnsupportedFor = null }) { Text("OK") } },
@@ -2983,7 +2983,7 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
             text = {
                 Text(
                     "\"${s.name}\" is an EA title: it launches through EA Desktop, which isn't installed in this " +
-                        "container yet. Bannerlator will open one setup session (wine-mono first if the container " +
+                        "container yet. WinHub will open one setup session (wine-mono first if the container " +
                         "lacks it) and run EA's installer — follow its prompts when it shows them. The session closes " +
                         "by itself when the installer finishes and the app comes back. Then launch the game again and " +
                         "sign in to EA when it asks. This happens once per container."
@@ -3213,7 +3213,7 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
     }
 }
 
-// Small "BANNERLATOR" source pill for configs shared through our own repo (app_source=bannerlator), so
+// Small "WINHUB" source pill for configs shared through our own repo (app_source=bannerlator), so
 // users can tell them apart from BannerHub-sourced configs. Subtle orange fill, same pill shape as
 // [CommunityStoreBadge].
 @Composable
@@ -3225,7 +3225,7 @@ private fun BannerlatorSourceBadge() {
             .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
         Text(
-            text = "BANNERLATOR",
+            text = "WINHUB",
             style = MaterialTheme.typography.labelSmall,
             color = Color.White,
         )
@@ -4729,7 +4729,7 @@ private fun CommunityDevicePanel(
 internal fun communitySourceLabel(appSource: String?): String = when (appSource?.lowercase()?.trim()) {
     "bannerhub" -> "BannerHub"
     "bannerhub_lite" -> "BannerHub Lite"
-    "bannerlator" -> "Bannerlator"
+    "bannerlator" -> "WinHub"
     null, "" -> "BannerHub"
     else -> appSource.split('_', ' ').filter { it.isNotBlank() }
         .joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }

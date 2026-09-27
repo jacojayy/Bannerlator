@@ -1057,7 +1057,7 @@ private fun CustomSaveTab(modifier: Modifier = Modifier, columns: Int = 1, onMes
                             .padding(vertical = 8.dp),
                     ) {
                         Text("Restore from a file…", color = MaterialTheme.colorScheme.primary)
-                        Text("Browse for a GameHub or Bannerlator save .zip", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Text("Browse for a GameHub or WinHub save .zip", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             },

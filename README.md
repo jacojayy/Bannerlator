@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="logo.jpg" width="820" alt="Bannerlator" />
+  <img src="logo.jpg" width="820" alt="WinHub" />
 </p>
 
-<h1 align="center">Bannerlator</h1>
+<h1 align="center">WinHub</h1>
 <p align="center"><b>Windows applications and games on Android.</b></p>
 
 <p align="center">
@@ -77,7 +77,7 @@ Before any **stable release** is published, all changes are **manually debugged 
 
 | | |
 |---|---|
-| **App label** | `Bannerlator Bionic` (standard) · `Bannerlator Bionic PuBG` (pubg) · `Bannerlator Bionic Ludashi` (ludashi) |
+| **App label** | `WinHub` (standard) · `WinHub PuBG` (pubg) · `WinHub Ludashi` (ludashi) |
 | **Packages** | `com.winlator.banner` (standard) · `com.tencent.ig` (pubg) · `com.ludashi.benchmark` (ludashi) |
 | **Version** | Bannerlator **V 3.1.2** — built from Star **marcescence** (`versionName 3.1.2`, `versionCode 86`) |
 | **Android SDK** | `compileSdk 34` · `targetSdk 28` · `minSdk 26` (Android 8.0+) |

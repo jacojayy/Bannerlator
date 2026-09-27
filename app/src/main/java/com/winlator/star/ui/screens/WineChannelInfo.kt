@@ -90,7 +90,7 @@ object WineChannelInfo {
         "d3d9" to "Direct3D 9 — the most common API for games of that era.",
         "d3d10" to "Direct3D 10.",
         "d3d10core" to "Direct3D 10 core layer.",
-        "d3d11" to "Direct3D 11 — what most modern games in Bannerlator use.",
+        "d3d11" to "Direct3D 11 — what most modern games in WinHub use.",
         "d3d12" to "Direct3D 12, translated by VKD3D.",
         "d3d_shader" to "Shader compilation. Try this for missing or corrupted visuals.",
         "d3d_decl" to "Vertex declarations — how geometry is described to the GPU.",
@@ -215,7 +215,7 @@ object WineChannelInfo {
         "reg" to "Registry reads and writes. Good for a game that won't see its own settings.",
         "storage" to "Structured storage files.",
         "volume" to "Drives and volumes.",
-        "mountmgr" to "Drive letter assignment — relevant to how Bannerlator maps your storage.",
+        "mountmgr" to "Drive letter assignment — relevant to how WinHub maps your storage.",
         "cabinet" to "CAB archive extraction, used by installers.",
         "profile" to "INI file reads and writes. Older games keep settings this way.",
         "path" to "Path handling and conversion between Windows and Linux paths.",
@@ -276,7 +276,7 @@ object WineChannelInfo {
         "winspool" to "The print spooler.",
 
         // ── Host side ─────────────────────────────────────────────────────────────────────
-        "x11drv" to "The X11 display driver — how Wine's windows reach Bannerlator's screen. " +
+        "x11drv" to "The X11 display driver — how Wine's windows reach WinHub's screen. " +
             "The channel for windowing, fullscreen and mouse-capture problems.",
         "waylanddrv" to "The Wayland display driver, used by the experimental Wayland path.",
         "xrandr" to "Display modes and refresh rates under X11.",

@@ -1411,7 +1411,7 @@ private fun GameCommunitySheet(
                             type = "application/json"
                             putExtra(Intent.EXTRA_STREAM, uri)
                             putExtra(Intent.EXTRA_SUBJECT, res.game)
-                            putExtra(Intent.EXTRA_TEXT, "Bannerlator config for ${res.game}")
+                            putExtra(Intent.EXTRA_TEXT, "WinHub config for ${res.game}")
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }
                         context.startActivity(Intent.createChooser(send, "Share config"))

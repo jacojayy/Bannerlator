@@ -67,12 +67,15 @@ import com.winlator.star.core.Phase
 import com.winlator.star.core.PreloaderDetails
 import com.winlator.star.core.PreloaderState
 import com.winlator.star.ui.screens.SpecChipRows
+import com.winlator.star.ui.screens.XmbWaves
 
 // The hero surface is always laid over a dark scrim, so text/accents use fixed light-on-dark
 // values that read over any cover art rather than the ambient theme's surface colours.
 private val HeroText = Color(0xFFF3F5F8)
 private val HeroTextDim = Color(0xFFB6BCC6)
-private val HeroAccent = Color(0xFF4C8DFF)
+// Amethyst purple: the launch accent — step bars, step counter, hint, spinner and the wave field
+// behind them all read as one colour. Was the old blue #4C8DFF.
+private val HeroAccent = Color(0xFFA855F7)
 
 /**
  * Full-bleed "game hero" launch overlay. The shortcut's cover art fills the screen behind a dark
@@ -92,7 +95,7 @@ fun PreloaderOverlay() {
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // --- Background: cover art, or a branded dark fallback with the logo centered. ---
+        // --- Background: cover art, or the XMB wave field over a purple wash. ---
         val cover = ui.coverArt ?: ui.icon
         if (cover != null) {
             Image(
@@ -102,19 +105,20 @@ fun PreloaderOverlay() {
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
+            // No art to show → the same moving wave ribbons the Games XMB draws, tinted with the
+            // launch accent, instead of the old centered Bannerlator logo.
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF0A0B0D)),
-                contentAlignment = Alignment.Center,
+                    .background(
+                        Brush.verticalGradient(
+                            0.0f to HeroAccent.copy(alpha = 0.30f),
+                            0.42f to Color(0xFF0A0B0D),
+                            1.0f to Color(0xFF05050A),
+                        )
+                    ),
             ) {
-                Image(
-                    painter = painterResource(R.drawable.splash_logo),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(140.dp)
-                        .clip(RoundedCornerShape(20.dp)),
-                )
+                XmbWaves(HeroAccent, Modifier.fillMaxSize())
             }
         }
 
@@ -258,7 +262,7 @@ private fun SetupProgress(stepIndex: Int, stepTotal: Int, stepLabel: String) {
     StepPips(stepIndex, stepTotal)
 }
 
-/** Discrete step segments: done = solid accent, current = pulsing accent, pending = faint. */
+/** Discrete step segments: done = solid accent, current = pulsing accent, pending = faint tint. */
 @Composable
 private fun StepPips(stepIndex: Int, stepTotal: Int) {
     val transition = rememberInfiniteTransition(label = "pips")
@@ -276,7 +280,7 @@ private fun StepPips(stepIndex: Int, stepTotal: Int) {
             val color = when {
                 i < stepIndex -> HeroAccent
                 i == stepIndex -> HeroAccent.copy(alpha = pulse)
-                else -> Color.White.copy(alpha = 0.14f)
+                else -> HeroAccent.copy(alpha = 0.16f)
             }
             Box(
                 modifier = Modifier

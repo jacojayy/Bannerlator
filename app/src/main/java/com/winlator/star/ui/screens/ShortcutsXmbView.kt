@@ -748,8 +748,9 @@ private val XMB_RIBBONS = listOf(
 
 // The XMB wave. Every time term is a whole number of turns per loop, so the 40 s cycle is seamless.
 // The phase is read only inside the draw lambda, so this redraws without recomposing.
+// internal: shared with the launch preloader, which draws the same field behind its progress.
 @Composable
-private fun XmbWaves(accent: Color, modifier: Modifier) {
+internal fun XmbWaves(accent: Color, modifier: Modifier) {
     val phase by rememberInfiniteTransition(label = "xmbWaves").animateFloat(
         initialValue = 0f, targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(40_000, easing = LinearEasing)),

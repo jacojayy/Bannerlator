@@ -7892,35 +7892,8 @@ internal fun ShortcutSettingsDialogScreen(
                     // X server, and the Linux runtime brings its own D3D stack.
                     if (!isLinuxEntry) {
 
-                    // Unreal Engine HDR (per-game, both backends; under HDR output on Wayland):
-                    // "Use container default (<its mode>)" / Off / DirectX 12 fix / DirectX 11. See
-                    // core.UnrealHdr; the DirectX 11 notes follow this game's GPU name spoof.
-                    run {
-                        val containerMode = com.winlator.star.core.UnrealHdr.containerMode(shortcut.container)
-                        val values = listOf("") + com.winlator.star.core.UnrealHdr.MODES
-                        val labels = values.map {
-                            if (it.isEmpty()) "Use container default (" + com.winlator.star.core.UnrealHdr.label(containerMode) + ")"
-                            else com.winlator.star.core.UnrealHdr.label(it)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            DpDrop(
-                                dp, com.winlator.star.core.UnrealHdr.EXTRA,
-                                label = com.winlator.star.core.UnrealHdr.TITLE,
-                                options = labels,
-                                selected = labels[values.indexOf(unrealHdrOverride).coerceAtLeast(0)],
-                                onSelect = { unrealHdrOverride = values[labels.indexOf(it)] },
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(onClick = { helpText = com.winlator.star.core.UnrealHdr.help(effectiveWaylandShortcut) }) {
-                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                            }
-                        }
-                        val effectiveMode = unrealHdrOverride.ifEmpty { containerMode }
-                        if (effectiveMode == com.winlator.star.core.UnrealHdr.DX11) UnrealHdrDx11Notes(
-                            gpuName = com.winlator.star.core.GpuSpoof.gpuNameOf(graphicsDriverConfig),
-                            wayland = effectiveWaylandShortcut
-                        )
-                    }
+                    // Unreal Engine HDR removed from the editor (useless): the per-game extra and
+                    // core.UnrealHdr launch plumbing still resolve a stored mode, no control sets one.
 
                     // DX Wrapper
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {

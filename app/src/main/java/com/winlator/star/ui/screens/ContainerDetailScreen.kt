@@ -1070,30 +1070,8 @@ private fun TopLevelFields(
                 }
             }
         }
-        // Unreal Engine HDR (both backends; under HDR output on Wayland): Off / DirectX 12 fix /
-        // DirectX 11 (experimental, NVAPI). See core.UnrealHdr; the DirectX 11 mode swaps the bundled
-        // dxvk-nvapi into the prefix at launch (core.DxvkNvapi) and Off puts the prefix's files back.
-        run {
-            Spacer(Modifier.height(8.dp))
-            val modes = com.winlator.star.core.UnrealHdr.MODES
-            val labels = modes.map { com.winlator.star.core.UnrealHdr.label(it) }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                LabeledDropdown(
-                    label = com.winlator.star.core.UnrealHdr.TITLE,
-                    options = labels,
-                    selectedOption = com.winlator.star.core.UnrealHdr.label(viewModel.unrealHdr),
-                    onSelect = { viewModel.unrealHdr = modes[labels.indexOf(it)] },
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(onClick = { helpText = com.winlator.star.core.UnrealHdr.help(compositorDriverOnly) }) {
-                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                }
-            }
-            if (viewModel.unrealHdr == com.winlator.star.core.UnrealHdr.DX11) UnrealHdrDx11Notes(
-                gpuName = com.winlator.star.core.GpuSpoof.gpuNameOf(viewModel.graphicsDriverConfig),
-                wayland = compositorDriverOnly
-            )
-        }
+        // Unreal Engine HDR removed from the editor (useless): the extra and core.UnrealHdr launch
+        // plumbing still resolve a stored mode, but there is no control to set one.
         if (showWrapperManager) WrapperManagerDialog(onDismiss = {
             showWrapperManager = false
             viewModel.refreshGraphicsDriverEntries() // pick up a just-imported/deleted wrapper

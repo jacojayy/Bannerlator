@@ -318,8 +318,8 @@ fun CollapsibleRail(
                         Text(
                             collapsedLabel(item.label),
                             color = labelColor,
-                            fontSize = 9.sp,
-                            lineHeight = 10.5.sp,
+                            fontSize = 8.sp,
+                            lineHeight = 9.5.sp,
                             fontWeight = FontWeight.Medium,
                             textAlign = TextAlign.Center,
                             maxLines = 2,

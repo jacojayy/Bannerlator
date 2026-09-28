@@ -158,7 +158,8 @@ fun ContentsHubScreen(vm: ContentsHubViewModel = viewModel()) {
         if (wide) {
             Row(modifier = Modifier.fillMaxSize()) {
                 NavigationRail(containerColor = cs.background) {
-                    HubTab.values().forEach { t ->
+                    // LINUX is hidden from the chrome (kept in the enum so the `when` stays exhaustive).
+                    HubTab.values().filter { it != HubTab.LINUX }.forEach { t ->
                         NavigationRailItem(
                             selected = tab == t,
                             onClick = { tab = t },
@@ -183,7 +184,7 @@ fun ContentsHubScreen(vm: ContentsHubViewModel = viewModel()) {
                     containerColor = cs.background,
                     contentColor = cs.primary,
                 ) {
-                    HubTab.values().forEach { t ->
+                    HubTab.values().filter { it != HubTab.LINUX }.forEach { t ->
                         Tab(
                             selected = tab == t,
                             onClick = { tab = t },

@@ -2555,6 +2555,10 @@ trying for speed, <b>notemplates</b> if you get driver crashes.
     <string name="social_hub_empty_feed">No posts yet</string>
     <string name="social_hub_empty_feed_hint">Start the conversation — everyone playing WinHub can see it.</string>
     <string name="social_hub_new_post">New post</string>
+    <string name="social_hub_search_hint">Search posts</string>
+    <string name="social_hub_search_empty">No posts match your search</string>
+    <string name="social_hub_search_empty_hint">Try another word, or clear the search to see everything.</string>
+    <string name="social_hub_search_clear">Clear search</string>
     <string name="social_hub_new_post_title">New post</string>
     <string name="social_hub_post_title_field">Title</string>
     <string name="social_hub_post_body_field">What\'s on your mind?</string>

@@ -164,15 +164,37 @@ object SocialHubStore {
         }
     }
 
-    /** Feed reload. No-op while logged out (nothing to show — the repo is for players). */
+    /**
+     * Feed reload. No-op while logged out (nothing to show — the repo is for players).
+     *
+     * The fetch result is MERGED rather than swapped: GitHub's list endpoint can lag a second or
+     * two behind a write, and dropping an item the user just published is what made the feed look
+     * like it "didn't refresh". Anything the server has not answered for yet is kept and re-sorted
+     * by creation time, so ordering stays newest-first.
+     *
+     * A failed fetch also keeps what is already on screen (a blip should not blank the feed), and
+     * a thread that is currently open has its replies re-read too — the header refresh button is a
+     * full-screen refresh, not a feed-only one.
+     */
     fun refresh() {
         if (_account.value == null) return
         scope.launch {
             _loading.value = true
             val result = fetchPosts()
-            _posts.value = result.getOrElse { emptyList() }
-            result.exceptionOrNull()?.let { _error.value = it.message ?: "Could not load the feed." }
+            result.fold(
+                onSuccess = { fresh ->
+                    val unseen = _posts.value.filter { local ->
+                        !local.isDeleted && fresh.none { it.number == local.number }
+                    }
+                    _posts.value = (fresh + unseen).sortedByDescending { it.createdAtMs }
+                },
+                onFailure = { t ->
+                    if (BuildConfig.DEBUG) Log.w(TAG, "refresh", t)
+                    _error.value = t.message ?: "Could not load the feed."
+                },
+            )
             _loading.value = false
+            _openPost.value?.let { loadComments(it) }
         }
     }
 
@@ -290,21 +312,36 @@ object SocialHubStore {
 
     // ── Mutations (suspend: the UI awaits them to clear its composer) ───────────────────────────
 
-    /** Create a post. Returns null on success, or a user-facing error string. */
+    /**
+     * Create a post. Returns null on success, or a user-facing error string.
+     *
+     * GitHub returns the created issue in the response body, so it is inserted into the feed
+     * immediately instead of waiting on a refetch — the post is visible the moment the dialog
+     * closes, with no tab switch needed.
+     */
     suspend fun createPost(title: String, body: String): String? = withContext(Dispatchers.IO) {
         mutate("Could not publish.") {
             val json = JSONObject().put("title", title).put("body", body).toString()
             val (code, text) = postJson(ISSUES_URL, json)
-            if (code in 200..299) null else githubError(text, code, "Could not publish.")
+            if (code in 200..299) {
+                insertPost(text)
+                null
+            } else githubError(text, code, "Could not publish.")
         }
     }
 
-    /** Reply to the open post. Returns null on success, or a user-facing error string. */
+    /**
+     * Reply to the open post. Returns null on success, or a user-facing error string.
+     * Same optimistic rule as [createPost]: the created comment is appended locally.
+     */
     suspend fun addComment(postNumber: Int, body: String): String? = withContext(Dispatchers.IO) {
         mutate("Could not send your reply.") {
             val json = JSONObject().put("body", body).toString()
             val (code, text) = postJson("$ISSUES_URL/$postNumber/comments", json)
-            if (code in 200..299) null else githubError(text, code, "Could not send your reply.")
+            if (code in 200..299) {
+                insertComment(text)
+                null
+            } else githubError(text, code, "Could not send your reply.")
         }
     }
 
@@ -321,7 +358,10 @@ object SocialHubStore {
                 .put("state", "closed")
                 .toString()
             val (code, text) = patchJson("$ISSUES_URL/$postNumber", json)
-            if (code in 200..299) null else githubError(text, code, "Could not delete the post.")
+            if (code in 200..299) {
+                _posts.value = _posts.value.filterNot { it.number == postNumber }
+                null
+            } else githubError(text, code, "Could not delete the post.")
         }
     }
 
@@ -336,12 +376,15 @@ object SocialHubStore {
             val del = Request.Builder().url(url).headers(authHeaders()).delete().build()
             val (code, text) = execute(del)
             if (code in 200..299) {
+                removeComment(commentId)
                 null
             } else if (code == 404 || code == 403 || code == 405) {
                 val fallback = JSONObject().put("body", SocialHubFormat.DELETE_MARKER).toString()
                 val (code2, text2) = patchJson(url, fallback)
-                if (code2 in 200..299) null
-                else githubError(text2, code2, "Could not delete the reply.")
+                if (code2 in 200..299) {
+                    removeComment(commentId)
+                    null
+                } else githubError(text2, code2, "Could not delete the reply.")
             } else {
                 githubError(text, code, "Could not delete the reply.")
             }
@@ -404,21 +447,8 @@ object SocialHubStore {
         for (i in 0 until array.length()) {
             val o = array.getJSONObject(i)
             if (o.has("pull_request")) continue // the API mixes PRs into /issues
-            val body = o.optString("body")
-            if (SocialHubFormat.isDeleted(body)) continue
-            val user = o.optJSONObject("user")
-            out.add(
-                Post(
-                    number = o.optInt("number"),
-                    title = o.optString("title").ifBlank { "(untitled)" },
-                    body = body,
-                    author = user?.optString("login") ?: "unknown",
-                    authorAvatar = user?.optString("avatar_url") ?: "",
-                    createdAtMs = parseGitHubTime(o.optString("created_at")) ?: now,
-                    commentCount = o.optInt("comments"),
-                    authorLogin = user?.optString("login") ?: "",
-                )
-            )
+            if (SocialHubFormat.isDeleted(o.optString("body"))) continue
+            out.add(postFromJson(o, now))
         }
         out
     }
@@ -432,21 +462,83 @@ object SocialHubStore {
         val now = System.currentTimeMillis()
         val out = ArrayList<Comment>(array.length())
         for (i in 0 until array.length()) {
-            val o = array.getJSONObject(i)
-            val body = o.optString("body")
-            val user = o.optJSONObject("user")
-            out.add(
-                Comment(
-                    id = o.optLong("id"),
-                    body = body,
-                    author = user?.optString("login") ?: "unknown",
-                    authorAvatar = user?.optString("avatar_url") ?: "",
-                    createdAtMs = parseGitHubTime(o.optString("created_at")) ?: now,
-                    authorLogin = user?.optString("login") ?: "",
-                )
-            )
+            out.add(commentFromJson(array.getJSONObject(i), now))
         }
         out
+    }
+
+    // ── Local reconciliation ────────────────────────────────────────────────────────────────────
+
+    /** One issue JSON object → [Post]. Shared by the list fetch and the create response. */
+    private fun postFromJson(o: JSONObject, now: Long): Post {
+        val user = o.optJSONObject("user")
+        val login = user?.optString("login") ?: ""
+        return Post(
+            number = o.optInt("number"),
+            title = o.optString("title").ifBlank { "(untitled)" },
+            body = o.optString("body"),
+            author = login.ifBlank { "unknown" },
+            authorAvatar = user?.optString("avatar_url") ?: "",
+            createdAtMs = parseGitHubTime(o.optString("created_at")) ?: now,
+            commentCount = o.optInt("comments"),
+            authorLogin = login,
+        )
+    }
+
+    /** One comment JSON object → [Comment]. Shared by the list fetch and the reply response. */
+    private fun commentFromJson(o: JSONObject, now: Long): Comment {
+        val user = o.optJSONObject("user")
+        val login = user?.optString("login") ?: ""
+        return Comment(
+            id = o.optLong("id"),
+            body = o.optString("body"),
+            author = login.ifBlank { "unknown" },
+            authorAvatar = user?.optString("avatar_url") ?: "",
+            createdAtMs = parseGitHubTime(o.optString("created_at")) ?: now,
+            authorLogin = login,
+        )
+    }
+
+    /**
+     * Push a freshly created issue onto the top of the feed. Best-effort: any parse failure is
+     * swallowed (the next [refresh] reconciles), because the write itself already succeeded.
+     */
+    private fun insertPost(responseBody: String) {
+        try {
+            val o = JSONObject(responseBody)
+            if (o.has("pull_request")) return
+            val post = postFromJson(o, System.currentTimeMillis())
+            if (post.isDeleted) return
+            val current = _posts.value
+            if (current.any { it.number == post.number }) return
+            _posts.value = listOf(post) + current
+        } catch (t: Throwable) {
+            if (BuildConfig.DEBUG) Log.w(TAG, "insertPost", t)
+        }
+    }
+
+    /**
+     * Push a freshly created comment onto the end of the open thread. Same best-effort rule;
+     * the thread's reply count is bumped too so the feed row stays honest without a refetch.
+     */
+    private fun insertComment(responseBody: String) {
+        try {
+            val comment = commentFromJson(JSONObject(responseBody), System.currentTimeMillis())
+            val current = _comments.value
+            if (current.any { it.id == comment.id }) return
+            _comments.value = current + comment
+            val open = _openPost.value ?: return
+            _posts.value = _posts.value.map { p ->
+                if (p.number == open) p.copy(commentCount = p.commentCount + 1) else p
+            }
+        } catch (t: Throwable) {
+            if (BuildConfig.DEBUG) Log.w(TAG, "insertComment", t)
+        }
+    }
+
+    /** Drop a deleted reply locally so it disappears without a refetch. */
+    private fun removeComment(commentId: Long) {
+        _comments.value = _comments.value.filterNot { it.id == commentId }
     }
 
     // ── HTTP plumbing ───────────────────────────────────────────────────────────────────────────

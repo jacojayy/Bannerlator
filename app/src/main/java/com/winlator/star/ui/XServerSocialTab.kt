@@ -31,10 +31,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -99,6 +101,8 @@ internal fun SocialContent() {
     val openPost by SocialHubStore.openPost.collectAsState()
 
     var showHelp by remember { mutableStateOf(false) }
+    // Hoisted above the feed so the query survives opening a post and coming back.
+    var query by remember { mutableStateOf("") }
 
     // Kotlin refuses to smart-cast a local DELEGATED property (`val account by ...`), so the
     // nullable account is snapshotted into a plain local val first — plain vals are smart-castable.
@@ -177,6 +181,8 @@ internal fun SocialContent() {
                 else -> SocialFeed(
                     posts = posts,
                     loading = loading,
+                    query = query,
+                    onQueryChange = { query = it },
                     onOpen = { SocialHubStore.openPost(it.number) },
                 )
             }
@@ -347,10 +353,19 @@ private fun DeviceCodePane(
 
 // ───── Feed ─────
 
+/** Case-insensitive match of the search query against title, body and author. */
+private fun matchesQuery(post: Post, query: String): Boolean =
+    post.title.contains(query, ignoreCase = true) ||
+        post.body.contains(query, ignoreCase = true) ||
+        post.author.contains(query, ignoreCase = true) ||
+        post.authorLogin.contains(query, ignoreCase = true)
+
 @Composable
 private fun SocialFeed(
     posts: List<Post>,
     loading: Boolean,
+    query: String,
+    onQueryChange: (String) -> Unit,
     onOpen: (Post) -> Unit,
 ) {
     var showNew by remember { mutableStateOf(false) }
@@ -359,72 +374,147 @@ private fun SocialFeed(
         SocialComposeDialog(onDismiss = { showNew = false })
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        if (loading && posts.isEmpty()) {
-            Column(
-                modifier = Modifier.align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                CircularProgressIndicator(modifier = Modifier.size(28.dp))
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    stringResource(R.string.social_hub_loading_feed),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 13.sp,
-                )
-            }
-        } else if (posts.isEmpty()) {
-            Column(
-                modifier = Modifier.align(Alignment.Center).padding(horizontal = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    stringResource(R.string.social_hub_empty_feed),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    stringResource(R.string.social_hub_empty_feed_hint),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 12.sp,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(14.dp))
-                TextButton(onClick = { showNew = true }) {
-                    Text(stringResource(R.string.social_hub_new_post))
-                }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                items(posts, key = { it.number }) { post -> SocialPostRow(post) { onOpen(post) } }
-            }
+    // Filtered here rather than in SocialContent so the thread lookup above keeps the full list.
+    val visible = remember(posts, query) {
+        val needle = query.trim()
+        if (needle.isEmpty()) posts else posts.filter { matchesQuery(it, needle) }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        if (posts.isNotEmpty()) {
+            SocialSearchField(query = query, onQueryChange = onQueryChange)
+            Spacer(Modifier.height(6.dp))
         }
 
-        if (posts.isNotEmpty()) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp)
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
-                    .clickable { showNew = true },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Add,
-                    contentDescription = stringResource(R.string.social_hub_new_post),
-                    tint = Color.White,
-                )
+        Box(modifier = Modifier.weight(1f).fillMaxSize()) {
+            if (loading && posts.isEmpty()) {
+                Column(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        stringResource(R.string.social_hub_loading_feed),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp,
+                    )
+                }
+            } else if (posts.isEmpty()) {
+                Column(
+                    modifier = Modifier.align(Alignment.Center).padding(horizontal = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        stringResource(R.string.social_hub_empty_feed),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        stringResource(R.string.social_hub_empty_feed_hint),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    TextButton(onClick = { showNew = true }) {
+                        Text(stringResource(R.string.social_hub_new_post))
+                    }
+                }
+            } else if (visible.isEmpty()) {
+                Column(
+                    modifier = Modifier.align(Alignment.Center).padding(horizontal = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        stringResource(R.string.social_hub_search_empty),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        stringResource(R.string.social_hub_search_empty_hint),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    TextButton(onClick = { onQueryChange("") }) {
+                        Text(stringResource(R.string.social_hub_search_clear))
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(visible, key = { it.number }) { post -> SocialPostRow(post) { onOpen(post) } }
+                }
+            }
+
+            if (posts.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
+                        .clickable { showNew = true },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = stringResource(R.string.social_hub_new_post),
+                        tint = Color.White,
+                    )
+                }
             }
         }
     }
+}
+
+@Composable
+private fun SocialSearchField(query: String, onQueryChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        placeholder = {
+            Text(
+                stringResource(R.string.social_hub_search_hint),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp,
+            )
+        },
+        leadingIcon = {
+            Icon(
+                imageVector = Icons.Filled.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = stringResource(R.string.social_hub_search_clear),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        keyboardActions = KeyboardActions(onSearch = {}),
+        shape = RoundedCornerShape(10.dp),
+        textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),
+    )
 }
 
 @Composable
@@ -568,7 +658,6 @@ private fun SocialThread(accountLogin: String, post: Post?) {
                     scope.launch {
                         SocialHubStore.deletePost(post.number)
                         SocialHubStore.openPost(null)
-                        SocialHubStore.refresh()
                     }
                 }) { Text(stringResource(R.string.social_hub_delete)) }
             },
@@ -872,10 +961,9 @@ private fun SocialComposeDialog(onDismiss: () -> Unit) {
                 onClick = {
                     scope.launch {
                         val error = SocialHubStore.createPost(title.trim(), body.trim())
-                        if (error == null) {
-                            SocialHubStore.refresh()
-                            onDismiss()
-                        }
+                        // No refresh() here: createPost already inserted the new issue locally.
+                        // A refetch can race GitHub's list endpoint and drop it again.
+                        if (error == null) onDismiss()
                     }
                 },
             ) {

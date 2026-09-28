@@ -318,12 +318,13 @@ fun CollapsibleRail(
                         Text(
                             collapsedLabel(item.label),
                             color = labelColor,
-                            fontSize = 7.5.sp,
-                            lineHeight = 8.5.sp,
+                            fontSize = 9.sp,
+                            lineHeight = 10.5.sp,
                             fontWeight = FontWeight.Medium,
                             textAlign = TextAlign.Center,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 } else {
@@ -436,12 +437,13 @@ private fun TopTabCell(
         Text(
             label,
             color = tint,
-            fontSize = 10.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
-            letterSpacing = 0.5.sp,
+            letterSpacing = 0.4.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(5.dp))
         Box(

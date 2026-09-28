@@ -573,12 +573,13 @@ private fun TopCell(
             label.uppercase(),
             color = tint,
             // Longer titles drop a size so the full word stays on one line instead of ellipsizing.
-            fontSize = if (label.length > 9) 7.5.sp else 10.sp,
+            fontSize = if (label.length > 9) 9.sp else 11.sp,
             fontWeight = FontWeight.Bold,
-            letterSpacing = if (label.length > 9) 0.sp else 0.5.sp,
+            letterSpacing = if (label.length > 9) 0.sp else 0.4.sp,
             textAlign = TextAlign.Center,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(5.dp))
         Box(
@@ -1209,19 +1210,23 @@ private fun TopLevelFields(
             val rsIdx = renderScaleValues.indexOf(viewModel.renderScale).coerceAtLeast(0)
             val rsEnabled = !viewModel.isWaylandBackend
             val rsShown = if (rsEnabled) renderScaleLabels[rsIdx] else "Not used on Wayland"
-            LabeledDropdown(
-                label = "Render scale (supersampling)",
-                options = if (rsEnabled) renderScaleLabels else listOf(rsShown),
-                selectedOption = rsShown,
-                onSelect = { viewModel.renderScale = renderScaleValues[renderScaleLabels.indexOf(it)] },
-                enabled = rsEnabled
-            )
-            if (!rsEnabled) {
-                Text(
-                    "Not used on Wayland: the compositor has no supersampling downscale. The stored value returns on X11.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                LabeledDropdown(
+                    label = "Render scale (supersampling)",
+                    options = if (rsEnabled) renderScaleLabels else listOf(rsShown),
+                    selectedOption = rsShown,
+                    onSelect = { viewModel.renderScale = renderScaleValues[renderScaleLabels.indexOf(it)] },
+                    enabled = rsEnabled,
+                    modifier = Modifier.weight(1f)
                 )
+                IconButton(onClick = {
+                    helpText = if (rsEnabled)
+                        "How much the game renders above the display resolution; the compositor scales it back down (supersampling). \"Off\" renders at the native display resolution."
+                    else
+                        "Not used on Wayland: the compositor has no supersampling downscale. The stored value returns on X11."
+                }) {
+                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                }
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -1466,6 +1471,19 @@ private fun TopLevelFields(
         val fgWayland = viewModel.isWaylandBackend
         val fgVulkan = fgWayland || viewModel.selectedRenderer == "Vulkan"
         val fgShown = fgEngineLabels[fgSelIdx]
+        // Per-engine paragraphs used to print inline under this row (and under the model picker);
+        // they now join the generic help behind the row's "?".
+        val fgEngineHint = when (viewModel.frameGenEngine) {
+            "bionic" -> stringResource(R.string.frame_generation_ingame_hint)
+            "lsfg" -> stringResource(R.string.frame_generation_lsfg_hint)
+            "lsfg-native" -> stringResource(R.string.frame_generation_lsfg_native_hint)
+            else -> null
+        }
+        val fgModelHint = if (viewModel.frameGenEngine == "bionic" && viewModel.frameGenModel != 0)
+            stringResource(R.string.frame_generation_model_experimental_hint) else null
+        val fgHelp = listOfNotNull(
+            stringResource(R.string.help_frame_generation), fgEngineHint, fgModelHint
+        ).joinToString("\n\n")
         Row(verticalAlignment = Alignment.CenterVertically) {
             LabeledDropdown(
                 label = stringResource(R.string.frame_generation),
@@ -1476,7 +1494,7 @@ private fun TopLevelFields(
                 disabledOptions = fgDisabledOpts,
                 modifier = (if (!fgVulkan) Modifier.alpha(0.5f) else Modifier).weight(1f)
             )
-            IconButton(onClick = { helpRes = R.string.help_frame_generation }) {
+            IconButton(onClick = { helpText = fgHelp }) {
                 Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
             }
         }
@@ -1497,12 +1515,6 @@ private fun TopLevelFields(
             )
         }
         if (viewModel.frameGenEngine == "bionic") {
-            Text(
-                text = stringResource(R.string.frame_generation_ingame_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 52.dp, top = 2.dp, bottom = 4.dp)
-            )
             // Interpolation model. Default (0) is the long-standing chain; 1-3 are newer engines
             // that are not yet device-proven, hence the explicit "experimental" labelling.
             val fgModelLabels = listOf(
@@ -1518,22 +1530,8 @@ private fun TopLevelFields(
                 selectedOption = fgModelLabels[viewModel.frameGenModel.coerceIn(0, 4)],
                 onSelect = { viewModel.frameGenModel = fgModelLabels.indexOf(it) }
             )
-            if (viewModel.frameGenModel != 0) {
-                Text(
-                    text = stringResource(R.string.frame_generation_model_experimental_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 52.dp, top = 2.dp, bottom = 4.dp)
-                )
-            }
         }
         if (viewModel.frameGenEngine == "lsfg-native") {
-            Text(
-                text = stringResource(R.string.frame_generation_lsfg_native_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 52.dp, top = 2.dp, bottom = 4.dp)
-            )
             // Experimental LSFG Native capture resolution, shown while
             // FeatureFlags.LSFG_NATIVE_EXPERIMENTS_ENABLED is on. (The Vulkan 1.1 compat switch
             // lives below, outside this engine check: it also serves per-game overrides.)
@@ -1553,18 +1551,25 @@ private fun TopLevelFields(
                     Container.FG_CAPTURE_GAME  -> capGame
                     else -> viewModel.fgCaptureSelection
                 }
-                LabeledDropdown(
-                    label = stringResource(R.string.fg_capture_resolution),
-                    options = capOptions,
-                    selectedOption = capSelected,
-                    onSelect = {
-                        viewModel.fgCaptureSelection = when (it) {
-                            capPanel -> Container.FG_CAPTURE_PANEL
-                            capGame  -> Container.FG_CAPTURE_GAME
-                            else     -> it
-                        }
+                val capHint = stringResource(R.string.fg_capture_resolution_hint)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    LabeledDropdown(
+                        label = stringResource(R.string.fg_capture_resolution),
+                        options = capOptions,
+                        selectedOption = capSelected,
+                        onSelect = {
+                            viewModel.fgCaptureSelection = when (it) {
+                                capPanel -> Container.FG_CAPTURE_PANEL
+                                capGame  -> Container.FG_CAPTURE_GAME
+                                else     -> it
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = { helpText = capHint }) {
+                        Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
                     }
-                )
+                }
                 if (viewModel.fgCaptureSelection.equals("custom", ignoreCase = true)) {
                     // Only the height is used (the width follows the panel's aspect).
                     OutlinedTextField(
@@ -1577,12 +1582,6 @@ private fun TopLevelFields(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
-                Text(
-                    text = stringResource(R.string.fg_capture_resolution_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 52.dp, top = 2.dp, bottom = 4.dp)
-                )
             }
         }
         // Vulkan 1.1 compat (experimental, FeatureFlags.LSFG_NATIVE_EXPERIMENTS_ENABLED). Shown
@@ -1601,6 +1600,9 @@ private fun TopLevelFields(
             // X11 only: this compat mode is handed to the X11 Vulkan renderer (setLsfgVk11Compat). On
             // Wayland LSFG Native runs on the compositor's own device, which is always a modern Turnip,
             // so the mode is neither read nor needed there.
+            val lsfgVk11Hint = if (fgWayland)
+                "Not used on Wayland: frame generation runs in the compositor on your Turnip driver, which does not need this compatibility mode."
+            else stringResource(R.string.lsfg_vk11_compat_hint)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = if (fgWayland) Modifier.alpha(0.5f) else Modifier
@@ -1612,13 +1614,10 @@ private fun TopLevelFields(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(stringResource(R.string.lsfg_vk11_compat), modifier = Modifier.weight(1f))
+                IconButton(onClick = { helpText = lsfgVk11Hint }) {
+                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                }
             }
-            Text(
-                text = if (fgWayland) "Not used on Wayland: frame generation runs in the compositor on your Turnip driver, which does not need this compatibility mode." else stringResource(R.string.lsfg_vk11_compat_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 52.dp, top = 2.dp, bottom = 4.dp)
-            )
         }
         if (viewModel.frameGenEngine == "lsfg") {
             Text(
@@ -1662,6 +1661,9 @@ private fun TopLevelFields(
         // FPS Limiter (bionic-fg). This switch just loads the layer; the cap value is set live
         // from the in-game FPS menu. (Frame Generation also loads the layer, so this is only
         // needed if you want a cap without frame gen.)
+        val fpsHelp = if (viewModel.fpsLimiterEnabled)
+            stringResource(R.string.help_fps_limiter) + "\n\n" + stringResource(R.string.fps_limiter_ingame_hint)
+        else stringResource(R.string.help_fps_limiter)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(
                 checked = viewModel.fpsLimiterEnabled,
@@ -1669,17 +1671,9 @@ private fun TopLevelFields(
             )
             Spacer(Modifier.width(8.dp))
             Text(stringResource(R.string.fps_limiter), modifier = Modifier.weight(1f))
-            IconButton(onClick = { helpRes = R.string.help_fps_limiter }) {
+            IconButton(onClick = { helpText = fpsHelp }) {
                 Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
             }
-        }
-        if (viewModel.fpsLimiterEnabled) {
-            Text(
-                text = stringResource(R.string.fps_limiter_ingame_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 52.dp, top = 2.dp, bottom = 4.dp)
-            )
         }
 
         // Match refresh rate to FPS (VRR). Greyed out on displays that can't do it (single refresh
@@ -1691,6 +1685,8 @@ private fun TopLevelFields(
         }
         val vrrCapable = remember { com.winlator.star.widget.XServerView.isDisplayVrrCapable(vrrDisplay) }
         val supportedRates = remember { com.winlator.star.widget.XServerView.getSupportedRefreshRates(vrrDisplay) }
+        val vrrHint = if (vrrCapable) stringResource(R.string.match_refresh_rate_hint)
+                      else stringResource(R.string.match_refresh_rate_unsupported)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(
                 checked = viewModel.matchRefreshRate && vrrCapable,
@@ -1699,24 +1695,30 @@ private fun TopLevelFields(
             )
             Spacer(Modifier.width(8.dp))
             Text(stringResource(R.string.auto_match_fps), modifier = Modifier.weight(1f))
+            IconButton(onClick = { helpText = vrrHint }) {
+                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+            }
         }
-        Text(
-            text = if (vrrCapable) stringResource(R.string.match_refresh_rate_hint)
-                   else stringResource(R.string.match_refresh_rate_unsupported),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(start = 52.dp, top = 2.dp, bottom = 4.dp)
-        )
         // Manual refresh-rate lock (Auto OFF). Persists viewModel.manualRefreshRate (0 = free).
         if (vrrCapable && supportedRates.isNotEmpty()) {
             val manualEnabled = !viewModel.matchRefreshRate
-            Text(
-                stringResource(R.string.manual_refresh_rate),
-                style = MaterialTheme.typography.bodySmall,
-                color = if (manualEnabled) MaterialTheme.colorScheme.onSurface
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
+            val manualHint = stringResource(R.string.manual_refresh_rate_hint)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.padding(start = 52.dp, top = 2.dp)
-            )
+            ) {
+                Text(
+                    stringResource(R.string.manual_refresh_rate),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (manualEnabled) MaterialTheme.colorScheme.onSurface
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = { helpText = manualHint }) {
+                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(16.dp))
+                }
+            }
             Row(modifier = Modifier.padding(start = 52.dp, top = 2.dp)) {
                 FilterChip(
                     selected = viewModel.manualRefreshRate == 0,
@@ -1735,12 +1737,6 @@ private fun TopLevelFields(
                     )
                 }
             }
-            Text(
-                text = stringResource(R.string.manual_refresh_rate_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 52.dp, top = 2.dp, bottom = 4.dp)
-            )
         }
 
         // Single guest-side refresh control. Collapses the unlock toggle + rate cap into one dropdown:
@@ -1759,23 +1755,24 @@ private fun TopLevelFields(
             val rrOptionLabels = listOf(lockedLabel, unlimitedLabel) + ratesAbove60.map { "$it Hz" }
             val rrCurrentValue = if (!viewModel.unlockGameRefreshRate) -1 else viewModel.maxGameRefreshRate
             val rrIdx = rrOptionValues.indexOf(rrCurrentValue).let { if (it >= 0) it else 1 } // fall back to Unlimited
-            LabeledDropdown(
-                label = stringResource(R.string.in_game_refresh_rate),
-                options = rrOptionLabels,
-                selectedOption = rrOptionLabels[rrIdx],
-                onSelect = {
-                    when (val v = rrOptionValues[rrOptionLabels.indexOf(it)]) {
-                        -1 -> { viewModel.unlockGameRefreshRate = false; viewModel.maxGameRefreshRate = 0 }
-                        else -> { viewModel.unlockGameRefreshRate = true; viewModel.maxGameRefreshRate = v }
-                    }
+            val rrHint = stringResource(R.string.in_game_refresh_rate_hint)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                LabeledDropdown(
+                    label = stringResource(R.string.in_game_refresh_rate),
+                    options = rrOptionLabels,
+                    selectedOption = rrOptionLabels[rrIdx],
+                    onSelect = {
+                        when (val v = rrOptionValues[rrOptionLabels.indexOf(it)]) {
+                            -1 -> { viewModel.unlockGameRefreshRate = false; viewModel.maxGameRefreshRate = 0 }
+                            else -> { viewModel.unlockGameRefreshRate = true; viewModel.maxGameRefreshRate = v }
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = { helpText = rrHint }) {
+                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
                 }
-            )
-            Text(
-                text = stringResource(R.string.in_game_refresh_rate_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 52.dp, top = 2.dp, bottom = 4.dp)
-            )
+            }
             // Warn when a non-Locked choice is set but the selected Proton has no xrandr — the unlock
             // will be skipped at launch. Keyed on the wine version so the cached probe only re-runs when
             // the layer changes.

@@ -98,7 +98,6 @@ import com.winlator.star.container.Container
 import com.winlator.star.container.ContainerLayerUpdater
 import com.winlator.star.container.Shortcut
 import com.winlator.star.store.SteamFriendsAction
-import com.winlator.star.contentdialog.GraphicsDriverConfigDialog
 import com.winlator.star.core.FileUtils
 import com.winlator.star.core.GameSaveBackup
 import com.winlator.star.util.InAppFilePicker
@@ -703,24 +702,6 @@ private fun ContainerItem(
     val layerTarget = layerUpdate ?: layerUpdateRemote?.entryName
     val layerNeedsDownload = layerUpdate == null && layerUpdateRemote != null
 
-    // Resolved component metadata (same theme as the Shortcuts game cards).
-    val (dxvkVersion, vkd3dVersion) = parseDxwrapperConfig(container.getDXWrapperConfig())
-    val driverCfg = container.getGraphicsDriverConfig()
-    val driverLabel = if (driverCfg.isNotEmpty()) GraphicsDriverConfigDialog.getVersion(driverCfg) else ""
-    // Renderer chip: a Wayland container renders through the compositor, so its stored renderer id
-    // is the X11 setting and nothing runs it. Same effective-backend rule as the editors, keyed on
-    // the inputs of that rule so the layer probe runs once per card.
-    val cardContext = LocalContext.current
-    val waylandContainer = remember(container.wineVersion, container.displayBackend) {
-        com.winlator.star.core.WineWaylandSupport.runsOnWayland(cardContext, container)
-    }
-    val rendererLabel = rendererLabelOf(container.renderer, waylandContainer)
-    val frameGenLabel = frameGenLabelOf(container.frameGenEngine)
-    val backendLabel = run {
-        val id = container.emulator
-        LocalContext.current.resources.getStringArray(R.array.emulator_entries)
-            .firstOrNull { StringUtils.parseIdentifier(it) == id } ?: ""
-    }
     val subtitle = listOf(container.wineVersion, container.screenSize)
         .filter { it.isNotEmpty() }.joinToString(" · ")
 
@@ -740,13 +721,11 @@ private fun ContainerItem(
                 .fillMaxWidth()
                 .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
         ) {
-            // Poster tile (matches the Shortcuts cards); containers have no art, so the
-            // container glyph is centered in the framed tile.
+            // Containers have no poster art, so the container glyph sits straight on the card
+            // (no framed tile — it read as a black square, by request).
             Box(
                 modifier = Modifier
                     .size(width = 48.dp, height = 64.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(SurfaceVariantColor),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -758,7 +737,7 @@ private fun ContainerItem(
             }
             Spacer(modifier = Modifier.width(12.dp))
 
-            // Info column: name, wineVersion · resolution subtitle, then the shared spec rows.
+            // Info column: name, wineVersion · resolution subtitle.
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = container.name,
@@ -824,14 +803,6 @@ private fun ContainerItem(
                         }
                     }
                 }
-                SpecChipRows(
-                    rendererLabel = rendererLabel,
-                    dxvkVersion = dxvkVersion,
-                    frameGenLabel = frameGenLabel,
-                    driverLabel = driverLabel,
-                    vkd3dVersion = vkd3dVersion,
-                    backendLabel = backendLabel,
-                )
             }
 
             Spacer(modifier = Modifier.width(8.dp))

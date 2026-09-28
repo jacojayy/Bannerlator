@@ -5141,12 +5141,6 @@ private fun ShortcutItemLayoutL(
     // Resolved component metadata (shortcut override → container default). Shared with the launch
     // overlay via buildLaunchSpec() so the card and the launch screen can never drift.
     val spec = buildLaunchSpec(shortcut, context)
-    val rendererLabel = spec.rendererLabel
-    val dxvkVersion = spec.dxvkVersion
-    val vkd3dVersion = spec.vkd3dVersion
-    val driverLabel = spec.driverLabel
-    val frameGenLabel = spec.frameGenLabel
-    val backendLabel = spec.backendLabel
     val subtitle = spec.meta
 
     // Floating card to match the Containers list (rounded surfaceVariant panel + outline
@@ -5271,16 +5265,6 @@ private fun ShortcutItemLayoutL(
                     SdCardBadge()
                 }
             }
-            // Component specs: bright primary chips (renderer · DXVK · frame-gen) then a
-            // muted secondary dot-line (driver · VKD3D · backend). Shared with Containers.
-            SpecChipRows(
-                rendererLabel = rendererLabel,
-                dxvkVersion = dxvkVersion,
-                frameGenLabel = frameGenLabel,
-                driverLabel = driverLabel,
-                vkd3dVersion = vkd3dVersion,
-                backendLabel = backendLabel,
-            )
         }
         ShortcutOverflowButton(
             onSettings = onSettings,
@@ -7123,7 +7107,6 @@ internal fun ShortcutSettingsDialogScreen(
                 // The Wine/X11 graphics stack is not registered for a Linux entry, so the D-pad
                 // cursor can never land on a row that isn't drawn (see the render conditionals).
                 if (!isLinuxEntry) add("displayBackend")
-                add("gfxDriver")   // the compositor driver: live on the gamescope path too
                 if (effectiveWaylandShortcut && !isLinuxEntry) { add("waylandGameDriver"); add("waylandDriverCfg") }
                 if (isLinuxEntry) add("linuxVulkanDriver")
                 if (isLinuxEntry) {
@@ -7140,7 +7123,6 @@ internal fun ShortcutSettingsDialogScreen(
                     add("linuxGamesFolderAdd")
                 }
                 if (effectiveWaylandShortcut || isLinuxEntry) add(com.winlator.star.display.WaylandHdr.EXTRA)
-                if (!effectiveWaylandShortcut && !isLinuxEntry) add("gfxConfig") // hidden on Wayland (X11 shims/tuning)
                 if (!isLinuxEntry) {
                     add(com.winlator.star.core.UnrealHdr.EXTRA)
                     if (panelRates.isNotEmpty()) add("refresh")
@@ -7155,6 +7137,8 @@ internal fun ShortcutSettingsDialogScreen(
                 if (!isLinuxEntry) add("autoClose")
             }
             6 -> { // Graphics — wrapper manager, DX Wrapper, Renderer, render scale
+                add("gfxDriver")   // compositor/display driver (moved from General)
+                if (!effectiveWaylandShortcut && !isLinuxEntry) add("gfxConfig")
                 if (!effectiveWaylandShortcut && !isLinuxEntry) add("gfxWrapper")
                 if (!isLinuxEntry) {
                     add("dxWrapper"); add("dxConfig"); add("renderer")
@@ -7246,7 +7230,66 @@ internal fun ShortcutSettingsDialogScreen(
                     ) {
                         when (selectedTab) {
                             6 -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Graphics tab (always 2nd): wrapper manager, DX Wrapper, Renderer, render scale.
+                    // Graphics tab (always 2nd): Graphics Driver, wrapper manager, DX Wrapper,
+                    // Renderer, render scale.
+                    val gfxContext = LocalContext.current
+                    var compositorChoices by remember { mutableStateOf<List<String>>(emptyList()) }
+                    var compositorChoicesLoaded by remember { mutableStateOf(false) }
+                    LaunchedEffect(effectiveWaylandShortcut, isLinuxEntry) {
+                        if (!effectiveWaylandShortcut && !isLinuxEntry) return@LaunchedEffect
+                        compositorChoices = compositorDriverChoices(gfxContext)
+                        compositorChoicesLoaded = true
+                    }
+                    val compositorVersion = GraphicsDriverConfigDialog.getVersion(graphicsDriverConfig) ?: ""
+
+                    // Two different drivers are involved in a Linux session and only one of them is
+                    // chosen here. This row picks the ANDROID driver the app's own compositor loads to
+                    // import the session's finished frames and put them on screen - it is live on this
+                    // path, and "System" here is a black screen. What the client and its games render
+                    // WITH is the Linux-built driver inside the runtime, which no row here touches.
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (effectiveWaylandShortcut || isLinuxEntry) {
+                            DpDrop(
+                                dp, "gfxDriver",
+                                // Named for what it does on each path. On a Linux entry the distinction
+                                // matters: this is the Android driver that DISPLAYS the session, while a
+                                // separate Linux driver inside the runtime is what draws it.
+                                label = if (isLinuxEntry) "Display driver (Android side)" else "Compositor driver",
+                                options = compositorChoices,
+                                selected = compositorDriverLabel(compositorVersion, compositorChoices, compositorChoicesLoaded),
+                                onSelect = { graphicsDriverConfig = withGraphicsDriverVersion(graphicsDriverConfig, it) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        } else {
+                            DpDrop(
+                                dp, "gfxDriver",
+                                label = stringResource(R.string.graphics_driver),
+                                options = graphicsDriverEntries,
+                                selected = selectedGfxDriver,
+                                onSelect = { selectedGfxDriver = it },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        IconButton(onClick = {
+                            helpRes = if (isLinuxEntry) R.string.help_linux_display_driver
+                                      else R.string.help_graphics_driver
+                        }) {
+                            Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                        }
+                    }
+
+                    // Driver configuration is X11 tuning; on Wayland its only live field (the Turnip
+                    // version) is covered by the Compositor driver dropdown, so the button is hidden.
+                    // The Wayland branch is also where HDR output lives, and that one DOES reach a
+                    // Linux session (the compositor gates HDR for every Wayland session, gamescope
+                    // included), so a Linux entry takes it with the driver rows conditioned off.
+                    if (!effectiveWaylandShortcut && !isLinuxEntry) {
+                        DpButton(dp, "gfxConfig", onActivate = { showGfxConfig = true }, modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(onClick = { showGfxConfig = true }, modifier = Modifier.fillMaxWidth()) {
+                                Text("${stringResource(R.string.graphics_driver)}: ${GraphicsDriverConfigDialog.getVersion(graphicsDriverConfig)}")
+                            }
+                        }
+                    }
                     if (!effectiveWaylandShortcut && !isLinuxEntry) {
                         DpButton(dp, "gfxWrapper", onActivate = { showWrapperManager = true }) {
                             OutlinedButton(onClick = { showWrapperManager = true }, modifier = Modifier.fillMaxWidth()) {
@@ -7755,52 +7798,7 @@ internal fun ShortcutSettingsDialogScreen(
                         linuxVulkanDriverValues = com.winlator.star.core.LinuxVulkanDriver.optionValues(gfxContext)
                     }
                     val compositorVersion = GraphicsDriverConfigDialog.getVersion(graphicsDriverConfig) ?: ""
-                    // Two different drivers are involved in a Linux session and only one of them is
-                    // chosen here. This row picks the ANDROID driver the app's own compositor loads to
-                    // import the session's finished frames and put them on screen - it is live on this
-                    // path, and "System" here is a black screen. What the client and its games render
-                    // WITH is the Linux-built driver inside the runtime, which no row here touches.
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        if (effectiveWaylandShortcut || isLinuxEntry) {
-                            DpDrop(
-                                dp, "gfxDriver",
-                                // Named for what it does on each path. On a Linux entry the distinction
-                                // matters: this is the Android driver that DISPLAYS the session, while a
-                                // separate Linux driver inside the runtime is what draws it.
-                                label = if (isLinuxEntry) "Display driver (Android side)" else "Compositor driver",
-                                options = compositorChoices,
-                                selected = compositorDriverLabel(compositorVersion, compositorChoices, compositorChoicesLoaded),
-                                onSelect = { graphicsDriverConfig = withGraphicsDriverVersion(graphicsDriverConfig, it) },
-                                modifier = Modifier.weight(1f)
-                            )
-                        } else {
-                            DpDrop(
-                                dp, "gfxDriver",
-                                label = stringResource(R.string.graphics_driver),
-                                options = graphicsDriverEntries,
-                                selected = selectedGfxDriver,
-                                onSelect = { selectedGfxDriver = it },
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-                        IconButton(onClick = {
-                            helpRes = if (isLinuxEntry) R.string.help_linux_display_driver
-                                      else R.string.help_graphics_driver
-                        }) {
-                            Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                        }
-                    }
-                    // Driver configuration is X11 tuning; on Wayland its only live field (the Turnip
-                    // version) is covered by the Compositor driver dropdown, so the button is hidden.
-                    // The Wayland branch is also where HDR output lives, and that one DOES reach a
-                    // Linux session (the compositor gates HDR for every Wayland session, gamescope
-                    // included), so a Linux entry takes it with the driver rows conditioned off.
                     if (!effectiveWaylandShortcut && !isLinuxEntry) {
-                        DpButton(dp, "gfxConfig", onActivate = { showGfxConfig = true }, modifier = Modifier.fillMaxWidth()) {
-                            OutlinedButton(onClick = { showGfxConfig = true }, modifier = Modifier.fillMaxWidth()) {
-                                Text("${stringResource(R.string.graphics_driver)}: ${GraphicsDriverConfigDialog.getVersion(graphicsDriverConfig)}")
-                            }
-                        }
                     } else {
                         // A Linux session has two drivers and the row above picked the wrong half of
                         // the pair on its own: that one DISPLAYS, this one DRAWS - the client's UI

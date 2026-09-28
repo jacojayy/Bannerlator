@@ -502,15 +502,18 @@ private fun DrawerIconItem(label: String, icon: ImageVector, onClick: () -> Unit
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 22.dp, vertical = 12.dp),
+            // Matches DrawerItem's metrics (12dp box padding + 13dp row padding, 25dp icon,
+            // 13dp gap) so Help/About line up with the Library/System entries instead of
+            // sitting a few dp to the left of them.
+            .padding(horizontal = 25.dp, vertical = 11.dp),
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(25.dp),
         )
-        Spacer(Modifier.width(14.dp))
+        Spacer(Modifier.width(13.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.bodyLarge,

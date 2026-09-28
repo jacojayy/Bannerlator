@@ -64,7 +64,6 @@ import com.winlator.star.core.Failure
 import com.winlator.star.core.Phase
 import com.winlator.star.core.PreloaderDetails
 import com.winlator.star.core.PreloaderState
-import com.winlator.star.ui.screens.SpecChipRows
 import com.winlator.star.ui.screens.XmbWaves
 
 // The hero surface is always laid over a dark scrim, so text/accents use fixed light-on-dark
@@ -163,9 +162,8 @@ fun PreloaderOverlay() {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                // Component spec, mirrored 1:1 from the game card: the "container · resolution" meta
-                // line, then the same two chip rows (renderer · DXVK · frame-gen / driver · VKD3D ·
-                // backend) via the shared SpecChipRows.
+                // "container · resolution" meta line, mirrored 1:1 from the game card (the spec
+                // chips themselves were removed from every card by request).
                 val spec = ui.spec
                 if (spec != null) {
                     if (spec.meta.isNotEmpty()) {
@@ -178,15 +176,6 @@ fun PreloaderOverlay() {
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    SpecChipRows(
-                        rendererLabel = spec.rendererLabel,
-                        dxvkVersion = spec.dxvkVersion,
-                        frameGenLabel = spec.frameGenLabel,
-                        driverLabel = spec.driverLabel,
-                        vkd3dVersion = spec.vkd3dVersion,
-                        backendLabel = spec.backendLabel,
-                        eosEnabled = spec.eosEnabled,
-                    )
                 }
                 Spacer(Modifier.height(18.dp))
             }

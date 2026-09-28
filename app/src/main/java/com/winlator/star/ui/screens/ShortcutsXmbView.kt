@@ -669,23 +669,12 @@ private fun XmbActionRow(action: XmbAction, selected: Boolean, accent: Color, ic
     }
 }
 
-// Right / lower pane: store badges, the same spec chips as the list card, playtime and Game Details.
+// Right / lower pane: store badges, playtime and Game Details.
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun XmbInfo(s: Shortcut, playtime: String?, descLines: Int, storeBadges: @Composable (Shortcut) -> Unit) {
-    val context = LocalContext.current
-    val spec = remember(s) { buildLaunchSpec(s, context) }
     val details = remember(s) { buildLaunchDetails(s) }
     storeBadges(s)
-    SpecChipRows(
-        rendererLabel = spec.rendererLabel,
-        dxvkVersion = spec.dxvkVersion,
-        frameGenLabel = spec.frameGenLabel,
-        driverLabel = spec.driverLabel,
-        vkd3dVersion = spec.vkd3dVersion,
-        backendLabel = spec.backendLabel,
-        eosEnabled = spec.eosEnabled,
-    )
     val factColor = Color(0xFFD0D0D0)
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),

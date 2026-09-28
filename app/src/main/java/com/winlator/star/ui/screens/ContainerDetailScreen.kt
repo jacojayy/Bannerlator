@@ -904,114 +904,18 @@ private fun TopLevelFields(
         // Display backend (X11 / Wayland) is deliberately NOT offered here — hidden by request.
         // The stored value is left exactly as saved (see ContainerDetailViewModel.displayBackend);
         // only the picker and its Wayland explainer were removed, nothing else changes.
-        // Graphics Driver + wrapper manager (cloud) + config button. Under Wayland the wrapper
-        // flavour is irrelevant: the compositor loads the installed Turnip named by the "version"
-        // key of graphicsDriverConfig (XServerDisplayActivity's Wayland resolve → adrenotools), and
-        // the game renders on the Proton's bundled Wayland Turnip. So on Wayland the flavour
-        // dropdown is replaced by a "Compositor driver" picker over the installed Turnip ids that
-        // writes ONLY the version key back; the config dialog stays reachable for the same key.
         val compositorDriverOnly = viewModel.isWaylandBackend
-        var compositorChoices by remember { mutableStateOf<List<String>>(emptyList()) }
-        var compositorChoicesLoaded by remember { mutableStateOf(false) }
-        // Bumped after a driver is installed from the warning below, to re-read the choices.
-        var compositorChoicesKey by remember { mutableIntStateOf(0) }
-        var showDriverDownload by remember { mutableStateOf(false) }
         // Wayland GAME driver choices (bundled variants + imported Linux ICDs) and the variant Auto
         // resolves to on this GPU — the latter is a native probe, so it runs with the compositor
         // choices off-main under graphicsProbeMutex (cached per process after the first run).
         var waylandGameDriverValues by remember { mutableStateOf<List<String>>(emptyList()) }
         var waylandAutoPick by remember { mutableStateOf(com.winlator.star.core.WaylandGameDriver.autoVariantIfKnown()) }
-        LaunchedEffect(compositorDriverOnly, compositorChoicesKey) {
+        LaunchedEffect(compositorDriverOnly) {
             if (!compositorDriverOnly) return@LaunchedEffect
-            compositorChoices = compositorDriverChoices(context) // same source as the config dialog
-            compositorChoicesLoaded = true
             waylandGameDriverValues = com.winlator.star.core.WaylandGameDriver.optionValues(context)
             waylandAutoPick = waylandAutoVariant(context)
         }
-        val compositorVersion = com.winlator.star.contentdialog.GraphicsDriverConfigDialog
-            .getVersion(viewModel.graphicsDriverConfig) ?: ""
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (compositorDriverOnly) {
-                LabeledDropdown(
-                    label = "Compositor driver",
-                    options = compositorChoices,
-                    selectedOption = compositorDriverLabel(compositorVersion, compositorChoices, compositorChoicesLoaded),
-                    onSelect = { viewModel.onCompositorDriverPicked(it) },
-                    modifier = Modifier.weight(1f)
-                )
-            } else {
-                LabeledDropdown(
-                    label = stringResource(R.string.graphics_driver),
-                    options = viewModel.graphicsDriverEntries,
-                    selectedOption = viewModel.selectedGraphicsDriver,
-                    onSelect = { viewModel.selectedGraphicsDriver = it },
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            IconButton(onClick = { helpRes = R.string.help_graphics_driver }) {
-                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-            }
-            // Wrappers are X11 game-driver shims and driver configuration is X11 tuning (its only
-            // live field, the Turnip version, is the Compositor driver dropdown), so both entry
-            // points are left out of the Wayland layout; the "?" stays.
-            if (!compositorDriverOnly) {
-                IconButton(onClick = onShowGfxConfig) {
-                    Icon(Icons.Default.Settings, contentDescription = null)
-                }
-            }
-        }
         if (compositorDriverOnly) {
-            // The compositor imports the game's dmabufs, which only an installed Turnip can do:
-            // an empty/"System" version falls back to the system libvulkan (see
-            // XServerDisplayActivity's Wayland driver resolve) and shows a black screen. The view-model
-            // fills an empty/"System" one with the newest installed driver that proves it can import
-            // them (defaultCompositorDriver); the warning is for when none can, or for a stored id
-            // that is no longer available — then with a way to get one.
-            when {
-                viewModel.compositorDriverSearching -> Text(
-                    "Looking for an installed Turnip that can import the game's frames…",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                compositorDriverUnusable(compositorVersion, compositorChoices, compositorChoicesLoaded) -> {
-                    Text(
-                        if (viewModel.compositorDriverNoneUsable)
-                            """No installed driver can import the game's frames, so this runs on "System" and shows a black screen. Wayland needs a Turnip driver here."""
-                        else
-                            """Wayland needs a Turnip driver here. "System" or a missing driver cannot import the game's frames and shows a black screen.""",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                    TextButton(onClick = { showDriverDownload = true }) {
-                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Download a Turnip driver")
-                    }
-                }
-                viewModel.compositorDriverAutoPicked == compositorVersion -> Text(
-                    if (viewModel.compositorDriverPickedFromDefaults)
-                        "Picked for you: the driver in your New Container Defaults."
-                    else
-                        "Picked for you: the newest installed Turnip that can import the game's frames.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            if (showDriverDownload) {
-                com.winlator.star.ui.screens.adrenodownload.AdrenoDriverDownloadSheet(
-                    onDismiss = { showDriverDownload = false },
-                    onDriverInstalled = {
-                        showDriverDownload = false
-                        compositorChoicesKey++
-                        viewModel.onCompositorDriversChanged()
-                    }
-                )
-            }
-            IconButton(onClick = {
-                helpText = "Used by the Wayland compositor to put frames on screen; the game renders on the Wayland game driver below."
-            }) {
-                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-            }
             Spacer(Modifier.height(8.dp))
             // Wayland game driver: what the GAME renders on (winewayland sets VK_ICD_FILENAMES from
             // it). Auto / the three bundled Turnip variants / each imported Linux ICD. A stored
@@ -1093,6 +997,108 @@ private fun TopLevelFields(
             viewModel.refreshGraphicsDriverEntries() // pick up a just-imported/deleted wrapper
         })
         Spacer(Modifier.height(8.dp))
+        // Graphics Driver + config button. Under Wayland the wrapper flavour is irrelevant: the
+        // compositor loads the installed Turnip named by the "version" key of graphicsDriverConfig
+        // (XServerDisplayActivity's Wayland resolve → adrenotools), and the game renders on the
+        // Proton's bundled Wayland Turnip. So on Wayland the flavour dropdown is replaced by a
+        // "Compositor driver" picker over the installed Turnip ids that writes ONLY the version
+        // key back; the config dialog stays reachable for the same key.
+        val compositorDriverOnly = viewModel.isWaylandBackend
+        var compositorChoices by remember { mutableStateOf<List<String>>(emptyList()) }
+        var compositorChoicesLoaded by remember { mutableStateOf(false) }
+        // Bumped after a driver is installed from the warning below, to re-read the choices.
+        var compositorChoicesKey by remember { mutableIntStateOf(0) }
+        var showDriverDownload by remember { mutableStateOf(false) }
+        LaunchedEffect(compositorDriverOnly, compositorChoicesKey) {
+            if (!compositorDriverOnly) return@LaunchedEffect
+            compositorChoices = compositorDriverChoices(context) // same source as the config dialog
+            compositorChoicesLoaded = true
+        }
+        val compositorVersion = com.winlator.star.contentdialog.GraphicsDriverConfigDialog
+            .getVersion(viewModel.graphicsDriverConfig) ?: ""
+
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (compositorDriverOnly) {
+                LabeledDropdown(
+                    label = "Compositor driver",
+                    options = compositorChoices,
+                    selectedOption = compositorDriverLabel(compositorVersion, compositorChoices, compositorChoicesLoaded),
+                    onSelect = { viewModel.onCompositorDriverPicked(it) },
+                    modifier = Modifier.weight(1f)
+                )
+            } else {
+                LabeledDropdown(
+                    label = stringResource(R.string.graphics_driver),
+                    options = viewModel.graphicsDriverEntries,
+                    selectedOption = viewModel.selectedGraphicsDriver,
+                    onSelect = { viewModel.selectedGraphicsDriver = it },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            IconButton(onClick = { helpRes = R.string.help_graphics_driver }) {
+                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+            }
+            // Wrappers are X11 game-driver shims and driver configuration is X11 tuning (its only
+            // live field, the Turnip version, is the Compositor driver dropdown), so both entry
+            // points are left out of the Wayland layout; the "?" stays.
+            if (!compositorDriverOnly) {
+                IconButton(onClick = onShowGfxConfig) {
+                    Icon(Icons.Default.Settings, contentDescription = null)
+                }
+            }
+        }
+
+            // The compositor imports the game's dmabufs, which only an installed Turnip can do:
+            // an empty/"System" version falls back to the system libvulkan (see
+            // XServerDisplayActivity's Wayland driver resolve) and shows a black screen. The view-model
+            // fills an empty/"System" one with the newest installed driver that proves it can import
+            // them (defaultCompositorDriver); the warning is for when none can, or for a stored id
+            // that is no longer available — then with a way to get one.
+            when {
+                viewModel.compositorDriverSearching -> Text(
+                    "Looking for an installed Turnip that can import the game's frames…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                compositorDriverUnusable(compositorVersion, compositorChoices, compositorChoicesLoaded) -> {
+                    Text(
+                        if (viewModel.compositorDriverNoneUsable)
+                            """No installed driver can import the game's frames, so this runs on "System" and shows a black screen. Wayland needs a Turnip driver here."""
+                        else
+                            """Wayland needs a Turnip driver here. "System" or a missing driver cannot import the game's frames and shows a black screen.""",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    TextButton(onClick = { showDriverDownload = true }) {
+                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Download a Turnip driver")
+                    }
+                }
+                viewModel.compositorDriverAutoPicked == compositorVersion -> Text(
+                    if (viewModel.compositorDriverPickedFromDefaults)
+                        "Picked for you: the driver in your New Container Defaults."
+                    else
+                        "Picked for you: the newest installed Turnip that can import the game's frames.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (showDriverDownload) {
+                com.winlator.star.ui.screens.adrenodownload.AdrenoDriverDownloadSheet(
+                    onDismiss = { showDriverDownload = false },
+                    onDriverInstalled = {
+                        showDriverDownload = false
+                        compositorChoicesKey++
+                        viewModel.onCompositorDriversChanged()
+                    }
+                )
+            }
+            IconButton(onClick = {
+                helpText = "Used by the Wayland compositor to put frames on screen; the game renders on the Wayland game driver below."
+            }) {
+                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+            }
 
         // DX Wrapper + config button
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {

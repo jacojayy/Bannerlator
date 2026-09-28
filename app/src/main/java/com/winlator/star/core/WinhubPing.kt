@@ -25,9 +25,9 @@ import kotlin.random.Random
  * [RUN_DEADLINE_MS] so a slow network cannot pin the thread (the old worst case was 10 × 10 s).
  * A 429/403 aborts the run instead of hammering through the throttle.
  *
- * With [notify] set, the outcome of the run is surfaced as the same centered toast used for
- * "Settings saved!" — "No necessary updates found." when at least one asset came back HTTP 200,
- * a throttle message when GitHub pushed back, and a failure message when none of them answered.
+ * With [notify] set, the outcome of the run is surfaced when the run finishes: "No necessary
+ * updates found." shows as the top-right Compose banner ([ComposeNotifier]), while a throttle
+ * message (GitHub pushed back) and a failure message (nothing answered) keep the centered toast.
  */
 object WinhubPing {
     private const val TAG = "WinhubPing"
@@ -113,7 +113,13 @@ object WinhubPing {
                 else -> R.string.winhub_ping_failed
             }
         )
-        mainHandler.post { AppUtils.showToast(context, message) }
+        // The success case is the one the user actually watches for, so it gets the top-right
+        // Compose banner instead of the centered toast. Throttle/failure keep the toast — they
+        // are rare, and the toast is what every other message in the app already uses.
+        mainHandler.post {
+            if (ok > 0) ComposeNotifier.show(context, message)
+            else AppUtils.showToast(context, message)
+        }
     }
 
     private fun download(index: Int): Outcome {

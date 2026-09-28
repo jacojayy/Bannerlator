@@ -69,7 +69,10 @@ class BannerlatorApp : Application() {
         // Remote asset hit: every open pulls the ten WinHub release assets and throws the bodies
         // away (nothing is parsed, nothing is stored). Background thread with timeouts, failures
         // swallowed — an offline device starts up exactly as it did before. notify = true makes the
-        // run end with the "No necessary updates found" toast, so the check is visible.
+        // run end with the "No necessary updates found" banner, so the check is visible.
+        // The notifier is installed FIRST: it has to be watching before MainActivity resumes or it
+        // would miss that resume and never show the banner it queued.
+        com.winlator.star.core.ComposeNotifier.install(this)
         com.winlator.star.core.WinhubPing.ping(applicationContext, notify = true)
 
         // Steam: make the connection status live app-wide. Init the session prefs synchronously (cheap;

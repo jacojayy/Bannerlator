@@ -15,6 +15,7 @@ import android.media.MediaScannerConnection
 import android.os.Environment
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
@@ -274,6 +275,7 @@ import com.winlator.star.store.SteamPrefs
 import com.winlator.star.store.SteamSessionManager
 import com.winlator.star.store.StarLaunchBridge
 import com.winlator.star.store.SteamSaveManagerActivity
+import com.winlator.star.store.SteamLibraryArt
 import com.winlator.star.store.SteamStoreSearch
 import com.winlator.star.store.compose.ContainerPickerDialog
 import com.winlator.star.ui.theme.Divider as DividerColor
@@ -5162,6 +5164,31 @@ private fun ShortcutItemLayoutL(
             if (selected) DangerRed else MaterialTheme.colorScheme.outline,
         ),
     ) {
+      // Full-bleed Steam wallpaper behind the row. The Amethyst surfaceVariant card stays underneath
+      // as the fallback for custom imports (no appId) and while the image is still loading.
+      Box {
+        val wallAppId = remember(shortcut) { steamAppIdOf(shortcut) }
+        if (wallAppId > 0) {
+            RowWallpaper(
+                appId = wallAppId,
+                // Clip explicitly: the backdrop is a full rectangle and must not spill past the
+                // card's 12dp corners regardless of how the Card clips its own content.
+                modifier = Modifier.matchParentSize().clip(RoundedCornerShape(12.dp)),
+            )
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(
+                                Color.Black.copy(alpha = 0.82f),
+                                Color.Black.copy(alpha = 0.55f),
+                            )
+                        )
+                    ),
+            )
+        }
       Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -5272,7 +5299,36 @@ private fun ShortcutItemLayoutL(
             onRestoreSaves = onRestoreSaves,
         )
       }
+      }
     }
+}
+
+// Wide Steam wallpaper used as the list row's backdrop. Candidates run best-first: the PICS art
+// snapshot (a real URL the engine already stored) then the public CDN paths, so a 404 on one
+// falls through to the next and a total miss simply leaves the card's own colour showing.
+@Composable
+private fun RowWallpaper(appId: Int, modifier: Modifier) {
+    val context = LocalContext.current
+    val candidates = remember(appId) {
+        listOfNotNull(
+            SteamLibraryArt.of(appId)?.libraryHero,
+            SteamLibraryArt.of(appId)?.header,
+            "https://cdn.akamai.steamstatic.com/steam/apps/$appId/library_hero.jpg",
+            SteamStoreSearch.headerUrl(appId),
+        )
+    }
+    var attempt by remember(appId) { mutableStateOf(0) }
+    AsyncImage(
+        model = ImageRequest.Builder(context)
+            .data(candidates[attempt.coerceIn(0, candidates.lastIndex)])
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .crossfade(true)
+            .build(),
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        onError = { if (attempt < candidates.lastIndex) attempt++ },
+        modifier = modifier,
+    )
 }
 
 // Shared overflow (⋮) button + menu for the list-view cards.

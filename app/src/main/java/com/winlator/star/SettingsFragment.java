@@ -360,7 +360,7 @@ public class SettingsFragment extends Fragment {
                 requireActivity().getOnBackPressedDispatcher().onBackPressed();
             }
 
-			AppUtils.showToast(context, "Settings saved!");
+			com.winlator.star.core.ComposeNotifier.show(context, "Settings saved!");
         });
 
 

@@ -79,6 +79,10 @@ object ComposeNotifier : Application.ActivityLifecycleCallbacks {
     private var installed = false
     private var pending: String? = null
 
+    /** Hard one-per-process limit: the first banner to actually reach the screen wins. */
+    @Volatile
+    private var shownThisSession = false
+
     /**
      * Register the lifecycle callbacks. Must run before the first Activity resumes — the ping
      * finishes while `MainActivity` is still starting up, and a late registration would never see
@@ -90,10 +94,17 @@ object ComposeNotifier : Application.ActivityLifecycleCallbacks {
         installed = true
     }
 
-    /** Show [message] as a top-right banner. Safe from any thread; no-ops without an Application. */
+    /**
+     * Show [message] as a top-right banner. Safe from any thread; no-ops without an Application.
+     * Only the FIRST call in a process ever draws — everything after it is dropped, so the update
+     * check, "Settings saved!" and the updater results cannot stack over one another.
+     */
+    @JvmStatic
     fun show(context: Context?, message: String) {
+        if (shownThisSession) return
         val app = context?.applicationContext as? Application ?: return
         mainHandler.post {
+            if (shownThisSession) return@post
             install(app)
             val host = resumed
             if (host != null && !host.isFinishing && !host.isDestroyed) showOn(host, message)
@@ -125,7 +136,9 @@ object ComposeNotifier : Application.ActivityLifecycleCallbacks {
     override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
 
     private fun showOn(host: Activity, message: String) {
+        if (shownThisSession) return
         val content = host.findViewById<FrameLayout>(android.R.id.content) ?: return
+        shownThisSession = true
         // One banner at a time: a newer message replaces whatever is still on screen.
         removeExisting(content)
 

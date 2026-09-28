@@ -103,7 +103,7 @@ object WinhubPing {
         }
     }
 
-    /** Posts the run outcome on the main looper; [AppUtils.showToast] is main-thread only. */
+    /** Posts the run outcome on the main looper; [ComposeNotifier.show] is main-thread safe. */
     private fun report(context: Context?, ok: Int, throttled: Boolean) {
         if (context == null) return
         val message = context.getString(
@@ -113,13 +113,9 @@ object WinhubPing {
                 else -> R.string.winhub_ping_failed
             }
         )
-        // The success case is the one the user actually watches for, so it gets the top-right
-        // Compose banner instead of the centered toast. Throttle/failure keep the toast — they
-        // are rare, and the toast is what every other message in the app already uses.
-        mainHandler.post {
-            if (ok > 0) ComposeNotifier.show(context, message)
-            else AppUtils.showToast(context, message)
-        }
+        // Every outcome goes through the top-right Compose banner (one per app open, enforced by
+        // ComposeNotifier). The centered toast is kept only for the rest of the app.
+        mainHandler.post { ComposeNotifier.show(context, message) }
     }
 
     private fun download(index: Int): Outcome {

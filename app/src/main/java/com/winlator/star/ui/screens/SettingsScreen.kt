@@ -89,6 +89,7 @@ import com.winlator.star.contentdialog.ContentDialog
 import com.winlator.star.contents.ContentsManager
 import com.winlator.star.core.AppOrientation
 import com.winlator.star.core.AppUtils
+import com.winlator.star.core.ComposeNotifier
 import com.winlator.star.core.FileUtils
 import com.winlator.star.core.PreloaderDialog
 import com.winlator.star.core.UpdateManager
@@ -598,8 +599,8 @@ fun SettingsScreen(onSaved: () -> Unit = {}) {
                             updateInfo = info
                             checkingUpdate = false
                             when {
-                                info == null -> AppUtils.showToast(context, "Couldn't check for updates")
-                                !info.isNewer -> AppUtils.showToast(context, "You're on the latest version")
+                                info == null -> ComposeNotifier.show(context, "Couldn't check for updates")
+                                !info.isNewer -> ComposeNotifier.show(context, "You're on the latest version")
                                 else -> {}
                             }
                         }
@@ -1595,7 +1596,7 @@ fun SettingsScreen(onSaved: () -> Unit = {}) {
         FloatingActionButton(
             onClick = {
                 saveSettings()
-                AppUtils.showToast(context, "Settings saved!")
+                ComposeNotifier.show(context, "Settings saved!")
                 onSaved()
             },
             containerColor = MaterialTheme.colorScheme.primary,

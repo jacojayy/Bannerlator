@@ -725,7 +725,7 @@ private fun ContainerItem(
             // (no framed tile — it read as a black square, by request).
             Box(
                 modifier = Modifier
-                    .size(width = 48.dp, height = 64.dp)
+                    .size(width = 48.dp, height = 64.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(

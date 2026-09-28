@@ -1048,6 +1048,9 @@ private fun TopLevelFields(
             }
         }
 
+        // Wayland-only block: the compositor driver warning, its download sheet and its "?" all
+        // describe the Wayland path (they were gated before the move to this tab — keep them gated).
+        if (compositorDriverOnly) {
             // The compositor imports the game's dmabufs, which only an installed Turnip can do:
             // an empty/"System" version falls back to the system libvulkan (see
             // XServerDisplayActivity's Wayland driver resolve) and shows a black screen. The view-model
@@ -1099,6 +1102,7 @@ private fun TopLevelFields(
             }) {
                 Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
             }
+        }
 
         // DX Wrapper + config button
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Gpu
 import androidx.compose.material.icons.filled.Help
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Settings
@@ -163,9 +164,9 @@ fun ContainerDetailScreen(
     // DRIVES is per-container (letters map to real paths), so it's dropped in "New Container Defaults"
     // mode. Content is dispatched by TITLE below (not raw index) so removing a tab never misaligns.
     val tabTitles = if (viewModel.defaultsMode)
-        listOf("GENERAL", "ENVIROMENT", "WIN COMPONENTS", "ADVANCED")
+        listOf("GENERAL", "GRAPHICS", "ENVIROMENT", "WIN COMPONENTS", "ADVANCED")
     else
-        listOf("GENERAL", "ENVIROMENT", "DRIVES", "WIN COMPONENTS", "ADVANCED")
+        listOf("GENERAL", "GRAPHICS", "ENVIROMENT", "DRIVES", "WIN COMPONENTS", "ADVANCED")
 
     Scaffold(
         floatingActionButton = {
@@ -239,8 +240,9 @@ fun ContainerDetailScreen(
                     // Dispatch by tab TITLE (not index): DRIVES is absent in defaults mode, so a
                     // raw index would misalign the remaining tabs.
                     when (activeTab) {
-                        "GENERAL" -> Column {
+                        "GENERAL", "GRAPHICS" -> Column {
                             TopLevelFields(
+                                tab = activeTab,
                                 viewModel = viewModel,
                                 onShowGfxConfig = { showGraphicsDriverConfig = true },
                                 onShowDxvkConfig = { showDxvkConfig = true },
@@ -249,7 +251,7 @@ fun ContainerDetailScreen(
                                 onShowWineDownloadSheet = { showWineDownloadSheet = true },
                                 onShowVulkanConfig = { showVulkanConfig = true },
                             )
-                            WineConfigTab(viewModel, colorPickerViewRef)
+                            if (activeTab == "GENERAL") WineConfigTab(viewModel, colorPickerViewRef)
                         }
                         "ENVIROMENT" -> EnvVarsTab(viewModel)
                         "DRIVES" -> DrivesTab(viewModel)
@@ -477,6 +479,7 @@ private fun parseVulkanConfig(s: String): Map<String, String> =
 private fun tabIcon(title: String): ImageVector = when (title) {
     "GENERAL" -> Icons.Filled.Settings
     "ENVIROMENT" -> Icons.Filled.Extension
+    "GRAPHICS" -> Icons.Filled.Gpu
     "DRIVES" -> Icons.Filled.Storage
     "WIN COMPONENTS" -> Icons.Filled.Widgets
     "ADVANCED" -> Icons.Filled.Tune
@@ -784,6 +787,7 @@ internal fun VulkanSettingsDialog(
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun TopLevelFields(
+    tab: String,
     viewModel: ContainerDetailViewModel,
     onShowGfxConfig: () -> Unit,
     onShowDxvkConfig: () -> Unit,
@@ -802,9 +806,24 @@ private fun TopLevelFields(
     var showAudioSettings by remember { mutableStateOf(false) }
     helpRes?.let { HelpDialog(it) { helpRes = null } }
     helpText?.let { HelpTextDialog(it) { helpText = null } }
+    // Declared at function level: the wrapper manager dialog renders on the GRAPHICS tab, the
+    // launcher for it lives there too.
+    var showWrapperManager by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
 
+        // ── GRAPHICS tab (always 2nd): wrapper manager, DX Wrapper, Renderer, render scale ─────
+        if (tab == "GRAPHICS") {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedButton(onClick = { showWrapperManager = true }, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.wrapper_manager_open))
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        if (tab == "GENERAL") {
         // Name — per-container identity, hidden in "New Container Defaults" mode (not templatable).
         if (!viewModel.defaultsMode) {
             OutlinedTextField(
@@ -891,7 +910,6 @@ private fun TopLevelFields(
         // the game renders on the Proton's bundled Wayland Turnip. So on Wayland the flavour
         // dropdown is replaced by a "Compositor driver" picker over the installed Turnip ids that
         // writes ONLY the version key back; the config dialog stays reachable for the same key.
-        var showWrapperManager by remember { mutableStateOf(false) }
         val compositorDriverOnly = viewModel.isWaylandBackend
         var compositorChoices by remember { mutableStateOf<List<String>>(emptyList()) }
         var compositorChoicesLoaded by remember { mutableStateOf(false) }
@@ -937,9 +955,6 @@ private fun TopLevelFields(
             // live field, the Turnip version, is the Compositor driver dropdown), so both entry
             // points are left out of the Wayland layout; the "?" stays.
             if (!compositorDriverOnly) {
-                IconButton(onClick = { showWrapperManager = true }) {
-                    Icon(Icons.Default.CloudDownload, contentDescription = stringResource(R.string.wrapper_manager_open))
-                }
                 IconButton(onClick = onShowGfxConfig) {
                     Icon(Icons.Default.Settings, contentDescription = null)
                 }
@@ -1071,6 +1086,8 @@ private fun TopLevelFields(
         }
         // Unreal Engine HDR removed from the editor (useless): the extra and core.UnrealHdr launch
         // plumbing still resolve a stored mode, but there is no control to set one.
+        }
+        if (tab == "GRAPHICS") {
         if (showWrapperManager) WrapperManagerDialog(onDismiss = {
             showWrapperManager = false
             viewModel.refreshGraphicsDriverEntries() // pick up a just-imported/deleted wrapper
@@ -1206,6 +1223,8 @@ private fun TopLevelFields(
                 }
             }
         }
+        }  // end GRAPHICS block
+        if (tab == "GENERAL") {
         Spacer(Modifier.height(8.dp))
 
         // Auto-close the session when the launched game exits (default ON). Avoids being left on the
@@ -1685,6 +1704,7 @@ private fun TopLevelFields(
                 }
             }
         }
+        } // end GENERAL (tail) block
     }
 }
 

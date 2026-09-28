@@ -91,6 +91,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.Gpu
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Tv
@@ -6800,6 +6801,8 @@ internal fun ShortcutSettingsDialogScreen(
     // The Wayland game driver's gear (WaylandDriverSettingsDialog: GPU name spoof, memory cap, present
     // mode, UBWC hint), editing the same graphicsDriverConfig as the X11 dialog above.
     var showWaylandDriverCfg by remember { mutableStateOf(false) }
+    // Shared with the Graphics tab (its launcher lives there; the dialog renders at dialog-body level).
+    var showWrapperManager by remember { mutableStateOf(false) }
     var showDxvkConfig by remember { mutableStateOf(false) }
     var showWineD3DConfig by remember { mutableStateOf(false) }
     // Per-field "?" help (helpRes) + the newcomer glossary ("What is all this?"), mirrored from the
@@ -6831,14 +6834,14 @@ internal fun ShortcutSettingsDialogScreen(
     // Win Components is Wine DLL-override plumbing and a gamescope session has no prefix to override.
     // Keeping selectedTab a content index means the when() branches never have to be renumbered.
     val tabIndices = remember(tvTabVisible, isLinuxEntry) {
-        listOf(0) + (if (isLinuxEntry) emptyList() else listOf(1)) + listOf(2, 3, 4) +
+        listOf(0, 6) + (if (isLinuxEntry) emptyList() else listOf(1)) + listOf(2, 3, 4) +
             (if (tvTabVisible) listOf(5) else emptyList())
     }
     val tabTitles = remember(tabIndices) {
         tabIndices.map {
             when (it) {
                 0 -> "General"; 1 -> "Win Components"; 2 -> "Env Vars"
-                3 -> "Advanced"; 4 -> "Controller"; else -> "TV"
+                3 -> "Advanced"; 4 -> "Controller"; 6 -> "Graphics"; else -> "TV"
             }
         }
     }
@@ -7137,13 +7140,9 @@ internal fun ShortcutSettingsDialogScreen(
                     add("linuxGamesFolderAdd")
                 }
                 if (effectiveWaylandShortcut || isLinuxEntry) add(com.winlator.star.display.WaylandHdr.EXTRA)
-                if (!effectiveWaylandShortcut && !isLinuxEntry) { add("gfxWrapper"); add("gfxConfig") } // hidden on Wayland (X11 shims/tuning)
+                if (!effectiveWaylandShortcut && !isLinuxEntry) add("gfxConfig") // hidden on Wayland (X11 shims/tuning)
                 if (!isLinuxEntry) {
                     add(com.winlator.star.core.UnrealHdr.EXTRA)
-                    add("dxWrapper"); add("dxConfig"); add("renderer")
-                    if (!effectiveWaylandShortcut && selectedRenderer == "SurfaceFlinger") add("sfCompat")
-                    if (!effectiveWaylandShortcut && selectedRenderer == "Vulkan") { add("vkNative"); add("vkColors"); add("vkPresent"); if (vkNative) add("vkBackend"); add("vkDriver") }
-                    add("renderScale")
                     if (panelRates.isNotEmpty()) add("refresh")
                 }
                 add("frameGen"); add("fpsLimiter"); add("audio")
@@ -7154,6 +7153,15 @@ internal fun ShortcutSettingsDialogScreen(
                 }
                 add("fullscreen")
                 if (!isLinuxEntry) add("autoClose")
+            }
+            6 -> { // Graphics — wrapper manager, DX Wrapper, Renderer, render scale
+                if (!effectiveWaylandShortcut && !isLinuxEntry) add("gfxWrapper")
+                if (!isLinuxEntry) {
+                    add("dxWrapper"); add("dxConfig"); add("renderer")
+                    if (!effectiveWaylandShortcut && selectedRenderer == "SurfaceFlinger") add("sfCompat")
+                    if (!effectiveWaylandShortcut && selectedRenderer == "Vulkan") { add("vkNative"); add("vkColors"); add("vkPresent"); if (vkNative) add("vkBackend"); add("vkDriver") }
+                    add("renderScale")
+                }
             }
             4 -> { // Controller
                 if (!isLinuxEntry) { add("enableXInput"); add("enableDInput"); add("exclusiveXInput"); add("disableXInput") }
@@ -7237,6 +7245,239 @@ internal fun ShortcutSettingsDialogScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         when (selectedTab) {
+                            6 -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Graphics tab (always 2nd): wrapper manager, DX Wrapper, Renderer, render scale.
+                    if (!effectiveWaylandShortcut && !isLinuxEntry) {
+                        DpButton(dp, "gfxWrapper", onActivate = { showWrapperManager = true }) {
+                            OutlinedButton(onClick = { showWrapperManager = true }, modifier = Modifier.fillMaxWidth()) {
+                                Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(stringResource(R.string.wrapper_manager_open))
+                            }
+                        }
+                    }
+                    if (!isLinuxEntry) {
+                    // DX Wrapper
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        DpDrop(
+                            dp, "dxWrapper",
+                            label = stringResource(R.string.dxwrapper),
+                            options = dxWrapperEntries,
+                            selected = selectedDxWrapper,
+                            onSelect = { newWrapper ->
+                                val wasVegas = StringUtils.parseIdentifier(selectedDxWrapper).contains("vegas")
+                                val isVegas = StringUtils.parseIdentifier(newWrapper).contains("vegas")
+                                selectedDxWrapper = newWrapper
+                                // Strip dxvkConfigFile when leaving VEGAS — prevents stale
+                                // VEGAS config path from leaking into plain DXVK+VKD3D.
+                                if (wasVegas && !isVegas) {
+                                    val cfg = DXVKConfigDialog.parseConfig(dxWrapperConfig)
+                                    val path = cfg.get("dxvkConfigFile")
+                                    if (path.isNotEmpty()) {
+                                        val stripped = dxWrapperConfig.split(",").filter { !it.startsWith("dxvkConfigFile=") }.joinToString(",")
+                                        dxWrapperConfig = stripped
+                                    }
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { helpRes = R.string.dxwrapper_help_content }) {
+                            Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                    DpButton(dp, "dxConfig", onActivate = {
+                        val w = StringUtils.parseIdentifier(selectedDxWrapper)
+                        if (w.contains("dxvk") || w.contains("vegas")) showDxvkConfig = true
+                        else showWineD3DConfig = true
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(
+                            onClick = {
+                                val w = StringUtils.parseIdentifier(selectedDxWrapper)
+                                if (w.contains("dxvk") || w.contains("vegas")) showDxvkConfig = true
+                                else showWineD3DConfig = true
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("DX Wrapper Config") }
+                    }
+
+                    // Renderer (host) — per-game override of the container's OpenGL/Vulkan choice.
+                    var showSfWarning by remember { mutableStateOf(false) }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        // Display only while greyed on Wayland: the compositor is always Vulkan; the
+                        // stored X11 choice is kept and returns with the X11 backend.
+                        val rendererShown = if (effectiveWaylandShortcut) "Vulkan (Wayland compositor)" else selectedRenderer
+                        DpDrop(
+                            dp, "renderer",
+                            label = stringResource(R.string.renderer),
+                            options = if (effectiveWaylandShortcut) listOf(rendererShown) else listOf("OpenGL", "Vulkan", "SurfaceFlinger"),
+                            selected = rendererShown,
+                            onSelect = {
+                                // SurfaceFlinger is experimental and can reboot some devices — require opt-in.
+                                if (it == "SurfaceFlinger" && selectedRenderer != "SurfaceFlinger") showSfWarning = true
+                                else selectedRenderer = it
+                            },
+                            enabled = !effectiveWaylandShortcut,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { helpRes = R.string.help_renderer }) {
+                            Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                    if (showSfWarning) {
+                        SurfaceFlingerWarningDialog(
+                            onConfirm = { selectedRenderer = "SurfaceFlinger"; showSfWarning = false },
+                            onDismiss = { showSfWarning = false }
+                        )
+                    }
+
+                    // SurfaceFlinger colour correction (ASR-only, GN #1620) — only relevant when this
+                    // game runs on the SurfaceFlinger renderer, so surface it under that choice.
+                    if (!effectiveWaylandShortcut && selectedRenderer == "SurfaceFlinger") {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(stringResource(R.string.renderer_sf_compat))
+                                Text(
+                                    stringResource(R.string.renderer_sf_compat_hint),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(onClick = { helpRes = R.string.help_renderer_sf_compat }) {
+                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                            }
+                            DpSwitch(dp, "sfCompat", checked = sfCompatMode, onCheckedChange = { sfCompatMode = it })
+                        }
+                    }
+
+                    // Vulkan renderer per-game overrides — only relevant when this game runs on Vulkan.
+                    if (!effectiveWaylandShortcut && selectedRenderer == "Vulkan") {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(stringResource(R.string.renderer_native), Modifier.weight(1f))
+                            IconButton(onClick = { helpRes = R.string.help_renderer_native }) {
+                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                            }
+                            DpSwitch(dp, "vkNative", checked = vkNative, onCheckedChange = { vkNative = it })
+                        }
+                        // Colors = the game buffer's channel order. BGRA (default) presents as-is; RGBA
+                        // swaps R/B (routes through the compositor — native can't swap). Per-game so one
+                        // game can differ from the container / its siblings.
+                        val vkColorOrders = listOf("BGRA", "RGBA")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            DpDrop(
+                                dp, "vkColors",
+                                label = stringResource(R.string.renderer_colors),
+                                options = vkColorOrders,
+                                selected = if (vkSwapRB) "RGBA" else "BGRA",
+                                onSelect = { vkSwapRB = (it == "RGBA") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = { helpRes = R.string.help_renderer_colors }) {
+                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        // Present mode is ignored under Native Rendering (direct scanout), so grey it out.
+                        val vkPmValues = listOf("fifo", "mailbox", "immediate")
+                        val vkPmLabels = listOf(
+                            stringResource(R.string.renderer_present_mode_fifo),
+                            stringResource(R.string.renderer_present_mode_mailbox),
+                            stringResource(R.string.renderer_present_mode_immediate)
+                        )
+                        val vkPmIdx = vkPmValues.indexOf(vkPresentMode).coerceAtLeast(0)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            DpDrop(
+                                dp, "vkPresent",
+                                label = stringResource(R.string.renderer_present_mode),
+                                options = vkPmLabels,
+                                selected = vkPmLabels[vkPmIdx],
+                                onSelect = { vkPresentMode = vkPmValues[vkPmLabels.indexOf(it)] },
+                                enabled = !vkNative,
+                                modifier = (if (vkNative) Modifier.alpha(0.5f) else Modifier).weight(1f)
+                            )
+                            IconButton(onClick = { helpRes = R.string.renderer_present_mode_help_content }) {
+                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        // Native backend — which native path Native Rendering uses. Only meaningful when
+                        // Native Rendering is on (matches the container Vulkan cog), so gate on vkNative.
+                        if (vkNative) {
+                            val vkBackendValues = listOf("auto", "asr", "flip")
+                            val vkBackendLabels = listOf(
+                                stringResource(R.string.renderer_native_backend_auto),
+                                stringResource(R.string.renderer_native_backend_asr),
+                                stringResource(R.string.renderer_native_backend_flip)
+                            )
+                            val vkBackendIdx = vkBackendValues.indexOf(vkNativeBackend).coerceAtLeast(0)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                DpDrop(
+                                    dp, "vkBackend",
+                                    label = stringResource(R.string.renderer_native_backend),
+                                    options = vkBackendLabels,
+                                    selected = vkBackendLabels[vkBackendIdx],
+                                    onSelect = { vkNativeBackend = vkBackendValues[vkBackendLabels.indexOf(it)] },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                IconButton(onClick = { helpRes = R.string.help_renderer_native_backend }) {
+                                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                        // Compositor (present-layer) Vulkan driver: System or an installed Turnip. Applies
+                        // regardless of native mode, so not gated on vkNative. Matches the container cog.
+                        val vkDriverOptions = remember {
+                            val installed = try {
+                                com.winlator.star.contents.AdrenotoolsManager(context).enumarateInstalledDrivers()
+                            } catch (e: Exception) { arrayListOf<String>() }
+                            (listOf("system") + installed).distinct()
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            DpDrop(
+                                dp, "vkDriver",
+                                label = stringResource(R.string.renderer_driver_id),
+                                options = vkDriverOptions,
+                                selected = if (vkDriverOptions.contains(vkRendererDriverId)) vkRendererDriverId else "system",
+                                onSelect = { vkRendererDriverId = it },
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = { helpRes = R.string.help_renderer_driver }) {
+                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                            }
+                        }
+                        // FG temporarily forces Mailbox; caption the field so FIFO-while-FG-selected isn't confusing.
+                        if (frameGenEngine != "off") {
+                            Text(
+                                stringResource(R.string.renderer_present_mode_fg_note),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    // Render scale (supersampling) — per-game override of the container default.
+                    // Greyed on Wayland (downscale lives in the X11 Vulkan renderer only); displays
+                    // "Not used on Wayland" while the stored value is left untouched.
+                    run {
+                        val renderScaleValues = listOf("1.0", "1.25", "1.5", "2.0")
+                        val renderScaleLabels = listOf("Off", "1.25x", "1.5x", "2x")
+                        val rsIdx = renderScaleValues.indexOf(renderScale).coerceAtLeast(0)
+                        val rsShown = if (effectiveWaylandShortcut) "Not used on Wayland" else renderScaleLabels[rsIdx]
+                        DpDrop(
+                            dp, "renderScale",
+                            label = "Render scale (supersampling)",
+                            options = if (effectiveWaylandShortcut) listOf(rsShown) else renderScaleLabels,
+                            selected = rsShown,
+                            onSelect = { renderScale = renderScaleValues[renderScaleLabels.indexOf(it)] },
+                            enabled = !effectiveWaylandShortcut
+                        )
+                        if (effectiveWaylandShortcut) {
+                            Text(
+                                "Not used on Wayland: the compositor has no supersampling downscale. The stored value returns on X11.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    }
+                            }
                             0 -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     // Name
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -7496,7 +7737,6 @@ internal fun ShortcutSettingsDialogScreen(
                     // game renders on the Proton's bundled Wayland Turnip. So the flavour dropdown is swapped
                     // for a "Compositor driver" picker over the installed Turnip ids that writes ONLY the
                     // version key back (see withGraphicsDriverVersion); the config button stays live.
-                    var showWrapperManager by remember { mutableStateOf(false) }
                     val gfxContext = LocalContext.current
                     var compositorChoices by remember { mutableStateOf<List<String>>(emptyList()) }
                     var compositorChoicesLoaded by remember { mutableStateOf(false) }
@@ -7540,8 +7780,7 @@ internal fun ShortcutSettingsDialogScreen(
                                 options = graphicsDriverEntries,
                                 selected = selectedGfxDriver,
                                 onSelect = { selectedGfxDriver = it },
-                                modifier = Modifier.weight(1f),
-                                onRightId = "gfxWrapper"
+                                modifier = Modifier.weight(1f)
                             )
                         }
                         IconButton(onClick = {
@@ -7550,20 +7789,7 @@ internal fun ShortcutSettingsDialogScreen(
                         }) {
                             Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
                         }
-                        // Wrappers are X11 game-driver shims: nothing on the Wayland path uses them,
-                        // so the manager button is left out there (the "?" stays).
-                        if (!effectiveWaylandShortcut && !isLinuxEntry) {
-                            DpButton(dp, "gfxWrapper", onActivate = { showWrapperManager = true }, onLeftId = "gfxDriver") {
-                                IconButton(onClick = { showWrapperManager = true }) {
-                                    Icon(Icons.Default.CloudDownload, contentDescription = stringResource(R.string.wrapper_manager_open))
-                                }
-                            }
-                        }
                     }
-                    if (showWrapperManager) WrapperManagerDialog(onDismiss = {
-                        showWrapperManager = false
-                        wrapperRefreshKey++ // pick up a just-imported/deleted wrapper
-                    })
                     // Driver configuration is X11 tuning; on Wayland its only live field (the Turnip
                     // version) is covered by the Compositor driver dropdown, so the button is hidden.
                     // The Wayland branch is also where HDR output lives, and that one DOES reach a
@@ -7867,228 +8093,6 @@ internal fun ShortcutSettingsDialogScreen(
                     if (!isLinuxEntry) {
 
                     // Unreal Engine HDR removed from the editor (useless): the per-game extra and
-                    // core.UnrealHdr launch plumbing still resolve a stored mode, no control sets one.
-
-                    // DX Wrapper
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        DpDrop(
-                            dp, "dxWrapper",
-                            label = stringResource(R.string.dxwrapper),
-                            options = dxWrapperEntries,
-                            selected = selectedDxWrapper,
-                            onSelect = { newWrapper ->
-                                val wasVegas = StringUtils.parseIdentifier(selectedDxWrapper).contains("vegas")
-                                val isVegas = StringUtils.parseIdentifier(newWrapper).contains("vegas")
-                                selectedDxWrapper = newWrapper
-                                // Strip dxvkConfigFile when leaving VEGAS — prevents stale
-                                // VEGAS config path from leaking into plain DXVK+VKD3D.
-                                if (wasVegas && !isVegas) {
-                                    val cfg = DXVKConfigDialog.parseConfig(dxWrapperConfig)
-                                    val path = cfg.get("dxvkConfigFile")
-                                    if (path.isNotEmpty()) {
-                                        val stripped = dxWrapperConfig.split(",").filter { !it.startsWith("dxvkConfigFile=") }.joinToString(",")
-                                        dxWrapperConfig = stripped
-                                    }
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(onClick = { helpRes = R.string.dxwrapper_help_content }) {
-                            Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                        }
-                    }
-                    DpButton(dp, "dxConfig", onActivate = {
-                        val w = StringUtils.parseIdentifier(selectedDxWrapper)
-                        if (w.contains("dxvk") || w.contains("vegas")) showDxvkConfig = true
-                        else showWineD3DConfig = true
-                    }, modifier = Modifier.fillMaxWidth()) {
-                        OutlinedButton(
-                            onClick = {
-                                val w = StringUtils.parseIdentifier(selectedDxWrapper)
-                                if (w.contains("dxvk") || w.contains("vegas")) showDxvkConfig = true
-                                else showWineD3DConfig = true
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("DX Wrapper Config") }
-                    }
-
-                    // Renderer (host) — per-game override of the container's OpenGL/Vulkan choice.
-                    var showSfWarning by remember { mutableStateOf(false) }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        // Display only while greyed on Wayland: the compositor is always Vulkan; the
-                        // stored X11 choice is kept and returns with the X11 backend.
-                        val rendererShown = if (effectiveWaylandShortcut) "Vulkan (Wayland compositor)" else selectedRenderer
-                        DpDrop(
-                            dp, "renderer",
-                            label = stringResource(R.string.renderer),
-                            options = if (effectiveWaylandShortcut) listOf(rendererShown) else listOf("OpenGL", "Vulkan", "SurfaceFlinger"),
-                            selected = rendererShown,
-                            onSelect = {
-                                // SurfaceFlinger is experimental and can reboot some devices — require opt-in.
-                                if (it == "SurfaceFlinger" && selectedRenderer != "SurfaceFlinger") showSfWarning = true
-                                else selectedRenderer = it
-                            },
-                            enabled = !effectiveWaylandShortcut,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(onClick = { helpRes = R.string.help_renderer }) {
-                            Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                        }
-                    }
-                    if (showSfWarning) {
-                        SurfaceFlingerWarningDialog(
-                            onConfirm = { selectedRenderer = "SurfaceFlinger"; showSfWarning = false },
-                            onDismiss = { showSfWarning = false }
-                        )
-                    }
-
-                    // SurfaceFlinger colour correction (ASR-only, GN #1620) — only relevant when this
-                    // game runs on the SurfaceFlinger renderer, so surface it under that choice.
-                    if (!effectiveWaylandShortcut && selectedRenderer == "SurfaceFlinger") {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(stringResource(R.string.renderer_sf_compat))
-                                Text(
-                                    stringResource(R.string.renderer_sf_compat_hint),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(onClick = { helpRes = R.string.help_renderer_sf_compat }) {
-                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                            }
-                            DpSwitch(dp, "sfCompat", checked = sfCompatMode, onCheckedChange = { sfCompatMode = it })
-                        }
-                    }
-
-                    // Vulkan renderer per-game overrides — only relevant when this game runs on Vulkan.
-                    if (!effectiveWaylandShortcut && selectedRenderer == "Vulkan") {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(stringResource(R.string.renderer_native), Modifier.weight(1f))
-                            IconButton(onClick = { helpRes = R.string.help_renderer_native }) {
-                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                            }
-                            DpSwitch(dp, "vkNative", checked = vkNative, onCheckedChange = { vkNative = it })
-                        }
-                        // Colors = the game buffer's channel order. BGRA (default) presents as-is; RGBA
-                        // swaps R/B (routes through the compositor — native can't swap). Per-game so one
-                        // game can differ from the container / its siblings.
-                        val vkColorOrders = listOf("BGRA", "RGBA")
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            DpDrop(
-                                dp, "vkColors",
-                                label = stringResource(R.string.renderer_colors),
-                                options = vkColorOrders,
-                                selected = if (vkSwapRB) "RGBA" else "BGRA",
-                                onSelect = { vkSwapRB = (it == "RGBA") },
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(onClick = { helpRes = R.string.help_renderer_colors }) {
-                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                            }
-                        }
-                        // Present mode is ignored under Native Rendering (direct scanout), so grey it out.
-                        val vkPmValues = listOf("fifo", "mailbox", "immediate")
-                        val vkPmLabels = listOf(
-                            stringResource(R.string.renderer_present_mode_fifo),
-                            stringResource(R.string.renderer_present_mode_mailbox),
-                            stringResource(R.string.renderer_present_mode_immediate)
-                        )
-                        val vkPmIdx = vkPmValues.indexOf(vkPresentMode).coerceAtLeast(0)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            DpDrop(
-                                dp, "vkPresent",
-                                label = stringResource(R.string.renderer_present_mode),
-                                options = vkPmLabels,
-                                selected = vkPmLabels[vkPmIdx],
-                                onSelect = { vkPresentMode = vkPmValues[vkPmLabels.indexOf(it)] },
-                                enabled = !vkNative,
-                                modifier = (if (vkNative) Modifier.alpha(0.5f) else Modifier).weight(1f)
-                            )
-                            IconButton(onClick = { helpRes = R.string.renderer_present_mode_help_content }) {
-                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                            }
-                        }
-                        // Native backend — which native path Native Rendering uses. Only meaningful when
-                        // Native Rendering is on (matches the container Vulkan cog), so gate on vkNative.
-                        if (vkNative) {
-                            val vkBackendValues = listOf("auto", "asr", "flip")
-                            val vkBackendLabels = listOf(
-                                stringResource(R.string.renderer_native_backend_auto),
-                                stringResource(R.string.renderer_native_backend_asr),
-                                stringResource(R.string.renderer_native_backend_flip)
-                            )
-                            val vkBackendIdx = vkBackendValues.indexOf(vkNativeBackend).coerceAtLeast(0)
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                DpDrop(
-                                    dp, "vkBackend",
-                                    label = stringResource(R.string.renderer_native_backend),
-                                    options = vkBackendLabels,
-                                    selected = vkBackendLabels[vkBackendIdx],
-                                    onSelect = { vkNativeBackend = vkBackendValues[vkBackendLabels.indexOf(it)] },
-                                    modifier = Modifier.weight(1f)
-                                )
-                                IconButton(onClick = { helpRes = R.string.help_renderer_native_backend }) {
-                                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                                }
-                            }
-                        }
-                        // Compositor (present-layer) Vulkan driver: System or an installed Turnip. Applies
-                        // regardless of native mode, so not gated on vkNative. Matches the container cog.
-                        val vkDriverOptions = remember {
-                            val installed = try {
-                                com.winlator.star.contents.AdrenotoolsManager(context).enumarateInstalledDrivers()
-                            } catch (e: Exception) { arrayListOf<String>() }
-                            (listOf("system") + installed).distinct()
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            DpDrop(
-                                dp, "vkDriver",
-                                label = stringResource(R.string.renderer_driver_id),
-                                options = vkDriverOptions,
-                                selected = if (vkDriverOptions.contains(vkRendererDriverId)) vkRendererDriverId else "system",
-                                onSelect = { vkRendererDriverId = it },
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(onClick = { helpRes = R.string.help_renderer_driver }) {
-                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                            }
-                        }
-                        // FG temporarily forces Mailbox; caption the field so FIFO-while-FG-selected isn't confusing.
-                        if (frameGenEngine != "off") {
-                            Text(
-                                stringResource(R.string.renderer_present_mode_fg_note),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    // Render scale (supersampling) — per-game override of the container default.
-                    // Greyed on Wayland (downscale lives in the X11 Vulkan renderer only); displays
-                    // "Not used on Wayland" while the stored value is left untouched.
-                    run {
-                        val renderScaleValues = listOf("1.0", "1.25", "1.5", "2.0")
-                        val renderScaleLabels = listOf("Off", "1.25x", "1.5x", "2x")
-                        val rsIdx = renderScaleValues.indexOf(renderScale).coerceAtLeast(0)
-                        val rsShown = if (effectiveWaylandShortcut) "Not used on Wayland" else renderScaleLabels[rsIdx]
-                        DpDrop(
-                            dp, "renderScale",
-                            label = "Render scale (supersampling)",
-                            options = if (effectiveWaylandShortcut) listOf(rsShown) else renderScaleLabels,
-                            selected = rsShown,
-                            onSelect = { renderScale = renderScaleValues[renderScaleLabels.indexOf(it)] },
-                            enabled = !effectiveWaylandShortcut
-                        )
-                        if (effectiveWaylandShortcut) {
-                            Text(
-                                "Not used on Wayland: the compositor has no supersampling downscale. The stored value returns on X11.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
                     // In-game refresh rate — single per-game override of the container default. Options:
                     // Use container default (inherit) / Locked (60) / <rate> Hz / Unlimited. Drives the
                     // two underlying extras (unlock + cap) together; empty = inherit.
@@ -8897,6 +8901,10 @@ internal fun ShortcutSettingsDialogScreen(
     // config dialogs above) so HelpDialog / the glossary ModalBottomSheet render on top of it.
     helpRes?.let { HelpDialog(it) { helpRes = null } }
     helpText?.let { HelpTextDialog(it) { helpText = null } }
+    if (showWrapperManager) WrapperManagerDialog(onDismiss = {
+        showWrapperManager = false
+        wrapperRefreshKey++ // pick up a just-imported/deleted wrapper
+    })
     glossaryQuery?.let { ContainerGlossarySheet(initialQuery = it, onDismiss = { glossaryQuery = null }) }
 
     if (showBox64DownloadSheet) {
@@ -8955,6 +8963,7 @@ private fun shortcutTabIcon(title: String): ImageVector = when (title) {
     "General" -> Icons.Filled.Settings
     "Win Components" -> Icons.Filled.Widgets
     "Env Vars" -> Icons.Filled.Extension
+    "Graphics" -> Icons.Filled.Gpu
     "Advanced" -> Icons.Filled.Tune
     "Controller" -> Icons.Filled.SportsEsports
     "TV" -> Icons.Filled.Tv

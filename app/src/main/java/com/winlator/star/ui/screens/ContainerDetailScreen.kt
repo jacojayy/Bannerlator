@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.text.font.FontWeight
@@ -486,7 +487,6 @@ private fun tabIcon(title: String): ImageVector = when (title) {
 /** Abbreviates the two long tab titles so the portrait top bar stays tidy (mirrors the rail's
  *  collapsed labels). */
 private fun topTabLabel(title: String): String = when (title) {
-    "ENVIROMENT" -> "ENVIRON"
     "WIN COMPONENTS" -> "WIN COMP"
     else -> title
 }
@@ -572,9 +572,11 @@ private fun TopCell(
         Text(
             label.uppercase(),
             color = tint,
-            fontSize = 10.sp,
+            // Longer titles drop a size so the full word stays on one line instead of ellipsizing.
+            fontSize = if (label.length > 9) 7.5.sp else 10.sp,
             fontWeight = FontWeight.Bold,
-            letterSpacing = 0.5.sp,
+            letterSpacing = if (label.length > 9) 0.sp else 0.5.sp,
+            textAlign = TextAlign.Center,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

@@ -866,13 +866,11 @@ private fun InstalledTab(vm: ContentsHubViewModel) {
     // separate kind from the adrenotools zips above, which only the X11 game path / Wayland compositor
     // load. Listed from meta.json, never probed.
     val waylandManager = remember { WaylandGameDriverManager(context) }
-    val waylandDrivers = remember(refreshKey) { waylandManager.enumerateInstalledDrivers().toList() }
     var confirmRemoveWaylandDriver by remember { mutableStateOf<String?>(null) }
     // Imported LINUX Vulkan drivers: glibc Turnip ICDs for the Linux runtime, i.e. the driver the
     // native Steam client and the games it launches draw with. The third kind, and the only one the
     // client can load at all - the two above are bionic. Listed from meta.json, never probed.
     val linuxDriverManager = remember { com.winlator.star.contents.LinuxVulkanDriverManager(context) }
-    val linuxDrivers = remember(refreshKey) { linuxDriverManager.enumerateInstalledDrivers().toList() }
     var confirmRemoveLinuxDriver by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val components = remember(refreshKey) {
@@ -952,61 +950,6 @@ private fun InstalledTab(vm: ContentsHubViewModel) {
                 InstalledRow(icon = Icons.Filled.ViewInAr, driver = true,
                     title = manager.getDriverName(id), subtitle = manager.getDriverVersion(id),
                     onRemove = { confirmRemoveDriver = id })
-                Spacer(Modifier.height(10.dp))
-            }
-        }
-
-        Spacer(Modifier.height(20.dp))
-        InstalledSectionHeader("Wayland game drivers (Linux ICD)", Icons.Filled.ViewInAr)
-        Spacer(Modifier.height(6.dp))
-        Text("The Vulkan driver a game renders on under the Wayland display backend. Import a zip with a " +
-            "libvulkan_freedreno*.so built for Wayland/Linux (optional libdrm.so, meta.json). Android Turnip " +
-            "zips (vulkan.adXXXX.so) belong under GPU Drivers above and are rejected here.",
-            style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
-        Spacer(Modifier.height(10.dp))
-        PrimaryButton("Import Wayland game driver (.zip)…", Icons.Filled.FolderOpen, enabled = true,
-            container = cs.onSurface.copy(alpha = 0.06f), content = cs.onSurface, modifier = Modifier.fillMaxWidth()) {
-            waylandDriverPicker.launch(InAppFilePicker.buildIntent(context, arrayOf("zip"), "Select Wayland game driver zip"))
-        }
-        Spacer(Modifier.height(12.dp))
-        if (waylandDrivers.isEmpty()) {
-            InstalledEmpty("No Wayland game drivers imported. Containers on Wayland use the Turnips bundled in the Proton.")
-        } else {
-            waylandDrivers.forEach { id ->
-                val ver = waylandManager.getDriverVersion(id)
-                val wsiNote = if (waylandManager.hasWaylandWsi(id)) "" else "  ·  no Wayland WSI detected"
-                InstalledRow(icon = Icons.Filled.ViewInAr, driver = true,
-                    title = waylandManager.getDriverName(id),
-                    subtitle = (if (ver.isEmpty()) "imported" else ver) + wsiNote,
-                    onRemove = { confirmRemoveWaylandDriver = id })
-                Spacer(Modifier.height(10.dp))
-            }
-        }
-
-        Spacer(Modifier.height(20.dp))
-        InstalledSectionHeader("Linux runtime drivers (Steam client)", Icons.Filled.ViewInAr)
-        Spacer(Modifier.height(6.dp))
-        Text("The Vulkan driver the Linux runtime draws with: the native Steam client\u2019s interface and every " +
-            "game it launches. Import a \"-Linux\" Turnip zip (glibc). The client and its games are Linux " +
-            "processes, so an Android (vulkan.adXXXX.so) or \"-Wayland\" zip cannot be loaded by them and is " +
-            "rejected here. Frames still reach the screen through the GPU driver above.",
-            style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
-        Spacer(Modifier.height(10.dp))
-        PrimaryButton("Import Linux runtime driver (.zip)\u2026", Icons.Filled.FolderOpen, enabled = true,
-            container = cs.onSurface.copy(alpha = 0.06f), content = cs.onSurface, modifier = Modifier.fillMaxWidth()) {
-            linuxDriverPicker.launch(InAppFilePicker.buildIntent(context, arrayOf("zip"), "Select Linux runtime driver zip"))
-        }
-        Spacer(Modifier.height(12.dp))
-        if (linuxDrivers.isEmpty()) {
-            InstalledEmpty("No Linux runtime drivers imported. Linux sessions use the Turnip built into the runtime.")
-        } else {
-            linuxDrivers.forEach { id ->
-                val ver = linuxDriverManager.getDriverVersion(id)
-                val glibc = linuxDriverManager.getMinGlibc(id)
-                InstalledRow(icon = Icons.Filled.ViewInAr, driver = true,
-                    title = linuxDriverManager.getDriverName(id),
-                    subtitle = (if (ver.isEmpty()) "imported" else ver) + (if (glibc.isEmpty()) "" else "  \u00b7  glibc $glibc+"),
-                    onRemove = { confirmRemoveLinuxDriver = id })
                 Spacer(Modifier.height(10.dp))
             }
         }

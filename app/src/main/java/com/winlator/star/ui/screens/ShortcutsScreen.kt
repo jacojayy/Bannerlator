@@ -7284,23 +7284,13 @@ internal fun ShortcutSettingsDialogScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        if (onMoveToDriveC != null && !alreadyOnC) {
-                            Spacer(Modifier.width(8.dp))
-                            OutlinedButton(onClick = onMoveToDriveC) {
-                                Icon(
-                                    Icons.Filled.DriveFileMove,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text("Move to Drive C")
-                            }
-                        }
+                        // "Move to Drive C" removed from the editor — the same action lives in the
+                        // game card's ⋮ menu ("Copy to Drive C…"), which is one tap away.
                     }
                     }
 
-                    // Executable — the .exe this shortcut launches, with a one-tap repoint to a
-                    // different exe in the same game (launcher → real exe, dx11 ↔ dx9, a config tool).
+                    // Executable — the .exe this shortcut launches. The "Change…" button was removed
+                    // from here: "Change executable…" is already in the game card's ⋮ menu.
                     if (onChangeExe != null && !isLinuxEntry) {
                         val currentExeName = remember(shortcut) {
                             CopyGameToDriveC.parse(shortcut).exeWin.substringAfterLast('\\').substringAfterLast('/')
@@ -7318,16 +7308,6 @@ internal fun ShortcutSettingsDialogScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            OutlinedButton(onClick = onChangeExe) {
-                                Icon(
-                                    Icons.Filled.SwapHoriz,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text("Change…")
                             }
                         }
                     }
@@ -7505,12 +7485,6 @@ internal fun ShortcutSettingsDialogScreen(
                             }
                         }
                         LinuxHelp(isLinuxEntry, R.string.help_linux_icon) { helpRes = it }
-                    }
-
-                    // "What is all this?" — the same newcomer glossary the container editor shows,
-                    // reused verbatim so the per-game editor's terms match the container's.
-                    TextButton(onClick = { glossaryQuery = "" }) {
-                        Text("❔  What is all this?")
                     }
 
                     // Display backend override (container default / Force X11 / Force Wayland) is
@@ -8814,8 +8788,8 @@ internal fun ShortcutSettingsDialogScreen(
                     val contentIndex = tabIndices[position]
                     RailItem(tab, shortcutTabIcon(tab), contentIndex == selectedTab) { selectedTab = contentIndex }
                 }
-                // Same "What is all this?" glossary link the container editor surfaces on its rail.
-                val railLinks = listOf(RailLink("What is all this?", Icons.Filled.Help) { glossaryQuery = "" })
+                // The newcomer glossary link moved to the drawer: Community → Help (more room there).
+                val railLinks = emptyList<RailLink>()
                 if (isPortrait) {
                     Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
                         // Left/Right and L1/R1 step through the strip, so DpTabs works in POSITIONS.

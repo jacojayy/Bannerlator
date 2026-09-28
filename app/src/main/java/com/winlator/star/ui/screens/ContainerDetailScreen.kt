@@ -215,7 +215,6 @@ fun ContainerDetailScreen(
             else -> "Edit Container"
         }
         val railLinks = buildList {
-            add(RailLink("What is all this?", Icons.Filled.Help) { glossaryQuery = "" })
             if (viewModel.defaultsMode) {
                 add(RailLink(stringResource(R.string.reset_to_app_defaults), Icons.Filled.Restore) { viewModel.resetDefaults() })
             }
@@ -1651,119 +1650,6 @@ private fun TopLevelFields(
             Text(stringResource(R.string.fps_limiter), modifier = Modifier.weight(1f))
             IconButton(onClick = { helpText = fpsHelp }) {
                 Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-            }
-        }
-
-        // Match refresh rate to FPS (VRR). Greyed out on displays that can't do it (single refresh
-        // rate or pre-Android-11); otherwise safe to leave on (no-op unless the FPS limiter is capping).
-        val vrrCtx = LocalContext.current
-        val vrrDisplay = remember {
-            if (android.os.Build.VERSION.SDK_INT >= 30) vrrCtx.display
-            else (vrrCtx.getSystemService(android.content.Context.WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay
-        }
-        val vrrCapable = remember { com.winlator.star.widget.XServerView.isDisplayVrrCapable(vrrDisplay) }
-        val supportedRates = remember { com.winlator.star.widget.XServerView.getSupportedRefreshRates(vrrDisplay) }
-        val vrrHint = if (vrrCapable) stringResource(R.string.match_refresh_rate_hint)
-                      else stringResource(R.string.match_refresh_rate_unsupported)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Switch(
-                checked = viewModel.matchRefreshRate && vrrCapable,
-                enabled = vrrCapable,
-                onCheckedChange = { viewModel.matchRefreshRate = it }
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(stringResource(R.string.auto_match_fps), modifier = Modifier.weight(1f))
-            IconButton(onClick = { helpText = vrrHint }) {
-                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-            }
-        }
-        // Manual refresh-rate lock (Auto OFF). Persists viewModel.manualRefreshRate (0 = free).
-        if (vrrCapable && supportedRates.isNotEmpty()) {
-            val manualEnabled = !viewModel.matchRefreshRate
-            val manualHint = stringResource(R.string.manual_refresh_rate_hint)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.padding(start = 52.dp, top = 2.dp)
-            ) {
-                Text(
-                    stringResource(R.string.manual_refresh_rate),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (manualEnabled) MaterialTheme.colorScheme.onSurface
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(onClick = { helpText = manualHint }) {
-                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(16.dp))
-                }
-            }
-            Row(modifier = Modifier.padding(start = 52.dp, top = 2.dp)) {
-                FilterChip(
-                    selected = viewModel.manualRefreshRate == 0,
-                    enabled = manualEnabled,
-                    onClick = { viewModel.manualRefreshRate = 0 },
-                    label = { Text("Off") },
-                    modifier = Modifier.padding(end = 6.dp)
-                )
-                supportedRates.forEach { rate ->
-                    FilterChip(
-                        selected = viewModel.manualRefreshRate == rate,
-                        enabled = manualEnabled,
-                        onClick = { viewModel.manualRefreshRate = rate },
-                        label = { Text("$rate") },
-                        modifier = Modifier.padding(end = 6.dp)
-                    )
-                }
-            }
-        }
-
-        // Single guest-side refresh control. Collapses the unlock toggle + rate cap into one dropdown:
-        //   Locked (60)  -> emulation stays on, game sits at 60 (unlockGameRefreshRate = false)
-        //   <rate> Hz    -> unlock on, capped at that rate (unlock = true, maxGameRefreshRate = rate)
-        //   Unlimited    -> unlock on, no cap (unlock = true, maxGameRefreshRate = 0)
-        // Default Unlimited. Drives the two underlying extras so the launch resolver is unchanged. Not
-        // gated on vrrCapable — a game choosing 120 Hz is meaningful even where the panel can't do VRR.
-        if (supportedRates.isNotEmpty()) {
-            val lockedLabel = stringResource(R.string.in_game_refresh_locked)
-            val unlimitedLabel = stringResource(R.string.max_game_refresh_rate_unlimited)
-            // Only rates ABOVE 60 are cap options — "Locked (60)" already covers 60.
-            val ratesAbove60 = supportedRates.filter { it > 60 }
-            // value model: -1 = Locked, 0 = Unlimited, N = cap N
-            val rrOptionValues = listOf(-1, 0) + ratesAbove60
-            val rrOptionLabels = listOf(lockedLabel, unlimitedLabel) + ratesAbove60.map { "$it Hz" }
-            val rrCurrentValue = if (!viewModel.unlockGameRefreshRate) -1 else viewModel.maxGameRefreshRate
-            val rrIdx = rrOptionValues.indexOf(rrCurrentValue).let { if (it >= 0) it else 1 } // fall back to Unlimited
-            val rrHint = stringResource(R.string.in_game_refresh_rate_hint)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                LabeledDropdown(
-                    label = stringResource(R.string.in_game_refresh_rate),
-                    options = rrOptionLabels,
-                    selectedOption = rrOptionLabels[rrIdx],
-                    onSelect = {
-                        when (val v = rrOptionValues[rrOptionLabels.indexOf(it)]) {
-                            -1 -> { viewModel.unlockGameRefreshRate = false; viewModel.maxGameRefreshRate = 0 }
-                            else -> { viewModel.unlockGameRefreshRate = true; viewModel.maxGameRefreshRate = v }
-                        }
-                    },
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(onClick = { helpText = rrHint }) {
-                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                }
-            }
-            // Warn when a non-Locked choice is set but the selected Proton has no xrandr — the unlock
-            // will be skipped at launch. Keyed on the wine version so the cached probe only re-runs when
-            // the layer changes.
-            val wineXrandrCapable = remember(viewModel.selectedWineVersion) {
-                viewModel.isWineXrandrCapable(viewModel.selectedWineVersion)
-            }
-            if (viewModel.unlockGameRefreshRate && !wineXrandrCapable) {
-                Text(
-                    text = stringResource(R.string.refresh_unlock_layer_incompatible_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(start = 52.dp, top = 2.dp, bottom = 4.dp)
-                )
             }
         }
 

@@ -25,6 +25,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material3.AlertDialog
@@ -58,6 +59,7 @@ import com.winlator.star.communityconfigs.AccountManager
 import com.winlator.star.core.StorageRoots
 import com.winlator.star.ui.theme.AppThemeState
 import com.winlator.star.ui.theme.LocalAccentDim
+import com.winlator.star.ui.components.ContainerGlossarySheet
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -91,6 +93,9 @@ fun AppDrawerContent(
     onMyAccount: () -> Unit = {},
 ) {
     var showHelp by remember { mutableStateOf(false) }
+    // Community → Help: the container/shortcut editor's newcomer glossary, moved here for the room
+    // it needs (the editors' "What is all this?" entries were removed).
+    var showGlossary by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
     if (showHelp) {
@@ -100,6 +105,9 @@ fun AppDrawerContent(
                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
             }
         )
+    }
+    if (showGlossary) {
+        ContainerGlossarySheet(initialQuery = "", onDismiss = { showGlossary = false })
     }
 
     Column(
@@ -134,6 +142,11 @@ fun AppDrawerContent(
         // GitHub device-flow session exists — see ui/XServerSocialTab.kt.
         DrawerSectionHeader("Community", showDivider = true)
         DrawerItem(Screen.SocialHub,     currentRoute, onNavigate)
+        DrawerIconItem(
+            label = "Help",
+            icon = Icons.Filled.MenuBook,
+            onClick = { showGlossary = true },
+        )
 
         // Hideable from Settings → Side Menu — the whole section, header included, so turning
         // it off leaves no orphaned divider behind.

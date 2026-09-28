@@ -796,8 +796,12 @@ private fun TopLevelFields(
     // Per-field "?" help — a centered, scrollable Compose dialog (HelpDialog), replacing the old
     // top-left PopupWindow. null = no dialog; otherwise the string res of the field's help text.
     var helpRes by remember { mutableStateOf<Int?>(null) }
+    // Same pattern as helpRes, but for help text held as a raw string (HelpTextDialog) — the
+    // Wayland / HDR option rows carry long paragraphs that used to sit inline under each control.
+    var helpText by remember { mutableStateOf<String?>(null) }
     var showAudioSettings by remember { mutableStateOf(false) }
     helpRes?.let { HelpDialog(it) { helpRes = null } }
+    helpText?.let { HelpTextDialog(it) { helpText = null } }
 
     Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
 
@@ -988,11 +992,11 @@ private fun TopLevelFields(
                     }
                 )
             }
-            Text(
-                "Used by the Wayland compositor to put frames on screen; the game renders on the Wayland game driver below.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            IconButton(onClick = {
+                helpText = "Used by the Wayland compositor to put frames on screen; the game renders on the Wayland game driver below."
+            }) {
+                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+            }
             Spacer(Modifier.height(8.dp))
             // Wayland game driver: what the GAME renders on (winewayland sets VK_ICD_FILENAMES from
             // it). Auto / the three bundled Turnip variants / each imported Linux ICD. A stored
@@ -1017,12 +1021,10 @@ private fun TopLevelFields(
                     IconButton(onClick = { showWaylandDriverSettings = true }) {
                         Icon(Icons.Default.Settings, contentDescription = "Wayland driver settings")
                     }
+                    IconButton(onClick = { helpText = com.winlator.star.core.WaylandGameDriver.HELP_TEXT }) {
+                        Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                    }
                 }
-                Text(
-                    com.winlator.star.core.WaylandGameDriver.HELP_TEXT,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 val spoof = com.winlator.star.core.GpuSpoof.gpuNameOf(viewModel.graphicsDriverConfig)
                 if (com.winlator.star.core.GpuSpoof.isSpoofing(spoof)) Text(
                     "GPU name spoof: $spoof (the gear)",
@@ -1053,6 +1055,10 @@ private fun TopLevelFields(
                         com.winlator.star.display.WaylandHdr.TITLE,
                         color = if (hdrUnavailable == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Spacer(Modifier.width(8.dp))
+                    IconButton(onClick = { helpText = com.winlator.star.display.WaylandHdr.HELP_TEXT }) {
+                        Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                    }
                 }
                 if (hdrUnavailable != null) {
                     Text(
@@ -1061,11 +1067,6 @@ private fun TopLevelFields(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Text(
-                    com.winlator.star.display.WaylandHdr.HELP_TEXT,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
         // Unreal Engine HDR (both backends; under HDR output on Wayland): Off / DirectX 12 fix /
@@ -1075,20 +1076,21 @@ private fun TopLevelFields(
             Spacer(Modifier.height(8.dp))
             val modes = com.winlator.star.core.UnrealHdr.MODES
             val labels = modes.map { com.winlator.star.core.UnrealHdr.label(it) }
-            LabeledDropdown(
-                label = com.winlator.star.core.UnrealHdr.TITLE,
-                options = labels,
-                selectedOption = com.winlator.star.core.UnrealHdr.label(viewModel.unrealHdr),
-                onSelect = { viewModel.unrealHdr = modes[labels.indexOf(it)] }
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                LabeledDropdown(
+                    label = com.winlator.star.core.UnrealHdr.TITLE,
+                    options = labels,
+                    selectedOption = com.winlator.star.core.UnrealHdr.label(viewModel.unrealHdr),
+                    onSelect = { viewModel.unrealHdr = modes[labels.indexOf(it)] },
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = { helpText = com.winlator.star.core.UnrealHdr.help(compositorDriverOnly) }) {
+                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                }
+            }
             if (viewModel.unrealHdr == com.winlator.star.core.UnrealHdr.DX11) UnrealHdrDx11Notes(
                 gpuName = com.winlator.star.core.GpuSpoof.gpuNameOf(viewModel.graphicsDriverConfig),
                 wayland = compositorDriverOnly
-            )
-            Text(
-                com.winlator.star.core.UnrealHdr.help(compositorDriverOnly),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         if (showWrapperManager) WrapperManagerDialog(onDismiss = {

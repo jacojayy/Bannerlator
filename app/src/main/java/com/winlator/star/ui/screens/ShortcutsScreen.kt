@@ -6805,6 +6805,9 @@ internal fun ShortcutSettingsDialogScreen(
     // Per-field "?" help (helpRes) + the newcomer glossary ("What is all this?"), mirrored from the
     // container editor. null = hidden; glossaryQuery == "" opens the glossary unfiltered.
     var helpRes by remember { mutableStateOf<Int?>(null) }
+    // Raw-string twin of helpRes (HelpTextDialog) — the Wayland/HDR rows used to print long
+    // paragraphs inline under each control; now a "?" opens the same text as a dialog.
+    var helpText by remember { mutableStateOf<String?>(null) }
     var glossaryQuery by remember { mutableStateOf<String?>(null) }
     var showBox64DownloadSheet by remember { mutableStateOf(false) }
     var showFexCoreDownloadSheet by remember { mutableStateOf(false) }
@@ -7631,17 +7634,14 @@ internal fun ShortcutSettingsDialogScreen(
                                     onSelect = { linuxVulkanDriverOverride = linuxValues[linuxLabels.indexOf(it)] },
                                     modifier = Modifier.weight(1f)
                                 )
-                                IconButton(onClick = { helpRes = R.string.help_linux_draw_driver }) {
+                                IconButton(onClick = {
+                                    helpText = com.winlator.star.core.LinuxVulkanDriver.HELP_TEXT +
+                                        if (linuxVulkanDriverValues.size > 1) ""
+                                        else " Nothing imported yet: Contents → Installed → Linux runtime drivers."
+                                }) {
                                     Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
                                 }
                             }
-                            Text(
-                                com.winlator.star.core.LinuxVulkanDriver.HELP_TEXT
-                                        + if (linuxVulkanDriverValues.size > 1) ""
-                                          else " Nothing imported yet: Contents \u2192 Installed \u2192 Linux runtime drivers.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                             Spacer(Modifier.height(8.dp))
 
                             // Performance switches for the chain that draws the client's interface.
@@ -7837,12 +7837,10 @@ internal fun ShortcutSettingsDialogScreen(
                                         Icon(Icons.Default.Settings, contentDescription = "Wayland driver settings")
                                     }
                                 }
+                                IconButton(onClick = { helpText = com.winlator.star.core.WaylandGameDriver.HELP_TEXT }) {
+                                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                                }
                             }
-                            Text(
-                                com.winlator.star.core.WaylandGameDriver.HELP_TEXT,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                             val spoof = com.winlator.star.core.GpuSpoof.gpuNameOf(graphicsDriverConfig)
                             if (com.winlator.star.core.GpuSpoof.isSpoofing(spoof)) Text(
                                 "GPU name spoof: $spoof (the gear)",
@@ -7871,6 +7869,11 @@ internal fun ShortcutSettingsDialogScreen(
                                     modifier = Modifier.weight(1f)
                                 )
                                 LinuxHelp(isLinuxEntry, R.string.help_linux_hdr_output) { helpRes = it }
+                                if (!isLinuxEntry) IconButton(
+                                    onClick = { helpText = com.winlator.star.display.WaylandHdr.HELP_TEXT }
+                                ) {
+                                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                                }
                             }
                             if (hdrUnavailable != null) {
                                 Text(
@@ -7879,11 +7882,6 @@ internal fun ShortcutSettingsDialogScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Text(
-                                com.winlator.star.display.WaylandHdr.HELP_TEXT,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                         }
                     }
 
@@ -7904,23 +7902,23 @@ internal fun ShortcutSettingsDialogScreen(
                             if (it.isEmpty()) "Use container default (" + com.winlator.star.core.UnrealHdr.label(containerMode) + ")"
                             else com.winlator.star.core.UnrealHdr.label(it)
                         }
-                        DpDrop(
-                            dp, com.winlator.star.core.UnrealHdr.EXTRA,
-                            label = com.winlator.star.core.UnrealHdr.TITLE,
-                            options = labels,
-                            selected = labels[values.indexOf(unrealHdrOverride).coerceAtLeast(0)],
-                            onSelect = { unrealHdrOverride = values[labels.indexOf(it)] },
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            DpDrop(
+                                dp, com.winlator.star.core.UnrealHdr.EXTRA,
+                                label = com.winlator.star.core.UnrealHdr.TITLE,
+                                options = labels,
+                                selected = labels[values.indexOf(unrealHdrOverride).coerceAtLeast(0)],
+                                onSelect = { unrealHdrOverride = values[labels.indexOf(it)] },
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(onClick = { helpText = com.winlator.star.core.UnrealHdr.help(effectiveWaylandShortcut) }) {
+                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
+                            }
+                        }
                         val effectiveMode = unrealHdrOverride.ifEmpty { containerMode }
                         if (effectiveMode == com.winlator.star.core.UnrealHdr.DX11) UnrealHdrDx11Notes(
                             gpuName = com.winlator.star.core.GpuSpoof.gpuNameOf(graphicsDriverConfig),
                             wayland = effectiveWaylandShortcut
-                        )
-                        Text(
-                            com.winlator.star.core.UnrealHdr.help(effectiveWaylandShortcut),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
@@ -8951,6 +8949,7 @@ internal fun ShortcutSettingsDialogScreen(
     // Per-field "?" help + newcomer glossary — composed INSIDE the settings Dialog's window (like the
     // config dialogs above) so HelpDialog / the glossary ModalBottomSheet render on top of it.
     helpRes?.let { HelpDialog(it) { helpRes = null } }
+    helpText?.let { HelpTextDialog(it) { helpText = null } }
     glossaryQuery?.let { ContainerGlossarySheet(initialQuery = it, onDismiss = { glossaryQuery = null }) }
 
     if (showBox64DownloadSheet) {

@@ -91,7 +91,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.Gpu
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Tv
@@ -8963,7 +8963,7 @@ private fun shortcutTabIcon(title: String): ImageVector = when (title) {
     "General" -> Icons.Filled.Settings
     "Win Components" -> Icons.Filled.Widgets
     "Env Vars" -> Icons.Filled.Extension
-    "Graphics" -> Icons.Filled.Gpu
+    "Graphics" -> Icons.Filled.Memory
     "Advanced" -> Icons.Filled.Tune
     "Controller" -> Icons.Filled.SportsEsports
     "TV" -> Icons.Filled.Tv

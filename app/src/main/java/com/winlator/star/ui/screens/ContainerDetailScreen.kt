@@ -29,7 +29,7 @@ import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Gpu
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Help
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Settings
@@ -479,7 +479,7 @@ private fun parseVulkanConfig(s: String): Map<String, String> =
 private fun tabIcon(title: String): ImageVector = when (title) {
     "GENERAL" -> Icons.Filled.Settings
     "ENVIROMENT" -> Icons.Filled.Extension
-    "GRAPHICS" -> Icons.Filled.Gpu
+    "GRAPHICS" -> Icons.Filled.Memory
     "DRIVES" -> Icons.Filled.Storage
     "WIN COMPONENTS" -> Icons.Filled.Widgets
     "ADVANCED" -> Icons.Filled.Tune

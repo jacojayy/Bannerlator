@@ -21,7 +21,7 @@ object SocialHubFormat {
     fun isDeleted(body: String?): Boolean = body?.contains(DELETE_MARKER) == true
 
     /** Markdown image: `![alt](url)`, optional quoted title after the URL. */
-    private val mdImage = Regex("""!\[[^\]]*]\(\s*(\S+?)(?:\s+["'][^"']*["'])?\s*)""")
+    private val mdImage = Regex("""!\[[^\]]*]\(\s*(\S+?)(?:\s+["'][^"']*["'])?\s*\)""")
 
     /** Bare image URL pasted without `![]()` markup. Duplicates of a markdown hit are de-duplicated. */
     private val bareImage =

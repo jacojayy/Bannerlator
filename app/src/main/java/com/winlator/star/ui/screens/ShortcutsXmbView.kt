@@ -5,7 +5,6 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import android.content.res.Configuration
 import android.hardware.input.InputManager
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.text.format.DateUtils
@@ -78,7 +77,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
@@ -373,16 +371,16 @@ internal fun ShortcutsXmbView(
                     )
                 )
             )
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                Crossfade(targetState = focused.icon, animationSpec = tween(600), label = "xmbBackdrop") { bmp ->
-                    if (bmp != null) {
-                        Image(
-                            bitmap = remember(bmp) { bmp.asImageBitmap() },
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize().blur(28.dp).alpha(0.30f),
-                        )
-                    }
+            // The focused game's cover IS the background: full-bleed and unblurred, the way the
+            // list rows put wallpaper behind their content. The shades below keep text readable.
+            Crossfade(targetState = focused.icon, animationSpec = tween(600), label = "xmbBackdrop") { bmp ->
+                if (bmp != null) {
+                    Image(
+                        bitmap = remember(bmp) { bmp.asImageBitmap() },
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().alpha(0.8f),
+                    )
                 }
             }
             Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.55f), 0.55f to Color.Black.copy(alpha = 0.1f), 1f to Color.Black.copy(alpha = 0.45f))))

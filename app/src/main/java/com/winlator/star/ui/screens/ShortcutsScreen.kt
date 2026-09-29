@@ -175,6 +175,7 @@ import com.winlator.star.ui.ComponentReturnBus
 import com.winlator.star.ui.EmulatorLabels
 import com.winlator.star.ui.LocalTopBarActions
 import com.winlator.star.ui.LocalTopBarTransparent
+import com.winlator.star.ui.Screen
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -317,7 +318,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 @Composable
-fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
+fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel(), onNavigate: ((Screen) -> Unit)? = null) {
     val shortcuts by vm.shortcuts.collectAsState(initial = emptyList())
     val sortOrder by vm.sortOrder.collectAsState()
     val viewMode by vm.viewMode.collectAsState()
@@ -1127,18 +1128,7 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel()) {
                             onExitSelection = { selectionMode = false; selectedPaths = emptySet() },
                             onPlay = { requestLaunch(it) },
                             actionsFor = xmbActionsFor,
-                            storeBadges = { shortcut ->
-                                ShortcutBadgeOverlay(
-                                    showSteam = remember(shortcut) { isSteamOriginShortcut(shortcut) },
-                                    showEa = remember(shortcut) { EaSupport.isTagged(shortcut) },
-                                    showEpic = remember(shortcut) { shortcut.getExtra("storeSource") == "epic" },
-                                    showEos = rememberEosBadge(shortcut),
-                                    showGog = remember(shortcut) { isGogShortcut(shortcut) },
-                                    showAmazon = remember(shortcut) { isAmazonShortcut(shortcut) },
-                                    showCustom = remember(shortcut) { isCustomOriginShortcut(shortcut) },
-                                    showLinux = remember(shortcut) { LinuxShortcuts.isLinuxEntry(shortcut) },
-                                )
-                            },
+                            onNavigate = onNavigate,
                             sdBadge = { shortcut ->
                                 if (remember(shortcut) { WinePath.isOnRemovableStorage(shortcut.container, shortcut.path) }) {
                                     SdCardBadge(Modifier.padding(start = 6.dp))

@@ -69,7 +69,9 @@ fun AppNavGraph(
         composable(Screen.Games.route) {
             // The main library is the phone-grid ShortcutsScreen again. The landscape couch "games wall"
             // (GamesWallScreen) is opt-in behind enable_big_picture_mode and renders on the BigPicture route.
-            ShortcutsScreen()
+            ShortcutsScreen(onNavigate = { dest ->
+                if (dest != Screen.Games) navController.navigate(dest.route)
+            })
         }
 
         composable(Screen.Contents.route) {

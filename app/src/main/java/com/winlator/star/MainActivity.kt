@@ -480,12 +480,12 @@ class MainActivity : AppCompatActivity() {
             android.view.KeyEvent.KEYCODE_BUTTON_B -> android.view.KeyEvent.KEYCODE_BACK
             else -> return super.dispatchKeyEvent(event)
         }
-        val mapped = android.view.KeyEvent.obtain(
+        val mapped = android.view.KeyEvent(
             event.downTime,
             event.eventTime,
             event.action,
             keyCode,
-            event.repeat,
+            event.repeatCount,
             event.metaState,
             event.deviceId,
             event.scanCode,

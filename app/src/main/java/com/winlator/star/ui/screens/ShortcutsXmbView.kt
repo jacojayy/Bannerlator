@@ -349,8 +349,8 @@ internal fun ShortcutsXmbView(
                         // Typing into a Text row: the field gets the keys; A = done, B = cancel.
                         if (nav.editingKey != null) {
                             return@onPreviewKeyEvent when (e.key) {
-                                Key.ButtonA -> { nav.commitEdit(xmbScope); true }
-                                Key.ButtonB -> { nav.pop(); true }
+                                Key.ButtonA, Key.DirectionCenter -> { nav.commitEdit(xmbScope); true }
+                                Key.ButtonB, Key.Back -> { nav.pop(); true }
                                 else -> false
                             }
                         }
@@ -360,7 +360,7 @@ internal fun ShortcutsXmbView(
                             Key.DirectionLeft -> XmbKey.Left
                             Key.DirectionRight -> XmbKey.Right
                             Key.ButtonA, Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> XmbKey.A
-                            Key.ButtonB, Key.Escape -> XmbKey.B
+                            Key.ButtonB, Key.Back, Key.Escape -> XmbKey.B
                             Key.ButtonL1 -> XmbKey.L1
                             Key.ButtonR1 -> XmbKey.R1
                             else -> null
@@ -388,7 +388,7 @@ internal fun ShortcutsXmbView(
                             sq >= 0 -> { runSquare(sq); true }
                             else -> { runAction(actions[actIdx]); true }
                         }
-                        Key.ButtonB -> when {
+                        Key.ButtonB, Key.Back -> when {
                             sq >= 0 -> { sq = -1; true }
                             act > 0 -> { act = 0; true }
                             act == 0 -> { act = -1; true }

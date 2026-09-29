@@ -1,6 +1,7 @@
 package com.winlator.star.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.fragment.app.FragmentActivity
@@ -8,6 +9,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.navArgument
 
 
@@ -33,6 +35,13 @@ fun AppNavGraph(
     modifier: Modifier = Modifier,
 ) {
     val activity = LocalContext.current as FragmentActivity
+
+    // A screen change tears down the focused node, leaving the window with no focus target at all
+    // — after which no key reaches a modifier. Park focus on the nav root so the first D-pad press
+    // re-enters the tree.
+    val navRootFocus = LocalControllerRootFocus.current
+    val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+    LaunchedEffect(currentRoute) { navRootFocus.requestFocus() }
 
     NavHost(navController = navController, startDestination = startRoute, modifier = modifier) {
 

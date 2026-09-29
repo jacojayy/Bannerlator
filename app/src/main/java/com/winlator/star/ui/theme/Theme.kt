@@ -1,5 +1,6 @@
 package com.winlator.star.ui.theme
 
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
@@ -8,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
@@ -16,6 +18,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import com.winlator.star.R
+import com.winlator.star.ui.ControllerFocusIndication
+import com.winlator.star.ui.ControllerNavRoot
 
 private val DefaultColorScheme = darkColorScheme(
     primary          = Primary,
@@ -77,7 +81,13 @@ fun WinlatorTheme(content: @Composable () -> Unit) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = AppTypography,
-            content = content
-        )
+        ) {
+            // Purple focus outline in place of the ripple, plus the D-pad walk root every screen
+            // inherits (keys are only dispatched while something in the tree holds focus). Set
+            // inside MaterialTheme so nothing deeper can shadow it.
+            CompositionLocalProvider(LocalIndication provides remember { ControllerFocusIndication() }) {
+                ControllerNavRoot { content() }
+            }
+        }
     }
 }

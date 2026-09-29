@@ -472,7 +472,18 @@ class MainActivity : AppCompatActivity() {
             controllerTestFeedKeyEvent(event)
             return true
         }
-        return super.dispatchKeyEvent(event)
+        // Compose only activates components on DPAD_CENTER/ENTER, and never reads a pad's B as
+        // back — rewrite the face buttons for the launcher so the whole UI is walkable. The Wine
+        // session runs in XServerDisplayActivity, which keeps the raw key codes.
+        return when (event.keyCode) {
+            android.view.KeyEvent.KEYCODE_BUTTON_A -> super.dispatchKeyEvent(
+                android.view.KeyEvent(event, android.view.KeyEvent.KEYCODE_DPAD_CENTER)
+            )
+            android.view.KeyEvent.KEYCODE_BUTTON_B -> super.dispatchKeyEvent(
+                android.view.KeyEvent(event, android.view.KeyEvent.KEYCODE_BACK)
+            )
+            else -> super.dispatchKeyEvent(event)
+        }
     }
 
     private fun isControllerTestMotionEvent(event: android.view.MotionEvent): Boolean {

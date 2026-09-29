@@ -369,7 +369,7 @@ internal fun ShortcutsXmbView(
                 Modifier.fillMaxSize().background(
                     Brush.radialGradient(
                         0f to accent.copy(alpha = 0.50f), 0.48f to accent.copy(alpha = 0.10f), 0.85f to Color.Black,
-                        center = Offset(wPx * 0.18f, 0f), radius = max(wPx, hPx) * 1.1f,
+                        center = Offset(wPx * 0.18f, hPx), radius = max(wPx, hPx) * 1.1f,
                     )
                 )
             )
@@ -386,7 +386,7 @@ internal fun ShortcutsXmbView(
                 }
             }
             Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.55f), 0.55f to Color.Black.copy(alpha = 0.1f), 1f to Color.Black.copy(alpha = 0.45f))))
-            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.4f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.9f))))
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.9f), 0.55f to Color.Transparent)))
             XmbWaves(accent, Modifier.fillMaxSize())
             // Faint shade behind a see-through top bar so its title and buttons stay readable.
             if (topInset > 0.dp) {

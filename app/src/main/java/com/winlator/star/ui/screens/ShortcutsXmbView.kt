@@ -515,26 +515,28 @@ internal fun ShortcutsXmbView(
 /** All XMB geometry in dp, from the content box. Portrait = taller than wide. */
 private class XmbMetrics(val w: Float, val h: Float) {
     val port = h > w * 1.05f
-    val fH = if (port) min(w * 0.52f, h * 0.29f) else (h * 0.36f).coerceIn(96f, 280f)
+    val fH = if (port) min(w * 0.62f, h * 0.34f) else (h * 0.44f).coerceIn(120f, 320f)
     val fW = fH * 2f / 3f                  // 2:3, same as the grid covers
     val sH = fH * 0.62f
     val sW = sH * 2f / 3f
     val gap = (fH * 0.09f).roundToInt().toFloat()
     val pitch = sW + gap
     val grow = fW - sW
-    val top = 34f
+    val top = h - fH - 16f                 // covers are anchored to the BOTTOM edge
     val cross = if (port) 16f + sW * 0.42f + gap else max(16f + pitch, w * 0.13f)
     val iconBox = 34f
     val rowH = if (port) 46f else 40f
     val extra = 6f
     val colX = cross + fW / 2f - iconBox / 2f
-    val colTop = top + fH + 12f
+    val colTop = 50f                       // option column sits under the hints, above the covers
     val labelW = if (port) min(220f, w - colX - iconBox - 28f) else 176f
-    val nVis = if (port) ((h * 0.38f) / rowH).toInt().coerceIn(3, 8) else max(2, ((h - colTop - 12f - extra) / rowH).toInt())
+    val room = top - 12f - colTop - extra  // vertical space left for the option column
+    val infoReserve = if (port) 56f else 0f
+    val nVis = if (port) (((room - infoReserve) / rowH).toInt().coerceIn(3, 8)) else max(2, (room / rowH).toInt())
     val infoX = if (port) 16f else colX + iconBox + 12f + labelW + 12f
     val infoY = if (port) colTop + nVis * rowH + extra + 10f else colTop
     val infoW = if (port) w - 32f else w - infoX - 80f   // 80 keeps clear of the + button
-    val infoH = if (port) h - infoY - 84f else h - infoY - 12f
+    val infoH = (top - 12f - infoY).coerceAtLeast(0f)    // stops above the cover strip
     val titleX = cross + fW + 16f
     val titleY = top + sH + 8f
     val titleW = w - titleX - 16f
@@ -580,8 +582,8 @@ private fun XmbCover(
             .background(Color(0xFF111111))
             .then(
                 when {
-                    selected -> Modifier.border(3.dp, DangerRed, shape)
-                    focused -> Modifier.border(2.dp, accent, shape)
+                    selected -> Modifier.border(1.5.dp, DangerRed, shape)
+                    focused -> Modifier.border(1.dp, accent, shape)
                     else -> Modifier
                 }
             )

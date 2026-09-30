@@ -318,7 +318,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 @Composable
-fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel(), onNavigate: ((Screen) -> Unit)? = null) {
+fun ShortcutsScreen(
+    vm: ShortcutsViewModel = viewModel(),
+    onNavigate: ((Screen) -> Unit)? = null,
+    onOpenContainer: ((Int?) -> Unit)? = null,
+) {
     val shortcuts by vm.shortcuts.collectAsState(initial = emptyList())
     val sortOrder by vm.sortOrder.collectAsState()
     val viewMode by vm.viewMode.collectAsState()
@@ -1129,6 +1133,7 @@ fun ShortcutsScreen(vm: ShortcutsViewModel = viewModel(), onNavigate: ((Screen) 
                             onPlay = { requestLaunch(it) },
                             actionsFor = xmbActionsFor,
                             onNavigate = onNavigate,
+                            onOpenContainer = onOpenContainer,
                             sdBadge = { shortcut ->
                                 if (remember(shortcut) { WinePath.isOnRemovableStorage(shortcut.container, shortcut.path) }) {
                                     SdCardBadge(Modifier.padding(start = 6.dp))

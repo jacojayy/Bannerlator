@@ -47,6 +47,9 @@ internal interface XmbPanel {
     fun Content(modifier: Modifier)
     /** Called for every key while this panel is on top. Return true if handled; B always goes back otherwise. */
     fun onKey(key: XmbKey): Boolean = false
+    /** true → the host stops consuming and the key falls through to the embedded screen's focus,
+     *  so a normal tab composited into a column stays fully interactive. */
+    val passthrough: Boolean get() = false
 }
 
 internal class XmbMenu(

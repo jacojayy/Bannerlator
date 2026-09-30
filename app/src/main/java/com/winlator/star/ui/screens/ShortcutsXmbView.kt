@@ -58,6 +58,8 @@ import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.PlayArrow
@@ -131,7 +133,9 @@ import com.winlator.star.store.GogMainActivity
 import com.winlator.star.store.SteamMainActivity
 import com.winlator.star.ui.LocalTopBarOverlayInset
 import com.winlator.star.ui.Screen
+import com.winlator.star.ui.SocialContent
 import com.winlator.star.ui.findActivity
+import com.winlator.star.ui.screens.contents.ContentsHubScreen
 import com.winlator.star.ui.theme.DangerRed
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -181,6 +185,8 @@ internal fun ShortcutsXmbView(
     onNestedChange: (Boolean) -> Unit = {},
     /** Open one of the drawer destinations (Containers, File Manager, Social Hub…) from the menu square. */
     onNavigate: ((Screen) -> Unit)? = null,
+    /** Open a container's detail screen (new/edit) from the XMB Containers column. */
+    onOpenContainer: ((Int?) -> Unit)? = null,
 ) {
     if (shortcuts.isEmpty()) return
     val context = LocalContext.current
@@ -261,7 +267,7 @@ internal fun ShortcutsXmbView(
             0 -> context.startActivity(Intent(context, SteamMainActivity::class.java))
             1 -> context.startActivity(Intent(context, GogMainActivity::class.java))
             2 -> context.startActivity(Intent(context, EpicMainActivity::class.java))
-            else -> onNavigate?.let { nav.push(xmbAppMenu(it)) }
+            else -> onNavigate?.let { nav.push(xmbAppMenu(it, onOpenContainer)) }
         }
     }
     LaunchedEffect(nested) { onNestedChange(nested) }
@@ -615,20 +621,82 @@ private fun appIconFor(screen: Screen): ImageVector = when (screen) {
     Screen.Contents -> Icons.Filled.Inventory2
     Screen.Saves -> Icons.Filled.Save
     Screen.SocialHub -> Icons.Filled.People
+    Screen.AdrenoTools -> Icons.Filled.Memory
+    Screen.Wrappers -> Icons.Filled.Layers
     else -> Icons.Filled.Menu
 }
 
-/** The pop-in column behind the fourth square: every destination the nav drawer lists. */
-private fun xmbAppMenu(onGo: (Screen) -> Unit): XmbMenu = XmbMenu(
+/** A drawer destination rendered as its own XMB column: the tab composable itself, full D-pad. */
+private fun screenMenu(screen: Screen, content: @Composable () -> Unit): XmbMenu = XmbMenu(
+    title = screen.label,
+    icon = appIconFor(screen),
+    panel = XmbScreenPanel(content),
+)
+
+/** Graphics: the same two entries the normal view groups under its Graphics section. */
+private fun xmbGraphicsMenu(): XmbMenu = XmbMenu(
+    title = "Graphics",
+    icon = Icons.Filled.Memory,
+    rows = {
+        listOf(
+            XmbRow.Link("adreno", "Adrenotools GPU Drivers", Icons.Filled.Memory) {
+                screenMenu(Screen.AdrenoTools) { AdrenoToolsScreen() }
+            },
+            XmbRow.Link("wrappers", "Manage Wrappers", Icons.Filled.Layers) {
+                screenMenu(Screen.Wrappers) { WrapperManagerScreen() }
+            },
+        )
+    },
+)
+
+/** The pop-in column behind the fourth square: every destination the nav drawer lists. In XMB mode
+ *  the tabs open as XMB columns (full controller) instead of jumping out to the tab. */
+private fun xmbAppMenu(onGo: (Screen) -> Unit, onOpenContainer: ((Int?) -> Unit)?): XmbMenu = XmbMenu(
     title = "Menu",
     icon = Icons.Filled.Menu,
     rows = {
         val xs = this
         Screen.drawerItems.map { d ->
-            XmbRow.Action(key = d.route, label = d.label, icon = appIconFor(d)) {
-                xs.popToRoot()
-                onGo(d)
+            when (d) {
+                // Games IS this tab; Settings still needs the nav graph (its own routes/callbacks).
+                Screen.Games, Screen.Settings ->
+                    XmbRow.Action(key = d.route, label = d.label, icon = appIconFor(d)) {
+                        xs.popToRoot()
+                        onGo(d)
+                    }
+
+                Screen.Containers -> XmbRow.Link(key = d.route, label = d.label, icon = appIconFor(d)) {
+                    screenMenu(d) { ContainersScreen(onNavigateToDetail = { onOpenContainer?.invoke(it) }) }
+                }
+
+                Screen.FileManager -> XmbRow.Link(key = d.route, label = d.label, icon = appIconFor(d)) {
+                    screenMenu(d) { FileManagerScreen() }
+                }
+
+                Screen.InputControls -> XmbRow.Link(key = d.route, label = d.label, icon = appIconFor(d)) {
+                    screenMenu(d) { InputControlsScreen() }
+                }
+
+                Screen.Contents -> XmbRow.Link(key = d.route, label = d.label, icon = appIconFor(d)) {
+                    screenMenu(d) { ContentsHubScreen() }
+                }
+
+                Screen.Saves -> XmbRow.Link(key = d.route, label = d.label, icon = appIconFor(d)) {
+                    screenMenu(d) { SavesScreen() }
+                }
+
+                Screen.SocialHub -> XmbRow.Link(key = d.route, label = d.label, icon = appIconFor(d)) {
+                    screenMenu(d) { SocialContent() }
+                }
+
+                else ->
+                    XmbRow.Action(key = d.route, label = d.label, icon = appIconFor(d)) {
+                        xs.popToRoot()
+                        onGo(d)
+                    }
             }
+        } + XmbRow.Link(key = "graphics", label = "Graphics", icon = Icons.Filled.Memory) {
+            xmbGraphicsMenu()
         }
     },
 )

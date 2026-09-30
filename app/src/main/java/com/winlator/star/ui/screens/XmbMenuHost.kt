@@ -263,7 +263,11 @@ internal fun XmbNavState.onKey(k: XmbKey, xmb: XmbScope): Boolean {
         when (k) { XmbKey.A -> commitEdit(xmb); XmbKey.B -> pop(); else -> {} }
         return true
     }
-    m.panel?.let { p -> if (p.onKey(k)) return true; if (k == XmbKey.B) pop(); return true }
+    m.panel?.let { p ->
+        if (p.onKey(k)) return true
+        if (k == XmbKey.B) { pop(); return true }
+        return !p.passthrough
+    }
     picker?.let { p ->
         when (k) {
             XmbKey.Up -> p.sel = max(0, p.sel - 1)
@@ -295,7 +299,7 @@ internal fun XmbNavState.hint(xmb: XmbScope): XmbHint {
     val m = top ?: return XmbHint("Select", false, false)
     if (editingKey != null) return XmbHint("Done", false, false)
     if (picker != null) return XmbHint("Choose", false, false)
-    if (m.panel != null) return XmbHint("Select", false, m.siblings != null)
+    m.panel?.let { p -> return XmbHint(if (p.passthrough) "Back" else "Select", false, m.siblings != null) }
     val rows = rowsOf(m, xmb)
     val row = rows.getOrNull(effectiveSel(m, rows))
     val a = when (row) {

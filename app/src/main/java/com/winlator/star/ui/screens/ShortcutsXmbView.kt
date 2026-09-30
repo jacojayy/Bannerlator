@@ -185,8 +185,6 @@ internal fun ShortcutsXmbView(
     onNestedChange: (Boolean) -> Unit = {},
     /** Open one of the drawer destinations (Containers, File Manager, Social Hub…) from the menu square. */
     onNavigate: ((Screen) -> Unit)? = null,
-    /** Open a container's detail screen (new/edit) from the XMB Containers column. */
-    onOpenContainer: ((Int?) -> Unit)? = null,
 ) {
     if (shortcuts.isEmpty()) return
     val context = LocalContext.current
@@ -267,7 +265,18 @@ internal fun ShortcutsXmbView(
             0 -> context.startActivity(Intent(context, SteamMainActivity::class.java))
             1 -> context.startActivity(Intent(context, GogMainActivity::class.java))
             2 -> context.startActivity(Intent(context, EpicMainActivity::class.java))
-            else -> onNavigate?.let { nav.push(xmbAppMenu(it, onOpenContainer)) }
+            else -> onNavigate?.let { go ->
+                nav.push(xmbAppMenu(go) { id ->
+                    nav.push(
+                        screenMenu(Screen.ContainerDetail) {
+                            ContainerDetailScreen(
+                                containerId = id ?: -1,
+                                onNavigateBack = { nav.pop() },
+                            )
+                        }
+                    )
+                })
+            }
         }
     }
     LaunchedEffect(nested) { onNestedChange(nested) }
@@ -651,22 +660,26 @@ private fun xmbGraphicsMenu(): XmbMenu = XmbMenu(
 
 /** The pop-in column behind the fourth square: every destination the nav drawer lists. In XMB mode
  *  the tabs open as XMB columns (full controller) instead of jumping out to the tab. */
-private fun xmbAppMenu(onGo: (Screen) -> Unit, onOpenContainer: ((Int?) -> Unit)?): XmbMenu = XmbMenu(
+private fun xmbAppMenu(onGo: (Screen) -> Unit, onOpenContainer: (Int?) -> Unit): XmbMenu = XmbMenu(
     title = "Menu",
     icon = Icons.Filled.Menu,
     rows = {
         val xs = this
         Screen.drawerItems.map { d ->
             when (d) {
-                // Games IS this tab; Settings still needs the nav graph (its own routes/callbacks).
-                Screen.Games, Screen.Settings ->
+                // Games IS this tab — it is where the column opened from.
+                Screen.Games ->
                     XmbRow.Action(key = d.route, label = d.label, icon = appIconFor(d)) {
                         xs.popToRoot()
                         onGo(d)
                     }
 
+                Screen.Settings -> XmbRow.Link(key = d.route, label = d.label, icon = appIconFor(d)) {
+                    screenMenu(d) { SettingsScreen(onSaved = { xs.pop() }) }
+                }
+
                 Screen.Containers -> XmbRow.Link(key = d.route, label = d.label, icon = appIconFor(d)) {
-                    screenMenu(d) { ContainersScreen(onNavigateToDetail = { onOpenContainer?.invoke(it) }) }
+                    screenMenu(d) { ContainersScreen(onNavigateToDetail = { onOpenContainer(it) }) }
                 }
 
                 Screen.FileManager -> XmbRow.Link(key = d.route, label = d.label, icon = appIconFor(d)) {

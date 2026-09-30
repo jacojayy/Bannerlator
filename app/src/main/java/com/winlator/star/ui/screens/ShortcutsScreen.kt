@@ -321,7 +321,6 @@ import org.json.JSONObject
 fun ShortcutsScreen(
     vm: ShortcutsViewModel = viewModel(),
     onNavigate: ((Screen) -> Unit)? = null,
-    onOpenContainer: ((Int?) -> Unit)? = null,
 ) {
     val shortcuts by vm.shortcuts.collectAsState(initial = emptyList())
     val sortOrder by vm.sortOrder.collectAsState()
@@ -1133,7 +1132,6 @@ fun ShortcutsScreen(
                             onPlay = { requestLaunch(it) },
                             actionsFor = xmbActionsFor,
                             onNavigate = onNavigate,
-                            onOpenContainer = onOpenContainer,
                             sdBadge = { shortcut ->
                                 if (remember(shortcut) { WinePath.isOnRemovableStorage(shortcut.container, shortcut.path) }) {
                                     SdCardBadge(Modifier.padding(start = 6.dp))

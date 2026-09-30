@@ -134,8 +134,8 @@ import com.winlator.star.store.SteamMainActivity
 import com.winlator.star.ui.LocalTopBarOverlayInset
 import com.winlator.star.ui.Screen
 import com.winlator.star.ui.SocialContent
-import com.winlator.star.ui.findActivity
 import com.winlator.star.ui.screens.contents.ContentsHubScreen
+import com.winlator.star.ui.findActivity
 import com.winlator.star.ui.theme.DangerRed
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -145,6 +145,7 @@ import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
+import java.io.File
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -636,28 +637,13 @@ private fun appIconFor(screen: Screen): ImageVector = when (screen) {
 }
 
 /** A drawer destination rendered as its own XMB column: the tab composable itself, full D-pad. */
-private fun screenMenu(screen: Screen, content: @Composable () -> Unit): XmbMenu = XmbMenu(
+internal fun screenMenu(screen: Screen, content: @Composable () -> Unit): XmbMenu = XmbMenu(
     title = screen.label,
     icon = appIconFor(screen),
     panel = XmbScreenPanel(content),
 )
 
 /** Graphics: the same two entries the normal view groups under its Graphics section. */
-private fun xmbGraphicsMenu(): XmbMenu = XmbMenu(
-    title = "Graphics",
-    icon = Icons.Filled.Memory,
-    rows = {
-        listOf(
-            XmbRow.Link("adreno", "Adrenotools GPU Drivers", Icons.Filled.Memory) {
-                screenMenu(Screen.AdrenoTools) { AdrenoToolsScreen() }
-            },
-            XmbRow.Link("wrappers", "Manage Wrappers", Icons.Filled.Layers) {
-                screenMenu(Screen.Wrappers) { WrapperManagerScreen() }
-            },
-        )
-    },
-)
-
 /** The pop-in column behind the fourth square: every destination the nav drawer lists. In XMB mode
  *  the tabs open as XMB columns (full controller) instead of jumping out to the tab. */
 private fun xmbAppMenu(onGo: (Screen) -> Unit, onOpenContainer: (Int?) -> Unit): XmbMenu = XmbMenu(
@@ -675,15 +661,15 @@ private fun xmbAppMenu(onGo: (Screen) -> Unit, onOpenContainer: (Int?) -> Unit):
                     }
 
                 Screen.Settings -> XmbRow.Link(key = d.route, label = d.label, icon = appIconFor(d)) {
-                    screenMenu(d) { SettingsScreen(onSaved = { xs.pop() }) }
+                    xmbSettingsMenu(xs)
                 }
 
                 Screen.Containers -> XmbRow.Link(key = d.route, label = d.label, icon = appIconFor(d)) {
-                    screenMenu(d) { ContainersScreen(onNavigateToDetail = { onOpenContainer(it) }) }
+                    xmbContainersMenu(xs, onOpenContainer)
                 }
 
                 Screen.FileManager -> XmbRow.Link(key = d.route, label = d.label, icon = appIconFor(d)) {
-                    screenMenu(d) { FileManagerScreen() }
+                    xmbFileManagerMenu(File("/storage/emulated/0"))
                 }
 
                 Screen.InputControls -> XmbRow.Link(key = d.route, label = d.label, icon = appIconFor(d)) {
@@ -709,7 +695,7 @@ private fun xmbAppMenu(onGo: (Screen) -> Unit, onOpenContainer: (Int?) -> Unit):
                     }
             }
         } + XmbRow.Link(key = "graphics", label = "Graphics", icon = Icons.Filled.Memory) {
-            xmbGraphicsMenu()
+            xmbGraphicsMenu(xs)
         }
     },
 )

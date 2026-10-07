@@ -1029,14 +1029,14 @@ fun ShortcutsScreen(
                     imageVector = when (viewMode) {
                         ShortcutViewMode.LIST -> Icons.Filled.GridView
                         ShortcutViewMode.GRID -> Icons.Filled.Apps
-                        ShortcutViewMode.GRID_COMPACT -> Icons.Filled.ViewCarousel
-                        ShortcutViewMode.XMB -> Icons.Filled.ViewList
+                        ShortcutViewMode.GRID_COMPACT -> Icons.Filled.ViewList
+                        ShortcutViewMode.XMB -> Icons.Filled.GridView
                     },
                     contentDescription = when (viewMode) {
                         ShortcutViewMode.LIST -> "Grid view"
                         ShortcutViewMode.GRID -> "Compact grid view"
-                        ShortcutViewMode.GRID_COMPACT -> "XMB view"
-                        ShortcutViewMode.XMB -> "List view"
+                        ShortcutViewMode.GRID_COMPACT -> "List view"
+                        ShortcutViewMode.XMB -> "Grid view"
                     },
                     tint = androidx.compose.ui.graphics.Color.White,
                 )

@@ -182,7 +182,7 @@ class ShortcutsViewModel(app: Application) : AndroidViewModel(app) {
                 if (prefs.getBoolean("is_grid_view", false)) ShortcutViewMode.GRID.ordinal
                 else ShortcutViewMode.LIST.ordinal
             ).coerceIn(0, ShortcutViewMode.entries.size - 1)
-        ]
+        ].let { if (it == ShortcutViewMode.XMB) ShortcutViewMode.GRID else it }
     )
     val viewMode: StateFlow<ShortcutViewMode> = _viewMode
 
@@ -949,13 +949,15 @@ class ShortcutsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setViewMode(mode: ShortcutViewMode) {
-        _viewMode.value = mode
-        prefs.edit().putInt("view_mode", mode.ordinal).apply()
+        val safe = if (mode == ShortcutViewMode.XMB) ShortcutViewMode.GRID else mode
+        _viewMode.value = safe
+        prefs.edit().putInt("view_mode", safe.ordinal).apply()
     }
 
-    /** Cycles list → grid → compact grid → XMB → list, driven by the single header button. */
+    /** Cycles list → grid → compact grid → list, driven by the single header button. */
     fun cycleViewMode() {
-        val next = ShortcutViewMode.entries[(_viewMode.value.ordinal + 1) % ShortcutViewMode.entries.size]
+        val modes = ShortcutViewMode.entries.filter { it != ShortcutViewMode.XMB }
+        val next = modes[(modes.indexOf(_viewMode.value) + 1).mod(modes.size)]
         setViewMode(next)
     }
 

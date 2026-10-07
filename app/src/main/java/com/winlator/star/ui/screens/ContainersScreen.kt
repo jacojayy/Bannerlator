@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.SettingsBackupRestore
 import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Upgrade
@@ -154,6 +155,8 @@ fun ContainersScreen(
     var confirmDialog by remember { mutableStateOf<ConfirmAction?>(null) }
     var storageInfoContainer by remember { mutableStateOf<Container?>(null) }
     var showImportPicker by remember { mutableStateOf(false) }
+    // Deck Mode — DroidDeck's front end, UI only (top-bar button, no launching).
+    var deckMode by remember { mutableStateOf(false) }
 
     // Backup / Restore game save flow (see SaveFlow). The engine posts its result on the main
     // thread, so we just flip these bits of Compose state as the flow advances.
@@ -194,6 +197,10 @@ fun ContainersScreen(
     // clear would steamroll it on first navigation to this screen.
     LaunchedEffect(Unit) {
         topBarActions.value = {
+            // Deck Mode — DroidDeck's UI, opened full-screen over the list.
+            IconButton(onClick = { deckMode = true }) {
+                Icon(Icons.Filled.SportsEsports, contentDescription = "Deck mode", tint = androidx.compose.ui.graphics.Color.White)
+            }
             // Steam friends + chat — only renders when signed in to Steam (login-gated internally).
             SteamFriendsAction()
             // New Container Defaults — opens the SAME container editor in "defaults mode" (the ✓ saves
@@ -304,6 +311,13 @@ fun ContainersScreen(
         // overlays the list at the bottom.
         resultMessage?.let { msg ->
             UninstallResultBar(message = msg, onTimeout = { resultMessage = null })
+        }
+        // Deck Mode — takes over the whole content area until its ✕ is pressed.
+        if (deckMode) {
+            DeckModeScreen(
+                titles = containers.map { it.name },
+                onExit = { deckMode = false },
+            )
         }
         } // end inner Box(weight)
     } // end Column

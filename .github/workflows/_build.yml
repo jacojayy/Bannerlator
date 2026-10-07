@@ -252,12 +252,15 @@ jobs:
     # launch instead of waiting on a ~790MB runtime release. Built from source here, never
     # committed, so it cannot drift from the bionic copy.
     - name: Build libfakeinput.so for the Linux runtime (glibc aarch64)
+      timeout-minutes: 20
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq g++-aarch64-linux-gnu >/dev/null
+        export DEBIAN_FRONTEND=noninteractive
+        APT="sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::ftp::Timeout=30"
+        $APT update -qq
+        $APT install -y -qq g++-aarch64-linux-gnu >/dev/null
         D=app/src/main/assets/linuxfs
         mkdir -p "$D"
         # Statically linked C++ runtime: this is preloaded into every Steam process, and Steam ships
@@ -289,7 +292,7 @@ jobs:
         # /etc/ld.so.preload names in every runtime since r5, so refreshing it from the app is how a
         # fix inside it reaches a runtime that is already installed - the netlink stand-in in
         # udevmon.c is exactly that, and the device that needs it cannot take a new runtime image.
-        sudo apt-get install -y -qq gcc-aarch64-linux-gnu >/dev/null
+        $APT install -y -qq gcc-aarch64-linux-gnu >/dev/null
         aarch64-linux-gnu-gcc -shared -fPIC -O2 -Wall -pthread \
           -o "$D/libblsession.so" tools/linuxfs/preload/*.c -ldl
         aarch64-linux-gnu-strip --strip-unneeded "$D/libblsession.so"

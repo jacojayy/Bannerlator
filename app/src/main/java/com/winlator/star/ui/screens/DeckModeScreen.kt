@@ -1,6 +1,7 @@
 package com.winlator.star.ui.screens
 
 import android.app.Activity
+import android.widget.VideoView
 
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -42,6 +43,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -59,6 +61,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,6 +71,8 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.winlator.star.container.ContainerManager
+import java.io.File
+import java.io.FileOutputStream
 import com.winlator.star.ui.ControllerFocusIndication
 import com.winlator.star.ui.SocialContent
 import com.winlator.star.ui.screens.contents.ContentsHubScreen
@@ -120,6 +125,7 @@ private fun deckSections() = listOf(
 internal fun DeckModeScreen(onExit: () -> Unit) {
     val context = LocalContext.current
     var titles by remember { mutableStateOf<List<String>>(emptyList()) }
+    var introDone by remember { mutableStateOf(false) }
     var section by remember { mutableStateOf("home") }
     var graphicPane by remember { mutableStateOf("gpu") }
     var deckDetail by remember { mutableStateOf<Int?>(null) }
@@ -189,10 +195,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                             onNavigateBack = { deckDetail = null },
                         )
                     } else {
-                        ContainersScreen(
-                            onNavigateToDetail = { id -> deckDetail = id ?: -1 },
-                            onOpenDeck = { },
-                        )
+                        DeckContainersScreen(onEditContainer = { id -> deckDetail = id })
                     }
                 }
                 "file_manager" -> FileManagerScreen()
@@ -206,6 +209,10 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 "social_hub" -> SocialContent()
                 "settings" -> DeckSettingsScreen()
                 else -> DeckHome(titles = titles)
+            }
+
+            if (!introDone) {
+                DeckIntro(onDone = { introDone = true })
             }
 
             // Leave Deck Mode — the only chrome that sits over a hosted screen.
@@ -538,6 +545,66 @@ private fun DeckCapsule(cover: DeckCover, shape: RoundedCornerShape, modifier: M
                 .align(Alignment.BottomStart)
                 .padding(8.dp)
                 .alpha(0.92f),
+        )
+    }
+}
+
+
+/**
+ * Console-style intro: the bundled `deck_intro.mp4` plays full-screen once when Deck Mode opens.
+ * Tap to skip; auto-dismisses on completion or error.
+ */
+@Composable
+private fun DeckIntro(onDone: () -> Unit) {
+    val context = LocalContext.current
+    var videoPath by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            val out = File(context.cacheDir, "deck_intro.mp4")
+            if (!out.exists()) {
+                context.assets.open("deck_intro.mp4").use { input ->
+                    FileOutputStream(out).use { output -> input.copyTo(output) }
+                }
+            }
+            videoPath = out.absolutePath
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .clickable { onDone() },
+        contentAlignment = Alignment.Center,
+    ) {
+        videoPath?.let { path ->
+            AndroidView(
+                factory = { ctx ->
+                    VideoView(ctx).apply {
+                        setOnCompletionListener { onDone() }
+                        setOnErrorListener { _, _, _ -> onDone(); true }
+                        isClickable = false
+                        setMediaController(null)
+                    }
+                },
+                update = { view ->
+                    if (view.tag != path) {
+                        view.tag = path
+                        view.setVideoPath(path)
+                        view.start()
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        Text(
+            text = "Tap to skip",
+            color = Color.White.copy(alpha = 0.55f),
+            fontSize = 13.sp,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 32.dp),
         )
     }
 }

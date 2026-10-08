@@ -70,10 +70,6 @@ import com.winlator.star.saves.CustomFilePickerActivity
 import com.winlator.star.util.InAppFilePicker
 import com.winlator.star.saves.Save
 import java.io.File
-import com.winlator.star.ui.theme.Divider as DividerColor
-import com.winlator.star.ui.theme.OnSurface
-import com.winlator.star.ui.theme.OnSurfaceVariant
-import com.winlator.star.ui.theme.Surface
 
 @Composable
 fun SavesScreen(vm: SavesViewModel = viewModel()) {
@@ -109,11 +105,15 @@ fun SavesScreen(vm: SavesViewModel = viewModel()) {
     }
     var showImportMenu by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
         if (saves.isEmpty() && !isLoading) {
             Text(
                 text = "No saves yet. Tap + to add one.",
-                color = OnSurfaceVariant,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.align(Alignment.Center),
             )
         } else {
@@ -127,7 +127,7 @@ fun SavesScreen(vm: SavesViewModel = viewModel()) {
                         onShare = { vm.exportSave(context, save, true) },
                         onUnregister = { vm.removeSave(save) },
                     )
-                    Divider(color = DividerColor)
+                    Divider(color = MaterialTheme.colorScheme.outline)
                 }
             }
         }
@@ -143,7 +143,7 @@ fun SavesScreen(vm: SavesViewModel = viewModel()) {
             Box {
                 FloatingActionButton(
                     onClick = { showImportMenu = true },
-                    containerColor = Surface,
+                    containerColor = MaterialTheme.colorScheme.surface,
                     modifier = Modifier.size(48.dp),
                 ) {
                     Icon(imageVector = Icons.Filled.FolderOpen, contentDescription = "Import save", tint = MaterialTheme.colorScheme.primary)
@@ -254,7 +254,7 @@ private fun SaveItem(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .background(Surface)
+            .background(MaterialTheme.colorScheme.surface)
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         Icon(
@@ -269,17 +269,17 @@ private fun SaveItem(
                 text = save.getTitle(),
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Bold,
-                color = OnSurface,
+                color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
                 text = save.container?.getName() ?: "",
                 style = MaterialTheme.typography.bodySmall,
-                color = OnSurfaceVariant,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Box {
             IconButton(onClick = { menuExpanded = true }) {
-                Icon(imageVector = Icons.Filled.MoreVert, contentDescription = "Options", tint = OnSurfaceVariant)
+                Icon(imageVector = Icons.Filled.MoreVert, contentDescription = "Options", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             DropdownMenu(
                 expanded = menuExpanded,
@@ -401,7 +401,7 @@ private fun NewSaveDialog(
                     Text("Select Save Path", color = MaterialTheme.colorScheme.primary)
                 }
                 if (selectedPath.isNotEmpty()) {
-                    Text(text = selectedPath, fontSize = 11.sp, color = OnSurfaceVariant)
+                    Text(text = selectedPath, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         },
@@ -441,7 +441,7 @@ private fun EditSaveDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Text("Original Path", fontSize = 12.sp, color = OnSurfaceVariant)
+                Text("Original Path", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(save.path, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
             }
         },
@@ -479,7 +479,7 @@ private fun TransferSaveDialog(
                 Text(
                     "Transfer \"${save.getTitle()}\" to:",
                     fontSize = 13.sp,
-                    color = OnSurfaceVariant,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 ExposedDropdownMenuBox(
                     expanded = dropdownExpanded,
@@ -538,7 +538,7 @@ private fun ImportContainerSelectDialog(
                 Text(
                     "Select target container:",
                     fontSize = 13.sp,
-                    color = OnSurfaceVariant,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 ExposedDropdownMenuBox(
                     expanded = dropdownExpanded,

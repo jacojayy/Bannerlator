@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -108,6 +109,55 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
                 fontSize = 13.sp,
                 color = DeckPalette.onSurfaceVariant,
             )
+            Spacer(Modifier.height(12.dp))
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(DeckPalette.primary)
+                        .clickable { onEditContainer(-1) }
+                        .padding(horizontal = 16.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Filled.Add,
+                            contentDescription = null,
+                            tint = DeckPalette.onPrimary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "New",
+                            color = DeckPalette.onPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(DeckPalette.surface)
+                        .border(1.dp, DeckPalette.line, RoundedCornerShape(12.dp))
+                        .clickable { onEditContainer(-2) }
+                        .padding(horizontal = 16.dp),
+                ) {
+                    Text(
+                        text = "Defaults",
+                        color = DeckPalette.onBackground,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
             Spacer(Modifier.height(12.dp))
 
             if (containers.isEmpty()) {

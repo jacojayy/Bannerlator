@@ -22,6 +22,8 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,7 +36,10 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -311,6 +316,68 @@ internal fun DeckSliderRow(
                 .fillMaxWidth()
                 .height(1.dp)
                 .background(DeckPalette.line),
+        )
+    }
+}
+
+/** A label + editable text field in the Deck style (same TextField colors used across Deck). */
+@Composable
+internal fun DeckTextRow(
+    label: String,
+    hint: String? = null,
+    value: String,
+    onValueChange: (String) -> Unit,
+    width: Dp = 300.dp,
+    mask: Boolean = false,
+) {
+    DeckRow(label, hint) {
+        TextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            visualTransformation = if (mask && value.isNotEmpty()) PasswordVisualTransformation() else VisualTransformation.None,
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = DeckPalette.surfaceVariant,
+                unfocusedContainerColor = DeckPalette.surfaceVariant,
+                focusedTextColor = DeckPalette.onBackground,
+                unfocusedTextColor = DeckPalette.onBackground,
+                focusedIndicatorColor = DeckPalette.primary,
+                unfocusedIndicatorColor = DeckPalette.line2,
+                cursorColor = DeckPalette.primary,
+            ),
+            modifier = Modifier
+                .width(width)
+                .clip(RoundedCornerShape(10.dp)),
+        )
+    }
+}
+
+/** A Deck-styled pill button (primary = filled blue, neutral = surface with hairline). */
+@Composable
+internal fun DeckButton(
+    text: String,
+    onClick: () -> Unit,
+    primary: Boolean = true,
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .heightIn(min = 44.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (primary) DeckPalette.primary else DeckPalette.surface)
+            .border(
+                width = 1.dp,
+                color = if (primary) DeckPalette.primary else DeckPalette.line,
+                shape = RoundedCornerShape(12.dp),
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp),
+    ) {
+        Text(
+            text = text,
+            color = if (primary) DeckPalette.onPrimary else DeckPalette.onBackground,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
         )
     }
 }

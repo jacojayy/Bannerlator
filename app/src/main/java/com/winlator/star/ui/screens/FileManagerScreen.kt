@@ -1097,7 +1097,11 @@ fun FileManagerScreen(
         )
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
         // ── Pick-mode title ──
         if (pickMode && !pickerTitle.isNullOrEmpty()) {
             Text(

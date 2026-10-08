@@ -1,6 +1,7 @@
 package com.winlator.star.ui.screens
 
 import android.app.Activity
+import android.content.pm.ActivityInfo
 import android.widget.VideoView
 
 import androidx.compose.animation.core.LinearEasing
@@ -24,6 +25,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
@@ -43,7 +46,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -141,12 +143,18 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     // Truly full screen: the system status/nav bars go with the top bar, restored on leaving.
     val view = LocalView.current
     DisposableEffect(Unit) {
-        val controller = (context as? Activity)?.window?.let { WindowCompat.getInsetsController(it, view) }
+        val activity = context as? Activity
+        val previousOrientation = activity?.requestedOrientation
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        val controller = activity?.window?.let { WindowCompat.getInsetsController(it, view) }
         if (controller != null) {
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(WindowInsetsCompat.Type.systemBars())
         }
-        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
+        onDispose {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
+            previousOrientation?.let { activity?.requestedOrientation = it }
+        }
     }
 
     // DroidDeck's Graphite palette as the theme for everything hosted here, so no Amethyst
@@ -211,10 +219,6 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 else -> DeckHome(titles = titles)
             }
 
-            if (!introDone) {
-                DeckIntro(onDone = { introDone = true })
-            }
-
             // Leave Deck Mode — the only chrome that sits over a hosted screen.
             Box(
                 contentAlignment = Alignment.Center,
@@ -236,6 +240,9 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
             }
         }
     }
+        if (!introDone) {
+            DeckIntro(onDone = { introDone = true })
+        }
         }
     }
 }
@@ -364,6 +371,7 @@ private fun DeckSideRail(selected: String, onSelect: (String) -> Unit) {
         modifier = Modifier
             .width(92.dp)
             .fillMaxHeight()
+            .verticalScroll(rememberScrollState())
             .background(Deck.surface)
             .padding(vertical = 12.dp),
     ) {

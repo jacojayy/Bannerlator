@@ -111,7 +111,11 @@ internal fun SocialContent() {
     // Restore a saved token (and refresh the feed) once per composition; no-op after the first.
     LaunchedEffect(Unit) { SocialHubStore.init(ctx) }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
         // Header: title + "?" help, with refresh + identity + sign-out when signed in.
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text(
@@ -277,7 +281,7 @@ private fun WelcomePane(onContinue: () -> Unit) {
  */
 @Composable
 private fun PurpleContinue(text: String, onClick: () -> Unit) {
-    val hero = Color(0xFFA855F7)
+    val hero = MaterialTheme.colorScheme.primary
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(24.dp))

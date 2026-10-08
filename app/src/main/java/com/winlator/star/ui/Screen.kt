@@ -28,6 +28,10 @@ sealed class Screen(val route: String, val label: String, val iconName: String) 
     // Registered as a route (see AppNavGraph) but intentionally NOT listed in the drawer.
     object BigPicture : Screen("big_picture", "Big Picture", "sports_esports")
 
+    // DroidDeck front end: full-bleed shell (no top bar) hosting this app's own screens.
+    // Registered as a route (see AppNavGraph) but intentionally NOT listed in the drawer.
+    object Deck : Screen("deck", "Deck", "sports_esports")
+
     companion object {
         val drawerItems by lazy {
             // Screen.Wrappers stays registered as a route (the wrapper manager is now reached via the

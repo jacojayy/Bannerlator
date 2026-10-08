@@ -634,7 +634,8 @@ private fun AppShell(
     // footer, so it gets the chrome-free full-bleed treatment. The Games route is the normal phone-grid
     // library again (top bar + drawer), so it is NOT full-bleed.
     val isBigPicture = currentRoute == Screen.BigPicture.route
-    val isFullBleed = isBigPicture
+    // Deck Mode is the same chrome-free treatment: it draws its own rail and header.
+    val isFullBleed = isBigPicture || currentRoute == Screen.Deck.route
 
     // In-app update banner: only when a newer stable exists, notify is on, and
     // this version wasn't skipped.

@@ -23,6 +23,7 @@ import com.winlator.star.ui.screens.FileManagerScreen
 import com.winlator.star.ui.screens.FragmentScreen
 import com.winlator.star.ui.screens.SavesScreen
 import com.winlator.star.ui.screens.InputControlsScreen
+import com.winlator.star.ui.screens.DeckModeScreen
 import com.winlator.star.ui.screens.GamesWallScreen
 import com.winlator.star.ui.screens.SettingsScreen
 import com.winlator.star.ui.screens.WrapperManagerScreen
@@ -48,6 +49,7 @@ fun AppNavGraph(
 
         composable(Screen.Containers.route) {
             ContainersScreen(
+                onOpenDeck = { navController.navigate(Screen.Deck.route) },
                 onNavigateToDetail = { containerId ->
                     val route = if (containerId != null) {
                         "container_detail?id=$containerId"
@@ -91,6 +93,11 @@ fun AppNavGraph(
             // Big Picture couch mode now renders the games wall. The old BigPictureScreen composable is
             // retired (no longer routed); GamesWallScreen still reuses its loadCover/launchShortcut helpers.
             GamesWallScreen(navController = navController)
+        }
+
+        composable(Screen.Deck.route) {
+            // DroidDeck front end — full-bleed (MainActivity drops the bar on this route).
+            DeckModeScreen(onExit = { navController.popBackStack() })
         }
 
         composable(Screen.InputControls.route) {

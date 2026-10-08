@@ -119,6 +119,7 @@ import com.winlator.star.xenvironment.ImageFs
 @Composable
 fun ContainersScreen(
     onNavigateToDetail: (containerId: Int?) -> Unit,
+    onOpenDeck: () -> Unit = {},
     vm: ContainersViewModel = viewModel(),
 ) {
     val containers by vm.containers.collectAsState()
@@ -155,8 +156,6 @@ fun ContainersScreen(
     var confirmDialog by remember { mutableStateOf<ConfirmAction?>(null) }
     var storageInfoContainer by remember { mutableStateOf<Container?>(null) }
     var showImportPicker by remember { mutableStateOf(false) }
-    // Deck Mode — DroidDeck's front end, UI only (top-bar button, no launching).
-    var deckMode by remember { mutableStateOf(false) }
 
     // Backup / Restore game save flow (see SaveFlow). The engine posts its result on the main
     // thread, so we just flip these bits of Compose state as the flow advances.
@@ -197,8 +196,8 @@ fun ContainersScreen(
     // clear would steamroll it on first navigation to this screen.
     LaunchedEffect(Unit) {
         topBarActions.value = {
-            // Deck Mode — DroidDeck's UI, opened full-screen over the list.
-            IconButton(onClick = { deckMode = true }) {
+            // Deck Mode — DroidDeck front end on its own full-bleed route.
+            IconButton(onClick = onOpenDeck) {
                 Icon(Icons.Filled.SportsEsports, contentDescription = "Deck mode", tint = androidx.compose.ui.graphics.Color.White)
             }
             // Steam friends + chat — only renders when signed in to Steam (login-gated internally).
@@ -311,13 +310,6 @@ fun ContainersScreen(
         // overlays the list at the bottom.
         resultMessage?.let { msg ->
             UninstallResultBar(message = msg, onTimeout = { resultMessage = null })
-        }
-        // Deck Mode — takes over the whole content area until its ✕ is pressed.
-        if (deckMode) {
-            DeckModeScreen(
-                titles = containers.map { it.name },
-                onExit = { deckMode = false },
-            )
         }
         } // end inner Box(weight)
     } // end Column

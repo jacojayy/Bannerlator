@@ -13,10 +13,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
@@ -27,17 +25,19 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.outlined.DesktopWindows
-import androidx.compose.material.icons.outlined.Layers
-import androidx.compose.material.icons.outlined.SportsEsports
-import androidx.compose.material.icons.outlined.Storefront
-import androidx.compose.material.icons.outlined.SystemUpdate
-import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material.icons.outlined.VideoLibrary
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,11 +51,16 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.winlator.star.container.ContainerManager
+import com.winlator.star.ui.SocialContent
+import com.winlator.star.ui.screens.contents.ContentsHubScreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** The DroidDeck palette (Graphite), lifted verbatim from DroidDeck's ui/Theme.kt. */
 private object Deck {
@@ -66,9 +71,7 @@ private object Deck {
     val onBackground = Color(0xFFF2F4F7)
     val onSurfaceVariant = Color(0xFF9AA3AF)
     val primary = Color(0xFF1A9FFF)
-    val primary2 = Color(0xFF1487DB)
     val onPrimary = Color(0xFF03111F)
-    val good = Color(0xFF4CD37F)
     val attention = Color(0xFFFFB547)
 }
 
@@ -81,73 +84,199 @@ private fun hueOf(name: String): Float {
     return ((h % 360) + 360) % 360 / 360f
 }
 
+/** The rail's real sections — the app's own destinations, in the DroidDeck rail style. */
+private class DeckSection(val key: String, val label: String, val icon: ImageVector)
+
+private fun deckSections() = listOf(
+    DeckSection("home", "Home", Icons.Filled.Apps),
+    DeckSection("containers", "Containers", Icons.Filled.Folder),
+    DeckSection("file_manager", "Files", Icons.Filled.FolderOpen),
+    DeckSection("graphics", "Graphics", Icons.Filled.Memory),
+    DeckSection("input_controls", "Controls", Icons.Filled.SportsEsports),
+    DeckSection("contents", "Contents", Icons.Filled.Inventory2),
+    DeckSection("saves", "Saves", Icons.Filled.Save),
+    DeckSection("social_hub", "Social", Icons.Filled.People),
+    DeckSection("settings", "Settings", Icons.Filled.Settings),
+)
+
 /**
- * Deck Mode — DroidDeck's front end, ported as UI only: the drifting, tilted capsule wall behind
- * the wordmark, the left rail and the one thing to do here, Play. Nothing in it launches anything.
+ * Deck Mode — DroidDeck's front end, full-bleed (MainActivity drops the top bar on the `deck`
+ * route). The rail lists this app's own sections; each one hosts the REAL screen, so Deck Mode
+ * is a shell over working functionality rather than a mock.
  */
 @Composable
-internal fun DeckModeScreen(titles: List<String>, onExit: () -> Unit) {
+internal fun DeckModeScreen(onExit: () -> Unit) {
+    val context = LocalContext.current
+    var titles by remember { mutableStateOf<List<String>>(emptyList()) }
+    var section by remember { mutableStateOf("home") }
+    var graphicPane by remember { mutableStateOf("gpu") }
+    var deckDetail by remember { mutableStateOf<Int?>(null) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            val manager = ContainerManager(context)
+            manager.reloadContainers()
+            titles = manager.getContainers().map { it.name }
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Deck.background),
+    ) {
+        DeckSideRail(
+            selected = section,
+            onSelect = { next ->
+                section = next
+                deckDetail = null
+            },
+        )
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clipToBounds(),
+        ) {
+            when (section) {
+                "home" -> DeckHome(titles = titles)
+                "containers" -> {
+                    val detailId = deckDetail
+                    if (detailId != null) {
+                        ContainerDetailScreen(
+                            containerId = detailId,
+                            onNavigateBack = { deckDetail = null },
+                        )
+                    } else {
+                        ContainersScreen(
+                            onNavigateToDetail = { id -> deckDetail = id ?: -1 },
+                            onOpenDeck = { },
+                        )
+                    }
+                }
+                "file_manager" -> FileManagerScreen()
+                "graphics" -> DeckGraphicsPane(
+                    pane = graphicPane,
+                    onSelect = { graphicPane = it },
+                )
+                "input_controls" -> InputControlsScreen()
+                "contents" -> ContentsHubScreen()
+                "saves" -> SavesScreen()
+                "social_hub" -> SocialContent()
+                "settings" -> SettingsScreen(onSaved = { })
+                else -> DeckHome(titles = titles)
+            }
+
+            // Leave Deck Mode — the only chrome that sits over a hosted screen.
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 12.dp, end = 16.dp)
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Deck.surface)
+                    .border(1.dp, Deck.line, RoundedCornerShape(14.dp))
+                    .clickable { onExit() },
+            ) {
+                Text(
+                    text = "✕",
+                    color = Deck.onBackground,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
+
+/** Home: the drifting capsule wall, the wordmark, and nothing that pretends to launch. */
+@Composable
+private fun DeckHome(titles: List<String>) {
     val covers = remember(titles) {
         if (titles.isEmpty()) List(12) { index -> DeckCover("", index / 12f) }
         else titles.map { title -> DeckCover(title, hueOf(title)) }
     }
-    var selected by remember { mutableStateOf("steam") }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Deck.background)
             .clipToBounds(),
     ) {
-        if (titles.isEmpty()) {
-            DeckCapsuleWall(covers = covers, driftMs = 75_000)
-        } else {
-            DeckCapsuleWall(covers = covers, driftMs = 40_000)
-            DeckWallFade()
-        }
-
-        DeckSideRail(
-            selected = selected,
-            onSelect = { selected = it },
-            modifier = Modifier.align(Alignment.CenterStart),
+        DeckCapsuleWall(
+            covers = covers,
+            driftMs = if (titles.isEmpty()) 75_000 else 40_000,
         )
-
-        // Top-right: leave Deck Mode.
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 16.dp, end = 20.dp)
-                .size(48.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(Deck.surface)
-                .border(1.dp, Deck.line, RoundedCornerShape(14.dp))
-                .clickable { onExit() },
-        ) {
-            Text(
-                text = "✕",
-                color = Deck.onBackground,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-
-        // Bottom-left: wordmark, then Play and the cog — DroidDeck's SteamHome block.
+        DeckWallFade()
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = 136.dp, bottom = 44.dp, end = 20.dp),
+                .padding(start = 36.dp, bottom = 44.dp, end = 20.dp),
         ) {
             DeckWordmark()
-            Spacer(Modifier.height(18.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                DeckPrimaryButton(label = "Play", onClick = { })
-                DeckCog(size = 54.dp, onClick = { })
-            }
         }
+    }
+}
+
+/** Graphics: pick the pane, then the real screen renders below it. */
+@Composable
+private fun DeckGraphicsPane(pane: String, onSelect: (String) -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Deck.background),
+    ) {
+        when (pane) {
+            "wrappers" -> WrapperManagerScreen()
+            else -> AdrenoToolsScreen()
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(top = 12.dp, start = 16.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Deck.surface)
+                .border(1.dp, Deck.line, RoundedCornerShape(14.dp))
+                .padding(6.dp),
+        ) {
+            DeckPaneChip(
+                label = "GPU drivers",
+                selected = pane == "gpu",
+                onClick = { onSelect("gpu") },
+            )
+            DeckPaneChip(
+                label = "Wrappers",
+                selected = pane == "wrappers",
+                onClick = { onSelect("wrappers") },
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeckPaneChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) Deck.primary.copy(alpha = 0.14f) else Color.Transparent)
+            .border(
+                width = 1.dp,
+                color = if (selected) Deck.primary else Color.Transparent,
+                shape = RoundedCornerShape(10.dp),
+            )
+            .clickable { onClick() }
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = label,
+            color = if (selected) Deck.primary else Deck.onSurfaceVariant,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
     }
 }
 
@@ -175,120 +304,26 @@ private fun DeckWordmark() {
     }
 }
 
-/** The primary action: a signal-blue pill, white-play glyph in the DroidDeck on-signal colour. */
-@Composable
-private fun DeckPrimaryButton(label: String, onClick: () -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier
-            .height(54.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Deck.primary)
-            .clickable { onClick() }
-            .padding(horizontal = 26.dp),
-    ) {
-        Icon(
-            imageVector = Icons.Filled.PlayArrow,
-            contentDescription = null,
-            tint = Deck.onPrimary,
-            modifier = Modifier.size(24.dp),
-        )
-        Text(
-            text = label,
-            color = Deck.onPrimary,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-        )
-    }
-}
-
-/** The cog beside Play: a large round hit target in DroidDeck's 54dp size. */
-@Composable
-private fun DeckCog(size: Dp, onClick: () -> Unit) {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(size)
-            .clip(CircleShape)
-            .background(Deck.surfaceVariant)
-            .border(1.dp, Deck.line, CircleShape)
-            .clickable { onClick() },
-    ) {
-        Text(text = "⚙", color = Deck.onBackground, fontSize = 24.sp)
-    }
-}
-
 /**
  * The left rail: every section on screen down the edge, 92dp wide, rounded 14 items that tint
- * with the signal blue when current — DroidDeck's SideRail.
+ * with the signal blue when current — DroidDeck's SideRail, carrying this app's own sections.
  */
 @Composable
-private fun DeckSideRail(selected: String, onSelect: (String) -> Unit, modifier: Modifier = Modifier) {
+private fun DeckSideRail(selected: String, onSelect: (String) -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier
+        modifier = Modifier
             .width(92.dp)
             .fillMaxHeight()
             .background(Deck.surface)
             .padding(vertical = 12.dp),
     ) {
-        val items = listOf(
-            Triple("steam", "Steam", Icons.Outlined.SportsEsports),
-            Triple("games", "Games", Icons.Outlined.VideoLibrary),
-            Triple("desktop", "Desktop", Icons.Outlined.DesktopWindows),
-            Triple("store", "Store", Icons.Outlined.Storefront),
-            Triple("components", "Components", Icons.Outlined.Layers),
-            Triple("setup", "Setup", Icons.Outlined.Tune),
-            Triple("updates", "Updates", Icons.Outlined.SystemUpdate),
-        )
-        items.forEach { (key, label, icon) ->
+        deckSections().forEach { item ->
             DeckRailItem(
-                label = label,
-                icon = icon,
-                current = selected == key,
-                badge = key == "setup" || key == "updates",
-                onClick = { onSelect(key) },
-            )
-        }
-        Spacer(Modifier.weight(1f))
-        // The running session, always one press away (DroidDeck's ResumeRailItem).
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-            modifier = Modifier
-                .width(80.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(Deck.good.copy(alpha = 0.12f))
-                .clickable { }
-                .padding(vertical = 9.dp, horizontal = 4.dp),
-        ) {
-            Box(
-                modifier = Modifier.size(14.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(7.dp)
-                        .clip(CircleShape)
-                        .background(Deck.good),
-                )
-            }
-            Text(
-                text = "Resume",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Deck.onBackground,
-                maxLines = 1,
-                softWrap = false,
-            )
-            Text(
-                text = "Session",
-                fontSize = 12.sp,
-                color = Deck.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                label = item.label,
+                icon = item.icon,
+                current = selected == item.key,
+                onClick = { onSelect(item.key) },
             )
         }
     }
@@ -299,7 +334,6 @@ private fun DeckRailItem(
     label: String,
     icon: ImageVector,
     current: Boolean,
-    badge: Boolean,
     onClick: () -> Unit,
 ) {
     Box(
@@ -336,20 +370,20 @@ private fun DeckRailItem(
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
         }
-        if (badge) {
+        if (current) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 8.dp, end = 18.dp)
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(Deck.attention),
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 4.dp)
+                    .size(width = 3.dp, height = 26.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(Deck.primary),
             )
         }
     }
 }
 
-/** The wall fades behind the words, and toward the bottom where the buttons sit. */
+/** The wall fades behind the words, and toward the bottom where the wordmark sits. */
 @Composable
 private fun DeckWallFade() {
     Box(

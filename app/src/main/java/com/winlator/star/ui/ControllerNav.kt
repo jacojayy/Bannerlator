@@ -44,33 +44,33 @@ val LocalControllerRootFocus = staticCompositionLocalOf { FocusRequester() }
  * every `clickable`/`focusable` in the app — and to dialogs, which inherit composition locals.
  * This replaces the ripple.
  */
-class ControllerFocusIndication : Indication {
+class ControllerFocusIndication(private val outline: Color = FocusOutlineColor) : Indication {
     @Composable
     override fun rememberUpdatedInstance(interactionSource: InteractionSource): IndicationInstance {
         val focused = interactionSource.collectIsFocusedAsState()
         val pressed = interactionSource.collectIsPressedAsState()
-        val instance = remember(interactionSource) { ControllerFocusInstance() }
+        val instance = remember(interactionSource) { ControllerFocusInstance(outline) }
         instance.focused = focused
         instance.pressed = pressed
         return instance
     }
 }
 
-private class ControllerFocusInstance : IndicationInstance {
+private class ControllerFocusInstance(private val color: Color) : IndicationInstance {
     var focused: State<Boolean> = mutableStateOf(false)
     var pressed: State<Boolean> = mutableStateOf(false)
 
     override fun ContentDrawScope.drawIndication() {
         drawContent()
         if (pressed.value) {
-            drawRect(color = FocusOutlineColor.copy(alpha = 0.16f))
+            drawRect(color = color.copy(alpha = 0.16f))
         }
         if (focused.value) {
             val stroke = 3.dp.toPx()
             val half = stroke / 2f
             val radius = 10.dp.toPx()
             drawRoundRect(
-                color = FocusOutlineColor,
+                color = color,
                 topLeft = Offset(half, half),
                 size = Size(size.width - stroke, size.height - stroke),
                 cornerRadius = CornerRadius(radius, radius),

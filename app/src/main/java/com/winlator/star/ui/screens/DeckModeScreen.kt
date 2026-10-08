@@ -1,10 +1,13 @@
 package com.winlator.star.ui.screens
 
+import android.app.Activity
+
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -35,8 +38,12 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,11 +59,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.winlator.star.container.ContainerManager
+import com.winlator.star.ui.ControllerFocusIndication
 import com.winlator.star.ui.SocialContent
 import com.winlator.star.ui.screens.contents.ContentsHubScreen
 import kotlinx.coroutines.Dispatchers
@@ -120,6 +132,34 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
         }
     }
 
+    // Truly full screen: the system status/nav bars go with the top bar, restored on leaving.
+    val view = LocalView.current
+    DisposableEffect(Unit) {
+        val controller = (context as? Activity)?.window?.let { WindowCompat.getInsetsController(it, view) }
+        if (controller != null) {
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+
+    // DroidDeck's Graphite palette as the theme for everything hosted here, so no Amethyst
+    // purple reaches a hosted screen — and the focus outline follows the same blue.
+    MaterialTheme(
+        colorScheme = darkColorScheme(
+            primary = Deck.primary,
+            onPrimary = Deck.onPrimary,
+            secondary = Deck.onSurfaceVariant,
+            background = Deck.background,
+            onBackground = Deck.onBackground,
+            surface = Deck.surface,
+            onSurface = Deck.onBackground,
+            surfaceVariant = Deck.surfaceVariant,
+            onSurfaceVariant = Deck.onSurfaceVariant,
+            error = Color(0xFFFF8A80),
+        ),
+    ) {
+        CompositionLocalProvider(LocalIndication provides remember { ControllerFocusIndication(Deck.primary) }) {
     Row(
         modifier = Modifier
             .fillMaxSize()
@@ -187,6 +227,8 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                     fontWeight = FontWeight.SemiBold,
                 )
             }
+        }
+    }
         }
     }
 }

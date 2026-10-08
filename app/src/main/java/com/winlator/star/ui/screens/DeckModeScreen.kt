@@ -82,7 +82,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** The DroidDeck palette (Graphite), lifted verbatim from DroidDeck's ui/Theme.kt. */
-private object Deck {
+internal object Deck {
     val background = Color(0xFF0A0B0D)
     val surface = Color(0xFF121417)
     val surfaceVariant = Color(0xFF1A1D22)

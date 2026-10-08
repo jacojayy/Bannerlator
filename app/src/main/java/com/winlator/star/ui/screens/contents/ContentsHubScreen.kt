@@ -298,7 +298,7 @@ private fun ComponentTab(vm: ContentsHubViewModel) {
             }
         }
     } else {
-        val title = hubCategories.firstOrNull { it.type == categoryType }?.title ?: categoryType
+        val title = hubCategories.firstOrNull { it.type == categoryType }?.title ?: categoryType ?: "Components"
         Column(modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 IconButton(onClick = { vm.selectCategory(null) }) {

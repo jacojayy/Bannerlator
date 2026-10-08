@@ -47,6 +47,21 @@ import com.winlator.star.fexcore.FEXCorePreset
 import com.winlator.star.fexcore.FEXCorePresetManager
 import com.winlator.star.store.SteamPrefs
 import com.winlator.star.store.SteamRegion
+import android.app.Activity
+import android.content.Intent
+import android.os.Environment
+import android.widget.Toast
+import java.io.File
+import java.util.concurrent.Executors
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
+import com.winlator.star.MainActivity
+import com.winlator.star.util.InAppFilePicker
+import com.winlator.star.contentdialog.ContentDialog
+import com.winlator.star.core.AppUtils
+import com.winlator.star.core.PreloaderDialog
+import com.winlator.star.midi.MidiManager
+import com.winlator.star.xenvironment.ImageFsInstaller
 
 /**
  * Deck Mode's settings page — a 1:1 mirror of [SettingsScreen]: the same preference keys, the same
@@ -107,6 +122,145 @@ internal fun DeckSettingsScreen() {
     var captureEnabled by remember { mutableStateOf(WinFgCapture.isEnabled(context)) }
     var captureRes by remember { mutableStateOf(WinFgCapture.captureRes(context)) }
     var captureLogging by remember { mutableStateOf(WinFgDiag.isExtraLoggingEnabled(context)) }
+
+    // ── Sound (MIDI Sound Font) — same as SettingsScreen's Sound section. ──
+    var sfNames by remember { mutableStateOf(listOf<String>()) }
+    var selectedSF by remember { mutableStateOf(0) }
+    fun refreshSF() {
+        val names = mutableListOf(MidiManager.DEFAULT_SF2_FILE)
+        val files = MidiManager.getSoundFontDir(context).listFiles()
+        if (files != null) for (file in files) if (file.name.endsWith(".sf2")) names.add(file.name)
+        sfNames = names
+    }
+
+    // ── ImageFS backup/restore — same as SettingsScreen's ImageFS section. ──
+    val activity = context as? Activity
+    val mainActivity = context as? MainActivity
+    var showBackupDialog by remember { mutableStateOf(false) }
+    var isBackingUp by remember { mutableStateOf(false) }
+    var pendingRestoreUri by remember { mutableStateOf<Uri?>(null) }
+    var showRestoreConfirm by remember { mutableStateOf(false) }
+    fun beginRestoreFromUri(uri: Uri) {
+        pendingRestoreUri = uri
+        showRestoreConfirm = true
+    }
+
+    // ── Frame Generation — LSFG Native (Lossless Scaling DLL) — same as SettingsScreen. ──
+    val lsfgDllFile = remember { File(context.filesDir, "lsfg-vk/Lossless.dll") }
+    fun lsfgDllStatusText(): String {
+        if (!(lsfgDllFile.isFile && lsfgDllFile.length() > 0)) return "Not set — LSFG Native will stay off"
+        val mb = lsfgDllFile.length() / (1024 * 1024)
+        return when (prefs.getString("lsfg_dll_source", null)) {
+            "store"  -> "Imported from Steam store (Lossless Scaling) — $mb MB"
+            "manual" -> "Imported manually — $mb MB"
+            else     -> "Imported ($mb MB)"
+        }
+    }
+    var lsfgDllStatus by remember { mutableStateOf(lsfgDllStatusText()) }
+    var lsfgShaderStatus by remember { mutableStateOf("") }
+    val lsfgShaderBuilding = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+    fun buildLsfgShaderCache() {
+        if (!(lsfgDllFile.isFile && lsfgDllFile.length() > 0)) { lsfgShaderStatus = ""; return }
+        if (!lsfgShaderBuilding.compareAndSet(false, true)) return
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        val appCtx = context.applicationContext
+        lsfgShaderStatus = "Preparing shaders for LSFG Native… (one-time, can take a minute)"
+        Thread {
+            val started = System.currentTimeMillis()
+            val status = try { com.winlator.star.core.LsfgNative.ensureCache(appCtx, false) } catch (e: Throwable) { -1 }
+            val took = (System.currentTimeMillis() - started) / 1000
+            val text = when (status) {
+                com.winlator.star.core.LsfgNative.STATUS_OK ->
+                    if (took >= 2) "Shaders ready for LSFG Native (built in ${took}s)" else "Shaders ready for LSFG Native"
+                -1 -> "Shader preparation failed; it will be retried when a game launches"
+                else -> com.winlator.star.core.LsfgNative.explain(status)
+            }
+            main.post { lsfgShaderStatus = text; lsfgShaderBuilding.set(false) }
+        }.start()
+    }
+    fun importLosslessDllFromUri(uri: Uri) {
+        try {
+            lsfgDllFile.parentFile?.mkdirs()
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                lsfgDllFile.outputStream().use { output -> input.copyTo(output) }
+            }
+            prefs.edit().putString("lsfg_dll_source", "manual").apply()
+            lsfgDllStatus = lsfgDllStatusText()
+            buildLsfgShaderCache()
+        } catch (e: Exception) {
+            lsfgDllStatus = "Import failed: " + e.message
+        }
+    }
+    fun findStoreLosslessDll(): File? {
+        val root = File(context.filesDir, "imagefs/steam_games")
+        if (!root.isDirectory) return null
+        return root.walkTopDown().maxDepth(6)
+            .filter { it.isFile && it.name.equals("Lossless.dll", ignoreCase = true) && it.length() > 0 }
+            .maxByOrNull { it.lastModified() }
+    }
+    fun detectLosslessDllFromStore() {
+        val src = findStoreLosslessDll()
+        if (src == null) {
+            Toast.makeText(context, "No Steam-store Lossless Scaling found — download it from the store or import manually.", Toast.LENGTH_LONG).show()
+            return
+        }
+        try {
+            lsfgDllFile.parentFile?.mkdirs()
+            src.inputStream().use { input -> lsfgDllFile.outputStream().use { output -> input.copyTo(output) } }
+            prefs.edit().putString("lsfg_dll_source", "store").apply()
+            lsfgDllStatus = lsfgDllStatusText()
+            buildLsfgShaderCache()
+            Toast.makeText(context, "Lossless.dll set from Steam store install.", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            lsfgDllStatus = "Detect failed: " + e.message
+            Toast.makeText(context, "Detect failed: " + e.message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // ── In-app pickers (primary actions, matching SettingsScreen). ──
+    val installSFInAppLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val uri = if (result.resultCode == Activity.RESULT_OK) InAppFilePicker.pickedUri(result.data) else null
+        if (uri != null && activity != null) {
+            val dialog = PreloaderDialog(activity)
+            dialog.showOnUiThread(R.string.installing_content)
+            MidiManager.installSF2File(context, uri, object : MidiManager.OnSoundFontInstalledCallback {
+                override fun onSuccess() {
+                    dialog.closeOnUiThread()
+                    activity.runOnUiThread {
+                        ContentDialog.alert(context, R.string.sound_font_installed_success, null)
+                        refreshSF()
+                    }
+                }
+                override fun onFailed(reason: Int) {
+                    dialog.closeOnUiThread()
+                    val resId = when (reason) {
+                        MidiManager.ERROR_BADFORMAT -> R.string.sound_font_bad_format
+                        MidiManager.ERROR_EXIST -> R.string.sound_font_already_exist
+                        else -> R.string.sound_font_installed_failed
+                    }
+                    activity.runOnUiThread { ContentDialog.alert(context, resId, null) }
+                }
+            })
+        }
+    }
+    val restoreFileInAppLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) InAppFilePicker.pickedUri(result.data)?.let { beginRestoreFromUri(it) }
+    }
+    val importLosslessDllInAppLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) InAppFilePicker.pickedUri(result.data)?.let { importLosslessDllFromUri(it) }
+    }
+
+    // ── Seed the SoundFont list + warm the LSFG shader cache on entry (as SettingsScreen does). ──
+    LaunchedEffect(Unit) {
+        refreshSF()
+        buildLsfgShaderCache()
+    }
 
     // ── Overlay dialogs. ──
     var showLogManager by remember { mutableStateOf(false) }
@@ -258,6 +412,35 @@ internal fun DeckSettingsScreen() {
                 selected = fex,
                 onPick = { fex = it; saved = false },
             )
+        }
+
+        // ── Sound ──
+        DeckGroup(title = "Sound") {
+            DeckChoiceRow(
+                label = "MIDI Sound Font",
+                options = sfNames.map { it to it },
+                selected = sfNames.getOrElse(selectedSF) { MidiManager.DEFAULT_SF2_FILE },
+                onPick = { picked -> selectedSF = sfNames.indexOf(picked).coerceAtLeast(0) },
+            )
+            DeckRow(label = "Install / Remove", hint = "Add a .sf2 or remove a custom one") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DeckButton("Install") {
+                        installSFInAppLauncher.launch(
+                            InAppFilePicker.buildIntent(context, InAppFilePicker.SF2, "Select SoundFont"),
+                        )
+                    }
+                    DeckButton("Remove", primary = false) {
+                        if (selectedSF != 0) {
+                            ContentDialog.confirm(context, R.string.do_you_want_to_remove_this_sound_font) {
+                                if (MidiManager.removeSF2File(context, sfNames[selectedSF])) {
+                                    AppUtils.showToast(context, R.string.sound_font_removed_success)
+                                    refreshSF()
+                                } else AppUtils.showToast(context, R.string.sound_font_removed_failed)
+                            }
+                        } else AppUtils.showToast(context, R.string.cannot_remove_default_sound_font)
+                    }
+                }
+            }
         }
 
         // ── Path Settings ──
@@ -423,6 +606,57 @@ internal fun DeckSettingsScreen() {
             )
         }
 
+        // ── ImageFS ──
+        DeckGroup(title = "ImageFS") {
+            DeckRow(label = "Reinstall ImageFS", hint = "Restore system files; containers unchanged") {
+                DeckButton("Reinstall", primary = false) {
+                    ContentDialog.confirm(context, R.string.do_you_want_to_reinstall_imagefs) {
+                        mainActivity?.let { ImageFsInstaller.installFromAssets(it) }
+                    }
+                }
+            }
+            DeckRow(label = "Backup Data", hint = "Archive the app data directory") {
+                DeckButton("Backup", primary = false) { showBackupDialog = true }
+            }
+            DeckRow(label = "Restore Data", hint = "Restore from a backup (restarts the app)") {
+                DeckButton("Restore", primary = false) {
+                    restoreFileInAppLauncher.launch(
+                        InAppFilePicker.buildIntent(context, InAppFilePicker.SAVE, "Select backup"),
+                    )
+                }
+            }
+        }
+
+        // ── Frame Generation — LSFG Native (Lossless Scaling) ──
+        DeckGroup(title = "Frame Generation — LSFG Native") {
+            DeckRow(label = "Status", hint = lsfgDllStatus) {
+                if (lsfgShaderStatus.isNotEmpty()) {
+                    Text(lsfgShaderStatus, color = DeckPalette.onSurfaceVariant, fontSize = 11.sp)
+                }
+            }
+            DeckRow(label = "Detect from Steam store", hint = "Find Lossless.dll in a store install") {
+                DeckButton("Detect", primary = false) { detectLosslessDllFromStore() }
+            }
+            DeckRow(label = "Import Lossless.dll", hint = "Pick your own copy") {
+                DeckButton("Import", primary = false) {
+                    importLosslessDllInAppLauncher.launch(
+                        InAppFilePicker.buildIntent(context, InAppFilePicker.DLL, "Select Lossless.dll"),
+                    )
+                }
+            }
+            if (lsfgDllFile.isFile) {
+                DeckRow(label = "Remove Lossless.dll") {
+                    DeckButton("Remove", primary = false) {
+                        lsfgDllFile.delete()
+                        com.winlator.star.core.LsfgNative.cacheFile(context).delete()
+                        prefs.edit().remove("lsfg_dll_source").apply()
+                        lsfgDllStatus = lsfgDllStatusText()
+                        lsfgShaderStatus = ""
+                    }
+                }
+            }
+        }
+
         // ── Developer — Frame-gen training capture ──
         DeckGroup(title = "Developer — Frame-gen training capture") {
             DeckRow(label = "Contribute frame-gen training capture") {
@@ -547,6 +781,74 @@ internal fun DeckSettingsScreen() {
             dismissButton = {
                 TextButton(onClick = { showCaptureConsent = false }) { Text("Cancel") }
             },
+        )
+    }
+
+    // ── ImageFS backup/restore dialogs (same as SettingsScreen). ──
+    if (isBackingUp) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(DeckPalette.background),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator()
+                Spacer(Modifier.height(16.dp))
+                Text("Backing up data...")
+            }
+        }
+    }
+    if (showBackupDialog) {
+        AlertDialog(
+            onDismissRequest = { showBackupDialog = false },
+            title = { Text("Backup Data") },
+            text = { Text("Do you want to create a backup of the app's data directory?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showBackupDialog = false
+                    isBackingUp = true
+                    val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
+                    executor.execute {
+                        val dataDir = context.filesDir.parentFile
+                        val backupFile = File(Environment.getExternalStorageDirectory(), "app_data_backup.tar")
+                        try {
+                            com.winlator.star.core.TarCompressorUtils.archive(
+                                arrayOf(dataDir), backupFile,
+                            ) { file -> !file.absolutePath.contains("imagefs/tmp/.sysvshm") }
+                            (context as? Activity)?.runOnUiThread {
+                                isBackingUp = false
+                                AppUtils.showToast(context, "Backup completed: ${backupFile.path}")
+                            }
+                        } catch (_: Exception) {
+                            (context as? Activity)?.runOnUiThread {
+                                isBackingUp = false
+                                AppUtils.showToast(context, "Backup failed.")
+                            }
+                        }
+                    }
+                }) { Text("Yes") }
+            },
+            dismissButton = { TextButton(onClick = { showBackupDialog = false }) { Text("No") } },
+        )
+    }
+    if (showRestoreConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRestoreConfirm = false; pendingRestoreUri = null },
+            title = { Text("Restore Data") },
+            text = { Text("This will restart the app. Continue?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showRestoreConfirm = false
+                    pendingRestoreUri?.let { uri ->
+                        val intent = Intent(context, com.winlator.star.restore.RestoreActivity::class.java)
+                        intent.data = uri
+                        context.startActivity(intent)
+                        (context as? Activity)?.finish()
+                    }
+                }) { Text("Restore") }
+            },
+            dismissButton = { TextButton(onClick = { showRestoreConfirm = false; pendingRestoreUri = null }) { Text("Cancel") } },
         )
     }
 }

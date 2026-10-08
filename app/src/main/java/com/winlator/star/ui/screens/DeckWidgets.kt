@@ -356,8 +356,8 @@ internal fun DeckTextRow(
 @Composable
 internal fun DeckButton(
     text: String,
-    onClick: () -> Unit,
     primary: Boolean = true,
+    onClick: () -> Unit,
 ) {
     Box(
         contentAlignment = Alignment.Center,

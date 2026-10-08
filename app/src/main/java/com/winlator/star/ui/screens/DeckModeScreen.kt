@@ -204,7 +204,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 "contents" -> ContentsHubScreen()
                 "saves" -> SavesScreen()
                 "social_hub" -> SocialContent()
-                "settings" -> SettingsScreen(onSaved = { })
+                "settings" -> DeckSettingsScreen()
                 else -> DeckHome(titles = titles)
             }
 

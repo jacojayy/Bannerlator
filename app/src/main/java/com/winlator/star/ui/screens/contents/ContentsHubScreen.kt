@@ -133,6 +133,7 @@ private val SavedBlue = Color(0xFF3D9BFF)
 
 private enum class HubTab(val label: String, val railLabel: String) {
     DOWNLOAD("Download Components", "Download"),
+    COMPONENT("Components", "Components"),
     INSTALLED("Installed", "Installed"),
     MY_FILES("My Files", "My Files"),
     LINUX("Linux Runtime", "Linux"),
@@ -140,6 +141,7 @@ private enum class HubTab(val label: String, val railLabel: String) {
 
 private fun tabIcon(t: HubTab): ImageVector = when (t) {
     HubTab.DOWNLOAD -> Icons.Filled.Download
+    HubTab.COMPONENT -> Icons.Filled.Extension
     HubTab.MY_FILES -> Icons.Filled.Folder
     HubTab.INSTALLED -> Icons.Filled.CheckCircle
     HubTab.LINUX -> Icons.Filled.DeveloperBoard
@@ -248,6 +250,7 @@ private fun HubTabContent(vm: ContentsHubViewModel, tab: HubTab, wide: Boolean) 
         // A single wide/narrow decision, taken once from the full screen width, drives BOTH the tab
         // chrome (rail vs top tabs) and the Download master–detail — so it's never rail + single-pane.
         HubTab.DOWNLOAD -> DownloadTab(vm, wide)
+        HubTab.COMPONENT -> ComponentTab(vm)
         HubTab.MY_FILES -> MyFilesTab(vm)
         HubTab.INSTALLED -> InstalledTab(vm)
         HubTab.LINUX -> LinuxRuntimeTab()
@@ -256,6 +259,108 @@ private fun HubTabContent(vm: ContentsHubViewModel, tab: HubTab, wide: Boolean) 
 
 // ── Download tab (master–detail) ───────────────────────────────────────────────
 @Composable
+// ── Component tab (category cards → that family's items across every source) ──────────
+private data class HubCategory(val type: String, val title: String, val blurb: String, val icon: ImageVector)
+
+// Fixed component families the catalog ships (mirrors ContentsTypes.ALL). Descriptors are accurate
+// one-liners, so the tab doubles as a quick glossary for newcomers.
+private val hubCategories = listOf(
+    HubCategory("DXVK", "DXVK", "Direct3D 9 / 10 / 11 \u2192 Vulkan", Icons.Filled.ViewInAr),
+    HubCategory("D7VK", "D7VK", "Direct3D 7 \u2192 Vulkan", Icons.Filled.ViewInAr),
+    HubCategory("VKD3D", "VKD3D", "Direct3D 12 \u2192 Vulkan (VKD3D-Proton)", Icons.Filled.ViewInAr),
+    HubCategory(ContentsTypes.GPU_DRIVERS, "GPU Drivers", "Turnip / Adreno Vulkan drivers", Icons.Filled.Memory),
+    HubCategory("Box64", "Box64", "x86_64 userland emulation on ARM64", Icons.Filled.Extension),
+    HubCategory("WOWBox64", "WOWBox64", "x86 (32-bit) emulation on ARM64", Icons.Filled.Extension),
+    HubCategory("FEXCore", "FEXCore", "x86 / x86_64 backend (ARM64EC)", Icons.Filled.Extension),
+    HubCategory("Wine", "Wine", "Windows compatibility layer (runtime)", Icons.Filled.Dns),
+    HubCategory("Proton", "Proton", "Valve's Wine fork tuned for gaming", Icons.Filled.Dns),
+)
+
+@Composable
+private fun ComponentTab(vm: ContentsHubViewModel) {
+    val cs = MaterialTheme.colorScheme
+    val categoryType by vm.categoryType.collectAsState()
+    val items by vm.categoryItems.collectAsState()
+    val loading by vm.categoryLoading.collectAsState()
+
+    if (categoryType == null) {
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text("Components", style = MaterialTheme.typography.titleLarge, color = cs.onSurface)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "Browse every component family across all repositories",
+                style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                itemsIndexed(hubCategories, key = { i, c -> "$i-${c.type}" }) { _, cat ->
+                    CategoryCard(cat) { vm.selectCategory(cat.type) }
+                    Spacer(Modifier.height(10.dp))
+                }
+            }
+        }
+    } else {
+        val title = hubCategories.firstOrNull { it.type == categoryType }?.title ?: categoryType
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                IconButton(onClick = { vm.selectCategory(null) }) {
+                    Icon(Icons.Filled.ArrowBack, "Back to categories", tint = cs.onSurface)
+                }
+                Text(title, style = MaterialTheme.typography.titleLarge, color = cs.onSurface,
+                    modifier = Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(4.dp))
+            if (loading) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = cs.primary)
+                }
+            } else {
+                Text(
+                    "${items.size} release${if (items.size != 1) "s" else ""}",
+                    style = MaterialTheme.typography.titleMedium, color = cs.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                if (items.isEmpty()) {
+                    Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text("No releases found for $title.", color = cs.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        itemsIndexed(items, key = { i, it -> "$i-${it.sourceName}-${it.downloadUrl}" }) { _, item ->
+                            ComponentRow(vm, item, showSource = true)
+                            Spacer(Modifier.height(10.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryCard(cat: HubCategory, onClick: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, cs.outline, RoundedCornerShape(16.dp))
+            .background(cs.surface, RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+    ) {
+        Icon(cat.icon, null, tint = cs.primary, modifier = Modifier.size(26.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(cat.title, style = MaterialTheme.typography.titleSmall, color = cs.onSurface,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
+            Text(cat.blurb, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Icon(Icons.Filled.ChevronRight, null, tint = cs.onSurfaceVariant)
+    }
+}
+
 private fun DownloadTab(vm: ContentsHubViewModel, wide: Boolean) {
     val sources by vm.sources.collectAsState()
     val selected by vm.selected.collectAsState()

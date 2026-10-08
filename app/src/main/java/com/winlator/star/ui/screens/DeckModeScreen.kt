@@ -198,7 +198,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 "containers" -> {
                     val detailId = deckDetail
                     if (detailId != null) {
-                        ContainerDetailScreen(
+                        DeckContainerDetailScreen(
                             containerId = detailId,
                             onNavigateBack = { deckDetail = null },
                         )
@@ -344,8 +344,16 @@ private fun DeckWordmark() {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = "BANNERLATOR",
+            text = "WIN",
             color = Deck.onBackground,
+            fontSize = 40.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = (-0.5).sp,
+            maxLines = 1,
+        )
+        Text(
+            text = "HUB",
+            color = Color(0xFF7EC8FF),
             fontSize = 40.sp,
             fontWeight = FontWeight.Black,
             letterSpacing = (-0.5).sp,

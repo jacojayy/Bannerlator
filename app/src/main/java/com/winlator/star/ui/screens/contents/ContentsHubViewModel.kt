@@ -260,6 +260,47 @@ class ContentsHubViewModel(app: Application) : AndroidViewModel(app) {
         sizeBytes = sizeBytes,
     )
 
+    // ── Component-tab category browse (category → that family's items, all sources) ──
+    private val _categoryType = MutableStateFlow<String?>(null)
+    val categoryType: StateFlow<String?> = _categoryType.asStateFlow()
+
+    private val _categoryItems = MutableStateFlow<List<CatalogItem>>(emptyList())
+    val categoryItems: StateFlow<List<CatalogItem>> = _categoryItems.asStateFlow()
+
+    private val _categoryLoading = MutableStateFlow(false)
+    val categoryLoading: StateFlow<Boolean> = _categoryLoading.asStateFlow()
+
+    fun selectCategory(type: String?) {
+        _categoryType.value = type
+        if (type == null) {
+            _categoryItems.value = emptyList()
+            return
+        }
+        loadCategory(type)
+    }
+
+    private fun loadCategory(type: String) {
+        _categoryLoading.value = true
+        _categoryItems.value = emptyList()
+        viewModelScope.launch {
+            val items = withContext(Dispatchers.IO) {
+                val comp = if (ContentsTypes.isDriver(type)) {
+                    // GPU drivers live in the shared driver registry, not the component cache.
+                    driverEntriesForSearch()
+                } else {
+                    repo.getAllSources().flatMap { src ->
+                        runCatching { repo.fetchFromSource(src, type) }.getOrDefault(emptyList())
+                            .map { it.toCatalog(type) }
+                    }
+                }
+                comp.distinctBy { it.downloadUrl }
+            }
+            _categoryItems.value = items
+            _categoryLoading.value = false
+            refreshStatus()
+        }
+    }
+
     // ── Cross-source search (components + shared driver registry) ────────────────
     fun setQuery(q: String) {
         _query.value = q

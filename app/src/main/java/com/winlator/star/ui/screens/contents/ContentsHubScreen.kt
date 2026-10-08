@@ -257,8 +257,6 @@ private fun HubTabContent(vm: ContentsHubViewModel, tab: HubTab, wide: Boolean) 
     }
 }
 
-// ── Download tab (master–detail) ───────────────────────────────────────────────
-@Composable
 // ── Component tab (category cards → that family's items across every source) ──────────
 private data class HubCategory(val type: String, val title: String, val blurb: String, val icon: ImageVector)
 
@@ -361,6 +359,8 @@ private fun CategoryCard(cat: HubCategory, onClick: () -> Unit) {
     }
 }
 
+// ── Download tab (master–detail) ───────────────────────────────────────────────
+@Composable
 private fun DownloadTab(vm: ContentsHubViewModel, wide: Boolean) {
     val sources by vm.sources.collectAsState()
     val selected by vm.selected.collectAsState()

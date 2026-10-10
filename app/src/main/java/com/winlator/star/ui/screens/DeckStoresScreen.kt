@@ -91,7 +91,7 @@ private fun launchDeckStore(context: Context, screen: Screen) {
 internal fun DeckStoresScreen() {
     val context = LocalContext.current
     val showStores by AppThemeState.showStores.collectAsState()
-    var selected by remember { mutableStateOf(Screen.Gog) }
+    var selected by remember { mutableStateOf<Screen>(Screen.Gog) }
     val active = deckStores.firstOrNull { it.screen == selected } ?: deckStores.first()
 
     Column(

@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -27,11 +30,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,6 +46,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,6 +56,11 @@ import androidx.compose.ui.unit.sp
 import com.winlator.star.store.AmazonLoginActivity
 import com.winlator.star.store.AmazonMainActivity
 import com.winlator.star.store.AmazonUserData
+import com.winlator.star.store.AmazonLibraryRepo
+import com.winlator.star.store.EpicLibraryRepo
+import com.winlator.star.store.GogLibraryRepo
+import com.winlator.star.store.SteamGame
+import com.winlator.star.store.SteamRepository
 import com.winlator.star.store.DownloadManagerActivity
 import com.winlator.star.store.EpicLoginActivity
 import com.winlator.star.store.EpicMainActivity
@@ -137,6 +150,103 @@ private fun deckAccountName(context: Context, screen: Screen): String? = when (s
 /** GOG alone caches an owned-games count in its profile; the rest report nothing rather than guess. */
 private fun deckOwnedCount(context: Context, screen: Screen): Int? =
     if (screen == Screen.Gog) GogUserData.cached(context)?.ownedGames else null
+
+
+/** One owned game, reduced to what the grid draws: a title and its cover art. */
+private data class DeckOwnedGame(val title: String, val art: String?)
+
+/**
+ * The store's REAL cached owned-games library, read off each store's own repo. Steam's rows come off
+ * `SteamRepository`'s SQLite cache (its header art needs no hash). Wrapped in `runCatching` so a
+ * store that has never synced simply draws nothing rather than taking the screen down.
+ */
+private fun deckOwnedGames(context: Context, screen: Screen): List<DeckOwnedGame> = runCatching {
+    when (screen) {
+        Screen.Gog -> GogLibraryRepo.cached(context).map { g ->
+            val c = GogLibraryRepo.toCatalogItem(g)
+            DeckOwnedGame(c.title, c.tallImageUrl ?: c.imageUrl)
+        }
+        Screen.Epic -> EpicLibraryRepo.cached(context).map { g ->
+            DeckOwnedGame(g.title, g.artCover.ifBlank { null } ?: g.artSquare.ifBlank { null })
+        }
+        Screen.Amazon -> AmazonLibraryRepo.cached(context).map { g ->
+            DeckOwnedGame(g.title, g.artUrl.ifBlank { null } ?: g.heroUrl.ifBlank { null })
+        }
+        Screen.Steam -> SteamRepository.getInstance().getCachedGameRows()
+            .map { SteamGame.fromGameRow(it) }
+            .map { DeckOwnedGame(it.name, it.headerUrl) }
+        else -> emptyList()
+    }
+}.getOrDefault(emptyList())
+
+/** The signed-in store's owned-games grid, loaded off the main thread from the real cache. */
+@Composable
+private fun DeckLibraryGrid(tile: DeckStoreTile, context: Context) {
+    var games by remember(tile.screen) { mutableStateOf<List<DeckOwnedGame>>(emptyList()) }
+    LaunchedEffect(tile.screen) {
+        games = withContext(Dispatchers.IO) { deckOwnedGames(context, tile.screen) }
+    }
+    Text(
+        text = if (games.isEmpty()) "Library"
+        else "Library \u00b7 ${games.size} game${if (games.size == 1) "" else "s"}",
+        style = MaterialTheme.typography.titleSmall,
+        color = Deck.onSurfaceVariant,
+    )
+    Spacer(Modifier.size(8.dp))
+    if (games.isEmpty()) {
+        Text(
+            text = "No cached library yet \u2014 open ${tile.screen.label} to sync it.",
+            color = Deck.onSurfaceVariant,
+            fontSize = 12.sp,
+        )
+    } else {
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = 116.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.heightIn(max = 380.dp).fillMaxWidth(),
+        ) {
+            itemsIndexed(games, key = { i, g -> "$i-${g.title}" }) { _, game ->
+                DeckGameCard(game) { launchDeckStore(context, tile.screen) }
+            }
+        }
+    }
+}
+
+/** A cover card: the game's real art over a graphite tile, with its title beneath. */
+@Composable
+private fun DeckGameCard(game: DeckOwnedGame, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(10.dp)
+    Column(modifier = Modifier.clickable(onClick = onClick)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(150.dp)
+                .clip(shape)
+                .background(Deck.surface)
+                .border(1.dp, Deck.line, shape),
+        ) {
+            val art = game.art
+            if (art != null) {
+                AsyncImage(
+                    model = art,
+                    contentDescription = game.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.matchParentSize(),
+                )
+            }
+        }
+        Spacer(Modifier.size(6.dp))
+        Text(
+            text = game.title,
+            color = Deck.onBackground,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
 
 @Composable
 internal fun DeckStoresScreen() {
@@ -399,5 +509,7 @@ private fun DeckAccountCard(tile: DeckStoreTile, context: Context) {
         DeckButton("Downloads", primary = false) {
             context.startActivity(Intent(context, DownloadManagerActivity::class.java))
         }
+        Spacer(Modifier.size(16.dp))
+        DeckLibraryGrid(tile, context)
     }
 }

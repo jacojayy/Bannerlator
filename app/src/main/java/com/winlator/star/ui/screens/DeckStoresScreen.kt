@@ -56,10 +56,14 @@ import androidx.compose.ui.unit.sp
 import com.winlator.star.store.AmazonLoginActivity
 import com.winlator.star.store.AmazonMainActivity
 import com.winlator.star.store.AmazonUserData
+import com.winlator.star.store.AmazonGameDetailActivity
 import com.winlator.star.store.AmazonLibraryRepo
+import com.winlator.star.store.EpicGameDetailActivity
 import com.winlator.star.store.EpicLibraryRepo
+import com.winlator.star.store.GogGameDetailActivity
 import com.winlator.star.store.GogLibraryRepo
 import com.winlator.star.store.SteamGame
+import com.winlator.star.store.SteamGameDetailActivity
 import com.winlator.star.store.SteamRepository
 import com.winlator.star.store.DownloadManagerActivity
 import com.winlator.star.store.EpicLoginActivity
@@ -152,8 +156,8 @@ private fun deckOwnedCount(context: Context, screen: Screen): Int? =
     if (screen == Screen.Gog) GogUserData.cached(context)?.ownedGames else null
 
 
-/** One owned game, reduced to what the grid draws: a title and its cover art. */
-private data class DeckOwnedGame(val title: String, val art: String?)
+/** One owned game: cover art, and how to open its real per-store detail screen. */
+private data class DeckOwnedGame(val title: String, val art: String?, val open: (Context) -> Unit)
 
 /**
  * The store's REAL cached owned-games library, read off each store's own repo. Steam's rows come off
@@ -164,17 +168,70 @@ private fun deckOwnedGames(context: Context, screen: Screen): List<DeckOwnedGame
     when (screen) {
         Screen.Gog -> GogLibraryRepo.cached(context).map { g ->
             val c = GogLibraryRepo.toCatalogItem(g)
-            DeckOwnedGame(c.title, c.tallImageUrl ?: c.imageUrl)
+            DeckOwnedGame(
+                title = g.title,
+                art = c.tallImageUrl ?: c.imageUrl,
+                open = { ctx ->
+                    ctx.startActivity(Intent(ctx, GogGameDetailActivity::class.java).apply {
+                        putExtra("game_id", g.gameId)
+                        putExtra("title", g.title)
+                        putExtra("image_url", g.imageUrl)
+                        putExtra("description", g.description)
+                        putExtra("developer", g.developer)
+                        putExtra("category", g.category)
+                        putExtra("generation", g.generation)
+                    })
+                },
+            )
         }
         Screen.Epic -> EpicLibraryRepo.cached(context).map { g ->
-            DeckOwnedGame(g.title, g.artCover.ifBlank { null } ?: g.artSquare.ifBlank { null })
+            DeckOwnedGame(
+                title = g.title,
+                art = g.artCover.ifBlank { null } ?: g.artSquare.ifBlank { null },
+                open = { ctx ->
+                    ctx.startActivity(Intent(ctx, EpicGameDetailActivity::class.java).apply {
+                        putExtra("app_name", g.appName)
+                        putExtra("title", g.title)
+                        putExtra("description", g.description)
+                        putExtra("developer", g.developer)
+                        putExtra("art_cover", g.artCover)
+                        putExtra("namespace", g.namespace)
+                        putExtra("catalog_item_id", g.catalogItemId)
+                    })
+                },
+            )
         }
         Screen.Amazon -> AmazonLibraryRepo.cached(context).map { g ->
-            DeckOwnedGame(g.title, g.artUrl.ifBlank { null } ?: g.heroUrl.ifBlank { null })
+            DeckOwnedGame(
+                title = g.title,
+                art = g.artUrl.ifBlank { null } ?: g.heroUrl.ifBlank { null },
+                open = { ctx ->
+                    ctx.startActivity(Intent(ctx, AmazonGameDetailActivity::class.java).apply {
+                        putExtra("product_id", g.productId)
+                        putExtra("entitlement_id", g.entitlementId)
+                        putExtra("title", g.title)
+                        putExtra("developer", g.developer)
+                        putExtra("publisher", g.publisher)
+                        putExtra("art_url", g.artUrl)
+                        putExtra("product_sku", g.productSku)
+                    })
+                },
+            )
         }
         Screen.Steam -> SteamRepository.getInstance().getCachedGameRows()
             .map { SteamGame.fromGameRow(it) }
-            .map { DeckOwnedGame(it.name, it.headerUrl) }
+            .map { g ->
+                DeckOwnedGame(
+                    title = g.name,
+                    art = g.headerUrl,
+                    open = { ctx ->
+                        ctx.startActivity(
+                            Intent(ctx, SteamGameDetailActivity::class.java)
+                                .putExtra(SteamGameDetailActivity.EXTRA_APP_ID, g.appId),
+                        )
+                    },
+                )
+            }
         else -> emptyList()
     }
 }.getOrDefault(emptyList())
@@ -207,7 +264,7 @@ private fun DeckLibraryGrid(tile: DeckStoreTile, context: Context) {
             modifier = Modifier.heightIn(max = 380.dp).fillMaxWidth(),
         ) {
             itemsIndexed(games, key = { i, g -> "$i-${g.title}" }) { _, game ->
-                DeckGameCard(game) { launchDeckStore(context, tile.screen) }
+                DeckGameCard(game) { game.open(context) }
             }
         }
     }

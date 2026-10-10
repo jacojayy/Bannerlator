@@ -36,10 +36,10 @@ import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Inventory2
-import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -109,8 +109,8 @@ private class DeckSection(val key: String, val label: String, val icon: ImageVec
 private fun deckSections() = listOf(
     DeckSection("home", "Home", Icons.Filled.Apps),
     DeckSection("containers", "Containers", Icons.Filled.Folder),
+    DeckSection("stores", "Stores", Icons.Filled.Storefront),
     DeckSection("file_manager", "Files", Icons.Filled.FolderOpen),
-    DeckSection("graphics", "Graphics", Icons.Filled.Memory),
     DeckSection("input_controls", "Controls", Icons.Filled.SportsEsports),
     DeckSection("contents", "Contents", Icons.Filled.Inventory2),
     DeckSection("saves", "Saves", Icons.Filled.Save),
@@ -206,6 +206,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         DeckContainersScreen(onEditContainer = { id -> deckDetail = id })
                     }
                 }
+                "stores" -> DeckStoresScreen()
                 "file_manager" -> FileManagerScreen()
                 "graphics" -> DeckGraphicsPane(
                     pane = graphicPane,

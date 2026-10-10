@@ -47,6 +47,7 @@ import com.winlator.star.fexcore.FEXCorePreset
 import com.winlator.star.fexcore.FEXCorePresetManager
 import com.winlator.star.store.SteamPrefs
 import com.winlator.star.store.SteamRegion
+import com.winlator.star.ui.theme.AppThemeState
 import android.app.Activity
 import android.content.Intent
 import android.os.Environment
@@ -113,12 +114,12 @@ internal fun DeckSettingsScreen() {
     var steamChat by remember { mutableStateOf(SteamPrefs.isChatNotificationsEnabled(context)) }
     var steamOffline by remember { mutableStateOf(SteamPrefs.isOfflinePresenceEnabled(context)) }
     var steamRegion by remember { mutableStateOf(SteamRegion.mode(context)) }
-    var showStores by remember { mutableStateOf(prefs.getBoolean("show_stores", true)) }
-    var showInternal by remember { mutableStateOf(prefs.getBoolean("show_internal_storage", true)) }
-    var showSd by remember { mutableStateOf(prefs.getBoolean("show_sd_storage", true)) }
+    var showStores by remember { mutableStateOf(AppThemeState.showStores.value) }
+    var showInternal by remember { mutableStateOf(AppThemeState.showInternalStorage.value) }
+    var showSd by remember { mutableStateOf(AppThemeState.showSdStorage.value) }
     var orientation by remember { mutableStateOf(AppOrientation.mode(context)) }
-    var uiScale by remember { mutableStateOf(prefs.getFloat("ui_scale", 0.9f).coerceIn(0.5f, 1.5f)) }
-    var fontScale by remember { mutableStateOf(prefs.getFloat("font_scale", 0.9f).coerceIn(0.5f, 1.5f)) }
+    var uiScale by remember { mutableStateOf(AppThemeState.uiScale.value) }
+    var fontScale by remember { mutableStateOf(AppThemeState.fontScale.value) }
     var captureEnabled by remember { mutableStateOf(WinFgCapture.isEnabled(context)) }
     var captureRes by remember { mutableStateOf(WinFgCapture.captureRes(context)) }
     var captureLogging by remember { mutableStateOf(WinFgDiag.isExtraLoggingEnabled(context)) }
@@ -464,19 +465,19 @@ internal fun DeckSettingsScreen() {
             DeckRow(label = "Show game stores") {
                 DeckToggle(showStores) {
                     showStores = it
-                    prefs.edit().putBoolean("show_stores", it).apply()
+                    AppThemeState.setShowStores(it)
                 }
             }
             DeckRow(label = "Show internal storage") {
                 DeckToggle(showInternal) {
                     showInternal = it
-                    prefs.edit().putBoolean("show_internal_storage", it).apply()
+                    AppThemeState.setShowInternalStorage(it)
                 }
             }
             DeckRow(label = "Show SD card storage") {
                 DeckToggle(showSd) {
                     showSd = it
-                    prefs.edit().putBoolean("show_sd_storage", it).apply()
+                    AppThemeState.setShowSdStorage(it)
                 }
             }
         }
@@ -507,7 +508,7 @@ internal fun DeckSettingsScreen() {
                 format = { "${(it * 100).toInt()}%" },
                 onChange = {
                     uiScale = it
-                    prefs.edit().putFloat("ui_scale", it).apply()
+                    AppThemeState.setUiScale(it)
                 },
             )
             DeckSliderRow(
@@ -517,7 +518,7 @@ internal fun DeckSettingsScreen() {
                 format = { "${(it * 100).toInt()}%" },
                 onChange = {
                     fontScale = it
-                    prefs.edit().putFloat("font_scale", it).apply()
+                    AppThemeState.setFontScale(it)
                 },
             )
         }

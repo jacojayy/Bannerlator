@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -54,6 +55,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.winlator.star.store.AmazonLoginActivity
+import com.winlator.star.store.DeckRise
+import com.winlator.star.store.deckTileFocus
 import com.winlator.star.store.AmazonMainActivity
 import com.winlator.star.store.AmazonUserData
 import com.winlator.star.store.AmazonGameDetailActivity
@@ -263,8 +266,10 @@ private fun DeckLibraryGrid(tile: DeckStoreTile, context: Context) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.heightIn(max = 380.dp).fillMaxWidth(),
         ) {
-            itemsIndexed(games, key = { i, g -> "$i-${g.title}" }) { _, game ->
-                DeckGameCard(game) { game.open(context) }
+            itemsIndexed(games, key = { i, g -> "$i-${g.title}" }) { index, game ->
+                DeckRise(index = index % 10) {
+                    DeckGameCard(game) { game.open(context) }
+                }
             }
         }
     }
@@ -274,7 +279,12 @@ private fun DeckLibraryGrid(tile: DeckStoreTile, context: Context) {
 @Composable
 private fun DeckGameCard(game: DeckOwnedGame, onClick: () -> Unit) {
     val shape = RoundedCornerShape(10.dp)
-    Column(modifier = Modifier.clickable(onClick = onClick)) {
+    val interaction = remember { MutableInteractionSource() }
+    Column(
+        modifier = Modifier
+            .deckTileFocus(interaction)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+    ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()

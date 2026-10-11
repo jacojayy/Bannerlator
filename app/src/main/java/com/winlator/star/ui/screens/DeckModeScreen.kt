@@ -13,6 +13,8 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -53,6 +55,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.winlator.star.store.deckTileFocus
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -402,19 +405,25 @@ private fun DeckRailItem(
     current: Boolean,
     onClick: () -> Unit,
 ) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .padding(bottom = 4.dp)
             .size(width = 80.dp, height = 56.dp)
+            .deckTileFocus(interaction)
             .clip(RoundedCornerShape(14.dp))
-            .background(if (current) Deck.primary.copy(alpha = 0.14f) else Color.Transparent)
+            .background(
+                if (current) Deck.primary.copy(alpha = 0.14f)
+                else if (focused) Deck.surfaceVariant else Color.Transparent,
+            )
             .border(
                 width = 1.dp,
-                color = if (current) Deck.primary else Color.Transparent,
+                color = if (current || focused) Deck.primary else Color.Transparent,
                 shape = RoundedCornerShape(14.dp),
             )
-            .clickable { onClick() },
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,

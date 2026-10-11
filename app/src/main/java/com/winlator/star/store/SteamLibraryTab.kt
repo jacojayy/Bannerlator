@@ -6,6 +6,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -531,14 +532,16 @@ private fun LibraryCapsuleCard(
     onAction: () -> Unit,
 ) {
     val shape = RoundedCornerShape(10.dp)
+    val interaction = remember { MutableInteractionSource() }
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .steamFocusRing(shape)
+            .deckTileFocus(interaction)
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .border(1.dp, MaterialTheme.colorScheme.outline, shape)
-            .clickable(onClick = onOpen),
+            .clickable(interactionSource = interaction, indication = null, onClick = onOpen),
     ) {
         StoreCapsule(
             appId = game.appId,

@@ -79,6 +79,7 @@ class SteamLoginActivity : ComponentActivity(), SteamAuthManager.AuthListener {
         com.winlator.star.core.AppOrientation.apply(this)
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 SteamLoginScreen(
                     username = username,
                     password = password,
@@ -113,7 +114,8 @@ class SteamLoginActivity : ComponentActivity(), SteamAuthManager.AuthListener {
                         },
                     )
                 }
-            }
+            
+                }}
         }
     }
 

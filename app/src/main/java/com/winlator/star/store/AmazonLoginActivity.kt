@@ -47,6 +47,7 @@ class AmazonLoginActivity : ComponentActivity() {
 
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 val authUrl = buildAuthUrl(pendingClientId!!, challenge)
                 AmazonLoginWebView(
                     authUrl = authUrl,
@@ -54,7 +55,8 @@ class AmazonLoginActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                 )
                 resultBarMsg?.let { UninstallResultBar(it) { resultBarMsg = null } }
-            }
+            
+                }}
         }
     }
 

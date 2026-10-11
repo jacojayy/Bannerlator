@@ -75,6 +75,7 @@ class EpicMainActivity : ComponentActivity() {
         refreshView()
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 if (isLoggedIn) {
                     EpicStorefrontHost(
                         initialTab = startTab,
@@ -93,7 +94,8 @@ class EpicMainActivity : ComponentActivity() {
                     })
                     resultBarMsg?.let { UninstallResultBar(it) { resultBarMsg = null } }
                 }
-            }
+            
+                }}
         }
     }
 

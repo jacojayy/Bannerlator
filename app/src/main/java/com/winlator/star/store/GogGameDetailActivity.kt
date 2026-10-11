@@ -243,6 +243,7 @@ class GogGameDetailActivity : ComponentActivity(), GogRedistInstaller.Host {
 
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 GogGameDetailScreen(
                     headerBitmap = headerBitmap,
                     title = title,
@@ -352,7 +353,8 @@ class GogGameDetailActivity : ComponentActivity(), GogRedistInstaller.Host {
                     )
                 }
                 resultBarMsg?.let { UninstallResultBar(it) { resultBarMsg = null } }
-            }
+            
+                }}
         }
 
         loadHeaderImage()

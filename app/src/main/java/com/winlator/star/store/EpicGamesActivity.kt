@@ -119,6 +119,7 @@ class EpicGamesActivity : ComponentActivity() {
 
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 EpicGamesScreen(
                     syncText = syncText,
                     searchQuery = searchQuery,
@@ -176,7 +177,8 @@ class EpicGamesActivity : ComponentActivity() {
                     },
                 )
                 resultBarMsg?.let { UninstallResultBar(it) { resultBarMsg = null } }
-            }
+            
+                }}
         }
 
         val cached = loadCachedGames()

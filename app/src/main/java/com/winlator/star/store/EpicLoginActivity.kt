@@ -44,6 +44,7 @@ class EpicLoginActivity : ComponentActivity() {
         Log.d(TAG, "EpicLoginActivity: loading auth page")
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 EpicLoginWebView(
                     authUrl = AUTH_URL,
                     redirectHost = REDIRECT_HOST,
@@ -51,7 +52,8 @@ class EpicLoginActivity : ComponentActivity() {
                     onJsonPage = { view -> handleJsonPage(view) },
                 )
                 resultBarMsg?.let { UninstallResultBar(it) { resultBarMsg = null } }
-            }
+            
+                }}
         }
     }
 

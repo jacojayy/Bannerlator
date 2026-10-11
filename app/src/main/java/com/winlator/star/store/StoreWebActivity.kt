@@ -88,6 +88,7 @@ class StoreWebActivity : ComponentActivity() {
 
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 var progress by remember { mutableIntStateOf(0) }
                 var title by remember { mutableStateOf(pageTitle) }
                 var canGoBack by remember { mutableStateOf(false) }
@@ -216,7 +217,8 @@ class StoreWebActivity : ComponentActivity() {
                         )
                     }
                 }
-            }
+            
+                }}
         }
     }
 

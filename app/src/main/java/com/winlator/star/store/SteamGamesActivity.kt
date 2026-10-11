@@ -68,7 +68,9 @@ class SteamGamesActivity : ComponentActivity() {
         SteamFriendsStore.init(this)
 
         setContent {
-            WinlatorTheme { SteamLibraryScreen(onBack = { finish() }) }
+            WinlatorTheme {
+                DeckStoreTheme { SteamLibraryScreen(onBack = { finish() }) 
+                }}
         }
     }
 }

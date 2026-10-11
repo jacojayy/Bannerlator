@@ -128,11 +128,13 @@ class SteamSaveManagerActivity : ComponentActivity() {
         val focusAppId = intent.getIntExtra(EXTRA_FOCUS_APP_ID, 0)
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 SaveManagerScreen(
                     focusAppId = focusAppId,
                     onBack = { finish() },
                 )
-            }
+            
+                }}
         }
     }
 }

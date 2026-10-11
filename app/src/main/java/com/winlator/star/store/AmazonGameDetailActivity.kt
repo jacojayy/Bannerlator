@@ -160,6 +160,7 @@ class AmazonGameDetailActivity : ComponentActivity() {
 
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 Box(Modifier.fillMaxSize()) {
                 AmazonGameDetailScreen(
                     artUrl = artUrl,
@@ -196,7 +197,8 @@ class AmazonGameDetailActivity : ComponentActivity() {
                 )
                 resultBarMsg?.let { UninstallResultBar(it) { resultBarMsg = null } }
                 }
-            }
+            
+                }}
         }
     }
 

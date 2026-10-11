@@ -126,6 +126,7 @@ class AmazonGamesActivity : ComponentActivity() {
 
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 AmazonGamesScreen(
                     games = allGames,
                     searchQuery = searchQuery,
@@ -191,7 +192,8 @@ class AmazonGamesActivity : ComponentActivity() {
                     )
                 }
                 resultBarMsg?.let { UninstallResultBar(it) { resultBarMsg = null } }
-            }
+            
+                }}
         }
 
         val cached = loadCachedGames()

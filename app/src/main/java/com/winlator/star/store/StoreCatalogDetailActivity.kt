@@ -96,13 +96,15 @@ class StoreCatalogDetailActivity : ComponentActivity() {
         if (item == null || item.id.isBlank()) { finish(); return }
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 CatalogDetailScreen(
                     item = item,
                     onBack = { finish() },
                     onOpenWeb = { url, title -> startActivity(StoreWebActivity.intent(this, url, title)) },
                     onOpenBrowser = { url -> runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } },
                 )
-            }
+            
+                }}
         }
     }
 }

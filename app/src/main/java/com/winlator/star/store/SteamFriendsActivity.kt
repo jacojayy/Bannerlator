@@ -77,12 +77,14 @@ class SteamFriendsActivity : ComponentActivity() {
         openFriendId.value = intent?.getLongExtra(EXTRA_OPEN_FRIEND, 0L) ?: 0L
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 SteamFriendsRoot(
                     onClose = { finish() },
                     openFriendId = openFriendId.value,
                     onFriendOpened = { openFriendId.value = 0L },
                 )
-            }
+            
+                }}
         }
     }
 

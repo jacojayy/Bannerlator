@@ -203,6 +203,7 @@ class GogGamesActivity : ComponentActivity() {
 
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 GogGamesScreen(
                     syncText = syncText,
                     syncTextColor = syncTextColor,
@@ -272,7 +273,8 @@ class GogGamesActivity : ComponentActivity() {
                     )
                 }
                 resultBarMsg?.let { UninstallResultBar(it) { resultBarMsg = null } }
-            }
+            
+                }}
         }
 
         val cached = loadCachedGames()

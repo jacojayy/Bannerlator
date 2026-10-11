@@ -78,6 +78,7 @@ class GogMainActivity : ComponentActivity() {
         refreshView()
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 if (isLoggedIn) {
                     GogStorefrontHost(
                         initialTab = startTab,
@@ -93,7 +94,8 @@ class GogMainActivity : ComponentActivity() {
                         startActivity(Intent(this@GogMainActivity, GogLoginActivity::class.java))
                     })
                 }
-            }
+            
+                }}
         }
     }
 

@@ -69,6 +69,7 @@ class QrLoginActivity : ComponentActivity(), SteamQrAuthManager.QrAuthListener {
 
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 QrLoginScreen(
                     qrBitmap = qrBitmap,
                     statusText = statusText,
@@ -78,7 +79,8 @@ class QrLoginActivity : ComponentActivity(), SteamQrAuthManager.QrAuthListener {
                     onRetry = { startQrAuth() },
                     onCancel = { finish() },
                 )
-            }
+            
+                }}
         }
 
         startQrAuth()

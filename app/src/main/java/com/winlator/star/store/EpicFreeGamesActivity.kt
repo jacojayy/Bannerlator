@@ -75,6 +75,7 @@ class EpicFreeGamesActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 EpicFreeGamesScreen(
                     statusText = statusText,
                     isLoading = isLoading,
@@ -91,7 +92,8 @@ class EpicFreeGamesActivity : ComponentActivity() {
                         }
                     },
                 )
-            }
+            
+                }}
         }
         fetchFreeGames()
     }

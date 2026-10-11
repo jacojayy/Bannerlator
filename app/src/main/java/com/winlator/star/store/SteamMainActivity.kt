@@ -134,14 +134,16 @@ class SteamMainActivity : ComponentActivity() {
 
         setContent {
             WinlatorTheme {
-                if (loggedIn.value) {
-                    SteamStorefrontHost(
-                        initialTab = startTab.value,
-                        onSignedOut = { loggedIn.value = false; finish() },
-                        onClose = { finish() },
-                    )
-                } else {
-                    SteamBootScreen()
+                DeckStoreTheme {
+                    if (loggedIn.value) {
+                        SteamStorefrontHost(
+                            initialTab = startTab.value,
+                            onSignedOut = { loggedIn.value = false; finish() },
+                            onClose = { finish() },
+                        )
+                    } else {
+                        SteamBootScreen()
+                    }
                 }
             }
         }

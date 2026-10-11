@@ -143,6 +143,9 @@ class GogLoginActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Graphite surround so the WebView's frame matches the rest of the Deck store UI. The
+        // WebView itself is deliberately untouched — see the class comment about the white screen.
+        window.setBackgroundDrawableResource(android.R.color.black)
         oauthState = savedInstanceState?.getString(KEY_STATE) ?: generateState()
 
         setContentView(buildChrome())

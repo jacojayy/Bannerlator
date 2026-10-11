@@ -317,6 +317,7 @@ class SteamGameDetailActivity : ComponentActivity(), SteamRepository.SteamEventL
 
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 SteamGameDetailScreen(
                     appId = appId,
                     signedIn = SteamPrefs.isLoggedIn,
@@ -560,7 +561,8 @@ class SteamGameDetailActivity : ComponentActivity(), SteamRepository.SteamEventL
                 }
 
                 uninstallResult?.let { UninstallResultBar(it) { uninstallResult = null } }
-            }
+            
+                }}
         }
 
         SteamRepository.getInstance().addListener(this)

@@ -120,6 +120,7 @@ class DownloadManagerActivity : ComponentActivity() {
 
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 DownloadManagerScreen(
                     onBack = { finish() },
                     onClear = { clearTerminalAndLibrary() },
@@ -176,7 +177,8 @@ class DownloadManagerActivity : ComponentActivity() {
                         onDismiss = { addResult = null },
                     )
                 }
-            }
+            
+                }}
         }
     }
 

@@ -74,6 +74,7 @@ class AmazonMainActivity : ComponentActivity() {
         refreshView()
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 if (isLoggedIn) {
                     AmazonStorefrontHost(
                         initialTab = startTab,
@@ -92,7 +93,8 @@ class AmazonMainActivity : ComponentActivity() {
                     })
                     resultBarMsg?.let { UninstallResultBar(it) { resultBarMsg = null } }
                 }
-            }
+            
+                }}
         }
     }
 

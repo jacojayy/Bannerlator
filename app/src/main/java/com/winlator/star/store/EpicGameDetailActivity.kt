@@ -159,6 +159,7 @@ class EpicGameDetailActivity : ComponentActivity() {
 
         setContent {
             WinlatorTheme {
+                DeckStoreTheme {
                 EpicGameDetailScreen(
                     appName = appName!!,
                     title = title ?: "",
@@ -214,7 +215,8 @@ class EpicGameDetailActivity : ComponentActivity() {
                     onCloudDownload = { cloudDownload() },
                 )
                 resultBarMsg?.let { UninstallResultBar(it) { resultBarMsg = null } }
-            }
+            
+                }}
         }
 
         refreshActionState()

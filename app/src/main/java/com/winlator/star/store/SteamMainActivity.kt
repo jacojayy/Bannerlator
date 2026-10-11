@@ -401,36 +401,12 @@ private fun StorefrontTabRow(
     counts: Map<SteamTab, Int>,
     onSelect: (SteamTab) -> Unit,
 ) {
-    TabRow(
-        selectedTabIndex = tab.ordinal,
-        containerColor = MaterialTheme.colorScheme.background,
-        contentColor = MaterialTheme.colorScheme.primary,
-    ) {
-        SteamTab.values().forEach { t ->
-            Tab(
-                selected = tab == t,
-                onClick = { onSelect(t) },
-                // Rectangular ring: a tab fills its slot, so a rounded ring would float oddly.
-                modifier = Modifier.steamFocusRing(RoundedCornerShape(0.dp)),
-                selectedContentColor = MaterialTheme.colorScheme.primary,
-                unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                text = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(t.label, fontWeight = FontWeight.Bold, maxLines = 1)
-                        counts[t]?.takeIf { it > 0 }?.let {
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                text = "($it)",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                            )
-                        }
-                    }
-                },
-            )
-        }
-    }
+    val specs = SteamTab.values().map { DeckTabSpec(it.label, counts[it] ?: 0) }
+    DeckTabBar(
+        tabs = specs,
+        selected = tab.ordinal,
+        onSelect = { onSelect(SteamTab.values()[it]) },
+    )
 }
 
 /**

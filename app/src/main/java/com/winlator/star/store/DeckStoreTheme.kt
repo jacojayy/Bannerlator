@@ -46,5 +46,6 @@ internal val DeckGraphiteScheme = darkColorScheme(
 /** Applies the Graphite Deck look to a store screen. Nest inside [WinlatorTheme]. */
 @Composable
 internal fun DeckStoreTheme(content: @Composable () -> Unit) {
+    rememberDeckMotion()
     MaterialTheme(colorScheme = DeckGraphiteScheme, content = content)
 }

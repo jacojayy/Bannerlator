@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -255,14 +257,14 @@ private fun DeckLibraryGrid(tile: DeckStoreTile, context: Context) {
     }
     Text(
         text = if (games.isEmpty()) "Library"
-        else "Library \u00b7 ${games.size} game${if (games.size == 1) "" else "s"}",
+        else "Library - ${games.size} game${if (games.size == 1) "" else "s"}",
         style = MaterialTheme.typography.titleSmall,
         color = Deck.onSurfaceVariant,
     )
     Spacer(Modifier.size(8.dp))
     if (games.isEmpty()) {
         Text(
-            text = "No cached library yet \u2014 open ${tile.screen.label} to sync it.",
+            text = "No cached library yet - open ${tile.screen.label} to sync it.",
             color = Deck.onSurfaceVariant,
             fontSize = 12.sp,
         )
@@ -330,6 +332,12 @@ private data class DeckBrowseItem(
     val open: (Context) -> Unit,
 )
 
+/** A labeled rail of storefront items, DroidDeck style. */
+private data class DeckBrowseSection(val title: String, val items: List<DeckBrowseItem>)
+
+/** A store's featured catalog: a hero pick plus labeled rails. */
+private data class DeckStoreData(val hero: DeckBrowseItem?, val sections: List<DeckBrowseSection>)
+
 private fun deckCatalogPrice(i: CatalogItem): String = when {
     i.isFree -> "Free"
     i.hasPrice && i.finalPrice.isNotBlank() -> i.finalPrice
@@ -357,69 +365,154 @@ private fun deckSteamBrowse(i: SteamStoreCatalog.StoreItem): DeckBrowseItem =
         )
     }
 
+private fun <T> List<T>.rail(title: String, toItem: (T) -> DeckBrowseItem): DeckBrowseSection? =
+    if (isEmpty()) null else DeckBrowseSection(title, map(toItem))
+
 /** The store's REAL featured catalog, fetched off the main thread. Amazon ships no browse catalog. */
-private suspend fun deckFeatured(context: Context, screen: Screen): List<DeckBrowseItem> = when (screen) {
+private suspend fun deckFeatured(context: Context, screen: Screen): DeckStoreData = when (screen) {
     Screen.Gog -> runCatching { GogStoreCatalog.featured(context) }.getOrNull().let { f ->
-        if (f == null) emptyList()
-        else (listOfNotNull(f.hero) + f.trending + f.newReleases + f.deals + f.free)
-            .distinctBy { it.id }
-            .map { deckCatalogBrowse(it) }
+        if (f == null) DeckStoreData(null, emptyList())
+        else DeckStoreData(
+            hero = f.hero?.let { deckCatalogBrowse(it) },
+            sections = listOfNotNull(
+                f.trending.rail("Trending") { deckCatalogBrowse(it) },
+                f.newReleases.rail("New Releases") { deckCatalogBrowse(it) },
+                f.deals.rail("Deals") { deckCatalogBrowse(it) },
+                f.free.rail("Free") { deckCatalogBrowse(it) },
+            ),
+        )
     }
     Screen.Epic -> runCatching { EpicStoreCatalog.featured(context) }.getOrNull().let { f ->
-        if (f == null) emptyList()
-        else (listOfNotNull(f.hero) + f.freeNow + f.onSale + f.newReleases + f.freeToPlay)
-            .distinctBy { it.id }
-            .map { deckCatalogBrowse(it) }
+        if (f == null) DeckStoreData(null, emptyList())
+        else DeckStoreData(
+            hero = f.hero?.let { deckCatalogBrowse(it) },
+            sections = listOfNotNull(
+                f.freeNow.rail("Free Now") { deckCatalogBrowse(it) },
+                f.onSale.rail("On Sale") { deckCatalogBrowse(it) },
+                f.newReleases.rail("New Releases") { deckCatalogBrowse(it) },
+                f.freeToPlay.rail("Free to Play") { deckCatalogBrowse(it) },
+            ),
+        )
     }
     Screen.Steam -> runCatching { SteamStoreCatalog.featured(context) }.getOrNull().let { f ->
-        if (f == null) emptyList()
-        else (listOfNotNull(f.hero) + f.newReleases + f.topFree + f.specials)
-            .distinctBy { it.appId }
-            .map { deckSteamBrowse(it) }
+        if (f == null) DeckStoreData(null, emptyList())
+        else DeckStoreData(
+            hero = f.hero?.let { deckSteamBrowse(it) },
+            sections = listOfNotNull(
+                f.newReleases.rail("New Releases") { deckSteamBrowse(it) },
+                f.topFree.rail("Top Free") { deckSteamBrowse(it) },
+                f.specials.rail("Specials") { deckSteamBrowse(it) },
+            ),
+        )
     }
-    else -> emptyList()
+    else -> DeckStoreData(null, emptyList())
 }
 
-/** The signed-in store's storefront: real featured titles in a DroidDeck-style Deck grid. */
+/** The signed-in store's storefront: a hero pick plus labeled rails of real featured titles. */
 @Composable
 private fun DeckStoreFront(tile: DeckStoreTile, context: Context) {
-    var items by remember(tile.screen) { mutableStateOf<List<DeckBrowseItem>>(emptyList()) }
-    var loading by remember(tile.screen) { mutableStateOf(true) }
+    var data by remember(tile.screen) { mutableStateOf<DeckStoreData?>(null) }
     LaunchedEffect(tile.screen) {
-        items = withContext(Dispatchers.IO) { deckFeatured(context, tile.screen) }
-        loading = false
+        data = withContext(Dispatchers.IO) { deckFeatured(context, tile.screen) }
     }
-    if (loading) {
-        Text("Loading ${tile.screen.label} store\u2026", color = Deck.onSurfaceVariant, fontSize = 12.sp)
-    } else if (items.isEmpty()) {
+    val store = data
+    if (store == null) {
+        Text("Loading ${tile.screen.label} store...", color = Deck.onSurfaceVariant, fontSize = 12.sp)
+        return
+    }
+    if (store.hero == null && store.sections.isEmpty()) {
         Text(
-            "No featured titles cached yet \u2014 open ${tile.screen.label} to refresh.",
+            "No featured titles cached yet - open ${tile.screen.label} to refresh.",
             color = Deck.onSurfaceVariant,
             fontSize = 12.sp,
         )
-    } else {
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 150.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.heightIn(max = 420.dp).fillMaxWidth(),
-        ) {
-            itemsIndexed(items, key = { i, it -> "$i-${it.title}" }) { index, item ->
-                DeckRise(index = index % 10) {
-                    DeckBrowseCard(item) { item.open(context) }
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        store.hero?.let { hero -> DeckHeroCard(hero) { hero.open(context) } }
+        store.sections.forEach { section ->
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = section.title,
+                    color = Deck.onBackground,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Black,
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    itemsIndexed(section.items, key = { i, it -> "$i-${it.title}" }) { index, item ->
+                        DeckRise(index = index % 8) { DeckBrowseCard(item) { item.open(context) } }
+                    }
                 }
             }
         }
     }
 }
 
-/** A storefront card: the game's real cover art over graphite, with title and price beneath. */
+/** The hero pick: a big cover banner with the title and price over a graphite tile. */
+@Composable
+private fun DeckHeroCard(item: DeckBrowseItem, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(14.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(200.dp)
+            .deckTileFocus(interaction)
+            .clip(shape)
+            .background(Deck.surface)
+            .border(1.dp, Deck.line, shape)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+    ) {
+        val art = item.art
+        if (art != null) {
+            AsyncImage(
+                model = art,
+                contentDescription = item.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize(),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, Deck.background.copy(alpha = 0.92f)),
+                    ),
+                ),
+        )
+        Column(
+            modifier = Modifier.align(Alignment.BottomStart).padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = item.title,
+                color = Deck.onBackground,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Black,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (item.price.isNotEmpty()) {
+                Text(
+                    text = item.price,
+                    color = if (item.price == "Free") Deck.primary else Deck.onSurfaceVariant,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        }
+    }
+}
+
+/** A storefront rail card: cover art over graphite, title and price beneath. */
 @Composable
 private fun DeckBrowseCard(item: DeckBrowseItem, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val shape = RoundedCornerShape(10.dp)
     Column(
         modifier = Modifier
+            .width(150.dp)
             .deckTileFocus(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {

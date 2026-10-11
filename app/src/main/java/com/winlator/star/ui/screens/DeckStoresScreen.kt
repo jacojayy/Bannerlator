@@ -55,7 +55,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.winlator.star.store.AmazonLoginActivity
+import com.winlator.star.store.CatalogItem
 import com.winlator.star.store.DeckRise
+import com.winlator.star.store.DeckTabBar
+import com.winlator.star.store.DeckTabSpec
+import com.winlator.star.store.EpicStoreCatalog
+import com.winlator.star.store.GogStoreCatalog
+import com.winlator.star.store.SteamStoreCatalog
+import com.winlator.star.store.StoreCatalogDetailActivity
 import com.winlator.star.store.deckTileFocus
 import com.winlator.star.store.AmazonMainActivity
 import com.winlator.star.store.AmazonUserData
@@ -315,6 +322,146 @@ private fun DeckGameCard(game: DeckOwnedGame, onClick: () -> Unit) {
     }
 }
 
+/** A browseable storefront entry: cover art, title, price and how to open its detail page. */
+private data class DeckBrowseItem(
+    val title: String,
+    val art: String?,
+    val price: String,
+    val open: (Context) -> Unit,
+)
+
+private fun deckCatalogPrice(i: CatalogItem): String = when {
+    i.isFree -> "Free"
+    i.hasPrice && i.finalPrice.isNotBlank() -> i.finalPrice
+    else -> ""
+}
+
+private fun deckCatalogBrowse(i: CatalogItem): DeckBrowseItem =
+    DeckBrowseItem(i.title, i.tallImageUrl ?: i.imageUrl, deckCatalogPrice(i)) { ctx ->
+        ctx.startActivity(StoreCatalogDetailActivity.intent(ctx, i))
+    }
+
+private fun deckSteamBrowse(i: SteamStoreCatalog.StoreItem): DeckBrowseItem =
+    DeckBrowseItem(
+        title = i.name,
+        art = i.artUrl,
+        price = when {
+            i.isFree -> "Free"
+            i.hasPrice -> SteamStoreCatalog.formatPrice(i.finalCents, i.currency)
+            else -> ""
+        },
+    ) { ctx ->
+        ctx.startActivity(
+            Intent(ctx, SteamGameDetailActivity::class.java)
+                .putExtra(SteamGameDetailActivity.EXTRA_APP_ID, i.appId),
+        )
+    }
+
+/** The store's REAL featured catalog, fetched off the main thread. Amazon ships no browse catalog. */
+private suspend fun deckFeatured(context: Context, screen: Screen): List<DeckBrowseItem> = when (screen) {
+    Screen.Gog -> runCatching { GogStoreCatalog.featured(context) }.getOrNull().let { f ->
+        if (f == null) emptyList()
+        else (listOfNotNull(f.hero) + f.trending + f.newReleases + f.deals + f.free)
+            .distinctBy { it.id }
+            .map { deckCatalogBrowse(it) }
+    }
+    Screen.Epic -> runCatching { EpicStoreCatalog.featured(context) }.getOrNull().let { f ->
+        if (f == null) emptyList()
+        else (listOfNotNull(f.hero) + f.freeNow + f.onSale + f.newReleases + f.freeToPlay)
+            .distinctBy { it.id }
+            .map { deckCatalogBrowse(it) }
+    }
+    Screen.Steam -> runCatching { SteamStoreCatalog.featured(context) }.getOrNull().let { f ->
+        if (f == null) emptyList()
+        else (listOfNotNull(f.hero) + f.newReleases + f.topFree + f.specials)
+            .distinctBy { it.appId }
+            .map { deckSteamBrowse(it) }
+    }
+    else -> emptyList()
+}
+
+/** The signed-in store's storefront: real featured titles in a DroidDeck-style Deck grid. */
+@Composable
+private fun DeckStoreFront(tile: DeckStoreTile, context: Context) {
+    var items by remember(tile.screen) { mutableStateOf<List<DeckBrowseItem>>(emptyList()) }
+    var loading by remember(tile.screen) { mutableStateOf(true) }
+    LaunchedEffect(tile.screen) {
+        items = withContext(Dispatchers.IO) { deckFeatured(context, tile.screen) }
+        loading = false
+    }
+    if (loading) {
+        Text("Loading ${tile.screen.label} store\u2026", color = Deck.onSurfaceVariant, fontSize = 12.sp)
+    } else if (items.isEmpty()) {
+        Text(
+            "No featured titles cached yet \u2014 open ${tile.screen.label} to refresh.",
+            color = Deck.onSurfaceVariant,
+            fontSize = 12.sp,
+        )
+    } else {
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = 150.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.heightIn(max = 420.dp).fillMaxWidth(),
+        ) {
+            itemsIndexed(items, key = { i, it -> "$i-${it.title}" }) { index, item ->
+                DeckRise(index = index % 10) {
+                    DeckBrowseCard(item) { item.open(context) }
+                }
+            }
+        }
+    }
+}
+
+/** A storefront card: the game's real cover art over graphite, with title and price beneath. */
+@Composable
+private fun DeckBrowseCard(item: DeckBrowseItem, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val shape = RoundedCornerShape(10.dp)
+    Column(
+        modifier = Modifier
+            .deckTileFocus(interaction)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(200.dp)
+                .clip(shape)
+                .background(Deck.surface)
+                .border(1.dp, Deck.line, shape),
+        ) {
+            val art = item.art
+            if (art != null) {
+                AsyncImage(
+                    model = art,
+                    contentDescription = item.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.matchParentSize(),
+                )
+            }
+        }
+        Spacer(Modifier.size(6.dp))
+        Text(
+            text = item.title,
+            color = Deck.onBackground,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (item.price.isNotEmpty()) {
+            Text(
+                text = item.price,
+                color = if (item.price == "Free") Deck.primary else Deck.onSurfaceVariant,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
 @Composable
 internal fun DeckStoresScreen() {
     val context = LocalContext.current
@@ -422,7 +569,18 @@ internal fun DeckStoresScreen() {
             Spacer(Modifier.size(16.dp))
 
             if (deckSignedIn(context, active.screen)) {
-                DeckAccountCard(active, context)
+                var storeTab by remember(active.screen) { mutableStateOf(0) }
+                DeckTabBar(
+                    tabs = listOf(DeckTabSpec("Store"), DeckTabSpec("Library")),
+                    selected = storeTab,
+                    onSelect = { storeTab = it },
+                )
+                Spacer(Modifier.size(12.dp))
+                if (storeTab == 0) {
+                    DeckStoreFront(active, context)
+                } else {
+                    DeckAccountCard(active, context)
+                }
             } else {
                 DeckSignInCard(active, context)
             }

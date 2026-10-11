@@ -39,7 +39,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import com.winlator.star.store.GogGame
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -330,6 +333,7 @@ private data class DeckBrowseItem(
     val art: String?,
     val price: String,
     val open: (Context) -> Unit,
+    val catalog: CatalogItem? = null,
 )
 
 /** A labeled rail of storefront items, DroidDeck style. */
@@ -345,9 +349,13 @@ private fun deckCatalogPrice(i: CatalogItem): String = when {
 }
 
 private fun deckCatalogBrowse(i: CatalogItem): DeckBrowseItem =
-    DeckBrowseItem(i.title, i.tallImageUrl ?: i.imageUrl, deckCatalogPrice(i)) { ctx ->
-        ctx.startActivity(StoreCatalogDetailActivity.intent(ctx, i))
-    }
+    DeckBrowseItem(
+        title = i.title,
+        art = i.tallImageUrl ?: i.imageUrl,
+        price = deckCatalogPrice(i),
+        open = { ctx -> ctx.startActivity(StoreCatalogDetailActivity.intent(ctx, i)) },
+        catalog = i,
+    )
 
 private fun deckSteamBrowse(i: SteamStoreCatalog.StoreItem): DeckBrowseItem =
     DeckBrowseItem(
@@ -410,12 +418,29 @@ private suspend fun deckFeatured(context: Context, screen: Screen): DeckStoreDat
 
 /** The signed-in store's storefront: a hero pick plus labeled rails of real featured titles. */
 @Composable
-private fun DeckStoreFront(tile: DeckStoreTile, context: Context) {
+private fun DeckStoreFront(tile: DeckStoreTile, context: Context, onInstallGog: (GogGame) -> Unit) {
     var data by remember(tile.screen) { mutableStateOf<DeckStoreData?>(null) }
     LaunchedEffect(tile.screen) {
         data = withContext(Dispatchers.IO) { deckFeatured(context, tile.screen) }
     }
     val store = data
+    val scope = rememberCoroutineScope()
+    val onCard: (DeckBrowseItem) -> Unit = { item ->
+        val cat = item.catalog
+        if (tile.screen == Screen.Gog && cat != null) {
+            scope.launch {
+                val game = withContext(Dispatchers.IO) {
+                    deckGogBuild(
+                        context, cat.id, cat.title, cat.imageUrl,
+                        cat.description, cat.developer, cat.tags,
+                    )
+                }
+                onInstallGog(game)
+            }
+        } else {
+            item.open(context)
+        }
+    }
     if (store == null) {
         Text("Loading ${tile.screen.label} store...", color = Deck.onSurfaceVariant, fontSize = 12.sp)
         return
@@ -429,7 +454,7 @@ private fun DeckStoreFront(tile: DeckStoreTile, context: Context) {
         return
     }
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        store.hero?.let { hero -> DeckHeroCard(hero) { hero.open(context) } }
+        store.hero?.let { hero -> DeckHeroCard(hero) { onCard(hero) } }
         store.sections.forEach { section ->
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
@@ -440,7 +465,7 @@ private fun DeckStoreFront(tile: DeckStoreTile, context: Context) {
                 )
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     itemsIndexed(section.items, key = { i, it -> "$i-${it.title}" }) { index, item ->
-                        DeckRise(index = index % 8) { DeckBrowseCard(item) { item.open(context) } }
+                        DeckRise(index = index % 8) { DeckBrowseCard(item) { onCard(item) } }
                     }
                 }
             }
@@ -560,8 +585,13 @@ internal fun DeckStoresScreen() {
     val context = LocalContext.current
     val showStores by AppThemeState.showStores.collectAsState()
     var selected by remember { mutableStateOf<Screen>(Screen.Gog) }
+    var gogInstall by remember { mutableStateOf<GogGame?>(null) }
     val active = deckStores.firstOrNull { it.screen == selected } ?: deckStores.first()
 
+    val install = gogInstall
+    if (install != null) {
+        DeckGogInstall(install) { gogInstall = null }
+    } else {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -670,7 +700,7 @@ internal fun DeckStoresScreen() {
                 )
                 Spacer(Modifier.size(12.dp))
                 if (storeTab == 0) {
-                    DeckStoreFront(active, context)
+                    DeckStoreFront(active, context, onInstallGog = { gogInstall = it })
                 } else {
                     DeckAccountCard(active, context)
                 }
@@ -678,6 +708,7 @@ internal fun DeckStoresScreen() {
                 DeckSignInCard(active, context)
             }
         }
+    }
     }
 }
 

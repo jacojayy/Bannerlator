@@ -234,6 +234,10 @@ public abstract class TarCompressorUtils {
                         // directory) — make the parent exist before writing.
                         File parent = file.getParentFile();
                         if (parent != null && !parent.isDirectory()) parent.mkdirs();
+                        // A symlink container links system32/syswow64 into the Wine LAYER. Writing
+                        // through such a link would truncate that shared file and break every
+                        // container on the layer — drop the link so this entry lands here instead.
+                        if (FileUtils.isSymlink(file)) file.delete();
                         try (BufferedOutputStream outStream = new BufferedOutputStream(new FileOutputStream(file), StreamUtils.BUFFER_SIZE)) {
                             if (!StreamUtils.copy(tar, outStream)) return false;
                         }
@@ -487,6 +491,10 @@ public abstract class TarCompressorUtils {
                     if (entry.isSymbolicLink()) {
                         FileUtils.symlink(entry.getLinkName(), file.getAbsolutePath());
                     } else {
+                        // Never write THROUGH an existing symlink (see extract()): it would
+                        // clobber the file the link points at — in a symlink container that is a
+                        // DLL shared with every other container on the same Wine layer.
+                        if (FileUtils.isSymlink(file)) file.delete();
                         try (BufferedOutputStream outStream = new BufferedOutputStream(new FileOutputStream(file), StreamUtils.BUFFER_SIZE)) {
                             if (!StreamUtils.copy(tar, outStream)) return false;
                         }

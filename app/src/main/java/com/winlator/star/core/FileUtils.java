@@ -184,6 +184,11 @@ public abstract class FileUtils {
             File parent = dstFile.getParentFile();
             if (!srcFile.exists() || (parent != null && !parent.exists() && !parent.mkdirs())) return false;
 
+            // Never write THROUGH an existing symlink: a symlink container links
+            // system32/syswow64 files into the Wine layer, so opening one here would
+            // truncate that shared file and break every container on the layer. Drop the
+            // link — the copy lands in this container instead.
+            if (isSymlink(dstFile)) dstFile.delete();
             try (FileChannel inChannel = (new FileInputStream(srcFile)).getChannel();
                  FileChannel outChannel = (new FileOutputStream(dstFile)).getChannel()) {
                 // transferTo may move fewer bytes than requested — loop until done.

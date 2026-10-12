@@ -115,6 +115,11 @@ public class Container {
     private String drives = DEFAULT_DRIVES;
     private String wineVersion = WineInfo.MAIN_WINE_VERSION.identifier();
     private boolean showFPS;
+    // Creation mode: true = Symlink (system32/syswow64 link into the Wine layer, the container
+    // stays tiny but installers can't rewrite those DLLs), false = Classic (every DLL copied
+    // into the prefix). Chosen once at creation and persisted here so the container list can
+    // badge it.
+    private boolean symlinkMode;
     private boolean rendererNative = false;
     // Which native backend a Native-Rendering Vulkan container routes to: "auto"/"asr" -> hardened
     // SurfaceFlinger (ASR) renderer when eligible (default reroute); "flip" -> force the leaner inline
@@ -335,6 +340,14 @@ public class Container {
 
     public void setShowFPS(boolean showFPS) {
         this.showFPS = showFPS;
+    }
+
+    public boolean isSymlinkMode() {
+        return symlinkMode;
+    }
+
+    public void setSymlinkMode(boolean symlinkMode) {
+        this.symlinkMode = symlinkMode;
     }
 
     public String getFPSCounterConfig() {
@@ -1317,6 +1330,7 @@ public class Container {
             data.put("wincomponents", wincomponents);
             data.put("drives", drives);
             data.put("showFPS", showFPS);
+            data.put("symlinkMode", symlinkMode);
             data.put("fpsCounterConfig", fpsCounterConfig);
             data.put("fullscreenMode", fullscreenMode);
             data.put("screenAlignment", screenAlignment);
@@ -1401,6 +1415,9 @@ public class Container {
                     break;
                 case "showFPS" :
                     setShowFPS(data.getBoolean(key));
+                    break;
+                case "symlinkMode" :
+                    setSymlinkMode(data.getBoolean(key));
                     break;
                 case "fpsCounterConfig" :
                     setFPSCounterConfig(data.getString(key));

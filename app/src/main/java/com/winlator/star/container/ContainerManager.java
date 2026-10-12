@@ -533,6 +533,53 @@ public class ContainerManager {
         return stub.contains("Wine builtin DLL") || stub.contains("Wine placeholder DLL");
     }
 
+    /**
+     * Safety net for the pack skip in extractContainerPatternFile: if a system32/syswow64 file of
+     * file of the layer's own name and length did get unpacked anyway (odd archive layout, a
+     * pattern asset rather than prefixPack.txz), swap that copy for a symlink back into the layer.
+     * The pack is built from the layer, so an equal name + length means an equal file. Anything the
+     * pack ships that the layer doesn't — or ships at a different size — stays a real file untouched.
+     */
+    private static void linkifySystemDlls(WineInfo wineInfo, File containerDir) {
+        File windowsDir = new File(containerDir, ".wine/drive_c/windows");
+        linkifyDir(
+            new File(wineInfo.path, "lib/wine/" + (wineInfo.isArm64EC() ? "aarch64-windows" : "x86_64-windows")),
+            new File(windowsDir, "system32")
+        );
+        linkifyDir(new File(wineInfo.path, "lib/wine/i386-windows"), new File(windowsDir, "syswow64"));
+    }
+
+    /**
+     * One directory of [linkifySystemDlls]. The new link is created under a temp name first: if
+     * {@code Os.symlink} fails (FileUtils swallows the error) the real file is left exactly as the
+     * pack wrote it, so a prefix can never end up with a hole where a DLL used to be.
+     */
+    private static void linkifyDir(File layerDir, File dstDir) {
+        if (dstDir == null) return;
+        File[] files = dstDir.listFiles();
+        if (files == null) return;
+        for (File dst : files) {
+            if (!dst.isFile() || FileUtils.isSymlink(dst)) continue;
+            File src = new File(layerDir, dst.getName());
+            if (!src.isFile() || src.length() != dst.length()) continue;
+
+            File link = new File(dst.getParentFile(), dst.getName() + ".dllink");
+            FileUtils.symlink(src, link);
+            if (!FileUtils.isSymlink(link)) {
+                link.delete();
+                continue;
+            }
+            dst.delete();
+            if (!link.renameTo(dst)) {
+                // Rename refused (rare) — link straight at the destination instead, and if even
+                // that fails, put a real copy back so the prefix is never left without the file.
+                link.delete();
+                FileUtils.symlink(src, dst);
+                if (!FileUtils.isSymlink(dst)) FileUtils.copy(src, dst);
+            }
+        }
+    }
+
     public boolean extractContainerPatternFile(Container container, String wineVersion, ContentsManager contentsManager, File containerDir, OnExtractFileListener onExtractFileListener) {
         return extractContainerPatternFile(container, wineVersion, contentsManager, containerDir, onExtractFileListener, false);
     }
@@ -541,14 +588,47 @@ public class ContainerManager {
     public boolean extractContainerPatternFile(Container container, String wineVersion, ContentsManager contentsManager, File containerDir, OnExtractFileListener onExtractFileListener, boolean symlinkMode) {
         WineInfo wineInfo = WineInfo.fromIdentifier(context, contentsManager, wineVersion);
         String containerPattern = wineVersion + "_container_pattern.tzst";
-        boolean result = TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, context, containerPattern, containerDir, onExtractFileListener);
+
+        OnExtractFileListener listener = onExtractFileListener;
+        if (symlinkMode) {
+            // The prefix pack carries its own copies of system32/syswow64 — the ~1 GB of a classic
+            // container. Do NOT unpack them: the layer already owns every one of those files, so
+            // extractCommonDlls below links them back in for free. Members the layer does not own
+            // (icons, config exes, ini files the pack adds) are still written as real files.
+            // Matching rule = same file name + same length, exactly like linkifySystemDlls.
+            final File system32LayerDir = new File(wineInfo.path, "lib/wine/" + (wineInfo.isArm64EC() ? "aarch64-windows" : "x86_64-windows"));
+            final File syswow64LayerDir = new File(wineInfo.path, "lib/wine/i386-windows");
+            final OnExtractFileListener passthrough = onExtractFileListener;
+            listener = (file, size) -> {
+                String path = file.getAbsolutePath();
+                boolean inSystem32 = path.contains("/windows/system32/");
+                boolean inSyswow64 = path.contains("/windows/syswow64/");
+                if (!inSystem32 && !inSyswow64) return passthrough == null ? file : passthrough.onExtractFile(file, size);
+                File parent = file.getParentFile();
+                String expected = inSystem32 ? "system32" : "syswow64";
+                // Only direct children: the layer's arch dirs are flat, deeper files (wbem/,
+                // drivers/) have no counterpart there and must be extracted normally.
+                if (parent == null || !parent.getName().equals(expected)) return passthrough == null ? file : passthrough.onExtractFile(file, size);
+                String name = file.getName();
+                // copyLayerDlls deliberately never emits these two — if we drop the pack's copy,
+                // nothing would put it back. Extract them as real files.
+                if (name.equals("tabtip.exe") || name.equals("icu.dll"))
+                    return passthrough == null ? file : passthrough.onExtractFile(file, size);
+                File layerFile = new File(inSystem32 ? system32LayerDir : syswow64LayerDir, name);
+                if (size > 0 && layerFile.isFile() && layerFile.length() == size) return null;
+                return passthrough == null ? file : passthrough.onExtractFile(file, size);
+            };
+        }
+
+        boolean result = TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, context, containerPattern, containerDir, listener);
 
         if (!result) {
             File containerPatternFile = new File(wineInfo.path + "/prefixPack.txz");
-            result = TarCompressorUtils.extract(TarCompressorUtils.Type.XZ, containerPatternFile, containerDir);
+            result = TarCompressorUtils.extract(TarCompressorUtils.Type.XZ, containerPatternFile, containerDir, listener);
         }
 
         if (result) {
+            if (symlinkMode) linkifySystemDlls(wineInfo, containerDir);
             try {
                 if (wineInfo.isArm64EC())
                     extractCommonDlls(wineInfo, "aarch64-windows", "system32", containerDir, onExtractFileListener, symlinkMode); // arm64ec only

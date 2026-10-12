@@ -357,7 +357,9 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
     // write into system32/syswow64 can't), false = classic copy (≈1 GB, everything works).
     // Defaults to CLASSIC so the legacy editor, which never sets this, keeps its old behaviour;
     // Deck Mode's create screen preselects Symlink. Threaded into createContainerAsync as the
-    // "symlinkMode" data flag (buildCreateData) and never persisted — it only shapes creation.
+    // "symlinkMode" data flag (buildCreateData), which Container.loadData/saveData persists so the
+    // container list can badge the mode. In edit mode the form never shows it, so the loaded
+    // container's own value is left untouched.
     var symlinkMode by mutableStateOf(false)
 
     // ── Box64 ─────────────────────────────────────────────────────────────────

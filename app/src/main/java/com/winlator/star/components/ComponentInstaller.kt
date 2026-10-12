@@ -3,6 +3,7 @@ package com.winlator.star.components
 import android.content.Context
 import com.winlator.star.container.Container
 import com.winlator.star.contents.Downloader
+import com.winlator.star.core.FileUtils
 import com.winlator.star.core.TarCompressorUtils
 import com.winlator.star.core.WineRegistryEditor
 import java.io.File
@@ -143,6 +144,13 @@ object ComponentInstaller {
                 matches.filterNot { it.path.contains("${File.separator}$other${File.separator}", true) }
             }
         }
-        matches.forEach { f -> f.copyTo(File(dest, f.name), overwrite = true) }
+        matches.forEach { f ->
+            val dst = File(dest, f.name)
+            // A symlink container links system32/syswow64 into the Wine layer — writing through
+            // that link would truncate the layer's DLL and break every container on it. Drop the
+            // link first so the component's own file lands in this container.
+            if (FileUtils.isSymlink(dst)) dst.delete()
+            f.copyTo(dst, overwrite = true)
+        }
     }
 }

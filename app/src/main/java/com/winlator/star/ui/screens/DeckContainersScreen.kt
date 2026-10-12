@@ -176,6 +176,7 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
                     items(containers, key = { it.id }) { container ->
                         DeckContainerCard(
                             name = container.name,
+                            symlinkMode = container.isSymlinkMode,
                             subtitle = listOf(container.wineVersion, container.screenSize)
                                 .filter { it.isNotEmpty() }
                                 .joinToString(" · "),
@@ -219,10 +220,36 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
     }
 }
 
+/** The container's creation mode as a pill: SYMLINK (linked into the Wine layer, tiny) or CLASSIC. */
+@Composable
+private fun DeckModeBadge(symlinkMode: Boolean) {
+    val shape = RoundedCornerShape(6.dp)
+    Box(
+        modifier = Modifier
+            .clip(shape)
+            .background(
+                if (symlinkMode) DeckPalette.primary.copy(alpha = 0.16f)
+                else DeckPalette.surfaceVariant,
+            )
+            .border(1.dp, if (symlinkMode) DeckPalette.primary else DeckPalette.line2, shape)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = if (symlinkMode) "SYMLINK" else "CLASSIC",
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 1.sp,
+            maxLines = 1,
+            color = if (symlinkMode) DeckPalette.primary else DeckPalette.onSurfaceVariant,
+        )
+    }
+}
+
 /** One container as a DroidDeck card: 14dp surface, name + subtitle, blue play pill, overflow. */
 @Composable
 private fun DeckContainerCard(
     name: String,
+    symlinkMode: Boolean,
     subtitle: String,
     onRun: () -> Unit,
     onEdit: () -> Unit,
@@ -247,14 +274,19 @@ private fun DeckContainerCard(
                 .weight(1f)
                 .padding(end = 12.dp),
         ) {
-            Text(
-                text = name,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = DeckPalette.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = name,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = DeckPalette.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                DeckModeBadge(symlinkMode)
+            }
             if (subtitle.isNotEmpty()) {
                 Text(
                     text = subtitle,

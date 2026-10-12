@@ -231,6 +231,16 @@ public class ContainerManager {
 //                return null;
 //            }
 
+            if (com.winlator.star.BuildConfig.DEBUG) {
+                File system32 = new File(containerDir, ".wine/drive_c/windows/system32");
+                File syswow64 = new File(containerDir, ".wine/drive_c/windows/syswow64");
+                Log.d("ContainerManager", "container " + id
+                    + (data.optBoolean("symlinkMode", false) ? " [SYMLINK]" : " [CLASSIC]")
+                    + " total=" + FileUtils.totalSize(containerDir) / (1024 * 1024) + "MB"
+                    + " system32=" + FileUtils.totalSize(system32) / (1024 * 1024) + "MB"
+                    + " syswow64=" + FileUtils.totalSize(syswow64) / (1024 * 1024) + "MB"
+                    + " wine=" + container.getWineVersion());
+            }
             container.saveData();
             maxContainerId++;
             containers.add(container);
@@ -545,9 +555,15 @@ public class ContainerManager {
         return false;
     }
 
+    private static boolean isNonEmptyDir(File dir) {
+        if (dir == null) return false;
+        File[] files = dir.listFiles();
+        return files != null && files.length > 0;
+    }
+
     /**
      * Safety net for the pack skip in extractContainerPatternFile: if a system32/syswow64 file
-     * of the layer's own name and length did get unpacked anyway (odd archive layout, a
+     * the layer also carries did get unpacked anyway (odd archive layout, a
      * pattern asset rather than prefixPack.txz), swap that copy for a symlink back into the layer.
      * The pack is built from the layer, so an equal name + length means an equal file. Anything the
      * pack ships that the layer doesn't — or ships at a different size — stays a real file untouched.
@@ -573,7 +589,9 @@ public class ContainerManager {
         for (File dst : files) {
             if (!dst.isFile() || FileUtils.isSymlink(dst)) continue;
             File src = new File(layerDir, dst.getName());
-            if (!src.isFile() || src.length() != dst.length()) continue;
+            // NAME only — see the pack-skip comment: a size check made this silently skip every
+            // file on layers whose pack was rebuilt at a different length.
+            if (!src.isFile()) continue;
 
             File link = new File(dst.getParentFile(), dst.getName() + ".dllink");
             FileUtils.symlink(src, link);
@@ -607,9 +625,13 @@ public class ContainerManager {
             // container. Do NOT unpack them: the layer already owns every one of those files, so
             // extractCommonDlls below links them back in for free. Members the layer does not own
             // (icons, config exes, ini files the pack adds) are still written as real files.
-            // Matching rule = same file name + same length, exactly like linkifySystemDlls.
+            // Matching rule = same file NAME in the layer's arch dir, exactly like linkifySystemDlls.
             final File system32LayerDir = new File(wineInfo.path, "lib/wine/" + (wineInfo.isArm64EC() ? "aarch64-windows" : "x86_64-windows"));
             final File syswow64LayerDir = new File(wineInfo.path, "lib/wine/i386-windows");
+            // Never skip into a VOID: if the layer does not carry these dirs, the pack is the ONLY
+            // source for system32/syswow64 and skipping would leave an unbootable empty prefix.
+            final boolean skip32 = isNonEmptyDir(system32LayerDir);
+            final boolean skipWow = isNonEmptyDir(syswow64LayerDir);
             final OnExtractFileListener passthrough = onExtractFileListener;
             listener = (file, size) -> {
                 String path = file.getAbsolutePath();
@@ -624,13 +646,17 @@ public class ContainerManager {
                 // Only direct children: the layer's arch dirs are flat, deeper files (wbem/,
                 // drivers/) have no counterpart there and must be extracted normally.
                 if (parent == null || !parent.getName().equals(expected)) return passthrough == null ? file : passthrough.onExtractFile(file, size);
+                if (inSystem32 ? !skip32 : !skipWow) return passthrough == null ? file : passthrough.onExtractFile(file, size);
                 String name = file.getName();
                 // copyLayerDlls deliberately never emits these two — if we drop the pack's copy,
                 // nothing would put it back. Extract them as real files.
                 if (name.equals("tabtip.exe") || name.equals("icu.dll"))
                     return passthrough == null ? file : passthrough.onExtractFile(file, size);
-                File layerFile = new File(inSystem32 ? system32LayerDir : syswow64LayerDir, name);
-                if (size > 0 && layerFile.isFile() && layerFile.length() == size) return null;
+                // NAME match only. The pack lives inside this very layer, so a shared name IS the
+                // same file — but requiring an equal BYTE LENGTH made this a silent no-op on any
+                // layer whose pack was rebuilt at a different size, which is why the container
+                // still came out at ~950 MB no matter what was selected.
+                if (new File(inSystem32 ? system32LayerDir : syswow64LayerDir, name).isFile()) return null;
                 return passthrough == null ? file : passthrough.onExtractFile(file, size);
             };
         }

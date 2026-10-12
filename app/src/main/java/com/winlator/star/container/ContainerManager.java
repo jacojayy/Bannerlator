@@ -565,13 +565,14 @@ public class ContainerManager {
     // --------------------------------------------------------------------------------------------
     // Hidden per-Wine-version prefix template — the "virtual container" behind Symlink mode.
     //
-    // A Classic container spends ~900 MB on .wine/drive_c/windows/{system32,syswow64}. Symlink mode
-    // unpacks those two subtrees ONCE per Wine version + APK version into
-    // imagefs/home/.prefix-tpl-<wineVersion> (loadContainers only lists xuser-*, so the template
-    // never shows up as a container) and gives every container one symlink per file. The bytes are
-    // the pack's own — byte-identical to a Classic prefix — so nothing differs except that the
-    // system files are links. The stamp (.tpl_version = APK versionCode) rebuilds the template
-    // whenever an APK ships a new pack.
+    // A Classic container spends its gigabytes on the prefix pack. Symlink mode unpacks the pack
+    // ONCE per Wine version + APK version into imagefs/home/.prefix-tpl-<wineVersion>
+    // (loadContainers only lists xuser-*, so the template never shows up as a container) and every
+    // container gets one symlink per template file — everything EXCEPT the handful of paths the
+    // prefix must own itself (isContainerWritable: registry, drive letters, user profile,
+    // Program Files, temp) and the shared Pale Moon/fonts overlay. The bytes are the pack's own —
+    // byte-identical to a Classic prefix — so nothing differs except that shared files are links.
+    // The stamp (.tpl_version = APK versionCode) rebuilds the template when an APK ships a new pack.
     // --------------------------------------------------------------------------------------------
 
     private static final Object PREFIX_TEMPLATE_LOCK = new Object();
@@ -581,14 +582,33 @@ public class ContainerManager {
         return new File(homeDir, ".prefix-tpl-" + wineVersion.replaceAll("[^A-Za-z0-9._-]", "_"));
     }
 
-    private File templateWindowsDir(String wineVersion) {
-        return new File(prefixTemplateRoot(wineVersion), ".wine/drive_c/windows");
+    /**
+     * Subtrees Wine and installers rewrite — these must stay real per-container files, never links
+     * into the shared template (a link would leak writes across containers).
+     */
+    private static boolean isWritableSubtree(String rel) {
+        return rel.equals(".wine/dosdevices") || rel.startsWith(".wine/dosdevices/")
+            || rel.equals(".wine/drive_c/users") || rel.startsWith(".wine/drive_c/users/")
+            || rel.equals(".wine/drive_c/ProgramData") || rel.startsWith(".wine/drive_c/ProgramData/")
+            || rel.equals(".wine/drive_c/Program Files") || rel.startsWith(".wine/drive_c/Program Files/")
+            || rel.equals(".wine/drive_c/Program Files (x86)") || rel.startsWith(".wine/drive_c/Program Files (x86)/")
+            || rel.equals(".wine/drive_c/windows/temp") || rel.startsWith(".wine/drive_c/windows/temp/");
     }
 
-    /** True for {@code .../windows/<dirName>} itself or any file below it. */
-    private static boolean inSystemSubtree(String path, String dirName) {
-        String marker = "/windows/" + dirName;
-        return path.endsWith(marker) || path.contains(marker + "/");
+    /**
+     * True for a container-root-relative path the prefix must OWN: registry, drive letters, user
+     * profile, Program Files (installers write), Wine's temp/ini files. Everything else — the
+     * ~900 MB bulk — is shared template content and becomes a link. {@code isDir} is false when
+     * unknown (tar listener): directory entries then only match the subtree rules and their
+     * children are judged individually, so a directory is never left half-handled.
+     */
+    private static boolean isContainerWritable(String rel, boolean isDir) {
+        if (isWritableSubtree(rel)) return true;
+        if (isDir) return false;
+        // top-level .wine files: system.reg, user.reg, userdef.reg, system.inf ...
+        if (rel.startsWith(".wine/") && rel.indexOf('/', 6) < 0) return true;
+        // single files directly in drive_c/windows: win.ini, system.ini ...
+        return rel.startsWith(".wine/drive_c/windows/") && rel.indexOf('/', 22) < 0;
     }
 
     private static String readTemplateStamp(File root) {
@@ -601,14 +621,12 @@ public class ContainerManager {
     }
 
     /**
-     * Build (or reuse) the hidden template for {@code wineVersion}. The pack is extracted IN FULL —
-     * exactly like a Classic container — and then refilled from the layer, so the template's
-     * system32/syswow64 hold every single file a Classic container would have (controller, file
-     * manager and wineboot need the COMPLETE set; a partial template breaks them). The shared
-     * Pale Moon/fonts store and everything else are pruned afterwards, leaving only the two
-     * subtrees the template exists for. Any failure returns false WITHOUT throwing — the caller
-     * then falls back to a full Classic extraction, because a big working prefix beats a small
-     * broken one.
+     * Build (or reuse) the hidden template for {@code wineVersion}: the pack is extracted IN FULL —
+     * exactly like a Classic container — and refilled from the layer, so the template holds every
+     * file a Classic container would have (controller, file manager and wineboot need the complete
+     * set; a partial template breaks them). Containers then link everything from it except the few
+     * per-container writable paths. Any failure returns false WITHOUT throwing — the caller falls
+     * back to a full Classic extraction, because a big working prefix beats a small broken one.
      */
     private boolean ensurePrefixTemplate(String wineVersion, ContentsManager contentsManager) {
         synchronized (PREFIX_TEMPLATE_LOCK) {
@@ -656,10 +674,6 @@ public class ContainerManager {
                 else
                     extractCommonDlls(wineInfo, "x86_64-windows", "system32", root, null, false);
                 extractCommonDlls(wineInfo, "i386-windows", "syswow64", root, null, false);
-
-                // 3. Keep ONLY the two system subtrees: registry, ini files, drive_c extras etc. are
-                // tiny and every container extracts them itself — only the ~900 MB are worth sharing.
-                pruneToSystemDirs(root);
             }
             catch (Exception e) {
                 Log.e("ContainerManager", "prefix template: build failed for " + wineVersion, e);
@@ -684,49 +698,34 @@ public class ContainerManager {
         }
     }
 
-    /** Keep only {@code .wine/drive_c/windows/{system32,syswow64}} inside the template. */
-    private static void pruneToSystemDirs(File root) {
-        keepOnlyChildren(new File(root, ".wine/drive_c/windows"), "system32", "syswow64");
-        keepOnlyChildren(new File(root, ".wine/drive_c"), "windows");
-        keepOnlyChildren(new File(root, ".wine"), "drive_c");
-        keepOnlyChildren(root, ".wine");
-    }
-
-    private static void keepOnlyChildren(File dir, String... keep) {
-        File[] children = dir.listFiles();
-        if (children == null) return;
-        outer:
-        for (File child : children) {
-            for (String name : keep) if (child.getName().equals(name)) continue outer;
-            FileUtils.delete(child);
-        }
-    }
-
     /**
-     * Link {@code <container>/.wine/drive_c/windows/{system32,syswow64}} to the template — one
-     * symlink per file. Called right after a Symlink creation (the pack's copies were skipped) and
-     * on every launch for existing Symlink containers (see repairSymlinkPrefix).
+     * Link EVERYTHING the template holds into {@code <container>} except the per-container
+     * writable paths (isContainerWritable) and the stamp. Called right after a Symlink creation
+     * (the pack's copies were skipped) and on every launch for existing Symlink containers
+     * (see repairSymlinkPrefix).
      */
-    private void linkTemplateSystemDirs(String wineVersion, File containerDir) {
-        File tplWindows = templateWindowsDir(wineVersion);
-        File dstWindows = new File(containerDir, ".wine/drive_c/windows");
-        linkSubtreeFromTemplate(new File(tplWindows, "system32"), new File(dstWindows, "system32"));
-        linkSubtreeFromTemplate(new File(tplWindows, "syswow64"), new File(dstWindows, "syswow64"));
+    private void linkTemplateIntoContainer(String wineVersion, File containerDir) {
+        linkSubtreeFromTemplate(prefixTemplateRoot(wineVersion), containerDir, "");
     }
 
-    /** Recursive worker of {@link #linkTemplateSystemDirs}. */
-    private void linkSubtreeFromTemplate(File tplDir, File dstDir) {
+    /** Recursive worker of {@link #linkTemplateIntoContainer}; {@code rel} is container-root relative. */
+    private void linkSubtreeFromTemplate(File tplDir, File dstDir, String rel) {
         File[] entries = tplDir.listFiles();
         if (entries == null) return;
         if (!dstDir.isDirectory() && !dstDir.mkdirs()) return;
 
         for (File src : entries) {
+            String childRel = rel.isEmpty() ? src.getName() : rel + "/" + src.getName();
+            if (childRel.equals(TEMPLATE_STAMP)) continue;
+            boolean isDir = src.isDirectory();
+            if (isContainerWritable(childRel, isDir)) continue;
+
             File dst = new File(dstDir, src.getName());
-            if (src.isDirectory()) {
+            if (isDir) {
                 // Template has a directory here: the prefix must too (replace a stray file).
                 if (dst.exists() && !dst.isDirectory()) FileUtils.delete(dst);
                 if (!dst.isDirectory()) dst.mkdirs();
-                linkSubtreeFromTemplate(src, dst);
+                linkSubtreeFromTemplate(src, dst, childRel);
                 continue;
             }
             if (dst.isDirectory()) FileUtils.delete(dst);
@@ -769,7 +768,7 @@ public class ContainerManager {
         if (containerDir == null || wineVersion == null) return false;
         try {
             if (!ensurePrefixTemplate(wineVersion, contentsManager)) return false;
-            linkTemplateSystemDirs(wineVersion, containerDir);
+            linkTemplateIntoContainer(wineVersion, containerDir);
             return true;
         } catch (Exception e) {
             Log.e("ContainerManager", "repairSymlinkPrefix failed for container " + container.id, e);
@@ -799,14 +798,19 @@ public class ContainerManager {
         OnExtractFileListener listener = onExtractFileListener;
         if (symlinkMode) {
             final OnExtractFileListener passthrough = onExtractFileListener;
+            final String rootPath = containerDir.getAbsolutePath();
             listener = (file, size) -> {
                 String path = file.getAbsolutePath();
                 // Pale Moon + bundled fonts come from the shared store at first launch — see
                 // applyPatternCommonToSharedStore in XServerDisplayActivity.
                 if (isSharedOverlayPath(path)) return null;
-                // Template ready: those subtrees were unpacked into it instead of here.
-                if (useTemplate && (inSystemSubtree(path, "system32") || inSystemSubtree(path, "syswow64")))
-                    return null;
+                // Template ready: EVERYTHING else comes from it as links; only the few
+                // per-container writable files (registry, drive letters, user profile, Program
+                // Files, temp) are unpacked here as real files.
+                if (useTemplate && path.startsWith(rootPath)) {
+                    String rel = path.substring(rootPath.length() + 1);
+                    if (!isContainerWritable(rel, false)) return null;
+                }
                 return passthrough == null ? file : passthrough.onExtractFile(file, size);
             };
         }
@@ -819,7 +823,7 @@ public class ContainerManager {
         }
 
         if (result) {
-            if (useTemplate) linkTemplateSystemDirs(wineVersion, containerDir);
+            if (useTemplate) linkTemplateIntoContainer(wineVersion, containerDir);
             try {
                 // Always a CLASSIC refill: with the template in place every pack file is already
                 // linked above, so this only writes files the layer carries that the pack does not

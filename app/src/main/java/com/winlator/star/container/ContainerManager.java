@@ -705,7 +705,32 @@ public class ContainerManager {
      * (see repairSymlinkPrefix).
      */
     private void linkTemplateIntoContainer(String wineVersion, File containerDir) {
-        linkSubtreeFromTemplate(prefixTemplateRoot(wineVersion), containerDir, "");
+        File root = prefixTemplateRoot(wineVersion);
+        linkSubtreeFromTemplate(root, containerDir, "");
+        // The prefix's registry must be THIS container's own real file with a valid header:
+        // WineRegistryEditor fabricates a headerless fragment when the source .reg is missing
+        // ("system.reg is not a valid registry file" — wine then refuses to boot). Restore from
+        // the template whenever ours is unusable; runs at creation and on every repair.
+        for (String name : new String[] {"system.reg", "user.reg", "userdef.reg"}) {
+            File dst = new File(containerDir, ".wine/" + name);
+            File src = new File(root, ".wine/" + name);
+            if (FileUtils.isSymlink(dst)) dst.delete();
+            if (!isRegistryFile(dst) && isRegistryFile(src)) FileUtils.copy(src, dst);
+        }
+    }
+
+    /** A Wine registry file starts with "WINE REGISTRY Version 2" — anything else is a fragment. */
+    private static boolean isRegistryFile(File file) {
+        if (!file.isFile() || file.length() == 0) return false;
+        byte[] head = new byte[16];
+        int n;
+        try (java.io.FileInputStream in = new java.io.FileInputStream(file)) {
+            n = in.read(head);
+        } catch (java.io.IOException e) {
+            return false;
+        }
+        return n > 0 && new String(head, 0, n, java.nio.charset.StandardCharsets.ISO_8859_1)
+                .startsWith("WINE REGISTRY");
     }
 
     /** Recursive worker of {@link #linkTemplateIntoContainer}; {@code rel} is container-root relative. */
@@ -808,7 +833,11 @@ public class ContainerManager {
                 // per-container writable files (registry, drive letters, user profile, Program
                 // Files, temp) are unpacked here as real files.
                 if (useTemplate && path.startsWith(rootPath)) {
+                    // Pack entry names can carry "./" segments ("./.wine/system.reg") which would
+                    // defeat every startsWith check below and silently skip the registry.
                     String rel = path.substring(rootPath.length() + 1);
+                    while (rel.startsWith("./")) rel = rel.substring(2);
+                    rel = rel.replace("/./", "/");
                     if (!isContainerWritable(rel, false)) return null;
                 }
                 return passthrough == null ? file : passthrough.onExtractFile(file, size);

@@ -7145,6 +7145,11 @@ public class XServerDisplayActivity extends AppCompatActivity {
         String imgVersion = String.valueOf(imageFs.getVersion());
         boolean containerDataChanged = false;
 
+        // Relink to the prefix template FIRST: applyGeneralPatches/WineRegistryEditor parse the
+        // prefix's own registry, and a missing/fragmented .reg must be restored before that or it
+        // gets rewritten as an unbootable headerless file.
+        if (container.isSymlinkMode()) containerManager.repairSymlinkPrefix(container, contentsManager);
+
         // A wiped imagefs takes the shared Pale Moon/fonts store with it — marker included — and the
         // per-container extras below would never trip again, leaving Symlink containers browserless.
         // Fold "store gone" into the gate so the overlay re-runs and rebuilds it.
@@ -7166,9 +7171,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // store: an import (FileUtils.copy drops symlinks) can leave them missing even though the
         // pattern gate above stays satisfied. Two stats when the links are already right.
         if (container.isSymlinkMode()) linkSharedOverlaySubtrees(container);
-        // ...and to the hidden prefix template: a layer update or an import turns system32/syswow64
-        // back into real copies (or drops the links entirely), so re-link them on every launch.
-        if (container.isSymlinkMode()) containerManager.repairSymlinkPrefix(container, contentsManager);
 
         String dxwrapper = this.dxwrapper;
 

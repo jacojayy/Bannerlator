@@ -11,6 +11,7 @@ import androidx.preference.PreferenceManager;
 
 import com.winlator.star.R;
 import com.winlator.star.contents.ContentsManager;
+import com.winlator.star.core.AppUtils;
 import com.winlator.star.core.Callback;
 import com.winlator.star.core.FileUtils;
 import com.winlator.star.core.MSLink;
@@ -561,52 +562,175 @@ public class ContainerManager {
         return files != null && files.length > 0;
     }
 
-    /**
-     * Safety net for the pack skip in extractContainerPatternFile: if a system32/syswow64 file
-     * the layer also carries did get unpacked anyway (odd archive layout, a
-     * pattern asset rather than prefixPack.txz), swap that copy for a symlink back into the layer.
-     * The pack is built from the layer, so an equal name + length means an equal file. Anything the
-     * pack ships that the layer doesn't — or ships at a different size — stays a real file untouched.
-     */
-    private static void linkifySystemDlls(WineInfo wineInfo, File containerDir) {
-        File windowsDir = new File(containerDir, ".wine/drive_c/windows");
-        linkifyDir(
-            new File(wineInfo.path, "lib/wine/" + (wineInfo.isArm64EC() ? "aarch64-windows" : "x86_64-windows")),
-            new File(windowsDir, "system32")
-        );
-        linkifyDir(new File(wineInfo.path, "lib/wine/i386-windows"), new File(windowsDir, "syswow64"));
+    // --------------------------------------------------------------------------------------------
+    // Hidden per-Wine-version prefix template — the "virtual container" behind Symlink mode.
+    //
+    // A Classic container spends ~900 MB on .wine/drive_c/windows/{system32,syswow64}. Symlink mode
+    // unpacks those two subtrees ONCE per Wine version + APK version into
+    // imagefs/home/.prefix-tpl-<wineVersion> (loadContainers only lists xuser-*, so the template
+    // never shows up as a container) and gives every container one symlink per file. The bytes are
+    // the pack's own — byte-identical to a Classic prefix — so nothing differs except that the
+    // system files are links. The stamp (.tpl_version = APK versionCode) rebuilds the template
+    // whenever an APK ships a new pack.
+    // --------------------------------------------------------------------------------------------
+
+    private static final Object PREFIX_TEMPLATE_LOCK = new Object();
+    private static final String TEMPLATE_STAMP = ".tpl_version";
+
+    private File prefixTemplateRoot(String wineVersion) {
+        return new File(homeDir, ".prefix-tpl-" + wineVersion.replaceAll("[^A-Za-z0-9._-]", "_"));
+    }
+
+    private File templateWindowsDir(String wineVersion) {
+        return new File(prefixTemplateRoot(wineVersion), ".wine/drive_c/windows");
+    }
+
+    /** True for {@code .../windows/<dirName>} itself or any file below it. */
+    private static boolean inSystemSubtree(String path, String dirName) {
+        String marker = "/windows/" + dirName;
+        return path.endsWith(marker) || path.contains(marker + "/");
+    }
+
+    private static String readTemplateStamp(File root) {
+        try {
+            String stamp = FileUtils.readString(new File(root, TEMPLATE_STAMP));
+            return stamp == null ? null : stamp.trim();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**
-     * One directory of [linkifySystemDlls]. The new link is created under a temp name first: if
-     * {@code Os.symlink} fails (FileUtils swallows the error) the real file is left exactly as the
-     * pack wrote it, so a prefix can never end up with a hole where a DLL used to be.
+     * Build (or reuse) the hidden template for {@code wineVersion}: extract the prefix pack with a
+     * whitelist that keeps only the system32/syswow64 subtrees, stamp it, return true. Any failure
+     * returns false WITHOUT throwing — the caller then falls back to a full Classic extraction,
+     * because a big working prefix beats a small broken one.
      */
-    private static void linkifyDir(File layerDir, File dstDir) {
-        if (dstDir == null) return;
-        File[] files = dstDir.listFiles();
-        if (files == null) return;
-        for (File dst : files) {
-            if (!dst.isFile() || FileUtils.isSymlink(dst)) continue;
-            File src = new File(layerDir, dst.getName());
-            // NAME only — see the pack-skip comment: a size check made this silently skip every
-            // file on layers whose pack was rebuilt at a different length.
-            if (!src.isFile()) continue;
+    private boolean ensurePrefixTemplate(String wineVersion, ContentsManager contentsManager) {
+        synchronized (PREFIX_TEMPLATE_LOCK) {
+            File root = prefixTemplateRoot(wineVersion);
+            File system32 = new File(root, ".wine/drive_c/windows/system32");
+            File syswow64 = new File(root, ".wine/drive_c/windows/syswow64");
+            String stamp = String.valueOf(AppUtils.getVersionCode(context));
 
-            File link = new File(dst.getParentFile(), dst.getName() + ".dllink");
-            FileUtils.symlink(src, link);
-            if (!FileUtils.isSymlink(link)) {
-                link.delete();
+            if (isNonEmptyDir(system32) && isNonEmptyDir(syswow64) && stamp.equals(readTemplateStamp(root))) {
+                return true;
+            }
+
+            FileUtils.delete(root);
+            if (!root.mkdirs()) {
+                Log.e("ContainerManager", "prefix template: cannot create " + root);
+                return false;
+            }
+
+            try {
+                WineInfo wineInfo = WineInfo.fromIdentifier(context, contentsManager, wineVersion);
+                OnExtractFileListener keepSystems = (file, size) -> {
+                    String path = file.getAbsolutePath();
+                    return inSystemSubtree(path, "system32") || inSystemSubtree(path, "syswow64") ? file : null;
+                };
+
+                boolean ok = TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, context,
+                        wineVersion + "_container_pattern.tzst", root, keepSystems);
+                if (!ok) {
+                    ok = TarCompressorUtils.extract(TarCompressorUtils.Type.XZ,
+                            new File(wineInfo.path + "/prefixPack.txz"), root, keepSystems);
+                }
+
+                if (!ok || !isNonEmptyDir(system32) || !isNonEmptyDir(syswow64)) {
+                    Log.e("ContainerManager", "prefix template: pack extraction failed for " + wineVersion);
+                    FileUtils.delete(root);
+                    return false;
+                }
+            }
+            catch (Exception e) {
+                Log.e("ContainerManager", "prefix template: build failed for " + wineVersion, e);
+                FileUtils.delete(root);
+                return false;
+            }
+
+            if (!FileUtils.writeString(new File(root, TEMPLATE_STAMP), stamp))
+                Log.w("ContainerManager", "prefix template: could not write stamp, will rebuild next time");
+            if (com.winlator.star.BuildConfig.DEBUG) {
+                Log.d("ContainerManager", "prefix template built " + root.getName()
+                        + " system32=" + FileUtils.totalSize(system32) / (1024 * 1024) + "MB"
+                        + " syswow64=" + FileUtils.totalSize(syswow64) / (1024 * 1024) + "MB");
+            }
+            return true;
+        }
+    }
+
+    /**
+     * Link {@code <container>/.wine/drive_c/windows/{system32,syswow64}} to the template — one
+     * symlink per file. Called right after a Symlink creation (the pack's copies were skipped) and
+     * on every launch for existing Symlink containers (see repairSymlinkPrefix).
+     */
+    private void linkTemplateSystemDirs(String wineVersion, File containerDir) {
+        File tplWindows = templateWindowsDir(wineVersion);
+        File dstWindows = new File(containerDir, ".wine/drive_c/windows");
+        linkSubtreeFromTemplate(new File(tplWindows, "system32"), new File(dstWindows, "system32"));
+        linkSubtreeFromTemplate(new File(tplWindows, "syswow64"), new File(dstWindows, "syswow64"));
+    }
+
+    /** Recursive worker of {@link #linkTemplateSystemDirs}. */
+    private void linkSubtreeFromTemplate(File tplDir, File dstDir) {
+        File[] entries = tplDir.listFiles();
+        if (entries == null) return;
+        if (!dstDir.isDirectory() && !dstDir.mkdirs()) return;
+
+        for (File src : entries) {
+            File dst = new File(dstDir, src.getName());
+            if (src.isDirectory()) {
+                // Template has a directory here: the prefix must too (replace a stray file).
+                if (dst.exists() && !dst.isDirectory()) FileUtils.delete(dst);
+                if (!dst.isDirectory()) dst.mkdirs();
+                linkSubtreeFromTemplate(src, dst);
                 continue;
             }
-            dst.delete();
-            if (!link.renameTo(dst)) {
-                // Rename refused (rare) — link straight at the destination instead, and if even
-                // that fails, put a real copy back so the prefix is never left without the file.
-                link.delete();
+            if (dst.isDirectory()) FileUtils.delete(dst);
+
+            if (FileUtils.isSymlink(dst)) {
+                // Existing link (dangling, or the old link-into-the-layer kind): retarget it —
+                // FileUtils.symlink drops the previous link first.
                 FileUtils.symlink(src, dst);
-                if (!FileUtils.isSymlink(dst)) FileUtils.copy(src, dst);
             }
+            else {
+                if (dst.exists()) {
+                    // Real file: keep what the prefix owns itself — a native override (DXVK/VKD3D
+                    // d3d*.dll, files a game installed, non-PE data) must survive; everything Wine
+                    // itself put there is replaced by the template link.
+                    if (!isWineBuiltinPe(dst)) continue;
+                    dst.delete();
+                }
+                FileUtils.symlink(src, dst);
+            }
+            if (!FileUtils.isSymlink(dst)) {
+                // Os.symlink refused (FileUtils swallows the error) — a real copy keeps the prefix
+                // complete; correctness first, size second.
+                dst.delete();
+                FileUtils.copy(src, dst);
+            }
+        }
+    }
+
+    /**
+     * Relink a Symlink container's system32/syswow64 to the hidden template. Runs on every launch
+     * because three paths silently undo the links: a layer update (refreshCommonDlls overwrites
+     * links with real layer copies), an import (FileUtils.copy drops symlinks) and containers made
+     * by older builds (they linked into lib/wine/... instead). Never throws.
+     */
+    public boolean repairSymlinkPrefix(Container container, ContentsManager contentsManager) {
+        if (container == null || !container.isSymlinkMode()) return true;
+        File containerDir = container.getRootDir();
+        String wineVersion = container.getWineVersion();
+        if (containerDir == null || wineVersion == null) return false;
+        try {
+            if (!ensurePrefixTemplate(wineVersion, contentsManager)) return false;
+            linkTemplateSystemDirs(wineVersion, containerDir);
+            return true;
+        } catch (Exception e) {
+            Log.e("ContainerManager", "repairSymlinkPrefix failed for container " + container.id, e);
+            return false;
         }
     }
 
@@ -619,44 +743,23 @@ public class ContainerManager {
         WineInfo wineInfo = WineInfo.fromIdentifier(context, contentsManager, wineVersion);
         String containerPattern = wineVersion + "_container_pattern.tzst";
 
-        final File system32LayerDir = new File(wineInfo.path, "lib/wine/" + (wineInfo.isArm64EC() ? "aarch64-windows" : "x86_64-windows"));
-        final File syswow64LayerDir = new File(wineInfo.path, "lib/wine/i386-windows");
-        // Never drop the pack's system dirs into a VOID: if the layer does not carry them, the pack
-        // is the ONLY source for system32/syswow64 and an empty prefix would not boot.
-        final boolean skip32 = isNonEmptyDir(system32LayerDir);
-        final boolean skipWow = isNonEmptyDir(syswow64LayerDir);
+        // Symlink mode = Classic content at link size: the pack's system32/syswow64 go into the
+        // hidden per-version template (built once) and this container receives links — see
+        // ensurePrefixTemplate. If the template can't be built, useTemplate is false and the pack
+        // is extracted here like a Classic container (big, but complete).
+        final boolean useTemplate = symlinkMode && ensurePrefixTemplate(wineVersion, contentsManager);
 
         OnExtractFileListener listener = onExtractFileListener;
         if (symlinkMode) {
-            // The prefix pack carries its own copies of system32/syswow64 — the ~1 GB of a classic
-            // container. Do NOT unpack them: the layer already owns every one of those files, so
-            // extractCommonDlls below links them back in for free. Members the layer does not own
-            // (icons, config exes, ini files the pack adds) are still written as real files.
             final OnExtractFileListener passthrough = onExtractFileListener;
             listener = (file, size) -> {
                 String path = file.getAbsolutePath();
                 // Pale Moon + bundled fonts come from the shared store at first launch — see
                 // applyPatternCommonToSharedStore in XServerDisplayActivity.
                 if (isSharedOverlayPath(path)) return null;
-                boolean inSystem32 = path.contains("/windows/system32/");
-                boolean inSyswow64 = path.contains("/windows/syswow64/");
-                if (!inSystem32 && !inSyswow64) return passthrough == null ? file : passthrough.onExtractFile(file, size);
-                File parent = file.getParentFile();
-                String expected = inSystem32 ? "system32" : "syswow64";
-                // Only direct children: the layer's arch dirs are flat, deeper files (wbem/,
-                // drivers/) have no counterpart there and must be extracted normally.
-                if (parent == null || !parent.getName().equals(expected)) return passthrough == null ? file : passthrough.onExtractFile(file, size);
-                if (inSystem32 ? !skip32 : !skipWow) return passthrough == null ? file : passthrough.onExtractFile(file, size);
-                String name = file.getName();
-                // copyLayerDlls deliberately never emits these two — if we drop the pack's copy,
-                // nothing would put it back. Extract them as real files.
-                if (name.equals("tabtip.exe") || name.equals("icu.dll"))
-                    return passthrough == null ? file : passthrough.onExtractFile(file, size);
-                // NAME match only. The pack lives inside this very layer, so a shared name IS the
-                // same file — but requiring an equal BYTE LENGTH made this a silent no-op on any
-                // layer whose pack was rebuilt at a different size, which is why the container
-                // still came out at ~950 MB no matter what was selected.
-                if (new File(inSystem32 ? system32LayerDir : syswow64LayerDir, name).isFile()) return null;
+                // Template ready: those subtrees were unpacked into it instead of here.
+                if (useTemplate && (inSystemSubtree(path, "system32") || inSystemSubtree(path, "syswow64")))
+                    return null;
                 return passthrough == null ? file : passthrough.onExtractFile(file, size);
             };
         }
@@ -669,22 +772,17 @@ public class ContainerManager {
         }
 
         if (result) {
-            if (symlinkMode) {
-                // DECISIVE: drop whatever the pack unpacked into the two system dirs, whatever the
-                // archive's path layout or file lengths were. extractCommonDlls runs next and
-                // refills both dirs from the layer as links, so the ~900 MB never stays.
-                File windowsDir = new File(containerDir, ".wine/drive_c/windows");
-                if (skip32) FileUtils.delete(new File(windowsDir, "system32"));
-                if (skipWow) FileUtils.delete(new File(windowsDir, "syswow64"));
-                linkifySystemDlls(wineInfo, containerDir);
-            }
+            if (useTemplate) linkTemplateSystemDirs(wineVersion, containerDir);
             try {
+                // Always a CLASSIC refill: with the template in place every pack file is already
+                // linked above, so this only writes files the layer carries that the pack does not
+                // — byte-identical to what a Classic container stores for them.
                 if (wineInfo.isArm64EC())
-                    extractCommonDlls(wineInfo, "aarch64-windows", "system32", containerDir, onExtractFileListener, symlinkMode); // arm64ec only
+                    extractCommonDlls(wineInfo, "aarch64-windows", "system32", containerDir, onExtractFileListener, false); // arm64ec only
                 else
-                    extractCommonDlls(wineInfo, "x86_64-windows", "system32", containerDir, onExtractFileListener, symlinkMode);
+                    extractCommonDlls(wineInfo, "x86_64-windows", "system32", containerDir, onExtractFileListener, false);
 
-                extractCommonDlls(wineInfo, "i386-windows", "syswow64", containerDir, onExtractFileListener, symlinkMode);
+                extractCommonDlls(wineInfo, "i386-windows", "syswow64", containerDir, onExtractFileListener, false);
             }
             catch (JSONException e) {
                 return false;

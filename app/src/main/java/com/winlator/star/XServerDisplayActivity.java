@@ -7166,6 +7166,9 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // store: an import (FileUtils.copy drops symlinks) can leave them missing even though the
         // pattern gate above stays satisfied. Two stats when the links are already right.
         if (container.isSymlinkMode()) linkSharedOverlaySubtrees(container);
+        // ...and to the hidden prefix template: a layer update or an import turns system32/syswow64
+        // back into real copies (or drops the links entirely), so re-link them on every launch.
+        if (container.isSymlinkMode()) containerManager.repairSymlinkPrefix(container, contentsManager);
 
         String dxwrapper = this.dxwrapper;
 

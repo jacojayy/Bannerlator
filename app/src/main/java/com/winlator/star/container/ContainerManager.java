@@ -601,10 +601,14 @@ public class ContainerManager {
     }
 
     /**
-     * Build (or reuse) the hidden template for {@code wineVersion}: extract the prefix pack with a
-     * whitelist that keeps only the system32/syswow64 subtrees, stamp it, return true. Any failure
-     * returns false WITHOUT throwing — the caller then falls back to a full Classic extraction,
-     * because a big working prefix beats a small broken one.
+     * Build (or reuse) the hidden template for {@code wineVersion}. The pack is extracted IN FULL —
+     * exactly like a Classic container — and then refilled from the layer, so the template's
+     * system32/syswow64 hold every single file a Classic container would have (controller, file
+     * manager and wineboot need the COMPLETE set; a partial template breaks them). The shared
+     * Pale Moon/fonts store and everything else are pruned afterwards, leaving only the two
+     * subtrees the template exists for. Any failure returns false WITHOUT throwing — the caller
+     * then falls back to a full Classic extraction, because a big working prefix beats a small
+     * broken one.
      */
     private boolean ensurePrefixTemplate(String wineVersion, ContentsManager contentsManager) {
         synchronized (PREFIX_TEMPLATE_LOCK) {
@@ -625,26 +629,46 @@ public class ContainerManager {
 
             try {
                 WineInfo wineInfo = WineInfo.fromIdentifier(context, contentsManager, wineVersion);
-                OnExtractFileListener keepSystems = (file, size) -> {
-                    String path = file.getAbsolutePath();
-                    return inSystemSubtree(path, "system32") || inSystemSubtree(path, "syswow64") ? file : null;
-                };
+
+                // 1. Full pack, no whitelist — only the shared overlay (Pale Moon/fonts, which the
+                // launch overlay provides separately) is skipped. This writes byte-for-byte what a
+                // Classic container's pack extraction writes.
+                OnExtractFileListener noSharedOverlay = (file, size) ->
+                        isSharedOverlayPath(file.getAbsolutePath()) ? null : file;
 
                 boolean ok = TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, context,
-                        wineVersion + "_container_pattern.tzst", root, keepSystems);
+                        wineVersion + "_container_pattern.tzst", root, noSharedOverlay);
                 if (!ok) {
                     ok = TarCompressorUtils.extract(TarCompressorUtils.Type.XZ,
-                            new File(wineInfo.path + "/prefixPack.txz"), root, keepSystems);
+                            new File(wineInfo.path + "/prefixPack.txz"), root, noSharedOverlay);
                 }
-
-                if (!ok || !isNonEmptyDir(system32) || !isNonEmptyDir(syswow64)) {
+                if (!ok) {
                     Log.e("ContainerManager", "prefix template: pack extraction failed for " + wineVersion);
                     FileUtils.delete(root);
                     return false;
                 }
+
+                // 2. The same refill a Classic container gets: files the layer carries that the pack
+                // does not. Without this the template is only a subset and containers end up with
+                // real clones of everything that's missing.
+                if (wineInfo.isArm64EC())
+                    extractCommonDlls(wineInfo, "aarch64-windows", "system32", root, null, false); // arm64ec only
+                else
+                    extractCommonDlls(wineInfo, "x86_64-windows", "system32", root, null, false);
+                extractCommonDlls(wineInfo, "i386-windows", "syswow64", root, null, false);
+
+                // 3. Keep ONLY the two system subtrees: registry, ini files, drive_c extras etc. are
+                // tiny and every container extracts them itself — only the ~900 MB are worth sharing.
+                pruneToSystemDirs(root);
             }
             catch (Exception e) {
                 Log.e("ContainerManager", "prefix template: build failed for " + wineVersion, e);
+                FileUtils.delete(root);
+                return false;
+            }
+
+            if (!isNonEmptyDir(system32) || !isNonEmptyDir(syswow64)) {
+                Log.e("ContainerManager", "prefix template: empty system dirs for " + wineVersion);
                 FileUtils.delete(root);
                 return false;
             }
@@ -657,6 +681,24 @@ public class ContainerManager {
                         + " syswow64=" + FileUtils.totalSize(syswow64) / (1024 * 1024) + "MB");
             }
             return true;
+        }
+    }
+
+    /** Keep only {@code .wine/drive_c/windows/{system32,syswow64}} inside the template. */
+    private static void pruneToSystemDirs(File root) {
+        keepOnlyChildren(new File(root, ".wine/drive_c/windows"), "system32", "syswow64");
+        keepOnlyChildren(new File(root, ".wine/drive_c"), "windows");
+        keepOnlyChildren(new File(root, ".wine"), "drive_c");
+        keepOnlyChildren(root, ".wine");
+    }
+
+    private static void keepOnlyChildren(File dir, String... keep) {
+        File[] children = dir.listFiles();
+        if (children == null) return;
+        outer:
+        for (File child : children) {
+            for (String name : keep) if (child.getName().equals(name)) continue outer;
+            FileUtils.delete(child);
         }
     }
 
@@ -696,10 +738,11 @@ public class ContainerManager {
             }
             else {
                 if (dst.exists()) {
-                    // Real file: keep what the prefix owns itself — a native override (DXVK/VKD3D
-                    // d3d*.dll, files a game installed, non-PE data) must survive; everything Wine
-                    // itself put there is replaced by the template link.
-                    if (!isWineBuiltinPe(dst)) continue;
+                    // Real file: relink ONLY when it has the template file's length — that is the
+                    // same pack file, so the bytes Wine loads do not change and controller/file
+                    // manager cannot regress. Native overrides and wineboot-touched files differ
+                    // in size and stay real files (the prefix owns those).
+                    if (dst.length() != src.length()) continue;
                     dst.delete();
                 }
                 FileUtils.symlink(src, dst);
@@ -748,6 +791,10 @@ public class ContainerManager {
         // ensurePrefixTemplate. If the template can't be built, useTemplate is false and the pack
         // is extracted here like a Classic container (big, but complete).
         final boolean useTemplate = symlinkMode && ensurePrefixTemplate(wineVersion, contentsManager);
+        if (com.winlator.star.BuildConfig.DEBUG) {
+            Log.d("ContainerManager", "extract " + containerDir.getName()
+                    + " symlink=" + symlinkMode + " template=" + useTemplate);
+        }
 
         OnExtractFileListener listener = onExtractFileListener;
         if (symlinkMode) {

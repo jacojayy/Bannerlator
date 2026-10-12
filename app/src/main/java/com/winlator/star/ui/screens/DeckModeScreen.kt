@@ -61,6 +61,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -222,6 +225,35 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 "settings" -> DeckSettingsScreen()
                 else -> DeckHome(titles = titles)
             }
+
+            // DroidDeck's corner light — a graphite-to-blue wash at the top right of every pane.
+            // Draw-only, so it never intercepts touches meant for the screen underneath.
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .drawBehind {
+                        val bandHeight = 170.dp.toPx()
+                        drawRect(
+                            brush = Brush.horizontalGradient(
+                                0.0f to Color.Transparent,
+                                0.55f to Deck.primary.copy(alpha = 0.03f),
+                                1.0f to Deck.primary.copy(alpha = 0.09f),
+                            ),
+                            size = Size(size.width, bandHeight),
+                        )
+                        drawRect(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    Deck.primary.copy(alpha = 0.16f),
+                                    Deck.primary.copy(alpha = 0.05f),
+                                    Color.Transparent,
+                                ),
+                                center = Offset(size.width, 0f),
+                                radius = 300.dp.toPx(),
+                            ),
+                        )
+                    },
+            )
 
             // Leave Deck Mode — the only chrome that sits over a hosted screen.
             Box(

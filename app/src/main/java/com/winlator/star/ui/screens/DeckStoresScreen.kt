@@ -88,6 +88,7 @@ import com.winlator.star.store.SteamFriendsTab
 import com.winlator.star.store.SteamPrefs
 import com.winlator.star.store.SteamProfileTab
 import com.winlator.star.store.StoreMatureSetting
+import com.winlator.star.store.StoreDownloadTier
 import com.winlator.star.store.rememberSteamLibrary
 import com.winlator.star.store.rememberStorefrontLayout
 import com.winlator.star.store.download.DownloadRegistry
@@ -842,16 +843,21 @@ internal fun DeckStoresScreen() {
             if (deckSignedIn(context, active.screen)) {
                 var storeTab by remember(active.screen) { mutableStateOf(0) }
                 // Steam alone carries the social pair: Friends + Profile, the same composables
-                // the store front embeds, in the Deck tab strip.
+                // the store front embeds, in the Deck tab strip. Every store gets Settings.
                 val tabs = if (active.screen == Screen.Steam) {
                     listOf(
                         DeckTabSpec("Store"),
                         DeckTabSpec("Library"),
+                        DeckTabSpec("Settings"),
                         DeckTabSpec("Friends"),
                         DeckTabSpec("Profile"),
                     )
                 } else {
-                    listOf(DeckTabSpec("Store"), DeckTabSpec("Library"))
+                    listOf(
+                        DeckTabSpec("Store"),
+                        DeckTabSpec("Library"),
+                        DeckTabSpec("Settings"),
+                    )
                 }
                 DeckTabBar(
                     tabs = tabs,
@@ -862,8 +868,17 @@ internal fun DeckStoresScreen() {
                 when (storeTab) {
                     0 -> DeckStoreFront(active, context, onBrowseTap, showMature)
                     1 -> DeckAccountCard(active, context, openOwned) { showDownloads = true }
-                    2 -> DeckSteamFriendsPane()
-                    else -> DeckSteamProfilePane(onOpenFriends = { storeTab = 2 })
+                    2 -> DeckStoreSettingsPane(
+                        showMature = showMature,
+                        onShowMatureChange = { v ->
+                            showMature = v
+                            StoreMatureSetting.set(context, v)
+                        },
+                        onOpenDownloads = { showDownloads = true },
+                        activeDownloads = activeDownloads,
+                    )
+                    3 -> DeckSteamFriendsPane()
+                    else -> DeckSteamProfilePane(onOpenFriends = { storeTab = 3 })
                 }
             } else {
                 DeckSignInCard(active, context)
@@ -1031,6 +1046,56 @@ private fun DeckAccountCard(
 }
 
 /**
+ * The Settings tab: the shared store settings (mature-content filter + download-speed tier — the
+ * same ones the Downloads pane carries, so both entry points work) plus a jump into the queue.
+ * [showMature] is hoisted by [DeckStoresScreen] so the storefront refilters the instant it flips.
+ */
+@Composable
+private fun DeckStoreSettingsPane(
+    showMature: Boolean,
+    onShowMatureChange: (Boolean) -> Unit,
+    onOpenDownloads: () -> Unit,
+    activeDownloads: Int,
+) {
+    val context = LocalContext.current
+    var dlTier by remember { mutableStateOf(StoreDownloadTier.get(context)) }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        DeckGroup("Store settings") {
+            DeckRow(
+                label = "Show mature content",
+                hint = "Storefront 17+/18+ titles; owned games always show",
+                control = { DeckToggle(showMature, onShowMatureChange) },
+            )
+            DeckChoiceRow(
+                label = "Download speed",
+                hint = "Ceiling the next store download may ramp to",
+                options = StoreDownloadTier.ALL.map { t -> t.toString() to StoreDownloadTier.label(t) },
+                selected = dlTier.toString(),
+                onPick = { v ->
+                    v.toIntOrNull()?.let { t ->
+                        dlTier = t
+                        StoreDownloadTier.set(context, t)
+                    }
+                },
+            )
+        }
+        DeckGroup("Queue") {
+            DeckRow(
+                label = "Downloads",
+                hint = if (activeDownloads > 0) "$activeDownloads active" else "Nothing downloading",
+                control = { DeckButton("Open", primary = false) { onOpenDownloads() } },
+            )
+        }
+    }
+}
+
+/**
  * Steam's Friends tab embedded in the Deck tab strip: the SAME composable the store front runs,
  * wrapped in [DeckStoreTheme] so it draws in graphite, with the session inits the store Activity
  * would otherwise have done. Messages surface as a Toast (the Deck shell has no snackbar host).
@@ -1038,10 +1103,13 @@ private fun DeckAccountCard(
 @Composable
 private fun DeckSteamFriendsPane() {
     val context = LocalContext.current
-    LaunchedEffect(Unit) {
+    // SteamMainActivity runs these in onCreate — composition-time, before ANY child reads a
+    // pref or the engine, never deferred to an effect.
+    remember(context) {
         SteamPrefs.init(context)
         SteamRepository.getInstance().initialize(context)
         SteamFriendsStore.init(context)
+        true
     }
     val layout = rememberStorefrontLayout()
     DeckStoreTheme {
@@ -1059,10 +1127,14 @@ private fun DeckSteamFriendsPane() {
 @Composable
 private fun DeckSteamProfilePane(onOpenFriends: () -> Unit) {
     val context = LocalContext.current
-    LaunchedEffect(Unit) {
+    // Same composition-time session init as the Friends pane — see there for why it must not
+    // wait for an effect: everything the profile tab touches expects SteamMainActivity's onCreate
+    // sequence to have already run.
+    remember(context) {
         SteamPrefs.init(context)
         SteamRepository.getInstance().initialize(context)
         SteamFriendsStore.init(context)
+        true
     }
     val library = rememberSteamLibrary()
     val layout = rememberStorefrontLayout()

@@ -63,7 +63,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -226,31 +225,28 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 else -> DeckHome(titles = titles)
             }
 
-            // DroidDeck's corner light — a graphite-to-blue wash at the top right of every pane.
-            // Draw-only, so it never intercepts touches meant for the screen underneath.
+            // DroidDeck's corner light — one circular blue glow just inside the top right of every
+            // pane. Draw-only, so it never intercepts touches meant for the screen underneath, and
+            // anchored so it stops short of the pane's content instead of washing across it.
             Box(
                 modifier = Modifier
                     .matchParentSize()
                     .drawBehind {
-                        val bandHeight = 170.dp.toPx()
-                        drawRect(
-                            brush = Brush.horizontalGradient(
-                                0.0f to Color.Transparent,
-                                0.55f to Deck.primary.copy(alpha = 0.03f),
-                                1.0f to Deck.primary.copy(alpha = 0.09f),
-                            ),
-                            size = Size(size.width, bandHeight),
-                        )
-                        drawRect(
+                        val radius = 460.dp.toPx()
+                        val center = Offset(size.width - radius * 0.35f, radius * 0.35f)
+                        drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
-                                    Deck.primary.copy(alpha = 0.16f),
-                                    Deck.primary.copy(alpha = 0.05f),
+                                    Deck.primary.copy(alpha = 0.24f),
+                                    Deck.primary.copy(alpha = 0.10f),
+                                    Deck.primary.copy(alpha = 0.04f),
                                     Color.Transparent,
                                 ),
-                                center = Offset(size.width, 0f),
-                                radius = 300.dp.toPx(),
+                                center = center,
+                                radius = radius,
                             ),
+                            radius = radius,
+                            center = center,
                         )
                     },
             )

@@ -619,19 +619,19 @@ public class ContainerManager {
         WineInfo wineInfo = WineInfo.fromIdentifier(context, contentsManager, wineVersion);
         String containerPattern = wineVersion + "_container_pattern.tzst";
 
+        final File system32LayerDir = new File(wineInfo.path, "lib/wine/" + (wineInfo.isArm64EC() ? "aarch64-windows" : "x86_64-windows"));
+        final File syswow64LayerDir = new File(wineInfo.path, "lib/wine/i386-windows");
+        // Never drop the pack's system dirs into a VOID: if the layer does not carry them, the pack
+        // is the ONLY source for system32/syswow64 and an empty prefix would not boot.
+        final boolean skip32 = isNonEmptyDir(system32LayerDir);
+        final boolean skipWow = isNonEmptyDir(syswow64LayerDir);
+
         OnExtractFileListener listener = onExtractFileListener;
         if (symlinkMode) {
             // The prefix pack carries its own copies of system32/syswow64 — the ~1 GB of a classic
             // container. Do NOT unpack them: the layer already owns every one of those files, so
             // extractCommonDlls below links them back in for free. Members the layer does not own
             // (icons, config exes, ini files the pack adds) are still written as real files.
-            // Matching rule = same file NAME in the layer's arch dir, exactly like linkifySystemDlls.
-            final File system32LayerDir = new File(wineInfo.path, "lib/wine/" + (wineInfo.isArm64EC() ? "aarch64-windows" : "x86_64-windows"));
-            final File syswow64LayerDir = new File(wineInfo.path, "lib/wine/i386-windows");
-            // Never skip into a VOID: if the layer does not carry these dirs, the pack is the ONLY
-            // source for system32/syswow64 and skipping would leave an unbootable empty prefix.
-            final boolean skip32 = isNonEmptyDir(system32LayerDir);
-            final boolean skipWow = isNonEmptyDir(syswow64LayerDir);
             final OnExtractFileListener passthrough = onExtractFileListener;
             listener = (file, size) -> {
                 String path = file.getAbsolutePath();
@@ -669,7 +669,15 @@ public class ContainerManager {
         }
 
         if (result) {
-            if (symlinkMode) linkifySystemDlls(wineInfo, containerDir);
+            if (symlinkMode) {
+                // DECISIVE: drop whatever the pack unpacked into the two system dirs, whatever the
+                // archive's path layout or file lengths were. extractCommonDlls runs next and
+                // refills both dirs from the layer as links, so the ~900 MB never stays.
+                File windowsDir = new File(containerDir, ".wine/drive_c/windows");
+                if (skip32) FileUtils.delete(new File(windowsDir, "system32"));
+                if (skipWow) FileUtils.delete(new File(windowsDir, "syswow64"));
+                linkifySystemDlls(wineInfo, containerDir);
+            }
             try {
                 if (wineInfo.isArm64EC())
                     extractCommonDlls(wineInfo, "aarch64-windows", "system32", containerDir, onExtractFileListener, symlinkMode); // arm64ec only

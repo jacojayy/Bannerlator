@@ -1,7 +1,10 @@
 package com.winlator.star.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,8 +12,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -21,6 +27,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,7 +55,14 @@ internal fun DeckContainerDetailScreen(
     onNavigateBack: () -> Unit,
     viewModel: ContainerDetailViewModel = viewModel(),
 ) {
-    LaunchedEffect(containerId) { viewModel.init(containerId) }
+    LaunchedEffect(containerId) {
+        viewModel.init(containerId)
+        // CREATE ONLY: preselect the recommended Symlink mode. The legacy editor never touches
+        // symlinkMode, so it keeps creating Classic containers.
+        if (containerId <= 0 && containerId != ContainerDetailViewModel.EDIT_DEFAULTS_ID) {
+            viewModel.symlinkMode = true
+        }
+    }
 
     val title = when {
         viewModel.defaultsMode -> "New Container Defaults"
@@ -115,6 +130,30 @@ internal fun DeckContainerDetailScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp),
         ) {
+            // ── Container mode (create only) ─────────────────────────────────
+            // "Choose Container mode": Symlink links the prefix's system DLLs into the Wine layer
+            // (tiny container, installers that rewrite system32 can't), Classic copies them the way
+            // Winlator always has. Existing containers keep the mode they were created with, so the
+            // row only ever appears while creating.
+            if (!viewModel.isEditMode && !viewModel.defaultsMode) {
+                DeckGroup("Choose Container mode") {
+                    DeckContainerModeCard(
+                        title = "Symlink",
+                        badge = "RECOMMENDED",
+                        body = "Containers will be less than 100 MB, but installers won't work.",
+                        selected = viewModel.symlinkMode,
+                        onClick = { viewModel.symlinkMode = true },
+                    )
+                    DeckContainerModeCard(
+                        title = "Classic",
+                        badge = null,
+                        body = "The classic method. Containers will take up around 1 GB, but everything will work.",
+                        selected = !viewModel.symlinkMode,
+                        onClick = { viewModel.symlinkMode = false },
+                    )
+                }
+            }
+
             DeckGroup("General") {
                 DeckTextRow(
                     label = "Container Name",
@@ -365,6 +404,67 @@ internal fun DeckContainerDetailScreen(
                     onDone                       = onNavigateBack,
                 )
             }
+        }
+    }
+}
+
+/** One selectable "Container mode" card — a Deck radio row: dot, title, optional badge, body. */
+@Composable
+private fun DeckContainerModeCard(
+    title: String,
+    badge: String?,
+    body: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .clip(shape)
+            .background(
+                if (selected) DeckPalette.primary.copy(alpha = 0.14f) else DeckPalette.surfaceVariant,
+            )
+            .border(1.dp, if (selected) DeckPalette.primary else DeckPalette.line, shape)
+            .clickable(onClick = onClick)
+            .padding(14.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(if (selected) DeckPalette.primary else Color.Transparent)
+                .border(2.dp, if (selected) DeckPalette.primary else DeckPalette.line2, CircleShape),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = title,
+                    color = if (selected) DeckPalette.primary else DeckPalette.onBackground,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                if (badge != null) {
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = badge,
+                        color = DeckPalette.primary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 1.sp,
+                    )
+                }
+            }
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = body,
+                color = DeckPalette.onSurfaceVariant,
+                fontSize = 12.5.sp,
+                lineHeight = 17.sp,
+            )
         }
     }
 }

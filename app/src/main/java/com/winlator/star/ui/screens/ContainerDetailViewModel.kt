@@ -352,6 +352,14 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
     // here directly (mirrors saveMouseWarp, but against system.reg).
     var runAsAdmin by mutableStateOf(true)
 
+    // Container mode, CREATE ONLY: true = symlink mode (the prefix's system DLLs are linked into
+    // the Wine layer instead of copied → a container stays well under 100 MB, but installers that
+    // write into system32/syswow64 can't), false = classic copy (≈1 GB, everything works).
+    // Defaults to CLASSIC so the legacy editor, which never sets this, keeps its old behaviour;
+    // Deck Mode's create screen preselects Symlink. Threaded into createContainerAsync as the
+    // "symlinkMode" data flag (buildCreateData) and never persisted — it only shapes creation.
+    var symlinkMode by mutableStateOf(false)
+
     // ── Box64 ─────────────────────────────────────────────────────────────────
     var box64VersionEntries by mutableStateOf(emptyList<String>()); private set
     var selectedBox64Version by mutableStateOf("")
@@ -1280,6 +1288,7 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
         return template.getData().apply {
             put("wineVersion", selectedWineVersion)
             put("runAsAdmin", runAsAdmin)
+            put("symlinkMode", symlinkMode)
         }
     }
 

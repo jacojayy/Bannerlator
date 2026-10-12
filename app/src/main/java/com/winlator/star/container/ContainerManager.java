@@ -206,7 +206,7 @@ public class ContainerManager {
 
             container.setWineVersion(data.getString("wineVersion"));
 
-            if (!extractContainerPatternFile(container, container.getWineVersion(), contentsManager, containerDir, null)) {
+            if (!extractContainerPatternFile(container, container.getWineVersion(), contentsManager, containerDir, null, data.optBoolean("symlinkMode", false))) {
                 FileUtils.delete(containerDir);
                 return null;
             }
@@ -435,8 +435,14 @@ public class ContainerManager {
         return linuxContainer;
     }
 
-    private void extractCommonDlls(WineInfo wineInfo, String srcName, String dstName, File containerDir, OnExtractFileListener onExtractFileListener) throws JSONException {
-        copyLayerDlls(new File(wineInfo.path), wineInfo.isArm64EC(), srcName, dstName, containerDir, false, onExtractFileListener);
+    /**
+     * {@code symlinkMode} = the container's "Symlink" mode: the layer's system DLLs are LINKED
+     * into the prefix instead of copied into it, so the container itself stays well under 100 MB.
+     * Classic mode (false) keeps the copy — installers that rewrite system32/syswow64 need real
+     * files in the prefix, which is exactly what symlinking gives up.
+     */
+    private void extractCommonDlls(WineInfo wineInfo, String srcName, String dstName, File containerDir, OnExtractFileListener onExtractFileListener, boolean symlinkMode) throws JSONException {
+        copyLayerDlls(new File(wineInfo.path), wineInfo.isArm64EC(), srcName, dstName, containerDir, false, symlinkMode, onExtractFileListener);
     }
 
     /**
@@ -451,6 +457,10 @@ public class ContainerManager {
      * game-installed files) are never clobbered. Returns the number of files written.
      */
     static int copyLayerDlls(File layerDir, boolean arm64ec, String srcName, String dstName, File containerDir, boolean overwriteBuiltins, OnExtractFileListener onExtractFileListener) {
+        return copyLayerDlls(layerDir, arm64ec, srcName, dstName, containerDir, overwriteBuiltins, false, onExtractFileListener);
+    }
+
+    static int copyLayerDlls(File layerDir, boolean arm64ec, String srcName, String dstName, File containerDir, boolean overwriteBuiltins, boolean symlinkMode, OnExtractFileListener onExtractFileListener) {
         File srcDir = new File(layerDir, "lib/wine/" + srcName);
 
         File[] srcfiles = srcDir.listFiles(file -> file.isFile());
@@ -471,7 +481,24 @@ public class ContainerManager {
                 dstFile = onExtractFileListener.onExtractFile(dstFile, 0);
                 if (dstFile == null) continue;
             }
-            if (FileUtils.copy(file, dstFile)) written++;
+            if (symlinkMode) {
+                // Symlink mode: link back into the Wine layer instead of copying — this is what
+                // keeps the container under ~100 MB. FileUtils.symlink drops an existing entry
+                // first but does NOT create the parent directory, so make it (FileUtils.copy does
+                // that for itself, and Os.symlink would silently fail without it).
+                File parent = dstFile.getParentFile();
+                if (parent != null && !parent.exists()) parent.mkdirs();
+                FileUtils.symlink(file, dstFile);
+                written++;
+            }
+            else {
+                // Never WRITE THROUGH a symlink: a symlink-mode container's destination points into
+                // the Wine layer, and opening it would truncate that shared file. Drop the link so
+                // the copy lands in this container instead. Classic containers have no symlink
+                // here, so this changes nothing for them.
+                if (FileUtils.isSymlink(dstFile)) dstFile.delete();
+                if (FileUtils.copy(file, dstFile)) written++;
+            }
         }
         return written;
     }
@@ -507,6 +534,11 @@ public class ContainerManager {
     }
 
     public boolean extractContainerPatternFile(Container container, String wineVersion, ContentsManager contentsManager, File containerDir, OnExtractFileListener onExtractFileListener) {
+        return extractContainerPatternFile(container, wineVersion, contentsManager, containerDir, onExtractFileListener, false);
+    }
+
+    /** {@code symlinkMode} — see {@link #extractCommonDlls(WineInfo, String, String, File, OnExtractFileListener, boolean)}. */
+    public boolean extractContainerPatternFile(Container container, String wineVersion, ContentsManager contentsManager, File containerDir, OnExtractFileListener onExtractFileListener, boolean symlinkMode) {
         WineInfo wineInfo = WineInfo.fromIdentifier(context, contentsManager, wineVersion);
         String containerPattern = wineVersion + "_container_pattern.tzst";
         boolean result = TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, context, containerPattern, containerDir, onExtractFileListener);
@@ -519,11 +551,11 @@ public class ContainerManager {
         if (result) {
             try {
                 if (wineInfo.isArm64EC())
-                    extractCommonDlls(wineInfo, "aarch64-windows", "system32", containerDir, onExtractFileListener); // arm64ec only
+                    extractCommonDlls(wineInfo, "aarch64-windows", "system32", containerDir, onExtractFileListener, symlinkMode); // arm64ec only
                 else
-                    extractCommonDlls(wineInfo, "x86_64-windows", "system32", containerDir, onExtractFileListener);
+                    extractCommonDlls(wineInfo, "x86_64-windows", "system32", containerDir, onExtractFileListener, symlinkMode);
 
-                extractCommonDlls(wineInfo, "i386-windows", "syswow64", containerDir, onExtractFileListener);
+                extractCommonDlls(wineInfo, "i386-windows", "syswow64", containerDir, onExtractFileListener, symlinkMode);
             }
             catch (JSONException e) {
                 return false;

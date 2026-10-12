@@ -13296,10 +13296,13 @@ return true;
         for (String dll : dlls) {
             File srcFile = new File(system32dlls, dll);
             File dstFile = new File(windowsDir, "system32/" + dll);
-            FileUtils.copy(srcFile, dstFile);
+            // A symlink-mode container's destination already LINKS to this exact layer file, so
+            // there is nothing to restore — and copying would write THROUGH the link, truncating
+            // the shared Wine layer file itself. Classic containers have no symlink here.
+            if (!FileUtils.isSymlink(dstFile)) FileUtils.copy(srcFile, dstFile);
             srcFile = new File(syswow64dlls, dll);
             dstFile = new File(windowsDir, "syswow64/" + dll);
-            FileUtils.copy(srcFile, dstFile);
+            if (!FileUtils.isSymlink(dstFile)) FileUtils.copy(srcFile, dstFile);
         }
    }
 

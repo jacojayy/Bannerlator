@@ -533,9 +533,21 @@ public class ContainerManager {
         return stub.contains("Wine builtin DLL") || stub.contains("Wine placeholder DLL");
     }
 
+    // Mirrors XServerDisplayActivity.SHARED_OVERLAY_SUBTREES: a symlink container does NOT own the
+    // launch overlay's Pale Moon / bundled fonts — it links the one shared copy at first launch —
+    // so the prefix pack must not unpack its own copy of them either.
+    private static final String[] SHARED_OVERLAY_DIRS = {"/drive_c/PaleMoon", "/drive_c/windows/Fonts"};
+
+    private static boolean isSharedOverlayPath(String path) {
+        for (String dir : SHARED_OVERLAY_DIRS) {
+            if (path.endsWith(dir) || path.contains(dir + "/")) return true;
+        }
+        return false;
+    }
+
     /**
-     * Safety net for the pack skip in extractContainerPatternFile: if a system32/syswow64 file of
-     * file of the layer's own name and length did get unpacked anyway (odd archive layout, a
+     * Safety net for the pack skip in extractContainerPatternFile: if a system32/syswow64 file
+     * of the layer's own name and length did get unpacked anyway (odd archive layout, a
      * pattern asset rather than prefixPack.txz), swap that copy for a symlink back into the layer.
      * The pack is built from the layer, so an equal name + length means an equal file. Anything the
      * pack ships that the layer doesn't — or ships at a different size — stays a real file untouched.
@@ -601,6 +613,9 @@ public class ContainerManager {
             final OnExtractFileListener passthrough = onExtractFileListener;
             listener = (file, size) -> {
                 String path = file.getAbsolutePath();
+                // Pale Moon + bundled fonts come from the shared store at first launch — see
+                // applyPatternCommonToSharedStore in XServerDisplayActivity.
+                if (isSharedOverlayPath(path)) return null;
                 boolean inSystem32 = path.contains("/windows/system32/");
                 boolean inSyswow64 = path.contains("/windows/syswow64/");
                 if (!inSystem32 && !inSyswow64) return passthrough == null ? file : passthrough.onExtractFile(file, size);

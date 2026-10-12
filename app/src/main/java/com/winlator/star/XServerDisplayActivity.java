@@ -7131,20 +7131,41 @@ public class XServerDisplayActivity extends AppCompatActivity {
     //                lingers and the new default.pa args are rejected → silence (2026-08-10).
     private static final String PATTERN_CONTENT_VERSION = "7";
 
+    // The two big read-mostly subtrees inside container_pattern_common.tzst — Pale Moon (~106 MB)
+    // and the bundled fonts (~74 MB). A SYMLINK container stores neither: the overlay extracts them
+    // once into a shared store and the prefix gets a directory symlink, so N symlink containers cost
+    // one copy instead of N × 180 MB. Classic containers keep their own real copies, as always.
+    private static final String[] SHARED_OVERLAY_SUBTREES = {
+        "drive_c/PaleMoon",
+        "drive_c/windows/Fonts",
+    };
+
     private void setupWineSystemFiles() {
         String appVersion = String.valueOf(AppUtils.getVersionCode(this));
         String imgVersion = String.valueOf(imageFs.getVersion());
         boolean containerDataChanged = false;
 
+        // A wiped imagefs takes the shared Pale Moon/fonts store with it — marker included — and the
+        // per-container extras below would never trip again, leaving Symlink containers browserless.
+        // Fold "store gone" into the gate so the overlay re-runs and rebuilds it.
+        boolean sharedStoreMissing = container.isSymlinkMode()
+                && !new File(imageFs.getRootDir(), "share/pattern_common").isDirectory();
+
         if (!container.getExtra("appVersion").equals(appVersion)
                 || !container.getExtra("imgVersion").equals(imgVersion)
-                || !container.getExtra("patternVersion").equals(PATTERN_CONTENT_VERSION)) {
+                || !container.getExtra("patternVersion").equals(PATTERN_CONTENT_VERSION)
+                || sharedStoreMissing) {
             applyGeneralPatches(container);
             container.putExtra("appVersion", appVersion);
             container.putExtra("imgVersion", imgVersion);
             container.putExtra("patternVersion", PATTERN_CONTENT_VERSION);
             containerDataChanged = true;
         }
+
+        // A Symlink container must ALWAYS end up with valid links to the shared Pale Moon/fonts
+        // store: an import (FileUtils.copy drops symlinks) can leave them missing even though the
+        // pattern gate above stays satisfied. Two stats when the links are already right.
+        if (container.isSymlinkMode()) linkSharedOverlaySubtrees(container);
 
         String dxwrapper = this.dxwrapper;
 
@@ -14713,12 +14734,96 @@ return true;
 
     private void applyGeneralPatches(Container container) {
         File rootDir = imageFs.getRootDir();
-        TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, this, "container_pattern_common.tzst", rootDir);
+        if (container.isSymlinkMode()) applyPatternCommonToSharedStore(rootDir, container);
+        else TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, this, "container_pattern_common.tzst", rootDir);
         TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, this, "pulseaudio.tzst", new File(getFilesDir(), "pulseaudio"));
         removePaleMoonDesktopShortcut(container);
         WineUtils.applySystemTweaks(this, wineInfo);
         container.putExtra("graphicsDriver", null);
         container.putExtra("desktopTheme", null);
+    }
+
+    /**
+     * Symlink mode's half of applyGeneralPatches. The overlay's two big subtrees (Pale Moon,
+     * bundled fonts — 180 of its 202 MB) are extracted into {@code <imagefs>/share/pattern_common}
+     * ONCE and version-stamped there; everything else still lands in this container as usual, and
+     * the prefix then links the shared copies. Without this a Symlink container would still weigh
+     * in at ~200 MB from the launch overlay alone.
+     */
+    private void applyPatternCommonToSharedStore(File rootDir, Container container) {
+        final File sharedDir = new File(rootDir, "share/pattern_common");
+        File versionFile = new File(sharedDir, ".pattern_version");
+        final boolean sharedCurrent = versionFile.isFile()
+                && PATTERN_CONTENT_VERSION.equals(FileUtils.readString(versionFile).trim());
+
+        // The listener decides WHERE each entry is written: the shared subtrees go into the shared
+        // store (or are skipped when it is already at this version), everything else keeps its path.
+        OnExtractFileListener remap = (file, size) -> {
+            String path = file.getAbsolutePath();
+            int i = path.indexOf("/.wine/");
+            if (i < 0) return file;
+            String rel = path.substring(i + "/.wine/".length());
+            if (!isSharedOverlaySubtree(rel)) return file;
+            if (sharedCurrent) return null;
+            return new File(sharedDir, rel);
+        };
+
+        boolean extracted = TarCompressorUtils.extract(
+            TarCompressorUtils.Type.ZSTD, this, "container_pattern_common.tzst", rootDir, remap);
+        if (extracted && !sharedCurrent) {
+            sharedDir.mkdirs();
+            FileUtils.writeString(versionFile, PATTERN_CONTENT_VERSION);
+        }
+
+        linkSharedOverlaySubtrees(container);
+    }
+
+    /** Point this prefix's Pale Moon/fonts at the shared store (idempotent, see linkPrefixSubtree). */
+    private void linkSharedOverlaySubtrees(Container container) {
+        File sharedDir = new File(imageFs.getRootDir(), "share/pattern_common");
+        File prefix = new File(container.getRootDir(), ".wine");
+        for (String sub : SHARED_OVERLAY_SUBTREES) {
+            linkPrefixSubtree(new File(sharedDir, sub), new File(prefix, sub));
+        }
+    }
+
+    /** True for {@code drive_c/PaleMoon}, {@code drive_c/windows/Fonts} and anything beneath them. */
+    private static boolean isSharedOverlaySubtree(String rel) {
+        for (String sub : SHARED_OVERLAY_SUBTREES) {
+            if (rel.equals(sub) || rel.startsWith(sub + "/")) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Point {@code prefixSubtree} at {@code sharedSubtree} (the one shared copy of Pale Moon and the
+     * bundled fonts). A missing shared copy links nothing; a real NON-EMPTY directory in the prefix
+     * is left alone so installed fonts and browser files are never destroyed; an empty dir, a stale
+     * link or an absent path is replaced by the symlink.
+     */
+    private static void linkPrefixSubtree(File sharedSubtree, File prefixSubtree) {
+        if (!sharedSubtree.isDirectory()) {
+            // No shared copy (failed extract, or a pattern that ships no Pale Moon): drop a stale
+            // link rather than leave the prefix pointing at nothing.
+            if (FileUtils.isSymlink(prefixSubtree)) prefixSubtree.delete();
+            return;
+        }
+        if (FileUtils.isSymlink(prefixSubtree)) {
+            try {
+                // Already pointing at the shared copy: nothing to do (checked every launch).
+                if (prefixSubtree.getCanonicalFile().equals(sharedSubtree.getCanonicalFile())) return;
+            } catch (IOException ignored) {}
+            prefixSubtree.delete();
+        } else if (prefixSubtree.isDirectory()) {
+            String[] children = prefixSubtree.list();
+            if (children == null || children.length > 0) return;
+            prefixSubtree.delete();
+        } else if (prefixSubtree.exists()) {
+            return;
+        }
+        File parent = prefixSubtree.getParentFile();
+        if (parent != null && !parent.isDirectory()) parent.mkdirs();
+        FileUtils.symlink(sharedSubtree, prefixSubtree);
     }
 
     // Pale Moon ships only as a START MENU launcher now — never as a desktop shortcut. The repacked

@@ -71,8 +71,10 @@ import com.winlator.star.store.StoreCatalogDetailActivity
 import com.winlator.star.store.deckTileFocus
 import com.winlator.star.store.AmazonMainActivity
 import com.winlator.star.store.AmazonUserData
+import com.winlator.star.store.AmazonGame
 import com.winlator.star.store.AmazonGameDetailActivity
 import com.winlator.star.store.AmazonLibraryRepo
+import com.winlator.star.store.EpicGame
 import com.winlator.star.store.EpicGameDetailActivity
 import com.winlator.star.store.EpicLibraryRepo
 import com.winlator.star.store.GogGameDetailActivity
@@ -172,7 +174,15 @@ private fun deckOwnedCount(context: Context, screen: Screen): Int? =
 
 
 /** One owned game: cover art, and how to open its real per-store detail screen. */
-private data class DeckOwnedGame(val title: String, val art: String?, val open: (Context) -> Unit)
+private data class DeckOwnedGame(
+    val title: String,
+    val art: String?,
+    val open: (Context) -> Unit,
+    val gog: GogGame? = null,
+    val epic: EpicGame? = null,
+    val amazon: AmazonGame? = null,
+    val steamAppId: Int = 0,
+)
 
 /**
  * The store's REAL cached owned-games library, read off each store's own repo. Steam's rows come off
@@ -186,6 +196,7 @@ private fun deckOwnedGames(context: Context, screen: Screen): List<DeckOwnedGame
             DeckOwnedGame(
                 title = g.title,
                 art = c.tallImageUrl ?: c.imageUrl,
+                gog = g,
                 open = { ctx ->
                     ctx.startActivity(Intent(ctx, GogGameDetailActivity::class.java).apply {
                         putExtra("game_id", g.gameId)
@@ -203,6 +214,7 @@ private fun deckOwnedGames(context: Context, screen: Screen): List<DeckOwnedGame
             DeckOwnedGame(
                 title = g.title,
                 art = g.artCover.ifBlank { null } ?: g.artSquare.ifBlank { null },
+                epic = g,
                 open = { ctx ->
                     ctx.startActivity(Intent(ctx, EpicGameDetailActivity::class.java).apply {
                         putExtra("app_name", g.appName)
@@ -220,6 +232,7 @@ private fun deckOwnedGames(context: Context, screen: Screen): List<DeckOwnedGame
             DeckOwnedGame(
                 title = g.title,
                 art = g.artUrl.ifBlank { null } ?: g.heroUrl.ifBlank { null },
+                amazon = g,
                 open = { ctx ->
                     ctx.startActivity(Intent(ctx, AmazonGameDetailActivity::class.java).apply {
                         putExtra("product_id", g.productId)
@@ -239,6 +252,7 @@ private fun deckOwnedGames(context: Context, screen: Screen): List<DeckOwnedGame
                 DeckOwnedGame(
                     title = g.name,
                     art = g.headerUrl,
+                    steamAppId = g.appId,
                     open = { ctx ->
                         ctx.startActivity(
                             Intent(ctx, SteamGameDetailActivity::class.java)
@@ -253,7 +267,7 @@ private fun deckOwnedGames(context: Context, screen: Screen): List<DeckOwnedGame
 
 /** The signed-in store's owned-games grid, loaded off the main thread from the real cache. */
 @Composable
-private fun DeckLibraryGrid(tile: DeckStoreTile, context: Context) {
+private fun DeckLibraryGrid(tile: DeckStoreTile, context: Context, onGameClick: (DeckOwnedGame) -> Unit) {
     var games by remember(tile.screen) { mutableStateOf<List<DeckOwnedGame>>(emptyList()) }
     LaunchedEffect(tile.screen) {
         games = withContext(Dispatchers.IO) { deckOwnedGames(context, tile.screen) }
@@ -280,7 +294,7 @@ private fun DeckLibraryGrid(tile: DeckStoreTile, context: Context) {
         ) {
             itemsIndexed(games, key = { i, g -> "$i-${g.title}" }) { index, game ->
                 DeckRise(index = index % 10) {
-                    DeckGameCard(game) { game.open(context) }
+                    DeckGameCard(game) { onGameClick(game) }
                 }
             }
         }
@@ -333,6 +347,7 @@ private data class DeckBrowseItem(
     val art: String?,
     val price: String,
     val catalog: CatalogItem? = null,
+    val appId: Int = 0,
     val open: (Context) -> Unit,
 )
 
@@ -366,6 +381,7 @@ private fun deckSteamBrowse(i: SteamStoreCatalog.StoreItem): DeckBrowseItem =
             i.hasPrice -> SteamStoreCatalog.formatPrice(i.finalCents, i.currency)
             else -> ""
         },
+        appId = i.appId,
     ) { ctx ->
         ctx.startActivity(
             Intent(ctx, SteamGameDetailActivity::class.java)
@@ -418,29 +434,12 @@ private suspend fun deckFeatured(context: Context, screen: Screen): DeckStoreDat
 
 /** The signed-in store's storefront: a hero pick plus labeled rails of real featured titles. */
 @Composable
-private fun DeckStoreFront(tile: DeckStoreTile, context: Context, onInstallGog: (GogGame) -> Unit) {
+private fun DeckStoreFront(tile: DeckStoreTile, context: Context, onCard: (DeckBrowseItem) -> Unit) {
     var data by remember(tile.screen) { mutableStateOf<DeckStoreData?>(null) }
     LaunchedEffect(tile.screen) {
         data = withContext(Dispatchers.IO) { deckFeatured(context, tile.screen) }
     }
     val store = data
-    val scope = rememberCoroutineScope()
-    val onCard: (DeckBrowseItem) -> Unit = { item ->
-        val cat = item.catalog
-        if (tile.screen == Screen.Gog && cat != null) {
-            scope.launch {
-                val game = withContext(Dispatchers.IO) {
-                    deckGogBuild(
-                        context, cat.id, cat.title, cat.imageUrl,
-                        cat.description, cat.developer, cat.tags,
-                    )
-                }
-                onInstallGog(game)
-            }
-        } else {
-            item.open(context)
-        }
-    }
     if (store == null) {
         Text("Loading ${tile.screen.label} store...", color = Deck.onSurfaceVariant, fontSize = 12.sp)
         return
@@ -586,12 +585,59 @@ internal fun DeckStoresScreen() {
     val showStores by AppThemeState.showStores.collectAsState()
     var selected by remember { mutableStateOf<Screen>(Screen.Gog) }
     var gogInstall by remember { mutableStateOf<GogGame?>(null) }
+    var epicInstall by remember { mutableStateOf<EpicGame?>(null) }
+    var amazonInstall by remember { mutableStateOf<AmazonGame?>(null) }
+    var steamInstall by remember { mutableStateOf<DeckSteamTarget?>(null) }
     val active = deckStores.firstOrNull { it.screen == selected } ?: deckStores.first()
+    val scope = rememberCoroutineScope()
 
-    val install = gogInstall
-    if (install != null) {
-        DeckGogInstall(install) { gogInstall = null }
-    } else {
+    // Library (owned) card tap -> in-Deck install when the store's payload is attached.
+    val openOwned: (DeckOwnedGame) -> Unit = { g ->
+        when {
+            g.gog != null -> gogInstall = g.gog
+            g.epic != null -> epicInstall = g.epic
+            g.amazon != null -> amazonInstall = g.amazon
+            g.steamAppId != 0 -> steamInstall = DeckSteamTarget(g.steamAppId, g.title, g.art)
+            else -> g.open(context)
+        }
+    }
+
+    // Store-tab browse card tap -> in-Deck install (GOG resolves its gen flag; Epic matches the
+    // owned library for appName/namespace; Steam goes straight from appId). Unowned fallbacks
+    // keep the legacy detail page.
+    val onBrowseTap: (DeckBrowseItem) -> Unit = { item ->
+        val cat = item.catalog
+        when {
+            active.screen == Screen.Gog && cat != null -> scope.launch {
+                val game = withContext(Dispatchers.IO) {
+                    deckGogBuild(
+                        context, cat.id, cat.title, cat.imageUrl,
+                        cat.description, cat.developer, cat.tags,
+                    )
+                }
+                gogInstall = game
+            }
+            active.screen == Screen.Epic && cat != null -> scope.launch {
+                val owned = withContext(Dispatchers.IO) {
+                    EpicLibraryRepo.cached(context).firstOrNull { g ->
+                        (g.namespace == cat.extra["namespace"] && g.catalogItemId == cat.id) ||
+                            g.title.equals(cat.title, ignoreCase = true)
+                    }
+                }
+                if (owned != null) epicInstall = owned else item.open(context)
+            }
+            active.screen == Screen.Steam && item.appId != 0 ->
+                steamInstall = DeckSteamTarget(item.appId, item.title, item.art)
+            else -> item.open(context)
+        }
+    }
+
+    when {
+        gogInstall != null -> DeckGogInstall(gogInstall!!) { gogInstall = null }
+        epicInstall != null -> DeckEpicInstall(epicInstall!!) { epicInstall = null }
+        amazonInstall != null -> DeckAmazonInstall(amazonInstall!!) { amazonInstall = null }
+        steamInstall != null -> DeckSteamInstall(steamInstall!!) { steamInstall = null }
+        else -> {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -700,14 +746,15 @@ internal fun DeckStoresScreen() {
                 )
                 Spacer(Modifier.size(12.dp))
                 if (storeTab == 0) {
-                    DeckStoreFront(active, context, onInstallGog = { gogInstall = it })
+                    DeckStoreFront(active, context, onBrowseTap)
                 } else {
-                    DeckAccountCard(active, context)
+                    DeckAccountCard(active, context, openOwned)
                 }
             } else {
                 DeckSignInCard(active, context)
             }
         }
+    }
     }
     }
 }
@@ -810,7 +857,7 @@ private fun DeckTiltedWall(tile: DeckStoreTile) {
 
 /** Signed in: the store's real cached account, with the actions that open it — 1:1 with the drawer. */
 @Composable
-private fun DeckAccountCard(tile: DeckStoreTile, context: Context) {
+private fun DeckAccountCard(tile: DeckStoreTile, context: Context, onGameClick: (DeckOwnedGame) -> Unit) {
     val name = deckAccountName(context, tile.screen)
     val owned = deckOwnedCount(context, tile.screen)
     DeckGroup(tile.screen.label) {
@@ -859,6 +906,6 @@ private fun DeckAccountCard(tile: DeckStoreTile, context: Context) {
             context.startActivity(Intent(context, DownloadManagerActivity::class.java))
         }
         Spacer(Modifier.size(16.dp))
-        DeckLibraryGrid(tile, context)
+        DeckLibraryGrid(tile, context, onGameClick)
     }
 }

@@ -2,46 +2,21 @@ package com.winlator.star.ui.screens
 
 import android.os.Handler
 import android.os.Looper
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.winlator.star.store.GogDownloadManager
 import com.winlator.star.store.GogGame
 import com.winlator.star.store.GogLibraryRepo
 import com.winlator.star.store.StoreNet
 import com.winlator.star.store.download.Store
 import com.winlator.star.store.download.StoreDownloadHooks
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /**
@@ -77,111 +52,81 @@ internal suspend fun deckGogBuild(
 
 /**
  * In-Deck GOG install. Drives the REAL [GogDownloadManager] engine — the same one the legacy detail
- * Activity uses — and publishes progress into the shared Download Manager, but renders entirely in
- * the Deck UI so install never leaves the Deck shell.
+ * Activity uses — and publishes progress into the shared Download Manager, rendered through the
+ * shared [DeckInstallShell] so install never leaves the Deck shell. Opens with an ownership check:
+ * a browse title that is not in the library yet offers "Open in GOG" instead of a doomed install.
  */
 @Composable
-internal fun DeckGogInstall(game: GogGame, onBack: () -> Unit) {
+internal fun DeckGogInstall(game: GogGame, onBack: () -> Unit, onOpenStore: (() -> Unit)? = null) {
     val context = LocalContext.current
     val main = remember { Handler(Looper.getMainLooper()) }
     var pct by remember { mutableStateOf(-1) }
     var status by remember { mutableStateOf("") }
     var finished by remember { mutableStateOf(false) }
     var errorText by remember { mutableStateOf<String?>(null) }
+    var notOwned by remember { mutableStateOf(false) }
+    var checking by remember { mutableStateOf(true) }
     var cancelHandle by remember { mutableStateOf<Runnable?>(null) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Deck.background)
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.clickable { onBack() }.padding(vertical = 4.dp),
-        ) {
-            Icon(
-                Icons.Filled.ArrowBack,
-                contentDescription = null,
-                tint = Deck.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.size(6.dp))
-            Text("Back", color = Deck.onSurfaceVariant, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+    // Browse items can be titles the account does not own — GOG's engine would just fail, so say
+    // so up front and hand the user the door into GOG's own page for it. A failed check never
+    // blocks an install (default true): the engine still enforces entitlements itself.
+    LaunchedEffect(game.gameId) {
+        val owned = withContext(Dispatchers.IO) {
+            runCatching { GogLibraryRepo.cached(context).any { it.gameId == game.gameId } }
+                .getOrDefault(true)
         }
-        Spacer(Modifier.size(14.dp))
-
-        val shape = RoundedCornerShape(12.dp)
-        if (game.imageUrl.isNotEmpty()) {
-            AsyncImage(
-                model = game.imageUrl,
-                contentDescription = game.title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(200.dp)
-                    .clip(shape)
-                    .background(Deck.surface)
-                    .border(1.dp, Deck.line, shape),
-            )
-            Spacer(Modifier.size(12.dp))
-        }
-        Text(
-            text = game.title,
-            color = Deck.onBackground,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Black,
-            maxLines = 2,
-        )
-        if (game.developer.isNotEmpty()) {
-            Text(game.developer, color = Deck.onSurfaceVariant, fontSize = 12.sp)
-        }
-        Spacer(Modifier.size(18.dp))
-
-        val err = errorText
-        when {
-            err != null -> Text(err, color = Color(0xFFFF6B6B), fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            finished -> Text("Installed.", color = Deck.primary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            pct < 0 -> DeckButton("Install", primary = true) {
-                val cb = object : GogDownloadManager.Callback {
-                    override fun onProgress(msg: String, p: Int) {
-                        StoreDownloadHooks.tick(Store.GOG, game.gameId, p)
-                        main.post { pct = p; status = msg }
-                    }
-                    override fun onComplete(exePath: String) {
-                        main.post { finished = true; pct = 100 }
-                    }
-                    override fun onError(msg: String) {
-                        main.post { errorText = msg }
-                    }
-                    override fun onCancelled() {
-                        main.post { status = "Cancelled"; pct = -1 }
-                    }
-                }
-                StoreDownloadHooks.registerDownload(
-                    store = Store.GOG,
-                    id = game.gameId,
-                    name = game.title,
-                    cover = game.imageUrl.ifEmpty { null },
-                    supportsPause = false,
-                    installTotal = 0L,
-                    cancel = { cancelHandle?.run() },
-                )
-                cancelHandle = GogDownloadManager.startDownload(context.applicationContext, game, cb)
-            }
-            else -> {
-                LinearProgressIndicator(
-                    progress = { (pct.coerceIn(0, 100)) / 100f },
-                    modifier = Modifier.fillMaxWidth(),
-                    color = Deck.primary,
-                    trackColor = Deck.surfaceVariant,
-                )
-                Spacer(Modifier.size(8.dp))
-                Text(status, color = Deck.onSurfaceVariant, fontSize = 12.sp)
-                Spacer(Modifier.size(12.dp))
-                DeckButton("Cancel", primary = false) { cancelHandle?.run() }
-            }
-        }
+        checking = false
+        if (!owned) notOwned = true
     }
+
+    val shownError = when {
+        errorText != null -> errorText
+        notOwned -> "Not in your library yet."
+        else -> null
+    }
+
+    DeckInstallShell(
+        title = game.title,
+        art = game.imageUrl.ifEmpty { null },
+        dev = game.developer,
+        onBack = onBack,
+        progress = pct,
+        status = status,
+        finished = finished,
+        error = shownError,
+        started = pct >= 0,
+        canInstall = !checking && !notOwned && errorText == null,
+        onPauseResume = null,
+        onOpenStore = if (!checking && (notOwned || errorText != null)) onOpenStore else null,
+        storeLabel = "GOG",
+        onStart = {
+            val cb = object : GogDownloadManager.Callback {
+                override fun onProgress(msg: String, p: Int) {
+                    StoreDownloadHooks.tick(Store.GOG, game.gameId, p)
+                    main.post { pct = p; status = msg }
+                }
+                override fun onComplete(exePath: String) {
+                    main.post { finished = true; pct = 100 }
+                }
+                override fun onError(msg: String) {
+                    main.post { errorText = msg }
+                }
+                override fun onCancelled() {
+                    main.post { status = "Cancelled"; pct = -1 }
+                }
+            }
+            StoreDownloadHooks.registerDownload(
+                store = Store.GOG,
+                id = game.gameId,
+                name = game.title,
+                cover = game.imageUrl.ifEmpty { null },
+                supportsPause = false,
+                installTotal = 0L,
+                cancel = { cancelHandle?.run() },
+            )
+            cancelHandle = GogDownloadManager.startDownload(context.applicationContext, game, cb)
+        },
+        onCancel = { cancelHandle?.run() },
+    )
 }

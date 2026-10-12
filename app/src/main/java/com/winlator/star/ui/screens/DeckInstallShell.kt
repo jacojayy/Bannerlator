@@ -3,6 +3,7 @@ package com.winlator.star.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,10 +32,11 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 
 /**
- * Shared scaffold for the in-Deck install screens (Epic / Amazon / Steam; GOG keeps its own
- * inline layout with identical visuals). Draws Back row, cover art, title, developer, then the
- * install state machine: idle shows Install, running shows progress + status + Cancel, plus the
- * done and error states. Every store screen feeds the same seven inputs.
+ * Shared scaffold for the in-Deck install screens (GOG / Epic / Amazon / Steam). Draws Back row,
+ * cover art, title, developer, then the install state machine: idle shows Install (plus the
+ * "Open in <store>" escape hatch a caller can offer when the game is not in the library), running
+ * shows progress + status + Cancel with an optional Pause/Resume, plus the done and error states.
+ * Every store screen feeds the same inputs; the extra handles default off.
  */
 @Composable
 internal fun DeckInstallShell(
@@ -49,6 +51,11 @@ internal fun DeckInstallShell(
     started: Boolean,
     onStart: () -> Unit,
     onCancel: () -> Unit,
+    canInstall: Boolean = true,
+    onPauseResume: (() -> Unit)? = null,
+    paused: Boolean = false,
+    onOpenStore: (() -> Unit)? = null,
+    storeLabel: String = "",
 ) {
     Column(
         modifier = Modifier
@@ -113,13 +120,24 @@ internal fun DeckInstallShell(
             Spacer(Modifier.size(8.dp))
             Text(status, color = Deck.onSurfaceVariant, fontSize = 12.sp)
             Spacer(Modifier.size(12.dp))
-            DeckButton("Cancel", primary = false) { onCancel() }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                DeckButton("Cancel", primary = false) { onCancel() }
+                if (onPauseResume != null) {
+                    DeckButton(if (paused) "Resume" else "Pause", primary = false) { onPauseResume() }
+                }
+            }
         } else {
             if (error != null) {
                 Text(error, color = Color(0xFFFF6B6B), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.size(10.dp))
             }
-            DeckButton("Install", primary = true) { onStart() }
+            if (canInstall) {
+                DeckButton("Install", primary = true) { onStart() }
+            }
+            if (onOpenStore != null) {
+                if (canInstall) Spacer(Modifier.size(8.dp))
+                DeckButton("Open in $storeLabel", primary = !canInstall) { onOpenStore() }
+            }
         }
     }
 }

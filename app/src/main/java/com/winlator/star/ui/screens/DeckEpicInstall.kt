@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * [DownloadScope] with a foreground Download Manager row, exactly like the legacy detail page.
  */
 @Composable
-internal fun DeckEpicInstall(game: EpicGame, onBack: () -> Unit) {
+internal fun DeckEpicInstall(game: EpicGame, onBack: () -> Unit, onOpenStore: (() -> Unit)? = null) {
     val context = LocalContext.current
     val appCtx = remember(context) { context.applicationContext }
     val prefs = remember(appCtx) { appCtx.getSharedPreferences("bh_epic_prefs", 0) }
@@ -52,6 +52,8 @@ internal fun DeckEpicInstall(game: EpicGame, onBack: () -> Unit) {
         finished = finished,
         error = errorText,
         started = started,
+        storeLabel = "Epic",
+        onOpenStore = onOpenStore,
         onStart = {
             errorText = null
             started = true

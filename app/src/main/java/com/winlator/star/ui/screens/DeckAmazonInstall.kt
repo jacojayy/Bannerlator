@@ -27,7 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * path), so the finished game lands at `Z:\Amazon\...` like every legacy install.
  */
 @Composable
-internal fun DeckAmazonInstall(game: AmazonGame, onBack: () -> Unit) {
+internal fun DeckAmazonInstall(game: AmazonGame, onBack: () -> Unit, onOpenStore: (() -> Unit)? = null) {
     val context = LocalContext.current
     val appCtx = remember(context) { context.applicationContext }
     val prefs = remember(appCtx) { appCtx.getSharedPreferences("bh_amazon_prefs", 0) }
@@ -49,6 +49,8 @@ internal fun DeckAmazonInstall(game: AmazonGame, onBack: () -> Unit) {
         finished = finished,
         error = errorText,
         started = started,
+        storeLabel = "Amazon",
+        onOpenStore = onOpenStore,
         onStart = {
             errorText = null
             started = true

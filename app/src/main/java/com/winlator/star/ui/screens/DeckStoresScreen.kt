@@ -82,7 +82,16 @@ import com.winlator.star.store.GogLibraryRepo
 import com.winlator.star.store.SteamGame
 import com.winlator.star.store.SteamGameDetailActivity
 import com.winlator.star.store.SteamRepository
-import com.winlator.star.store.DownloadManagerActivity
+import com.winlator.star.store.DeckStoreTheme
+import com.winlator.star.store.SteamFriendsStore
+import com.winlator.star.store.SteamFriendsTab
+import com.winlator.star.store.SteamPrefs
+import com.winlator.star.store.SteamProfileTab
+import com.winlator.star.store.StoreMatureSetting
+import com.winlator.star.store.rememberSteamLibrary
+import com.winlator.star.store.rememberStorefrontLayout
+import com.winlator.star.store.download.DownloadRegistry
+import android.widget.Toast
 import com.winlator.star.store.EpicLoginActivity
 import com.winlator.star.store.EpicMainActivity
 import com.winlator.star.store.EpicUserData
@@ -301,35 +310,40 @@ private fun DeckLibraryGrid(tile: DeckStoreTile, context: Context, onGameClick: 
     }
 }
 
-/** A cover card: the game's real art over a graphite tile, with its title beneath. */
+/** A library block: the cover fills the tile, a gradient fade grounds the title at its foot. */
 @Composable
 private fun DeckGameCard(game: DeckOwnedGame, onClick: () -> Unit) {
     val shape = RoundedCornerShape(10.dp)
     val interaction = remember { MutableInteractionSource() }
-    Column(
+    Box(
         modifier = Modifier
+            .fillMaxWidth()
+            .height(150.dp)
             .deckTileFocus(interaction)
+            .clip(shape)
+            .background(Deck.surface)
+            .border(1.dp, Deck.line, shape)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {
+        val art = game.art
+        if (art != null) {
+            AsyncImage(
+                model = art,
+                contentDescription = game.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize(),
+            )
+        }
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(150.dp)
-                .clip(shape)
-                .background(Deck.surface)
-                .border(1.dp, Deck.line, shape),
-        ) {
-            val art = game.art
-            if (art != null) {
-                AsyncImage(
-                    model = art,
-                    contentDescription = game.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.matchParentSize(),
-                )
-            }
-        }
-        Spacer(Modifier.size(6.dp))
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        0.45f to Color.Transparent,
+                        1f to Deck.background.copy(alpha = 0.92f),
+                    ),
+                ),
+        )
         Text(
             text = game.title,
             color = Deck.onBackground,
@@ -337,6 +351,7 @@ private fun DeckGameCard(game: DeckOwnedGame, onClick: () -> Unit) {
             fontWeight = FontWeight.Bold,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
         )
     }
 }
@@ -434,16 +449,30 @@ private suspend fun deckFeatured(context: Context, screen: Screen): DeckStoreDat
 
 /** The signed-in store's storefront: a hero pick plus labeled rails of real featured titles. */
 @Composable
-private fun DeckStoreFront(tile: DeckStoreTile, context: Context, onCard: (DeckBrowseItem) -> Unit) {
+private fun DeckStoreFront(
+    tile: DeckStoreTile,
+    context: Context,
+    onCard: (DeckBrowseItem) -> Unit,
+    showMature: Boolean,
+) {
     var data by remember(tile.screen) { mutableStateOf<DeckStoreData?>(null) }
     LaunchedEffect(tile.screen) {
         data = withContext(Dispatchers.IO) { deckFeatured(context, tile.screen) }
     }
-    val store = data
-    if (store == null) {
+    val raw = data
+    if (raw == null) {
         Text("Loading ${tile.screen.label} store...", color = Deck.onSurfaceVariant, fontSize = 12.sp)
         return
     }
+    // Mature titles stay out of the hero and rails unless the store setting shows them; Steam
+    // items carry no catalog, so they always pass (`catalog?.mature != true`).
+    val store = if (showMature) raw else DeckStoreData(
+        hero = raw.hero?.takeIf { it.catalog?.mature != true },
+        sections = raw.sections.mapNotNull { section ->
+            val items = section.items.filter { it.catalog?.mature != true }
+            if (items.isEmpty()) null else DeckBrowseSection(section.title, items)
+        },
+    )
     if (store.hero == null && store.sections.isEmpty()) {
         Text(
             "No featured titles cached yet - open ${tile.screen.label} to refresh.",
@@ -588,6 +617,11 @@ internal fun DeckStoresScreen() {
     var epicInstall by remember { mutableStateOf<EpicGame?>(null) }
     var amazonInstall by remember { mutableStateOf<AmazonGame?>(null) }
     var steamInstall by remember { mutableStateOf<DeckSteamTarget?>(null) }
+    var showDownloads by remember { mutableStateOf(false) }
+    var showMature by remember { mutableStateOf(StoreMatureSetting.get(context)) }
+    val dlEntries by DownloadRegistry.entries.collectAsState()
+    val activeDownloads = dlEntries.count { it.isActive }
+    LaunchedEffect(Unit) { DownloadRegistry.init(context) }
     val active = deckStores.firstOrNull { it.screen == selected } ?: deckStores.first()
     val scope = rememberCoroutineScope()
 
@@ -633,10 +667,78 @@ internal fun DeckStoresScreen() {
     }
 
     when {
-        gogInstall != null -> DeckGogInstall(gogInstall!!) { gogInstall = null }
-        epicInstall != null -> DeckEpicInstall(epicInstall!!) { epicInstall = null }
-        amazonInstall != null -> DeckAmazonInstall(amazonInstall!!) { amazonInstall = null }
-        steamInstall != null -> DeckSteamInstall(steamInstall!!) { steamInstall = null }
+        showDownloads -> DeckDownloadsPanel {
+            // Pull the panel's Store-settings change back so the storefront refilters at once.
+            showMature = StoreMatureSetting.get(context)
+            showDownloads = false
+        }
+        gogInstall != null -> {
+            val g = gogInstall!!
+            DeckGogInstall(
+                game = g,
+                onBack = { gogInstall = null },
+                onOpenStore = {
+                    context.startActivity(Intent(context, GogGameDetailActivity::class.java).apply {
+                        putExtra("game_id", g.gameId)
+                        putExtra("title", g.title)
+                        putExtra("image_url", g.imageUrl)
+                        putExtra("description", g.description)
+                        putExtra("developer", g.developer)
+                        putExtra("category", g.category)
+                        putExtra("generation", g.generation)
+                    })
+                },
+            )
+        }
+        epicInstall != null -> {
+            val g = epicInstall!!
+            DeckEpicInstall(
+                game = g,
+                onBack = { epicInstall = null },
+                onOpenStore = {
+                    context.startActivity(Intent(context, EpicGameDetailActivity::class.java).apply {
+                        putExtra("app_name", g.appName)
+                        putExtra("title", g.title)
+                        putExtra("description", g.description)
+                        putExtra("developer", g.developer)
+                        putExtra("art_cover", g.artCover)
+                        putExtra("namespace", g.namespace)
+                        putExtra("catalog_item_id", g.catalogItemId)
+                    })
+                },
+            )
+        }
+        amazonInstall != null -> {
+            val g = amazonInstall!!
+            DeckAmazonInstall(
+                game = g,
+                onBack = { amazonInstall = null },
+                onOpenStore = {
+                    context.startActivity(Intent(context, AmazonGameDetailActivity::class.java).apply {
+                        putExtra("product_id", g.productId)
+                        putExtra("entitlement_id", g.entitlementId)
+                        putExtra("title", g.title)
+                        putExtra("developer", g.developer)
+                        putExtra("publisher", g.publisher)
+                        putExtra("art_url", g.artUrl)
+                        putExtra("product_sku", g.productSku)
+                    })
+                },
+            )
+        }
+        steamInstall != null -> {
+            val t = steamInstall!!
+            DeckSteamInstall(
+                target = t,
+                onBack = { steamInstall = null },
+                onOpenStore = {
+                    context.startActivity(
+                        Intent(context, SteamGameDetailActivity::class.java)
+                            .putExtra(SteamGameDetailActivity.EXTRA_APP_ID, t.appId),
+                    )
+                },
+            )
+        }
         else -> {
     Column(
         modifier = Modifier
@@ -717,7 +819,7 @@ internal fun DeckStoresScreen() {
                         .clip(RoundedCornerShape(99.dp))
                         .background(Deck.surface)
                         .border(1.dp, Deck.line, RoundedCornerShape(99.dp))
-                        .clickable { context.startActivity(Intent(context, DownloadManagerActivity::class.java)) }
+                        .clickable { showDownloads = true }
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
                     Icon(
@@ -725,7 +827,7 @@ internal fun DeckStoresScreen() {
                         modifier = Modifier.size(16.dp),
                     )
                     Text(
-                        text = "Downloads",
+                        text = if (activeDownloads > 0) "Downloads ($activeDownloads)" else "Downloads",
                         color = Deck.onSurfaceVariant,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
@@ -739,16 +841,29 @@ internal fun DeckStoresScreen() {
 
             if (deckSignedIn(context, active.screen)) {
                 var storeTab by remember(active.screen) { mutableStateOf(0) }
+                // Steam alone carries the social pair: Friends + Profile, the same composables
+                // the store front embeds, in the Deck tab strip.
+                val tabs = if (active.screen == Screen.Steam) {
+                    listOf(
+                        DeckTabSpec("Store"),
+                        DeckTabSpec("Library"),
+                        DeckTabSpec("Friends"),
+                        DeckTabSpec("Profile"),
+                    )
+                } else {
+                    listOf(DeckTabSpec("Store"), DeckTabSpec("Library"))
+                }
                 DeckTabBar(
-                    tabs = listOf(DeckTabSpec("Store"), DeckTabSpec("Library")),
+                    tabs = tabs,
                     selected = storeTab,
                     onSelect = { storeTab = it },
                 )
                 Spacer(Modifier.size(12.dp))
-                if (storeTab == 0) {
-                    DeckStoreFront(active, context, onBrowseTap)
-                } else {
-                    DeckAccountCard(active, context, openOwned)
+                when (storeTab) {
+                    0 -> DeckStoreFront(active, context, onBrowseTap, showMature)
+                    1 -> DeckAccountCard(active, context, openOwned) { showDownloads = true }
+                    2 -> DeckSteamFriendsPane()
+                    else -> DeckSteamProfilePane(onOpenFriends = { storeTab = 2 })
                 }
             } else {
                 DeckSignInCard(active, context)
@@ -857,7 +972,12 @@ private fun DeckTiltedWall(tile: DeckStoreTile) {
 
 /** Signed in: the store's real cached account, with the actions that open it — 1:1 with the drawer. */
 @Composable
-private fun DeckAccountCard(tile: DeckStoreTile, context: Context, onGameClick: (DeckOwnedGame) -> Unit) {
+private fun DeckAccountCard(
+    tile: DeckStoreTile,
+    context: Context,
+    onGameClick: (DeckOwnedGame) -> Unit,
+    onDownloads: () -> Unit,
+) {
     val name = deckAccountName(context, tile.screen)
     val owned = deckOwnedCount(context, tile.screen)
     DeckGroup(tile.screen.label) {
@@ -903,9 +1023,61 @@ private fun DeckAccountCard(tile: DeckStoreTile, context: Context, onGameClick: 
             launchDeckStore(context, tile.screen)
         }
         DeckButton("Downloads", primary = false) {
-            context.startActivity(Intent(context, DownloadManagerActivity::class.java))
+            onDownloads()
         }
         Spacer(Modifier.size(16.dp))
         DeckLibraryGrid(tile, context, onGameClick)
+    }
+}
+
+/**
+ * Steam's Friends tab embedded in the Deck tab strip: the SAME composable the store front runs,
+ * wrapped in [DeckStoreTheme] so it draws in graphite, with the session inits the store Activity
+ * would otherwise have done. Messages surface as a Toast (the Deck shell has no snackbar host).
+ */
+@Composable
+private fun DeckSteamFriendsPane() {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        SteamPrefs.init(context)
+        SteamRepository.getInstance().initialize(context)
+        SteamFriendsStore.init(context)
+    }
+    val layout = rememberStorefrontLayout()
+    DeckStoreTheme {
+        SteamFriendsTab(
+            wide = layout.wide,
+            onMessage = { msg -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show() },
+        )
+    }
+}
+
+/**
+ * Steam's Profile tab in the Deck tab strip — self-loading like the store front's, so the library
+ * count comes from the sanctioned [rememberSteamLibrary] host and Open Friends flips the tab strip.
+ */
+@Composable
+private fun DeckSteamProfilePane(onOpenFriends: () -> Unit) {
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        SteamPrefs.init(context)
+        SteamRepository.getInstance().initialize(context)
+        SteamFriendsStore.init(context)
+    }
+    val library = rememberSteamLibrary()
+    val layout = rememberStorefrontLayout()
+    DeckStoreTheme {
+        SteamProfileTab(
+            wide = layout.wide,
+            libraryCount = library.games.size,
+            onOpenFriends = onOpenFriends,
+            onOpenApp = { appId ->
+                context.startActivity(
+                    Intent(context, SteamGameDetailActivity::class.java)
+                        .putExtra(SteamGameDetailActivity.EXTRA_APP_ID, appId),
+                )
+            },
+            onMessage = { msg -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show() },
+        )
     }
 }

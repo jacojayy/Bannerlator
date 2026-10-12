@@ -187,10 +187,14 @@ object EpicStoreCatalog {
             else -> fmtOriginal
         }
         val tags = e.optJSONArray("tags")
+        val tagNames = ArrayList<String>()
         val tagLine = buildList {
             if (tags != null) for (t in 0 until tags.length()) {
                 val name = tags.optJSONObject(t)?.optString("name").orEmpty()
-                if (name.isNotBlank() && name != "Windows" && size < 3) add(name)
+                if (name.isNotBlank()) {
+                    tagNames.add(name)
+                    if (name != "Windows" && size < 3) add(name)
+                }
             }
         }.joinToString(", ")
         val itemIds = buildList {
@@ -218,6 +222,7 @@ object EpicStoreCatalog {
             developer = e.optJSONObject("seller")?.optString("name", "").orEmpty(),
             releaseDate = e.optString("releaseDate", e.optString("effectiveDate", "")),
             description = e.optString("description", ""),
+            mature = matureByTags(tagNames),
             extra = buildMap {
                 put("namespace", ns)
                 if (itemIds.isNotEmpty()) put("items", itemIds.joinToString(","))
@@ -629,6 +634,7 @@ object EpicStoreCatalog {
         put("tags", i.tags); put("free", i.isFree); put("hasPrice", i.hasPrice)
         put("final", i.finalPrice); put("orig", i.originalPrice); put("disc", i.discountPercent)
         put("url", i.storeUrl); put("dev", i.developer); put("rel", i.releaseDate); put("desc", i.description)
+        put("mature", i.mature)
         put("extra", JSONObject(i.extra as Map<*, *>))
     }
 
@@ -643,6 +649,7 @@ object EpicStoreCatalog {
             finalPrice = o.optString("final"), originalPrice = o.optString("orig"), discountPercent = o.optInt("disc"),
             storeUrl = o.optString("url"), developer = o.optString("dev"), releaseDate = o.optString("rel"),
             description = o.optString("desc"), extra = extra,
+            mature = o.optBoolean("mature"),
         )
     }
 

@@ -109,9 +109,24 @@ data class CatalogItem(
     val description: String = "",
     /** Per-store identifiers the detail page needs (Epic namespace / slug, GOG slug …). */
     val extra: Map<String, String> = emptyMap(),
+    /** Rated or tagged for adults by the store's own data; hidden from the storefront unless Show mature content is on. */
+    val mature: Boolean = false,
 ) {
     val isDiscounted: Boolean get() = discountPercent > 0 && originalPrice.isNotBlank()
 }
+
+/** Tags that mark a title adult (store tags/slug, whatever the catalog calls it). */
+private val MATURE_TAGS = setOf(
+    "mature", "nsfw", "adult", "adult only", "adults only",
+    "nudity", "sexual content", "sexual-content",
+)
+
+/** Whether a store's own tags mark a title as adult. */
+internal fun matureByTags(tags: Collection<String>): Boolean =
+    tags.any { it.trim().lowercase() in MATURE_TAGS }
+
+/** Whether a store's own age ratings mark a title as adult: any rating system's 17+. */
+internal fun matureByAge(ages: Collection<Int>): Boolean = ages.any { it >= 17 }
 
 /** What the action button on a catalog card should offer right now. */
 sealed interface CatalogAction {

@@ -9,6 +9,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -741,11 +742,14 @@ internal fun DeckStoresScreen() {
             )
         }
         else -> {
+    // NOT globally scrollable: the tab panes below (Store settings, Steam's Profile) carry their
+    // OWN verticalScroll, and a scrollable measured with infinite height throws
+    // "Vertically scrollable component was measured with an infinity maximum height constraints".
+    // Chrome (title, chips, tab strip) stays fixed; the pane gets the bounded remainder.
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Deck.background)
-            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp, vertical = 14.dp),
     ) {
         Text(
@@ -765,12 +769,16 @@ internal fun DeckStoresScreen() {
         Spacer(Modifier.size(14.dp))
 
         if (!showStores) {
-            DeckGroup("Stores are turned off") {
-                DeckRow(
-                    label = "Enable Stores",
-                    hint = "Settings › Side Menu › Stores",
-                    control = { DeckToggle(false) { } },
-                )
+            Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                DeckPaneScroll {
+                    DeckGroup("Stores are turned off") {
+                        DeckRow(
+                            label = "Enable Stores",
+                            hint = "Settings › Side Menu › Stores",
+                            control = { DeckToggle(false) { } },
+                        )
+                    }
+                }
             }
         } else {
             // ── Chip row: DroidDeck's StoreChips — the dot is lit only while signed in ──
@@ -865,28 +873,53 @@ internal fun DeckStoresScreen() {
                     onSelect = { storeTab = it },
                 )
                 Spacer(Modifier.size(12.dp))
-                when (storeTab) {
-                    0 -> DeckStoreFront(active, context, onBrowseTap, showMature)
-                    1 -> DeckAccountCard(active, context, openOwned) { showDownloads = true }
-                    2 -> DeckStoreSettingsPane(
-                        showMature = showMature,
-                        onShowMatureChange = { v ->
-                            showMature = v
-                            StoreMatureSetting.set(context, v)
-                        },
-                        onOpenDownloads = { showDownloads = true },
-                        activeDownloads = activeDownloads,
-                    )
-                    3 -> DeckSteamFriendsPane()
-                    else -> DeckSteamProfilePane(onOpenFriends = { storeTab = 3 })
+                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    when (storeTab) {
+                        0 -> DeckPaneScroll {
+                            DeckStoreFront(active, context, onBrowseTap, showMature)
+                        }
+                        1 -> DeckPaneScroll {
+                            DeckAccountCard(active, context, openOwned) { showDownloads = true }
+                        }
+                        2 -> DeckStoreSettingsPane(
+                            showMature = showMature,
+                            onShowMatureChange = { v ->
+                                showMature = v
+                                StoreMatureSetting.set(context, v)
+                            },
+                            onOpenDownloads = { showDownloads = true },
+                            activeDownloads = activeDownloads,
+                        )
+                        3 -> DeckSteamFriendsPane()
+                        else -> DeckSteamProfilePane(onOpenFriends = { storeTab = 3 })
+                    }
                 }
             } else {
-                DeckSignInCard(active, context)
+                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    DeckPaneScroll { DeckSignInCard(active, context) }
+                }
             }
         }
     }
     }
     }
+}
+
+/**
+ * One Store tab pane: a bounded, self-scrolling host. The Store chrome (title, chips, tab strip) is
+ * fixed, so the pane sits in a `weight(1f)` Box with FINITE height — which is exactly what the
+ * panes carrying their own `verticalScroll` (Store settings, Steam's Profile) need. A scrollable
+ * measured inside an infinite-height constraint throws
+ * "Vertically scrollable component was measured with an infinity maximum height constraints".
+ */
+@Composable
+private fun DeckPaneScroll(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+        content = content,
+    )
 }
 
 /**

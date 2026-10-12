@@ -332,8 +332,8 @@ private data class DeckBrowseItem(
     val title: String,
     val art: String?,
     val price: String,
-    val open: (Context) -> Unit,
     val catalog: CatalogItem? = null,
+    val open: (Context) -> Unit,
 )
 
 /** A labeled rail of storefront items, DroidDeck style. */

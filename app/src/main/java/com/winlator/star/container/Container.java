@@ -114,6 +114,7 @@ public class Container {
     private String audioDriver = DEFAULT_AUDIO_DRIVER;
     private String drives = DEFAULT_DRIVES;
     private String wineVersion = WineInfo.MAIN_WINE_VERSION.identifier();
+    private String basePrefix = "";
     private boolean showFPS;
     private boolean rendererNative = false;
     // Which native backend a Native-Rendering Vulkan container routes to: "auto"/"asr" -> hardened
@@ -1192,6 +1193,18 @@ public class Container {
         this.wineVersion = wineVersion;
     }
 
+    public String getBasePrefix() {
+        return basePrefix != null ? basePrefix : "";
+    }
+
+    public void setBasePrefix(String basePrefix) {
+        this.basePrefix = basePrefix != null ? basePrefix : "";
+    }
+
+    public boolean isOverlay() {
+        return ContainerOverlay.isEligible(this) && !getBasePrefix().isEmpty();
+    }
+
     public File getConfigFile() {
         return new File(rootDir, ".container");
     }
@@ -1348,6 +1361,7 @@ public class Container {
             // Default is TRUE, so only persist the off state (absent token => correct colours).
             if (!rendererSfCompatMode) data.put("rendererSfCompatMode", false);
             if (!WineInfo.isMainWineVersion(wineVersion)) data.put("wineVersion", wineVersion);
+            if (!getBasePrefix().isEmpty()) data.put("basePrefix", basePrefix);
         }
         return data;
     }
@@ -1434,6 +1448,9 @@ public class Container {
                 }
                 case "wineVersion" :
                     setWineVersion(data.getString(key));
+                    break;
+                case "basePrefix" :
+                    setBasePrefix(data.optString(key, ""));
                     break;
                 case "box64Version":
                     setBox64Version(data.getString(key));

@@ -17,6 +17,7 @@ import com.winlator.star.BuildConfig;
 import com.winlator.star.box64.Box64Preset;
 import com.winlator.star.box64.Box64PresetManager;
 import com.winlator.star.container.Container;
+import com.winlator.star.container.ContainerOverlay;
 import com.winlator.star.container.Shortcut;
 import com.winlator.star.contents.ContentProfile;
 import com.winlator.star.contents.ContentsManager;
@@ -582,6 +583,8 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
         if (this.envVars != null) {
             envVars.putAll(this.envVars);
         }
+
+        ContainerOverlay.applyLaunchEnv(context, container, envVars);
 
 
         String emulator = container.getEmulator();

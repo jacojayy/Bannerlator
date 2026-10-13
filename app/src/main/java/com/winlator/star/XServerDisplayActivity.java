@@ -57,6 +57,8 @@ import com.winlator.star.ui.XServerDialogHostKt;
 import com.winlator.star.ui.XServerDialogState;
 import com.winlator.star.container.Container;
 import com.winlator.star.container.ContainerManager;
+import com.winlator.star.container.ContainerOverlay;
+import com.winlator.star.container.ContainerOverlayMigrator;
 import com.winlator.star.container.Shortcut;
 import com.winlator.star.core.CustomSaveVault;
 import com.winlator.star.store.AchievementWatcher;
@@ -7135,6 +7137,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
         String appVersion = String.valueOf(AppUtils.getVersionCode(this));
         String imgVersion = String.valueOf(imageFs.getVersion());
         boolean containerDataChanged = false;
+
+        ContainerOverlayMigrator.migrateIfNeeded(this, contentsManager, container);
 
         if (!container.getExtra("appVersion").equals(appVersion)
                 || !container.getExtra("imgVersion").equals(imgVersion)
@@ -14710,7 +14714,7 @@ return true;
 
     private void applyGeneralPatches(Container container) {
         File rootDir = imageFs.getRootDir();
-        TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, this, "container_pattern_common.tzst", rootDir);
+        if (!container.isOverlay()) TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, this, "container_pattern_common.tzst", rootDir);
         TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, this, "pulseaudio.tzst", new File(getFilesDir(), "pulseaudio"));
         removePaleMoonDesktopShortcut(container);
         WineUtils.applySystemTweaks(this, wineInfo);

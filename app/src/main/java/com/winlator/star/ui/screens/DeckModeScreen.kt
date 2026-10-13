@@ -69,6 +69,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.winlator.star.container.Container
 import com.winlator.star.contents.ContentsManager
+import com.winlator.star.R
 import com.winlator.star.container.ContainerManager
 import com.winlator.star.container.Shortcut
 import com.winlator.star.core.GameIdentifier
@@ -508,7 +509,10 @@ private fun DeckHome() {
                             val data = runCatching {
                                 val template = Container(0, mgr)
                                 val base = template.getData()
-                                val wine = mgr.getContainers().firstOrNull()?.wineVersion ?: template.wineVersion
+                                // The SAME wine pick a manual New Container makes: the first bundled
+                                // wine_entries entry (guaranteed present even on a fresh install).
+                                val wine = context.resources.getStringArray(R.array.wine_entries).firstOrNull()
+                                    ?: template.wineVersion
                                 base.put("name", name)
                                 base.put("wineVersion", wine)
                                 base.put("runAsAdmin", true)

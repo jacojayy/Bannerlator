@@ -155,7 +155,14 @@ internal fun copyPickedGame(context: Context, uri: Uri): File? {
             if (cursor.moveToFirst() && idx >= 0) cursor.getString(idx) else null
         }
     }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "game.exe"
-    val dir = File(context.cacheDir, "hub_pick").apply { mkdirs() }
+    // Land the copy on shared storage (Downloads/WinHub): app-private cacheDir is invisible
+    // inside the container chroot, which left the shortcut's Exec path unresolvable.
+    val preferred = File(
+        android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),
+        "WinHub",
+    )
+    val dir = if (preferred.isDirectory || preferred.mkdirs()) preferred
+        else File(context.cacheDir, "hub_pick").apply { mkdirs() }
     val out = File(dir, name.replace('/', '_').ifEmpty { "game.exe" })
     val input = context.contentResolver.openInputStream(uri) ?: return null
         input.use { stream -> out.outputStream().use { stream.copyTo(it) } }

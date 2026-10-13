@@ -68,7 +68,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.winlator.star.container.Container
+import com.winlator.star.contents.ContentsManager
 import com.winlator.star.container.ContainerManager
+import com.winlator.star.core.NewContainerDefaults
 import com.winlator.star.container.Shortcut
 import com.winlator.star.core.GameIdentifier
 import com.winlator.star.store.deckTileFocus
@@ -98,6 +100,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import com.winlator.star.ui.ControllerFocusIndication
@@ -496,39 +499,52 @@ private fun DeckHome() {
                 onConfirm = { name, appId, containerIndex, coverPath ->
                     pending = null
                     if (containerIndex < 0) {
-                        // Cronos — clone the first container, rename it after the game, add the shortcut.
-                        val master = containers.firstOrNull()
-                        if (master == null) {
-                            Toast.makeText(context, "Create a container first — Cronos clones one", Toast.LENGTH_SHORT).show()
-                            return@HubConfirmDialog
-                        }
+                        // Cronos — a FRESH dedicated container (user new-container defaults profile,
+                        // else the built-in Container defaults) with just this game's shortcut.
                         cronosName = name
                         cronosBusy = true
-                        ContainerManager(context).also { it.reloadContainers() }.duplicateContainerAsync(master) { created ->
-                            cronosBusy = false
-                            if (created == null) {
-                                Toast.makeText(context, "Cronos setup failed", Toast.LENGTH_SHORT).show()
-                                return@duplicateContainerAsync
-                            }
-                            created.name = name
-                            created.saveData()
-                            scope.launch(Dispatchers.IO) {
-                                val added = runCatching {
-                                    val desktop = ExeShortcutImporter.addToShortcuts(context, created, file, name, appId)
-                                    val finalCover = coverPath ?: appId?.let { fetchHubCover(context, it) }
-                                    val game = HubGame(name, created.id, desktop.absolutePath, appId, finalCover)
-                                    HubGamesStore.add(context, game)
-                                    HubEntry(name, finalCover?.let { BitmapFactory.decodeFile(it) }, game)
-                                }.getOrNull()
-                                containers = ContainerManager(context).also { it.reloadContainers() }.getContainers().toList()
-                                withContext(Dispatchers.Main) {
-                                    if (added == null) {
-                                        Toast.makeText(context, "Container created, but adding the game failed", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        val list = entries.orEmpty() + added
-                                        entries = list
-                                        selected = list.lastIndex
-                                        Toast.makeText(context, "Added \"${added.title}\" to its own Cronos container", Toast.LENGTH_SHORT).show()
+                        scope.launch(Dispatchers.IO) {
+                            val mgr = ContainerManager(context).also { it.reloadContainers() }
+                            val data = runCatching {
+                                val template = Container(0, mgr)
+                                val base = NewContainerDefaults.load(context, NewContainerDefaults.ARCH_X86_64)
+                                    ?.let { JSONObject(it) } ?: template.getData()
+                                base.put("name", name)
+                                if (!base.has("wineVersion")) base.put("wineVersion", template.wineVersion)
+                                base.put("runAsAdmin", true)
+                                base
+                            }.getOrNull()
+                            withContext(Dispatchers.Main) {
+                                if (data == null) {
+                                    cronosBusy = false
+                                    Toast.makeText(context, "Cronos setup failed", Toast.LENGTH_SHORT).show()
+                                    return@withContext
+                                }
+                                mgr.createContainerAsync(data, ContentsManager(context)) { created ->
+                                    cronosBusy = false
+                                    if (created == null) {
+                                        Toast.makeText(context, "Cronos setup failed", Toast.LENGTH_SHORT).show()
+                                        return@createContainerAsync
+                                    }
+                                    scope.launch(Dispatchers.IO) {
+                                        val added = runCatching {
+                                            val desktop = ExeShortcutImporter.addToShortcuts(context, created, file, name, appId)
+                                            val finalCover = coverPath ?: appId?.let { fetchHubCover(context, it) }
+                                            val game = HubGame(name, created.id, desktop.absolutePath, appId, finalCover)
+                                            HubGamesStore.add(context, game)
+                                            HubEntry(name, finalCover?.let { BitmapFactory.decodeFile(it) }, game)
+                                        }.getOrNull()
+                                        containers = ContainerManager(context).also { it.reloadContainers() }.getContainers().toList()
+                                        withContext(Dispatchers.Main) {
+                                            if (added == null) {
+                                                Toast.makeText(context, "Container created, but adding the game failed", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                val list = entries.orEmpty() + added
+                                                entries = list
+                                                selected = list.lastIndex
+                                                Toast.makeText(context, "Added \"${added.title}\" to its own Cronos container", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
                                     }
                                 }
                             }

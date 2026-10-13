@@ -333,8 +333,8 @@ internal enum class HubAddMode { MASTER, CRONOS }
 
 /**
  * The deck-styled "where should this game live?" menu the moment Add Games is used: Master
- * Containers (a shortcut inside a container you already have) vs Cronos (a dedicated container
- * cloned just for this game). Picking a mode opens the system file picker.
+ * Containers (a shortcut inside a container you already have) vs Cronos (a fresh dedicated
+ * container built just for this game). Picking a mode opens the system file picker.
  */
 @Composable
 internal fun DeckAddModeMenu(onPick: (HubAddMode) -> Unit, onDismiss: () -> Unit) {
@@ -367,7 +367,7 @@ internal fun DeckAddModeMenu(onPick: (HubAddMode) -> Unit, onDismiss: () -> Unit
             Spacer(Modifier.height(10.dp))
             DeckAddModeCard(
                 title = "Cronos",
-                desc = "A dedicated container cloned just for this game — one game, one container.",
+                desc = "A fresh dedicated container built just for this game — one game, one container.",
                 icon = Icons.Filled.Rocket,
             ) { onPick(HubAddMode.CRONOS) }
             TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterHorizontally)) {
@@ -504,7 +504,7 @@ internal fun HubConfirmDialog(
                         Icon(Icons.Filled.Rocket, contentDescription = null, tint = DeckPalette.primary, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(10.dp))
                         Text(
-                            "Cronos — a dedicated container named after this game, cloned from your first container.",
+                            "Cronos — a fresh dedicated container named after this game, with just this game's shortcut.",
                             color = DeckPalette.onSurfaceVariant,
                             fontSize = 11.5.sp,
                         )

@@ -70,7 +70,6 @@ import androidx.compose.runtime.setValue
 import com.winlator.star.container.Container
 import com.winlator.star.contents.ContentsManager
 import com.winlator.star.container.ContainerManager
-import com.winlator.star.core.NewContainerDefaults
 import com.winlator.star.container.Shortcut
 import com.winlator.star.core.GameIdentifier
 import com.winlator.star.store.deckTileFocus
@@ -100,7 +99,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import com.winlator.star.ui.ControllerFocusIndication
@@ -499,31 +497,33 @@ private fun DeckHome() {
                 onConfirm = { name, appId, containerIndex, coverPath ->
                     pending = null
                     if (containerIndex < 0) {
-                        // Cronos — a FRESH dedicated container (user new-container defaults profile,
-                        // else the built-in Container defaults) with just this game's shortcut.
+                        // Cronos — a FRESH dedicated container with just this game's shortcut.
+                        // Seeded from the built-in Container defaults, but the Wine version is taken
+                        // from a container that already works on this device so prefix extraction
+                        // can't fail on an unavailable layer.
                         cronosName = name
                         cronosBusy = true
                         scope.launch(Dispatchers.IO) {
                             val mgr = ContainerManager(context).also { it.reloadContainers() }
                             val data = runCatching {
                                 val template = Container(0, mgr)
-                                val base = NewContainerDefaults.load(context, NewContainerDefaults.ARCH_X86_64)
-                                    ?.let { JSONObject(it) } ?: template.getData()
+                                val base = template.getData()
+                                val wine = mgr.getContainers().firstOrNull()?.wineVersion ?: template.wineVersion
                                 base.put("name", name)
-                                if (!base.has("wineVersion")) base.put("wineVersion", template.wineVersion)
+                                base.put("wineVersion", wine)
                                 base.put("runAsAdmin", true)
                                 base
                             }.getOrNull()
                             withContext(Dispatchers.Main) {
                                 if (data == null) {
                                     cronosBusy = false
-                                    Toast.makeText(context, "Cronos setup failed", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Cronos setup failed — couldn't build config", Toast.LENGTH_SHORT).show()
                                     return@withContext
                                 }
                                 mgr.createContainerAsync(data, ContentsManager(context)) { created ->
                                     cronosBusy = false
                                     if (created == null) {
-                                        Toast.makeText(context, "Cronos setup failed", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Cronos setup failed — couldn't create the Wine prefix", Toast.LENGTH_SHORT).show()
                                         return@createContainerAsync
                                     }
                                     scope.launch(Dispatchers.IO) {

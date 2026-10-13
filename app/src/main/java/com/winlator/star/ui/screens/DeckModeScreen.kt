@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.Text
@@ -85,9 +86,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -331,6 +335,10 @@ private fun DeckHome() {
     var selected by remember { mutableStateOf(0) }
     var pending by remember { mutableStateOf<Pair<File, GameIdentifier.GameIdentity>?>(null) }
     var launchRequest by remember { mutableStateOf<Shortcut?>(null) }
+    var addModeMenu by remember { mutableStateOf(false) }
+    var addMode by remember { mutableStateOf(HubAddMode.MASTER) }
+    var cronosBusy by remember { mutableStateOf(false) }
+    var cronosName by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
@@ -431,11 +439,45 @@ private fun DeckHome() {
 
         HubGradientButton(
             text = "Add Games",
-            onClick = { picker.launch(arrayOf("*/*")) },
+            onClick = { addModeMenu = true },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(end = 28.dp, bottom = 44.dp),
         )
+
+        if (addModeMenu) {
+            DeckAddModeMenu(
+                onPick = { mode ->
+                    addMode = mode
+                    addModeMenu = false
+                    picker.launch(arrayOf("*/*"))
+                },
+                onDismiss = { addModeMenu = false },
+            )
+        }
+
+        if (cronosBusy) {
+            Dialog(onDismissRequest = { }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+                Column(
+                    Modifier
+                        .fillMaxWidth(0.8f)
+                        .clip(DeckPalette.groupShape)
+                        .background(DeckPalette.surface)
+                        .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    CircularProgressIndicator(color = DeckPalette.primary)
+                    Spacer(Modifier.height(14.dp))
+                    Text(
+                        "Building Cronos container\n$cronosName…",
+                        color = DeckPalette.onBackground,
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+        }
 
         DeckLaunchStack(
             activity = activity,
@@ -449,10 +491,51 @@ private fun DeckHome() {
                 containerNames = containers.map { it.name },
                 initialName = identity.name ?: file.nameWithoutExtension,
                 initialAppId = identity.appId,
+                mode = addMode,
                 onDismiss = { pending = null },
                 onConfirm = { name, appId, containerIndex, coverPath ->
-                    val container = containers.getOrNull(containerIndex)
                     pending = null
+                    if (containerIndex < 0) {
+                        // Cronos — clone the first container, rename it after the game, add the shortcut.
+                        val master = containers.firstOrNull()
+                        if (master == null) {
+                            Toast.makeText(context, "Create a container first — Cronos clones one", Toast.LENGTH_SHORT).show()
+                            return@HubConfirmDialog
+                        }
+                        cronosName = name
+                        cronosBusy = true
+                        ContainerManager(context).also { it.reloadContainers() }.duplicateContainerAsync(master) { created ->
+                            cronosBusy = false
+                            if (created == null) {
+                                Toast.makeText(context, "Cronos setup failed", Toast.LENGTH_SHORT).show()
+                                return@duplicateContainerAsync
+                            }
+                            created.name = name
+                            created.saveData()
+                            scope.launch(Dispatchers.IO) {
+                                val added = runCatching {
+                                    val desktop = ExeShortcutImporter.addToShortcuts(context, created, file, name, appId)
+                                    val finalCover = coverPath ?: appId?.let { fetchHubCover(context, it) }
+                                    val game = HubGame(name, created.id, desktop.absolutePath, appId, finalCover)
+                                    HubGamesStore.add(context, game)
+                                    HubEntry(name, finalCover?.let { BitmapFactory.decodeFile(it) }, game)
+                                }.getOrNull()
+                                containers = ContainerManager(context).also { it.reloadContainers() }.getContainers().toList()
+                                withContext(Dispatchers.Main) {
+                                    if (added == null) {
+                                        Toast.makeText(context, "Container created, but adding the game failed", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        val list = entries.orEmpty() + added
+                                        entries = list
+                                        selected = list.lastIndex
+                                        Toast.makeText(context, "Added \"${added.title}\" to its own Cronos container", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        }
+                        return@HubConfirmDialog
+                    }
+                    val container = containers.getOrNull(containerIndex)
                     if (container == null) {
                         Toast.makeText(context, "Create a container first", Toast.LENGTH_SHORT).show()
                         return@HubConfirmDialog

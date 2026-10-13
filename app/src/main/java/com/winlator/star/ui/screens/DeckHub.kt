@@ -31,8 +31,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Rocket
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.TextButton
@@ -325,6 +328,106 @@ internal fun HubCarousel(
     }
 }
 
+// ── Where an added game lives: an existing container (Master) vs its own clone (Cronos) ──────────
+internal enum class HubAddMode { MASTER, CRONOS }
+
+/**
+ * The deck-styled "where should this game live?" menu the moment Add Games is used: Master
+ * Containers (a shortcut inside a container you already have) vs Cronos (a dedicated container
+ * cloned just for this game). Picking a mode opens the system file picker.
+ */
+@Composable
+internal fun DeckAddModeMenu(onPick: (HubAddMode) -> Unit, onDismiss: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            Modifier
+                .fillMaxWidth(0.92f)
+                .clip(DeckPalette.groupShape)
+                .background(DeckPalette.surface)
+                .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                .padding(22.dp),
+        ) {
+            Text(
+                "Add a game",
+                color = DeckPalette.onBackground,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "Where should it live?",
+                color = DeckPalette.onSurfaceVariant,
+                fontSize = 12.5.sp,
+                modifier = Modifier.padding(top = 2.dp, bottom = 16.dp),
+            )
+            DeckAddModeCard(
+                title = "Master Containers",
+                desc = "Add it as a shortcut inside a container you already have.",
+                icon = Icons.Filled.Layers,
+            ) { onPick(HubAddMode.MASTER) }
+            Spacer(Modifier.height(10.dp))
+            DeckAddModeCard(
+                title = "Cronos",
+                desc = "A dedicated container cloned just for this game — one game, one container.",
+                icon = Icons.Filled.Rocket,
+            ) { onPick(HubAddMode.CRONOS) }
+            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                Text("Cancel", color = DeckPalette.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+/** One big gradient-edged card for [DeckAddModeMenu]. */
+@Composable
+private fun DeckAddModeCard(
+    title: String,
+    desc: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(
+                Brush.horizontalGradient(
+                    listOf(DeckPalette.primary.copy(alpha = 0.14f), DeckPalette.surfaceVariant),
+                ),
+            )
+            .border(
+                1.dp,
+                Brush.horizontalGradient(
+                    listOf(DeckPalette.primary.copy(alpha = 0.85f), DeckPalette.primary.copy(alpha = 0.25f)),
+                ),
+                RoundedCornerShape(16.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(DeckPalette.primary.copy(alpha = 0.20f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = DeckPalette.primary, modifier = Modifier.size(24.dp))
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, color = DeckPalette.onBackground, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                desc,
+                color = DeckPalette.onSurfaceVariant,
+                fontSize = 11.5.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = DeckPalette.onSurfaceVariant)
+    }
+}
+
 /**
  * "Is the game correct?" — the modernized confirm popup for a picked .exe: editable name field,
  * a container pick when there's more than one, and "Search on Steam" to scrape the store
@@ -336,6 +439,7 @@ internal fun HubConfirmDialog(
     containerNames: List<String>,
     initialName: String,
     initialAppId: Int?,
+    mode: HubAddMode = HubAddMode.MASTER,
     onDismiss: () -> Unit,
     onConfirm: (name: String, appId: Int?, containerIndex: Int, coverPath: String?) -> Unit,
 ) {
@@ -386,7 +490,26 @@ internal fun HubConfirmDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
 
-                if (containerNames.isNotEmpty()) {
+                if (mode == HubAddMode.CRONOS) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(DeckPalette.primary.copy(alpha = 0.12f))
+                            .border(1.dp, DeckPalette.primary.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Filled.Rocket, contentDescription = null, tint = DeckPalette.primary, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            "Cronos — a dedicated container named after this game, cloned from your first container.",
+                            color = DeckPalette.onSurfaceVariant,
+                            fontSize = 11.5.sp,
+                        )
+                    }
+                } else if (containerNames.isNotEmpty()) {
                     Spacer(Modifier.height(10.dp))
                     Box {
                         Row(
@@ -533,7 +656,7 @@ internal fun HubConfirmDialog(
                     }
                     Spacer(Modifier.width(10.dp))
                     HubGradientButton("Add") {
-                        onConfirm(name.trim().ifEmpty { file.nameWithoutExtension }, appId, containerIdx, coverPath)
+                        onConfirm(name.trim().ifEmpty { file.nameWithoutExtension }, appId, if (mode == HubAddMode.CRONOS) -1 else containerIdx, coverPath)
                     }
                 }
             }

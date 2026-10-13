@@ -1,7 +1,6 @@
 package com.winlator.star.ui.screens
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -181,7 +180,7 @@ internal fun DeckContainerDetailScreen(
         AnimatedContent(
             targetState = tab,
             transitionSpec = {
-                (slideInVertically(tween(240, easing = FastOutLinearInEasing)) { it } + fadeIn(tween(160)))
+                (slideInVertically(tween(240)) { it } + fadeIn(tween(160)))
                     .togetherWith(
                         slideOutVertically(tween(140)) { -it / 4 } + fadeOut(tween(100)),
                     )

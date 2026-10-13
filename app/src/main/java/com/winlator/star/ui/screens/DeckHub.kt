@@ -36,7 +36,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Rocket
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.TextButton
@@ -370,7 +370,7 @@ internal fun DeckAddModeMenu(onPick: (HubAddMode) -> Unit, onDismiss: () -> Unit
             DeckAddModeCard(
                 title = "Cronos",
                 desc = "A fresh dedicated container built just for this game — one game, one container.",
-                icon = Icons.Filled.Rocket,
+                icon = Icons.Filled.SportsEsports,
             ) { onPick(HubAddMode.CRONOS) }
             TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterHorizontally)) {
                 Text("Cancel", color = DeckPalette.onSurfaceVariant)
@@ -503,7 +503,7 @@ internal fun HubConfirmDialog(
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Filled.Rocket, contentDescription = null, tint = DeckPalette.primary, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Filled.SportsEsports, contentDescription = null, tint = DeckPalette.primary, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(10.dp))
                         Text(
                             "Cronos — a fresh dedicated container named after this game, with just this game's shortcut.",

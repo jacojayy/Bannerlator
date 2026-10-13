@@ -71,7 +71,6 @@ import com.winlator.star.core.PreloaderState
 import com.winlator.star.ui.screens.Deck
 import com.winlator.star.ui.screens.DeckCapsuleWall
 import com.winlator.star.ui.screens.DeckCover
-import com.winlator.star.ui.screens.XmbWaves
 import com.winlator.star.ui.screens.decodeCover
 import com.winlator.star.ui.screens.featuredCovers
 import com.winlator.star.ui.screens.hueOf
@@ -82,41 +81,69 @@ import kotlinx.coroutines.withContext
 // values that read over any cover art rather than the ambient theme's surface colours.
 private val HeroText = Color(0xFFF3F5F8)
 private val HeroTextDim = Color(0xFFB6BCC6)
-// Amethyst purple: the launch accent — step bars, step counter, hint, spinner and the wave field
-// behind them all read as one colour. Was the old blue #4C8DFF.
-private val HeroAccent = Color(0xFFA855F7)
-// Deck signal blue: the Home tab's accent — the shutdown/status screen's wall, corner light
-// and progress bar all read as one colour, matching the Home pane exactly.
+// Deck signal blue: every accent in this overlay — launch steps, spinner, hint, the shutdown bar
+// and the corner light — shares the Home tab's colour. (Launch was Amethyst #A855F7 before.)
 private val StatusAccent = Color(0xFF1A9FFF)
+private val HeroAccent = StatusAccent
 
 /**
- * Shared backdrop for every screen this overlay draws: a purple vertical wash with the Games XMB's
- * moving wave ribbons (XmbWaves) laid over it. The launch hero and the centered shutdown/status
- * screen both use it, so both read as the same surface — no cover art, no logo art, nothing else.
- * Every stop is FULLY OPAQUE: the overlay is a sibling drawn over the session's X server surface and
- * its on-screen controls, so even a 30%-alpha top stop would have let the container and the virtual
- * controls show through while a launch was still loading.
+ * The Home tab's look, shared by the launch hero and the shutdown/status screen: the deck
+ * background, the drifting wall of bundled cover art and the blue corner light. Fully opaque —
+ * the overlay is a sibling drawn over the session's X server surface and its on-screen controls,
+ * so nothing may show through while a launch is still loading.
  */
 @Composable
-private fun XmbWaveBackdrop(modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier.background(
-            Brush.verticalGradient(
-                0.0f to HeroAccent,
-                0.42f to Color(0xFF0A0B0D),
-                1.0f to Color(0xFF05050A),
-            )
-        ),
-    ) {
-        XmbWaves(HeroAccent, Modifier.fillMaxSize())
+private fun DeckCoverWallBackdrop() {
+    val context = LocalContext.current
+    var covers by remember { mutableStateOf<List<DeckCover>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        val decoded = withContext(Dispatchers.IO) {
+            featuredCovers.map { (name, asset) ->
+                DeckCover(name, hueOf(name), decodeCover(context, asset))
+            }
+        }
+        covers = decoded
     }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Deck.background),
+    ) {
+        DeckCapsuleWall(
+            covers = if (covers.isEmpty()) List(12) { index -> DeckCover("", index / 12f) } else covers,
+            driftMs = if (covers.isEmpty()) 75_000 else 40_000,
+        )
+    }
+    // The Home pane's blue corner light, same position and falloff.
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .drawBehind {
+                val radius = 460.dp.toPx()
+                val center = Offset(size.width - radius * 0.35f, radius * 0.35f)
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            StatusAccent.copy(alpha = 0.24f),
+                            StatusAccent.copy(alpha = 0.10f),
+                            StatusAccent.copy(alpha = 0.04f),
+                            Color.Transparent,
+                        ),
+                        center = center,
+                        radius = radius,
+                    ),
+                    radius = radius,
+                    center = center,
+                )
+            },
+    )
 }
 
 /**
- * Full-bleed "game hero" launch overlay. The screen is always the purple XMB wave field behind a
- * dark scrim gradient — never the shortcut's cover art; the game name sits above a stepped progress
- * readout (determinate bar for the measurable app-side setup, an indeterminate spinner for the
- * guest-boot tail) and a failure card.
+ * Full-bleed "game hero" launch overlay. The screen is the Home tab's drifting cover wall behind a
+ * dark scrim gradient; the game name sits above a stepped progress readout (determinate bar for
+ * the measurable app-side setup, an indeterminate spinner for the guest-boot tail) and a failure
+ * card.
  * Shows/hides based on PreloaderState.ui. Place at the top of the host Compose hierarchy.
  */
 @Composable
@@ -124,15 +151,15 @@ fun PreloaderOverlay() {
     val state by PreloaderState.ui.collectAsState()
     val ui = state ?: return
 
-    // Centered status/shutdown screen — purple wave backdrop + message + slim indeterminate bar.
+    // Centered status/shutdown screen — cover-wall backdrop + message + slim indeterminate bar.
     if (ui.centered) {
         CenteredStatus(ui.tailLabel.ifEmpty { ui.title }, ui.hint, ui.elapsed, ui.percent)
         return
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // --- Background: always the purple XMB wave field (no cover art, by request). ---
-        XmbWaveBackdrop(Modifier.fillMaxSize())
+        // --- Background: the Home tab's cover wall + blue corner light. ---
+        DeckCoverWallBackdrop()
 
         // --- Scrim: darken the top a touch and heavily at the bottom for legible text. ---
         Box(
@@ -302,51 +329,9 @@ private fun StepPips(stepIndex: Int, stepTotal: Int) {
  */
 @Composable
 private fun CenteredStatus(message: String, subMessage: String? = null, elapsed: String? = null, percent: Int = -1) {
-    val context = LocalContext.current
-    var covers by remember { mutableStateOf<List<DeckCover>>(emptyList()) }
-    LaunchedEffect(Unit) {
-        val decoded = withContext(Dispatchers.IO) {
-            featuredCovers.map { (name, asset) ->
-                DeckCover(name, hueOf(name), decodeCover(context, asset))
-            }
-        }
-        covers = decoded
-    }
     Box(modifier = Modifier.fillMaxSize()) {
-        // Home-style cover wall over the deck background — the same drifting grid as the Home tab.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Deck.background),
-        ) {
-            DeckCapsuleWall(
-                covers = if (covers.isEmpty()) List(12) { index -> DeckCover("", index / 12f) } else covers,
-                driftMs = if (covers.isEmpty()) 75_000 else 40_000,
-            )
-        }
-        // The Home pane's blue corner light, same position and falloff.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .drawBehind {
-                    val radius = 460.dp.toPx()
-                    val center = Offset(size.width - radius * 0.35f, radius * 0.35f)
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                StatusAccent.copy(alpha = 0.24f),
-                                StatusAccent.copy(alpha = 0.10f),
-                                StatusAccent.copy(alpha = 0.04f),
-                                Color.Transparent,
-                            ),
-                            center = center,
-                            radius = radius,
-                        ),
-                        radius = radius,
-                        center = center,
-                    )
-                },
-        )
+        // The Home tab's cover wall + blue corner light.
+        DeckCoverWallBackdrop()
         // Darken overall a touch and heavily at the bottom so the status text stays legible.
         Box(
             modifier = Modifier

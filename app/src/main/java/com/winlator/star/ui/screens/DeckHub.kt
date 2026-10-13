@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.widget.Toast
 import android.provider.OpenableColumns
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
@@ -65,6 +66,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
+import com.winlator.star.container.Shortcut
 import com.winlator.star.core.FileUtils
 import com.winlator.star.store.GoldbergComponent
 import com.winlator.star.store.GoldbergMode

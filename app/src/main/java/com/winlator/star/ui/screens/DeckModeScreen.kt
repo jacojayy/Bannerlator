@@ -1,7 +1,10 @@
 package com.winlator.star.ui.screens
 
 import android.app.Activity
+import android.content.Context
 import android.content.pm.ActivityInfo
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.widget.VideoView
 
 import androidx.compose.animation.core.LinearEasing
@@ -9,6 +12,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -67,6 +71,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalView
@@ -77,7 +83,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import com.winlator.star.container.ContainerManager
 import java.io.File
 import java.io.FileOutputStream
 import com.winlator.star.ui.ControllerFocusIndication
@@ -99,8 +104,8 @@ internal object Deck {
     val attention = Color(0xFFFFB547)
 }
 
-/** One tile on the wall: a name (drives its colour) and the resolved hue. */
-internal class DeckCover(val name: String, val hue: Float)
+/** One tile on the wall: a name (drives its colour), the resolved hue, and its cover art. */
+internal class DeckCover(val name: String, val hue: Float, val bitmap: Bitmap? = null)
 
 private fun hueOf(name: String): Float {
     var h = 0
@@ -131,19 +136,10 @@ private fun deckSections() = listOf(
 @Composable
 internal fun DeckModeScreen(onExit: () -> Unit) {
     val context = LocalContext.current
-    var titles by remember { mutableStateOf<List<String>>(emptyList()) }
     var introDone by remember { mutableStateOf(false) }
     var section by remember { mutableStateOf("home") }
     var graphicPane by remember { mutableStateOf("gpu") }
     var deckDetail by remember { mutableStateOf<Int?>(null) }
-
-    LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            val manager = ContainerManager(context)
-            manager.reloadContainers()
-            titles = manager.getContainers().map { it.name }
-        }
-    }
 
     // Truly full screen: the system status/nav bars go with the top bar, restored on leaving.
     val view = LocalView.current
@@ -199,7 +195,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 .clipToBounds(),
         ) {
             when (section) {
-                "home" -> DeckHome(titles = titles)
+                "home" -> DeckHome()
                 "containers" -> {
                     val detailId = deckDetail
                     if (detailId != null) {
@@ -222,7 +218,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 "saves" -> SavesScreen()
                 "social_hub" -> SocialContent()
                 "settings" -> DeckSettingsScreen()
-                else -> DeckHome(titles = titles)
+                else -> DeckHome()
             }
 
             // DroidDeck's corner light — one circular blue glow just inside the top right of every
@@ -279,12 +275,70 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     }
 }
 
-/** Home: the drifting capsule wall, the wordmark, and nothing that pretends to launch. */
+/** The featured library: bundled SteamGridDB vertical grids under assets/covers. */
+private val featuredCovers = listOf(
+    "Red Dead Redemption 2" to "covers/red_dead_redemption_2.jpg",
+    "Red Dead Redemption" to "covers/red_dead_redemption.jpg",
+    "Cyberpunk 2077" to "covers/cyberpunk_2077.jpg",
+    "Hogwarts Legacy" to "covers/hogwarts_legacy.jpg",
+    "High on Life" to "covers/high_on_life.jpg",
+    "High on Life 2" to "covers/high_on_life_2.jpg",
+    "Dinkum" to "covers/dinkum.jpg",
+    "Titanfall 2" to "covers/titanfall_2.jpg",
+    "Terraria" to "covers/terraria.jpg",
+    "Star Wars Jedi: Fallen Order" to "covers/star_wars_jedi_fallen_order.jpg",
+    "Marvel's Spider-Man 2" to "covers/spider_man_2.jpg",
+    "Marvel's Spider-Man Remastered" to "covers/spider_man_remastered.jpg",
+    "Marvel's Spider-Man: Miles Morales" to "covers/spider_man_miles_morales.jpg",
+    "Ratchet & Clank: Rift Apart" to "covers/ratchet_and_clank_rift_apart.jpg",
+    "Assassin's Creed" to "covers/assassins_creed.jpg",
+    "Assassin's Creed II" to "covers/assassins_creed_2.jpg",
+    "Assassin's Creed: Brotherhood" to "covers/assassins_creed_brotherhood.jpg",
+    "Assassin's Creed: Revelations" to "covers/assassins_creed_revelations.jpg",
+    "Assassin's Creed III" to "covers/assassins_creed_3.jpg",
+    "Assassin's Creed III Remastered" to "covers/assassins_creed_3_remastered.jpg",
+    "Assassin's Creed IV: Black Flag" to "covers/assassins_creed_4_black_flag.jpg",
+    "Assassin's Creed Rogue" to "covers/assassins_creed_rogue.jpg",
+    "Assassin's Creed Liberation" to "covers/assassins_creed_liberation.jpg",
+    "Assassin's Creed Unity" to "covers/assassins_creed_unity.jpg",
+    "Assassin's Creed Syndicate" to "covers/assassins_creed_syndicate.jpg",
+    "Assassin's Creed Origins" to "covers/assassins_creed_origins.jpg",
+    "Assassin's Creed Odyssey" to "covers/assassins_creed_odyssey.jpg",
+    "Assassin's Creed Valhalla" to "covers/assassins_creed_valhalla.jpg",
+    "Assassin's Creed Mirage" to "covers/assassins_creed_mirage.jpg",
+    "Assassin's Creed Shadows" to "covers/assassins_creed_shadows.jpg",
+    "AC Chronicles: China" to "covers/assassins_creed_chronicles_china.jpg",
+    "AC Chronicles: India" to "covers/assassins_creed_chronicles_india.jpg",
+    "AC Chronicles: Russia" to "covers/assassins_creed_chronicles_russia.jpg",
+)
+
+/** Decode a bundled cover at roughly capsule resolution so the wall stays light on RAM. */
+private fun decodeCover(context: Context, asset: String): Bitmap? = runCatching {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    context.assets.open(asset).use { BitmapFactory.decodeStream(it, null, bounds) }
+    var sample = 1
+    while (bounds.outWidth / sample > 320) sample *= 2
+    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+    context.assets.open(asset).use { BitmapFactory.decodeStream(it, null, opts) }
+}.getOrNull()
+
+/** Home: the drifting cover wall of real game art, the wordmark, nothing that pretends to launch. */
 @Composable
-private fun DeckHome(titles: List<String>) {
-    val covers = remember(titles) {
-        if (titles.isEmpty()) List(12) { index -> DeckCover("", index / 12f) }
-        else titles.map { title -> DeckCover(title, hueOf(title)) }
+private fun DeckHome() {
+    val context = LocalContext.current
+    var covers by remember { mutableStateOf<List<DeckCover>>(emptyList()) }
+
+    LaunchedEffect(Unit) {
+        val decoded = withContext(Dispatchers.IO) {
+            featuredCovers.map { (name, asset) ->
+                DeckCover(name, hueOf(name), decodeCover(context, asset))
+            }
+        }
+        covers = decoded
+    }
+
+    val wallCovers = remember(covers) {
+        if (covers.isEmpty()) List(12) { index -> DeckCover("", index / 12f) } else covers
     }
     Box(
         modifier = Modifier
@@ -293,8 +347,8 @@ private fun DeckHome(titles: List<String>) {
             .clipToBounds(),
     ) {
         DeckCapsuleWall(
-            covers = covers,
-            driftMs = if (titles.isEmpty()) 75_000 else 40_000,
+            covers = wallCovers,
+            driftMs = if (covers.isEmpty()) 75_000 else 40_000,
         )
         DeckWallFade()
         Column(
@@ -562,7 +616,7 @@ private fun DeckCapsuleWall(covers: List<DeckCover>, driftMs: Int, modifier: Mod
     }
 }
 
-/** One portrait capsule: a hue-tinted gradient standing in for the cover art. */
+/** One portrait capsule: the real cover art when bundled, otherwise a hue-tinted stand-in. */
 @Composable
 private fun DeckCapsule(cover: DeckCover, shape: RoundedCornerShape, modifier: Modifier) {
     if (cover.name.isEmpty()) {
@@ -572,6 +626,44 @@ private fun DeckCapsule(cover: DeckCover, shape: RoundedCornerShape, modifier: M
                 .background(Brush.linearGradient(listOf(Deck.surface, Deck.background)))
                 .border(1.dp, Deck.line, shape),
         )
+        return
+    }
+    val bitmap = cover.bitmap
+    if (bitmap != null) {
+        Box(
+            modifier
+                .clip(shape)
+                .background(Deck.surface)
+                .border(1.dp, Deck.line.copy(alpha = 0.6f), shape),
+        ) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = cover.name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize(),
+            )
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0.55f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = 0.72f),
+                        ),
+                    ),
+            )
+            Text(
+                text = cover.name,
+                color = Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(8.dp),
+            )
+        }
         return
     }
     val hue = cover.hue

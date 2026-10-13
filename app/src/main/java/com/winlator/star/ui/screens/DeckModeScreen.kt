@@ -107,7 +107,7 @@ internal object Deck {
 /** One tile on the wall: a name (drives its colour), the resolved hue, and its cover art. */
 internal class DeckCover(val name: String, val hue: Float, val bitmap: Bitmap? = null)
 
-private fun hueOf(name: String): Float {
+internal fun hueOf(name: String): Float {
     var h = 0
     for (c in name) h = 31 * h + c.code
     return ((h % 360) + 360) % 360 / 360f
@@ -276,7 +276,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
 }
 
 /** The featured library: bundled SteamGridDB vertical grids under assets/covers. */
-private val featuredCovers = listOf(
+internal val featuredCovers = listOf(
     "Red Dead Redemption 2" to "covers/red_dead_redemption_2.jpg",
     "Red Dead Redemption" to "covers/red_dead_redemption.jpg",
     "Cyberpunk 2077" to "covers/cyberpunk_2077.jpg",
@@ -313,7 +313,7 @@ private val featuredCovers = listOf(
 )
 
 /** Decode a bundled cover at roughly capsule resolution so the wall stays light on RAM. */
-private fun decodeCover(context: Context, asset: String): Bitmap? = runCatching {
+internal fun decodeCover(context: Context, asset: String): Bitmap? = runCatching {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     context.assets.open(asset).use { BitmapFactory.decodeStream(it, null, bounds) }
     var sample = 1
@@ -568,7 +568,7 @@ private fun DeckWallFade() {
  * geometry and timings are DroidDeck's CapsuleWall.
  */
 @Composable
-private fun DeckCapsuleWall(covers: List<DeckCover>, driftMs: Int, modifier: Modifier = Modifier) {
+internal fun DeckCapsuleWall(covers: List<DeckCover>, driftMs: Int, modifier: Modifier = Modifier) {
     val capW = 112.dp
     val capH = 168.dp
     val gap = 14.dp

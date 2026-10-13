@@ -42,6 +42,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,11 +51,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -64,7 +68,15 @@ import com.winlator.star.core.Failure
 import com.winlator.star.core.Phase
 import com.winlator.star.core.PreloaderDetails
 import com.winlator.star.core.PreloaderState
+import com.winlator.star.ui.screens.Deck
+import com.winlator.star.ui.screens.DeckCapsuleWall
+import com.winlator.star.ui.screens.DeckCover
 import com.winlator.star.ui.screens.XmbWaves
+import com.winlator.star.ui.screens.decodeCover
+import com.winlator.star.ui.screens.featuredCovers
+import com.winlator.star.ui.screens.hueOf
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 // The hero surface is always laid over a dark scrim, so text/accents use fixed light-on-dark
 // values that read over any cover art rather than the ambient theme's surface colours.
@@ -73,6 +85,9 @@ private val HeroTextDim = Color(0xFFB6BCC6)
 // Amethyst purple: the launch accent — step bars, step counter, hint, spinner and the wave field
 // behind them all read as one colour. Was the old blue #4C8DFF.
 private val HeroAccent = Color(0xFFA855F7)
+// Deck signal blue: the Home tab's accent — the shutdown/status screen's wall, corner light
+// and progress bar all read as one colour, matching the Home pane exactly.
+private val StatusAccent = Color(0xFF1A9FFF)
 
 /**
  * Shared backdrop for every screen this overlay draws: a purple vertical wash with the Games XMB's
@@ -282,14 +297,56 @@ private fun StepPips(stepIndex: Int, stepTotal: Int) {
 
 /**
  * Full-bleed "working…" screen for shutdown and other indeterminate operations (backup, restore,
- * install, create-container). The purple XMB wave backdrop fills the screen behind a scrim (the
- * branded Bannerlator logo art is gone, by request); the message + slim bar sit low.
+ * install, create-container). The Home tab's drifting cover wall fills the screen behind a scrim
+ * with the blue corner light — exactly the Home pane's look; the message + slim bar sit low.
  */
 @Composable
 private fun CenteredStatus(message: String, subMessage: String? = null, elapsed: String? = null, percent: Int = -1) {
+    val context = LocalContext.current
+    var covers by remember { mutableStateOf<List<DeckCover>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        val decoded = withContext(Dispatchers.IO) {
+            featuredCovers.map { (name, asset) ->
+                DeckCover(name, hueOf(name), decodeCover(context, asset))
+            }
+        }
+        covers = decoded
+    }
     Box(modifier = Modifier.fillMaxSize()) {
-        // Same backdrop as the launch hero — purple wash + XMB wave ribbons, no logo art.
-        XmbWaveBackdrop(Modifier.fillMaxSize())
+        // Home-style cover wall over the deck background — the same drifting grid as the Home tab.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Deck.background),
+        ) {
+            DeckCapsuleWall(
+                covers = if (covers.isEmpty()) List(12) { index -> DeckCover("", index / 12f) } else covers,
+                driftMs = if (covers.isEmpty()) 75_000 else 40_000,
+            )
+        }
+        // The Home pane's blue corner light, same position and falloff.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawBehind {
+                    val radius = 460.dp.toPx()
+                    val center = Offset(size.width - radius * 0.35f, radius * 0.35f)
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                StatusAccent.copy(alpha = 0.24f),
+                                StatusAccent.copy(alpha = 0.10f),
+                                StatusAccent.copy(alpha = 0.04f),
+                                Color.Transparent,
+                            ),
+                            center = center,
+                            radius = radius,
+                        ),
+                        radius = radius,
+                        center = center,
+                    )
+                },
+        )
         // Darken overall a touch and heavily at the bottom so the status text stays legible.
         Box(
             modifier = Modifier
@@ -343,14 +400,14 @@ private fun CenteredStatus(message: String, subMessage: String? = null, elapsed:
             if (percent >= 0) {
                 LinearProgressIndicator(
                     progress = { percent.coerceIn(0, 100) / 100f },
-                    color = HeroAccent,
+                    color = StatusAccent,
                     trackColor = Color.White.copy(alpha = 0.16f),
                     strokeCap = StrokeCap.Round,
                     modifier = barModifier,
                 )
             } else {
                 LinearProgressIndicator(
-                    color = HeroAccent,
+                    color = StatusAccent,
                     trackColor = Color.White.copy(alpha = 0.16f),
                     strokeCap = StrokeCap.Round,
                     modifier = barModifier,

@@ -13,6 +13,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,6 +33,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Layers
@@ -56,6 +61,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -127,6 +135,20 @@ internal object HubGamesStore {
             )
         }
         }.getOrDefault(emptyList())
+    }
+
+    fun remove(context: Context, game: HubGame) {
+        runCatching {
+            val file = File(context.filesDir, FILE_NAME)
+            val raw = FileUtils.readString(file) ?: return
+            val arr = JSONArray(raw)
+            val out = JSONArray()
+            (0 until arr.length()).forEach { i ->
+                val o = arr.optJSONObject(i) ?: return@forEach
+                if (o.optString("shortcutPath") != game.shortcutPath) out.put(o)
+            }
+            FileUtils.writeString(file, out.toString())
+        }
     }
 
     fun add(context: Context, game: HubGame) {
@@ -229,6 +251,7 @@ internal fun HubCarousel(
     entries: List<HubEntry>,
     selected: Int,
     onSelect: (Int) -> Unit,
+    onMenu: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (entries.isEmpty()) return
@@ -236,6 +259,15 @@ internal fun HubCarousel(
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown &&
+                    (event.key == Key.ButtonStart || event.key == Key.ButtonSelect || event.key == Key.Menu)
+                ) {
+                    onMenu(current)
+                    return@onPreviewKeyEvent true
+                }
+                false
+            }
             .pointerInput(entries.size, current) {
                 var total = 0f
                 detectHorizontalDragGestures(
@@ -295,7 +327,10 @@ internal fun HubCarousel(
                         color = if (isSelected) DeckPalette.primary else DeckPalette.line,
                         shape = RoundedCornerShape(10.dp),
                     )
-                    .clickable { onSelect(index) },
+                    .combinedClickable(
+                        onClick = { onSelect(index) },
+                        onLongClick = { onMenu(index) },
+                    ),
             ) {
                 val bitmap = entry.bitmap
                 if (bitmap != null) {
@@ -978,5 +1013,67 @@ internal fun DeckLaunchStack(activity: Activity, request: Shortcut?, onMenuClose
             },
             onUpdate = { _ -> preflightFor = null },
         )
+    }
+}
+
+/**
+ * The deck-styled game menu: long-press a carousel tile (touch) or press Options/Select (controller).
+ * Play / Settings (opens this game's container editor) / Add to Home Screen / Properties / Delete.
+ */
+@Composable
+internal fun DeckGameMenu(
+    title: String,
+    onPlay: () -> Unit,
+    onSettings: () -> Unit,
+    onAddToHomeScreen: () -> Unit,
+    onProperties: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            Modifier
+                .fillMaxWidth(0.78f)
+                .clip(DeckPalette.groupShape)
+                .background(DeckPalette.surface)
+                .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                .padding(vertical = 10.dp),
+        ) {
+            Text(
+                title,
+                color = DeckPalette.onBackground,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
+            )
+            DeckGameMenuRow("Play", Icons.Filled.PlayArrow, onClick = onPlay)
+            DeckGameMenuRow("Settings", Icons.Filled.Settings, onClick = onSettings)
+            DeckGameMenuRow("Add to Home Screen", Icons.Filled.Home, onClick = onAddToHomeScreen)
+            DeckGameMenuRow("Properties", Icons.Filled.Info, onClick = onProperties)
+            DeckGameMenuRow("Delete", Icons.Filled.Delete, danger = true, onClick = onDelete)
+        }
+    }
+}
+
+@Composable
+private fun DeckGameMenuRow(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    danger: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val tint = if (danger) DeckPalette.error else DeckPalette.onSurfaceVariant
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(14.dp))
+        Text(label, color = if (danger) DeckPalette.error else DeckPalette.onBackground, fontSize = 14.sp)
     }
 }

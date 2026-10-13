@@ -5,6 +5,9 @@ import android.content.Context
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
+import android.graphics.drawable.Icon
 import android.widget.Toast
 import android.widget.VideoView
 
@@ -67,6 +70,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import com.winlator.star.R
+import com.winlator.star.XServerDisplayActivity
 import com.winlator.star.container.Container
 import com.winlator.star.contents.ContentProfile
 import com.winlator.star.contents.ContentsManager
@@ -213,7 +218,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 .clipToBounds(),
         ) {
             when (section) {
-                "home" -> DeckHome()
+                "home" -> DeckHome(onEditContainer = { id -> section = "containers"; deckDetail = id })
                 "containers" -> {
                     val detailId = deckDetail
                     if (detailId != null) {
@@ -236,7 +241,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 "saves" -> SavesScreen()
                 "social_hub" -> SocialContent()
                 "settings" -> DeckSettingsScreen()
-                else -> DeckHome()
+                else -> DeckHome(onEditContainer = { id -> section = "containers"; deckDetail = id })
             }
 
             // DroidDeck's corner light — one circular blue glow just inside the top right of every
@@ -327,7 +332,7 @@ internal fun decodeCover(context: Context, asset: String): Bitmap? = runCatching
 
 /** Home: the cover wall behind a 3D games carousel — WinHub wordmark, Start Hubbing, Add Games. */
 @Composable
-private fun DeckHome() {
+private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
     val context = LocalContext.current
     val activity = context as Activity
     val scope = rememberCoroutineScope()
@@ -341,6 +346,8 @@ private fun DeckHome() {
     var addMode by remember { mutableStateOf(HubAddMode.MASTER) }
     var cronosBusy by remember { mutableStateOf(false) }
     var cronosName by remember { mutableStateOf("") }
+    var gameMenuFor by remember { mutableStateOf<HubEntry?>(null) }
+    var propertiesFor by remember { mutableStateOf<Container?>(null) }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
@@ -414,6 +421,7 @@ private fun DeckHome() {
                     entries = list,
                     selected = selected,
                     onSelect = { selected = it },
+                    onMenu = { idx -> gameMenuFor = list.getOrNull(idx) },
                     modifier = Modifier
                         .align(Alignment.Center)
                         .fillMaxWidth()
@@ -479,6 +487,89 @@ private fun DeckHome() {
                     )
                 }
             }
+        }
+
+        gameMenuFor?.let { entry ->
+            val game = entry.game
+            DeckGameMenu(
+                title = game?.name ?: entry.title,
+                onPlay = {
+                    gameMenuFor = null
+                    val g = entry.game ?: return@DeckGameMenu
+                    val shortcut = runCatching {
+                        val container = containers.find { it.id == g.containerId } ?: return@runCatching null
+                        val desktop = File(g.shortcutPath)
+                        if (!desktop.isFile) return@runCatching null
+                        Shortcut(container, desktop)
+                    }.getOrNull()
+                    if (shortcut == null) {
+                        Toast.makeText(context, "That game's shortcut is missing — re-add it", Toast.LENGTH_SHORT).show()
+                    } else {
+                        launchRequest = shortcut
+                    }
+                },
+                onSettings = {
+                    gameMenuFor = null
+                    val g = entry.game ?: return@DeckGameMenu
+                    if (containers.none { it.id == g.containerId }) {
+                        Toast.makeText(context, "Container not found", Toast.LENGTH_SHORT).show()
+                    } else {
+                        onEditContainer(g.containerId)
+                    }
+                },
+                onAddToHomeScreen = {
+                    gameMenuFor = null
+                    val g = entry.game ?: return@DeckGameMenu
+                    val launchIntent = Intent(context, XServerDisplayActivity::class.java).apply {
+                        putExtra("container_id", g.containerId)
+                        putExtra("shortcut_path", g.shortcutPath)
+                        putExtra("shortcut_name", g.name)
+                    }
+                    val bmp = entry.bitmap
+                    val icon = if (bmp != null) {
+                        Icon.createWithBitmap(Bitmap.createScaledBitmap(bmp, 192, 288, true))
+                    } else {
+                        Icon.createWithResource(context, R.mipmap.ic_launcher)
+                    }
+                    val info = ShortcutInfo.Builder(context, "hub_${g.containerId}_${g.name.hashCode()}")
+                        .setShortLabel(g.name)
+                        .setIcon(icon)
+                        .setIntent(launchIntent)
+                        .build()
+                    val sm = context.getSystemService(ShortcutManager::class.java)
+                    if (sm != null && sm.isRequestPinShortcutSupported) {
+                        sm.requestPinShortcut(info, null)
+                    } else {
+                        Toast.makeText(context, "Pin shortcuts aren't supported here", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onProperties = {
+                    gameMenuFor = null
+                    val g = entry.game ?: return@DeckGameMenu
+                    propertiesFor = containers.find { it.id == g.containerId }
+                    if (propertiesFor == null) Toast.makeText(context, "Container not found", Toast.LENGTH_SHORT).show()
+                },
+                onDelete = {
+                    gameMenuFor = null
+                    val g = entry.game ?: return@DeckGameMenu
+                    scope.launch(Dispatchers.IO) {
+                        runCatching { File(g.shortcutPath).delete() }
+                        g.coverPath?.let { runCatching { File(it).delete() } }
+                        HubGamesStore.remove(context, g)
+                        withContext(Dispatchers.Main) {
+                            val list = entries.orEmpty().filter { it.game?.shortcutPath != g.shortcutPath }
+                            entries = list
+                            selected = selected.coerceIn(0, (list.size - 1).coerceAtLeast(0))
+                            Toast.makeText(context, "Removed \"${g.name}\"", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+                onDismiss = { gameMenuFor = null },
+            )
+        }
+
+        propertiesFor?.let { c ->
+            DeckPropertiesDialog(container = c, onDismiss = { propertiesFor = null })
         }
 
         DeckLaunchStack(

@@ -370,7 +370,7 @@ private fun DeckPropRow(label: String, value: String) {
 
 /** DroidDeck-styled Properties sheet: identity header + live storage usage + Clear Cache. */
 @Composable
-private fun DeckPropertiesDialog(container: Container, onDismiss: () -> Unit) {
+internal fun DeckPropertiesDialog(container: Container, onDismiss: () -> Unit) {
     var driveCSize by remember { mutableStateOf(0L) }
     var cacheSize by remember { mutableStateOf(0L) }
     var cacheEpoch by remember { mutableStateOf(0) }

@@ -61,9 +61,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -247,6 +250,7 @@ internal fun HubGradientButton(
  * distance — tap or swipe (or D-pad focus + select) to move the selection.
  */
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 internal fun HubCarousel(
     entries: List<HubEntry>,
     selected: Int,

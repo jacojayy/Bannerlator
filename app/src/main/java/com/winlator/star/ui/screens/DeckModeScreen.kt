@@ -5,8 +5,11 @@ import android.content.Context
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.widget.Toast
 import android.widget.VideoView
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -26,10 +29,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -58,7 +64,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import com.winlator.star.container.Container
+import com.winlator.star.container.ContainerManager
+import com.winlator.star.container.Shortcut
+import com.winlator.star.core.GameIdentifier
 import com.winlator.star.store.deckTileFocus
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -89,6 +100,7 @@ import com.winlator.star.ui.ControllerFocusIndication
 import com.winlator.star.ui.SocialContent
 import com.winlator.star.ui.screens.contents.ContentsHubScreen
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** The DroidDeck palette (Graphite), lifted verbatim from DroidDeck's ui/Theme.kt. */
@@ -307,19 +319,68 @@ internal fun decodeCover(context: Context, asset: String): Bitmap? = runCatching
     context.assets.open(asset).use { BitmapFactory.decodeStream(it, null, opts) }
 }.getOrNull()
 
-/** Home: the drifting cover wall of real game art, the wordmark, nothing that pretends to launch. */
+/** Home: the cover wall behind a 3D games carousel — WinHub wordmark, Start Hubbing, Add Games. */
 @Composable
 private fun DeckHome() {
     val context = LocalContext.current
+    val activity = context as Activity
+    val scope = rememberCoroutineScope()
     var covers by remember { mutableStateOf<List<DeckCover>>(emptyList()) }
+    var entries by remember { mutableStateOf<List<HubEntry>?>(null) }
+    var containers by remember { mutableStateOf<List<Container>>(emptyList()) }
+    var selected by remember { mutableStateOf(0) }
+    var pending by remember { mutableStateOf<Pair<File, GameIdentifier.GameIdentity>?>(null) }
 
     LaunchedEffect(Unit) {
-        val decoded = withContext(Dispatchers.IO) {
-            featuredCovers.map { (name, asset) ->
+        withContext(Dispatchers.IO) {
+            covers = featuredCovers.map { (name, asset) ->
                 DeckCover(name, hueOf(name), decodeCover(context, asset))
             }
+            val featured = featuredCovers.map { (n, a) -> HubEntry(n, decodeCover(context, a), null) }
+            val user = HubGamesStore.load(context).map { g ->
+                HubEntry(g.name, g.coverPath?.let { BitmapFactory.decodeFile(it) }, g)
+            }
+            entries = featured + user
+            containers = ContainerManager(context).also { it.reloadContainers() }.getContainers().toList()
         }
-        covers = decoded
+    }
+
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch(Dispatchers.IO) {
+            val file = copyPickedGame(context, uri)
+            val identity = file?.let { runCatching { GameIdentifier.identify(it) }.getOrNull() }
+            withContext(Dispatchers.Main) {
+                if (file == null) {
+                    Toast.makeText(context, "Couldn't read that file", Toast.LENGTH_SHORT).show()
+                } else {
+                    pending = file to (identity ?: GameIdentifier.GameIdentity())
+                }
+            }
+        }
+    }
+
+    fun startHubbing() {
+        val game = entries?.getOrNull(selected)?.game
+        if (game == null) {
+            Toast.makeText(context, "Add this game first — use Add Games, bottom right", Toast.LENGTH_SHORT).show()
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            val shortcut = runCatching {
+                val container = containers.find { it.id == game.containerId } ?: return@runCatching null
+                val desktop = File(game.shortcutPath)
+                if (!desktop.isFile) return@runCatching null
+                Shortcut(container, desktop)
+            }.getOrNull()
+            withContext(Dispatchers.Main) {
+                if (shortcut == null) {
+                    Toast.makeText(context, "That game's shortcut is missing — re-add it", Toast.LENGTH_SHORT).show()
+                } else {
+                    launchShortcutNow(activity, shortcut)
+                }
+            }
+        }
     }
 
     val wallCovers = remember(covers) {
@@ -336,12 +397,75 @@ private fun DeckHome() {
             driftMs = if (covers.isEmpty()) 75_000 else 40_000,
         )
         DeckWallFade()
+
+        // The library — center stage, 3D coverflow of every game (bundled + added).
+        entries?.let { list ->
+            if (list.isNotEmpty()) {
+                HubCarousel(
+                    entries = list,
+                    selected = selected,
+                    onSelect = { selected = it },
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .fillMaxWidth()
+                        .padding(bottom = 72.dp),
+                )
+            }
+        }
+
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(start = 36.dp, bottom = 44.dp, end = 20.dp),
         ) {
             DeckWordmark()
+            Spacer(Modifier.height(16.dp))
+            HubGradientButton("Start Hubbing", onClick = { startHubbing() })
+        }
+
+        HubGradientButton(
+            text = "Add Games",
+            onClick = { picker.launch(arrayOf("*/*")) },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 28.dp, bottom = 44.dp),
+        )
+
+        pending?.let { (file, identity) ->
+            HubConfirmDialog(
+                file = file,
+                containerNames = containers.map { it.name },
+                initialName = identity.name ?: file.nameWithoutExtension,
+                initialAppId = identity.appId,
+                onDismiss = { pending = null },
+                onConfirm = { name, appId, containerIndex, coverPath ->
+                    val container = containers.getOrNull(containerIndex)
+                    pending = null
+                    if (container == null) {
+                        Toast.makeText(context, "Create a container first", Toast.LENGTH_SHORT).show()
+                        return@HubConfirmDialog
+                    }
+                    scope.launch(Dispatchers.IO) {
+                        val added = runCatching {
+                            val desktop = ExeShortcutImporter.addToShortcuts(context, container, file, name, appId)
+                            val finalCover = coverPath ?: appId?.let { fetchHubCover(context, it) }
+                            val game = HubGame(name, container.id, desktop.absolutePath, appId, finalCover)
+                            HubGamesStore.add(context, game)
+                            HubEntry(name, finalCover?.let { BitmapFactory.decodeFile(it) }, game)
+                        }.getOrNull()
+                        withContext(Dispatchers.Main) {
+                            if (added == null) {
+                                Toast.makeText(context, "Couldn't add that game", Toast.LENGTH_SHORT).show()
+                            } else {
+                                val list = entries.orEmpty() + added
+                                entries = list
+                                selected = list.lastIndex
+                                Toast.makeText(context, "Added \"${added.title}\"", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                },
+            )
         }
     }
 }

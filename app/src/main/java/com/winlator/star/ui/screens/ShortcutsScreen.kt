@@ -9683,7 +9683,7 @@ private fun Set<String>.toggle(path: String): Set<String> =
 // origin games funnel through the launch-method popup (see requestLaunch) BEFORE reaching here; every
 // other game comes straight in.
 // [preflightDone] = the SteamLite pre-flight already pulled cloud saves; the activity skips its own pull.
-private fun launchShortcutNow(activity: Activity, shortcut: Shortcut, preflightDone: Boolean = false) {
+internal fun launchShortcutNow(activity: Activity, shortcut: Shortcut, preflightDone: Boolean = false) {
     if (!XrActivity.isEnabled(activity)) {
         // Effective display backend: per-game override, else the container default. Wayland reuses
         // XServerDisplayActivity's launch machinery via a guarded wayland_mode flag.

@@ -76,6 +76,7 @@ import com.winlator.star.XServerDisplayActivity
 import com.winlator.star.container.Container
 import com.winlator.star.contents.ContentProfile
 import com.winlator.star.contents.ContentsManager
+import com.winlator.star.core.NewContainerDefaults
 import com.winlator.star.container.ContainerManager
 import com.winlator.star.container.Shortcut
 import com.winlator.star.core.GameIdentifier
@@ -106,6 +107,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import com.winlator.star.ui.ControllerFocusIndication
@@ -365,7 +367,7 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch(Dispatchers.IO) {
-            val file = copyPickedGame(context, uri)
+            val file = resolvePickedGame(context, uri)
             val identity = file?.let { runCatching { GameIdentifier.identify(it) }.getOrNull() }
             withContext(Dispatchers.Main) {
                 if (file == null) {
@@ -600,10 +602,12 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                             val mgr = ContainerManager(context).also { it.reloadContainers() }
                             val data = runCatching {
                                 val template = Container(0, mgr)
-                                val base = template.getData()
-                                // The SAME wine pick a manual New Container makes: the first
-                                // available Wine profile, then Proton (wine_entries is empty in
-                                // source — the real list is ContentsManager's downloadable profiles).
+                                // Seed from the USER's saved "New Container Defaults" profile when
+                                // set (their drivers/wrappers/presets), else built-in defaults.
+                                val base = NewContainerDefaults.load(context, NewContainerDefaults.ARCH_X86_64)
+                                    ?.let { JSONObject(it) } ?: template.getData()
+                                // Wine pick = the first available Wine/Proton content profile,
+                                // exactly what a manual New Container selects.
                                 val cm = ContentsManager(context).also { it.syncContents() }
                                 val wineList =
                                     cm.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_WINE)

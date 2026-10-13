@@ -172,6 +172,38 @@ internal object HubGamesStore {
 }
 
 /** SAF uri → a real cache file (identifier/importer need a path). Blocking — call off the main thread. */
+/**
+ * Resolve a picked SAF uri to the on-disk executable IN PLACE — the same rule the old UI's
+ * "+" importer uses, so the exe keeps its whole folder (dlls / data) beside it. Exotic providers
+ * that can't be resolved fall back to a copy under Downloads/WinHub.
+ */
+internal fun resolvePickedGame(context: Context, uri: Uri): File? {
+    val real = runCatching {
+        if (uri.scheme == "file") return uri.path?.let { File(it) }
+        if (uri.scheme != "content") return null
+        if (!android.provider.DocumentsContract.isDocumentUri(context, uri)) return null
+        val docId = android.provider.DocumentsContract.getDocumentId(uri)
+        val split = docId.split(":", limit = 2)
+        val type = split[0]
+        val rel = if (split.size > 1) split[1] else ""
+        when (uri.authority) {
+            "com.android.externalstorage.documents" -> {
+                if ("primary".equals(type, ignoreCase = true)) {
+                    "${android.os.Environment.getExternalStorageDirectory()}/$rel"
+                } else {
+                    "/storage/$type/$rel"
+                }
+            }
+            else -> null
+        }
+    }.getOrNull()
+    if (real != null) {
+        val f = File(real)
+        if (f.isFile) return f
+    }
+    return copyPickedGame(context, uri)
+}
+
 internal fun copyPickedGame(context: Context, uri: Uri): File? {
     return runCatching {
         val name = runCatching {

@@ -351,6 +351,7 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
     var cronosName by remember { mutableStateOf("") }
     var gameMenuFor by remember { mutableStateOf<HubEntry?>(null) }
     var propertiesFor by remember { mutableStateOf<Container?>(null) }
+    var cronosReviewFor by remember { mutableStateOf<Container?>(null) }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
@@ -575,6 +576,17 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
             DeckPropertiesDialog(container = c, onDismiss = { propertiesFor = null })
         }
 
+        cronosReviewFor?.let { c ->
+            DeckCronosReviewDialog(
+                container = c,
+                onKeep = { cronosReviewFor = null },
+                onEdit = {
+                    cronosReviewFor = null
+                    onEditContainer(c.id)
+                },
+            )
+        }
+
         DeckLaunchStack(
             activity = activity,
             request = launchRequest,
@@ -602,10 +614,22 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                             val mgr = ContainerManager(context).also { it.reloadContainers() }
                             val data = runCatching {
                                 val template = Container(0, mgr)
-                                // Seed from the USER's saved "New Container Defaults" profile when
-                                // set (their drivers/wrappers/presets), else built-in defaults.
-                                val base = NewContainerDefaults.load(context, NewContainerDefaults.ARCH_X86_64)
-                                    ?.let { JSONObject(it) } ?: template.getData()
+                                // Built-in defaults first, then overlay the USER's saved
+                                // "New Container Defaults" profile — only non-empty keys, so a
+                                // stale/partial profile can never blank a valid field.
+                                val base = template.getData()
+                                NewContainerDefaults.load(context, NewContainerDefaults.ARCH_X86_64)
+                                    ?.let { raw ->
+                                        val profile = JSONObject(raw)
+                                        val keys = profile.keys()
+                                        while (keys.hasNext()) {
+                                            val k = keys.next()
+                                            val v = profile.opt(k)
+                                            if (v != null && v != JSONObject.NULL && v.toString().isNotEmpty()) {
+                                                base.put(k, v)
+                                            }
+                                        }
+                                    }
                                 // Wine pick = the first available Wine/Proton content profile,
                                 // exactly what a manual New Container selects.
                                 val cm = ContentsManager(context).also { it.syncContents() }
@@ -651,6 +675,7 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                                                 entries = list
                                                 selected = list.lastIndex
                                                 Toast.makeText(context, "Added \"${added.title}\" to its own Cronos container", Toast.LENGTH_SHORT).show()
+                                                cronosReviewFor = created
                                             }
                                         }
                                     }

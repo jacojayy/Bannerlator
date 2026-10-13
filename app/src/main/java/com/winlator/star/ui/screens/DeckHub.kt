@@ -1113,3 +1113,81 @@ private fun DeckGameMenuRow(
         Text(label, color = if (danger) DeckPalette.error else DeckPalette.onBackground, fontSize = 14.sp)
     }
 }
+
+/**
+ * Post-create Cronos check: the key launch-relevant settings of the container that was just
+ * built (wine, graphics driver, DX wrapper + versions, Box64/FEXCore preset, screen, audio) so
+ * the user can confirm them or jump straight into the container editor.
+ */
+@Composable
+internal fun DeckCronosReviewDialog(
+    container: com.winlator.star.container.Container,
+    onKeep: () -> Unit,
+    onEdit: () -> Unit,
+) {
+    val cfg = remember(container) { runCatching { container.dxwrapperConfig }.getOrDefault("") }
+    val dxvkVer = remember(cfg) { Regex("""(?:^|,)version=([^,]+)""").find(cfg)?.groupValues?.get(1) }
+    val vkd3dVer = remember(cfg) { Regex("""(?:^|,)vkd3dVersion=([^,]+)""").find(cfg)?.groupValues?.get(1) }
+    val rows = remember(container, dxvkVer, vkd3dVer) {
+        listOf(
+            "Wine" to (runCatching { container.wineVersion }.getOrDefault("?")),
+            "Graphics driver" to (runCatching { container.graphicsDriver }.getOrDefault("?")),
+            "DX wrapper" to buildString {
+                append(runCatching { container.dxwrapper }.getOrDefault("?"))
+                dxvkVer?.let { append(" (dxvk ") ; append(it); append(")") }
+                vkd3dVer?.let { append(" / vkd3d ") ; append(it) }
+            },
+            "Emulator" to (runCatching { container.emulator }.getOrDefault("?")),
+            "Box64 preset" to (runCatching { container.box64Preset }.getOrDefault("-")),
+            "FEXCore preset" to (runCatching { container.fexCorePreset }.getOrDefault("-")),
+            "Screen size" to (runCatching { container.screenSize }.getOrDefault("?")),
+            "Audio" to (runCatching { container.audioDriver }.getOrDefault("?")),
+        )
+    }
+
+    Dialog(onDismissRequest = onKeep, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            Modifier
+                .fillMaxWidth(0.88f)
+                .clip(DeckPalette.groupShape)
+                .background(DeckPalette.surface)
+                .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                .padding(22.dp),
+        ) {
+            Text(
+                "Cronos created - are these settings right?",
+                color = DeckPalette.onBackground,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                runCatching { container.name }.getOrDefault(""),
+                color = DeckPalette.onSurfaceVariant,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 2.dp, bottom = 14.dp),
+            )
+            rows.forEach { (label, value) ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                    Text(
+                        label,
+                        color = DeckPalette.onSurfaceVariant,
+                        fontSize = 12.5.sp,
+                        modifier = Modifier.width(130.dp),
+                    )
+                    Text(
+                        value,
+                        color = DeckPalette.onBackground,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            HubGradientButton("Settings are good", onClick = onKeep, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onEdit, modifier = Modifier.fillMaxWidth()) {
+                Text("Edit settings", color = DeckPalette.onSurfaceVariant)
+            }
+        }
+    }
+}

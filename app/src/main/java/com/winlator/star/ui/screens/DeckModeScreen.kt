@@ -330,17 +330,16 @@ private fun DeckHome() {
     var containers by remember { mutableStateOf<List<Container>>(emptyList()) }
     var selected by remember { mutableStateOf(0) }
     var pending by remember { mutableStateOf<Pair<File, GameIdentifier.GameIdentity>?>(null) }
+    var launchRequest by remember { mutableStateOf<Shortcut?>(null) }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             covers = featuredCovers.map { (name, asset) ->
                 DeckCover(name, hueOf(name), decodeCover(context, asset))
             }
-            val featured = featuredCovers.map { (n, a) -> HubEntry(n, decodeCover(context, a), null) }
-            val user = HubGamesStore.load(context).map { g ->
+            entries = HubGamesStore.load(context).map { g ->
                 HubEntry(g.name, g.coverPath?.let { BitmapFactory.decodeFile(it) }, g)
             }
-            entries = featured + user
             containers = ContainerManager(context).also { it.reloadContainers() }.getContainers().toList()
         }
     }
@@ -377,7 +376,7 @@ private fun DeckHome() {
                 if (shortcut == null) {
                     Toast.makeText(context, "That game's shortcut is missing — re-add it", Toast.LENGTH_SHORT).show()
                 } else {
-                    launchShortcutNow(activity, shortcut)
+                    launchRequest = shortcut
                 }
             }
         }
@@ -398,7 +397,7 @@ private fun DeckHome() {
         )
         DeckWallFade()
 
-        // The library — center stage, 3D coverflow of every game (bundled + added).
+        // The library — center stage, a 3D coverflow of every added game.
         entries?.let { list ->
             if (list.isNotEmpty()) {
                 HubCarousel(
@@ -409,6 +408,13 @@ private fun DeckHome() {
                         .align(Alignment.Center)
                         .fillMaxWidth()
                         .padding(bottom = 72.dp),
+                )
+            } else {
+                Text(
+                    "No games yet — tap Add Games",
+                    color = DeckPalette.onSurfaceVariant,
+                    fontSize = 14.sp,
+                    modifier = Modifier.align(Alignment.Center),
                 )
             }
         }
@@ -429,6 +435,12 @@ private fun DeckHome() {
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(end = 28.dp, bottom = 44.dp),
+        )
+
+        DeckLaunchStack(
+            activity = activity,
+            request = launchRequest,
+            onMenuClosed = { launchRequest = null },
         )
 
         pending?.let { (file, identity) ->

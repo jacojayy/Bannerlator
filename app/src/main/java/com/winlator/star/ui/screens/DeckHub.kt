@@ -1,6 +1,8 @@
 package com.winlator.star.ui.screens
 
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -25,8 +27,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -54,6 +63,14 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import com.winlator.star.core.FileUtils
+import com.winlator.star.store.GoldbergComponent
+import com.winlator.star.store.GoldbergMode
+import com.winlator.star.store.GoldbergPatcher
+import com.winlator.star.store.SteamDatabase
+import com.winlator.star.store.SteamLiteComponent
+import com.winlator.star.store.SteamLoginActivity
+import com.winlator.star.store.SteamPrefs
+import com.winlator.star.store.SteamSessionManager
 import com.winlator.star.store.SteamStoreSearch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -227,7 +244,6 @@ internal fun HubCarousel(
         entries.forEachIndexed { index, entry ->
             val delta = index - current
             val distance = abs(delta)
-            if (distance > 4) return@forEachIndexed
             val isSelected = delta == 0
 
             val scale by animateFloatAsState(
@@ -522,5 +538,313 @@ internal fun HubConfirmDialog(
                 }
             }
         }
+    }
+}
+
+// ── Deck-styled launch-method menu + the SteamLite/Goldberg launch pipeline behind it ──────────────
+// Steam-origin games get SteamLite (real client) / Goldberg (offline emulator) / Raw .exe; every
+// other source is Raw-only — the same source gates as the old UI's LaunchMethodSheet, restyled.
+@Composable
+internal fun DeckLaunchMethodDialog(
+    shortcut: Shortcut,
+    onDismiss: () -> Unit,
+    onLaunch: (mode: String, goldbergMode: GoldbergMode?, remember: Boolean) -> Unit,
+) {
+    val context = LocalContext.current
+    val isSteam = remember(shortcut) { isSteamOriginShortcut(shortcut) }
+    val appId = remember(shortcut) { steamAppIdOf(shortcut) }
+    SteamPrefs.init(context)
+    var method by remember(shortcut) {
+        mutableStateOf(
+            when (shortcut.getExtra("launchMode", "")) {
+                "Goldberg" -> "Goldberg"
+                "Raw" -> "Raw"
+                "RealSteam" -> "RealSteam"
+                else -> if (isSteam) "RealSteam" else "Raw"
+            }.let { if (isSteam) it else "Raw" },
+        )
+    }
+    var goldbergMode by remember(shortcut) {
+        mutableStateOf(SteamPrefs.getGoldbergMode(appId).let { if (it == GoldbergMode.OFF) GoldbergMode.REGULAR else it })
+    }
+    var rememberChoice by remember(shortcut) { mutableStateOf(shortcut.getExtra("launchModeRemembered", "") == "1") }
+
+    val methods = remember(isSteam) {
+        if (isSteam) listOf(
+            Triple("RealSteam", "SteamLite", "Real Steam client - online, VAC, cloud saves"),
+            Triple("Goldberg", "Goldberg", "Offline Steam emulator - no login"),
+            Triple("Raw", "Raw .exe", "Run the game directly - no Steam layer"),
+        ) else listOf(
+            Triple("Raw", "Raw .exe", "Run the game directly - no Steam layer"),
+        )
+    }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            Modifier
+                .fillMaxWidth(0.92f)
+                .clip(DeckPalette.groupShape)
+                .background(DeckPalette.surface)
+                .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                .padding(22.dp),
+        ) {
+            Text(
+                shortcut.name,
+                color = DeckPalette.onBackground,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "Choose how to launch",
+                color = DeckPalette.onSurfaceVariant,
+                fontSize = 12.5.sp,
+                modifier = Modifier.padding(top = 2.dp, bottom = 16.dp),
+            )
+            methods.forEach { (mode, title, desc) ->
+                val picked = method == mode
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (picked) DeckPalette.primary.copy(alpha = 0.10f) else DeckPalette.surfaceVariant)
+                        .border(if (picked) 1.5.dp else 1.dp, if (picked) DeckPalette.primary else DeckPalette.line, RoundedCornerShape(14.dp))
+                        .clickable { method = mode }
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.PlayArrow,
+                        contentDescription = null,
+                        tint = if (picked) DeckPalette.primary else DeckPalette.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            title,
+                            color = if (picked) DeckPalette.primary else DeckPalette.onBackground,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            desc,
+                            color = DeckPalette.onSurfaceVariant,
+                            fontSize = 11.5.sp,
+                            modifier = Modifier.padding(top = 1.dp),
+                        )
+                    }
+                    if (picked) {
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = null,
+                            tint = DeckPalette.primary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { rememberChoice = !rememberChoice }
+                    .padding(vertical = 10.dp),
+            ) {
+                Box(
+                    Modifier
+                        .size(20.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (rememberChoice) DeckPalette.primary else Color.Transparent)
+                        .border(1.dp, if (rememberChoice) DeckPalette.primary else DeckPalette.line, RoundedCornerShape(6.dp)),
+                ) {
+                    if (rememberChoice) {
+                        Icon(
+                            Icons.Filled.Check,
+                            contentDescription = null,
+                            tint = DeckPalette.onPrimary,
+                            modifier = Modifier
+                                .size(14.dp)
+                                .align(Alignment.Center),
+                        )
+                    }
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "Remember this choice",
+                    color = DeckPalette.onSurfaceVariant,
+                    fontSize = 13.sp,
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            HubGradientButton(
+                "Launch",
+                onClick = { onLaunch(method, if (method == "Goldberg") goldbergMode else null, rememberChoice) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                Text("Cancel", color = DeckPalette.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+/**
+ * The launch pipeline behind the deck menu: Goldberg (patch-then-launch, component on demand),
+ * SteamLite (component on demand → Steam pre-flight) and Raw (direct), mirroring BigPictureScreen's
+ * flow with deck-styled progress chrome. [request] non-null opens the method menu for that shortcut.
+ */
+@Composable
+internal fun DeckLaunchStack(activity: Activity, request: Shortcut?, onMenuClosed: () -> Unit) {
+    val context = LocalContext.current
+    var preflightFor by remember { mutableStateOf<Shortcut?>(null) }
+    var componentDownloadFor by remember { mutableStateOf<Shortcut?>(null) }
+    var componentDownloadLabel by remember { mutableStateOf("") }
+    var componentDownloadProgress by remember { mutableStateOf(0f) }
+
+    fun launchWithGoldberg(s: Shortcut, gm: GoldbergMode) {
+        val appId = steamAppIdOf(s)
+        SteamPrefs.init(context)
+        SteamPrefs.setGoldbergMode(appId, gm)
+        val applyThenLaunch = {
+            Thread({
+                val installDir = runCatching {
+                    SteamDatabase.getInstance(context).getGame(appId)?.installDir
+                }.getOrNull().orEmpty()
+                activity.runOnUiThread {
+                    if (installDir.isEmpty()) {
+                        launchShortcut(activity, s)
+                    } else {
+                        GoldbergPatcher.applyModeAsync(context, appId, installDir, s.name, gm) { _, _ ->
+                            launchShortcut(activity, s)
+                        }
+                    }
+                }
+            }, "deck-goldberg-apply-launch").start()
+        }
+        if (!GoldbergComponent.isInstalled(context)) {
+            componentDownloadFor = s
+            componentDownloadLabel = "Steam Emulator (Goldberg)"
+            componentDownloadProgress = 0f
+            GoldbergComponent.downloadAsync(
+                context,
+                { f -> componentDownloadProgress = f },
+                { ok, msg ->
+                    componentDownloadFor = null
+                    if (ok) applyThenLaunch()
+                    else Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                },
+            )
+        } else applyThenLaunch()
+    }
+
+    fun launchWithSteamLite(s: Shortcut) {
+        if (!SteamLiteComponent.isInstalled(context)) {
+            componentDownloadFor = s
+            componentDownloadLabel = "SteamLite (Real Steam / VAC)"
+            componentDownloadProgress = 0f
+            SteamLiteComponent.downloadAsync(
+                context,
+                { f -> componentDownloadProgress = f },
+                { ok, msg ->
+                    componentDownloadFor = null
+                    if (ok) preflightFor = s
+                    else Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                },
+            )
+        } else {
+            preflightFor = s
+        }
+    }
+
+    request?.let { s ->
+        DeckLaunchMethodDialog(
+            shortcut = s,
+            onDismiss = onMenuClosed,
+            onLaunch = { mode, gm, rememberChoice ->
+                onMenuClosed()
+                s.putExtra("launchMode", mode)
+                s.putExtra("launchModeRemembered", if (rememberChoice) "1" else "0")
+                s.saveData()
+                when (mode) {
+                    "Goldberg" -> launchWithGoldberg(s, gm ?: GoldbergMode.REGULAR)
+                    "Raw" -> launchShortcut(activity, s)
+                    else -> launchWithSteamLite(s)
+                }
+            },
+        )
+    }
+
+    componentDownloadFor?.let {
+        Dialog(onDismissRequest = { }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Column(
+                Modifier
+                    .fillMaxWidth(0.85f)
+                    .clip(DeckPalette.groupShape)
+                    .background(DeckPalette.surface)
+                    .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                    .padding(22.dp),
+            ) {
+                Text(
+                    "Downloading $componentDownloadLabel",
+                    color = DeckPalette.onBackground,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(CircleShape)
+                        .background(DeckPalette.surfaceVariant),
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(componentDownloadProgress.coerceIn(0f, 1f))
+                            .height(6.dp)
+                            .clip(CircleShape)
+                            .background(DeckPalette.primary),
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "${(componentDownloadProgress.coerceIn(0f, 1f) * 100).toInt()}% - the game launches when this finishes.",
+                    color = DeckPalette.onSurfaceVariant,
+                    fontSize = 12.sp,
+                )
+            }
+        }
+    }
+
+    preflightFor?.let { s ->
+        val appId = steamAppIdOf(s)
+        val installDir = remember(s) {
+            runCatching { SteamDatabase.getInstance(context).getGame(appId)?.installDir }.getOrNull().orEmpty()
+        }
+        val savePrefs = remember { context.getSharedPreferences("save_manager_prefs", Context.MODE_PRIVATE) }
+        SteamPreflightDialog(
+            shortcut = s,
+            request = SteamSessionManager.PreflightRequest(
+                appId = appId,
+                installDir = installDir,
+                gameName = s.name,
+                pullCloudSaves = savePrefs.getBoolean("auto_download_steam_on_launch", true),
+            ),
+            onLaunch = { preflightFor = null; launchShortcut(activity, s, preflightDone = true) },
+            onDismiss = { preflightFor = null },
+            onSignIn = {
+                preflightFor = null
+                context.startActivity(Intent(context, SteamLoginActivity::class.java))
+            },
+            onGoldberg = {
+                preflightFor = null
+                SteamPrefs.init(context)
+                launchWithGoldberg(s, SteamPrefs.getGoldbergMode(appId).let { if (it == GoldbergMode.OFF) GoldbergMode.REGULAR else it })
+            },
+            onUpdate = { _ -> preflightFor = null },
+        )
     }
 }

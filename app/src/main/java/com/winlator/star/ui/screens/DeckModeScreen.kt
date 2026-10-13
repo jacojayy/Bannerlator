@@ -68,8 +68,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.winlator.star.container.Container
+import com.winlator.star.contents.ContentProfile
 import com.winlator.star.contents.ContentsManager
-import com.winlator.star.R
 import com.winlator.star.container.ContainerManager
 import com.winlator.star.container.Shortcut
 import com.winlator.star.core.GameIdentifier
@@ -509,9 +509,17 @@ private fun DeckHome() {
                             val data = runCatching {
                                 val template = Container(0, mgr)
                                 val base = template.getData()
-                                // The SAME wine pick a manual New Container makes: the first bundled
-                                // wine_entries entry (guaranteed present even on a fresh install).
-                                val wine = context.resources.getStringArray(R.array.wine_entries).firstOrNull()
+                                // The SAME wine pick a manual New Container makes: the first
+                                // available Wine profile, then Proton (wine_entries is empty in
+                                // source — the real list is ContentsManager's downloadable profiles).
+                                val cm = ContentsManager(context).also { it.syncContents() }
+                                val wineList =
+                                    cm.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_WINE)
+                                        .map { ContentsManager.getEntryName(it) } +
+                                        cm.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_PROTON)
+                                            .map { ContentsManager.getEntryName(it) }
+                                val wine = wineList.firstOrNull()
+                                    ?: mgr.getContainers().firstOrNull()?.wineVersion
                                     ?: template.wineVersion
                                 base.put("name", name)
                                 base.put("wineVersion", wine)

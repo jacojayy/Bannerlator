@@ -291,26 +291,11 @@ internal val featuredCovers = listOf(
     "Marvel's Spider-Man Remastered" to "covers/spider_man_remastered.jpg",
     "Marvel's Spider-Man: Miles Morales" to "covers/spider_man_miles_morales.jpg",
     "Ratchet & Clank: Rift Apart" to "covers/ratchet_and_clank_rift_apart.jpg",
-    "Assassin's Creed" to "covers/assassins_creed.jpg",
-    "Assassin's Creed II" to "covers/assassins_creed_2.jpg",
-    "Assassin's Creed: Brotherhood" to "covers/assassins_creed_brotherhood.jpg",
-    "Assassin's Creed: Revelations" to "covers/assassins_creed_revelations.jpg",
-    "Assassin's Creed III" to "covers/assassins_creed_3.jpg",
-    "Assassin's Creed III Remastered" to "covers/assassins_creed_3_remastered.jpg",
-    "Assassin's Creed IV: Black Flag" to "covers/assassins_creed_4_black_flag.jpg",
-    "Assassin's Creed Rogue" to "covers/assassins_creed_rogue.jpg",
-    "Assassin's Creed Liberation" to "covers/assassins_creed_liberation.jpg",
-    "Assassin's Creed Unity" to "covers/assassins_creed_unity.jpg",
-    "Assassin's Creed Syndicate" to "covers/assassins_creed_syndicate.jpg",
-    "Assassin's Creed Origins" to "covers/assassins_creed_origins.jpg",
-    "Assassin's Creed Odyssey" to "covers/assassins_creed_odyssey.jpg",
+                            "Assassin's Creed IV: Black Flag" to "covers/assassins_creed_4_black_flag.jpg",
+                        "Assassin's Creed Odyssey" to "covers/assassins_creed_odyssey.jpg",
     "Assassin's Creed Valhalla" to "covers/assassins_creed_valhalla.jpg",
     "Assassin's Creed Mirage" to "covers/assassins_creed_mirage.jpg",
-    "Assassin's Creed Shadows" to "covers/assassins_creed_shadows.jpg",
-    "AC Chronicles: China" to "covers/assassins_creed_chronicles_china.jpg",
-    "AC Chronicles: India" to "covers/assassins_creed_chronicles_india.jpg",
-    "AC Chronicles: Russia" to "covers/assassins_creed_chronicles_russia.jpg",
-)
+                )
 
 /** Decode a bundled cover at roughly capsule resolution so the wall stays light on RAM. */
 internal fun decodeCover(context: Context, asset: String): Bitmap? = runCatching {
@@ -422,7 +407,7 @@ private fun DeckPaneChip(label: String, selected: Boolean, onClick: () -> Unit) 
     }
 }
 
-/** The wordmark: BANNERLATOR in DroidDeck's heavy, tight-tracked style with the signal dot. */
+/** The wordmark: WinHub in DroidDeck's heavy style — "Win" light, "Hub" in the signal blue. */
 @Composable
 private fun DeckWordmark() {
     Row(
@@ -430,7 +415,7 @@ private fun DeckWordmark() {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = "WIN",
+            text = "Win",
             color = Deck.onBackground,
             fontSize = 40.sp,
             fontWeight = FontWeight.Black,
@@ -438,8 +423,8 @@ private fun DeckWordmark() {
             maxLines = 1,
         )
         Text(
-            text = "HUB",
-            color = Color(0xFF7EC8FF),
+            text = "Hub",
+            color = Deck.primary,
             fontSize = 40.sp,
             fontWeight = FontWeight.Black,
             letterSpacing = (-0.5).sp,
@@ -641,27 +626,6 @@ private fun DeckCapsule(cover: DeckCover, shape: RoundedCornerShape, modifier: M
                 contentDescription = cover.name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.matchParentSize(),
-            )
-            Box(
-                Modifier
-                    .matchParentSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0.55f to Color.Transparent,
-                            1f to Color.Black.copy(alpha = 0.72f),
-                        ),
-                    ),
-            )
-            Text(
-                text = cover.name,
-                color = Color.White,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(8.dp),
             )
         }
         return

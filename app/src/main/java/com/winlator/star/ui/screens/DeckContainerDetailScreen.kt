@@ -32,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -90,12 +91,9 @@ internal fun DeckContainerDetailScreen(
     }
     var tab by remember { mutableStateOf(0) }
 
-    // Config panels — same dialogs the classic editor opens from its per-row settings icons.
-    var showDxvkConfig by remember { mutableStateOf(false) }
-    var showWineD3DConfig by remember { mutableStateOf(false) }
-    var showFpsConfig by remember { mutableStateOf(false) }
-    var showVulkanConfig by remember { mutableStateOf(false) }
-    var showEnvVarsEditor by remember { mutableStateOf(false) }
+    // Which inline config section is expanded (null = all collapsed). One at a time, so a row's
+    // editor pushes the rows below it down without stacking several open at once.
+    var openSection by remember { mutableStateOf<String?>(null) }
     val firstTabFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { firstTabFocus.requestFocus() }
 
@@ -255,26 +253,92 @@ internal fun DeckContainerDetailScreen(
                             selected = viewModel.selectedGraphicsDriver,
                             onPick = { viewModel.selectedGraphicsDriver = it },
                         )
+                        DeckExpandableRow(
+                            label = "Driver Config",
+                            hint = "Turnip / BCn / wrapper tuning",
+                            expanded = openSection == "gfxDriver",
+                            onToggle = { openSection = if (openSection == "gfxDriver") null else "gfxDriver" },
+                        ) {
+                            CompositionLocalProvider(LocalInlineDialog provides true) {
+                                GraphicsDriverConfigDialog(
+                                    graphicsDriver = viewModel.selectedGraphicsDriver,
+                                    initialConfig = viewModel.graphicsDriverConfig,
+                                    onConfirm = { viewModel.graphicsDriverConfig = it; openSection = null },
+                                    onDismiss = { openSection = null },
+                                )
+                            }
+                        }
                         DeckChoiceRow(
                             label = "DX Wrapper",
                             options = viewModel.dxWrapperEntries.map { it to it },
                             selected = viewModel.selectedDXWrapper,
                             onPick = { viewModel.selectedDXWrapper = it },
-                            configPanel = true,
-                            onConfigClick = {
-                                val wrapper = StringUtils.parseIdentifier(viewModel.selectedDXWrapper)
-                                if (wrapper.contains("dxvk") || wrapper.contains("vegas")) showDxvkConfig = true
-                                else showWineD3DConfig = true
-                            },
                         )
+                        DeckExpandableRow(
+                            label = "Wrapper Config",
+                            hint = "DXVK / VKD3D / wined3d tuning",
+                            expanded = openSection == "dxWrapper",
+                            onToggle = { openSection = if (openSection == "dxWrapper") null else "dxWrapper" },
+                        ) {
+                            CompositionLocalProvider(LocalInlineDialog provides true) {
+                                if (StringUtils.parseIdentifier(viewModel.selectedDXWrapper)
+                                        .let { it.contains("dxvk") || it.contains("vegas") }
+                                ) {
+                                    DxvkConfigDialog(
+                                        isArm64EC = viewModel.isArm64EC,
+                                        isVegas = StringUtils.parseIdentifier(viewModel.selectedDXWrapper).contains("vegas"),
+                                        containerRootDir = viewModel.container?.rootDir,
+                                        relaxDxvkFilter = StringUtils.parseIdentifier(viewModel.selectedGraphicsDriver) == "wrapper-compat-bcn",
+                                        initialConfig = viewModel.dxWrapperConfig,
+                                        onConfirm = { viewModel.dxWrapperConfig = it; openSection = null },
+                                        onDismiss = { openSection = null },
+                                    )
+                                } else {
+                                    WineD3DConfigDialog(
+                                        initialConfig = viewModel.dxWrapperConfig,
+                                        onConfirm = { viewModel.dxWrapperConfig = it; openSection = null },
+                                        onDismiss = { openSection = null },
+                                    )
+                                }
+                            }
+                        }
                         DeckChoiceRow(
                             label = "Renderer",
                             options = viewModel.rendererEntries.map { it to it },
                             selected = viewModel.selectedRenderer,
                             onPick = { viewModel.selectedRenderer = it },
-                            configPanel = viewModel.selectedRenderer == "Vulkan",
-                            onConfigClick = { showVulkanConfig = true },
                         )
+                        DeckExpandableRow(
+                            label = "Renderer Config",
+                            hint = "Native render / present mode / colours",
+                            expanded = openSection == "renderer",
+                            onToggle = { openSection = if (openSection == "renderer") null else "renderer" },
+                        ) {
+                            CompositionLocalProvider(LocalInlineDialog provides true) {
+                                VulkanSettingsDialog(
+                                    initialConfig = "native=${viewModel.rendererNative}" +
+                                        ";presentMode=${viewModel.rendererPresentMode}" +
+                                        ";driverId=${viewModel.rendererDriverId}" +
+                                        ";filterMode=${viewModel.rendererFilterMode}" +
+                                        ";swapRB=${viewModel.rendererSwapRB}" +
+                                        ";sfCompatMode=${viewModel.rendererSfCompatMode}" +
+                                        ";nativeBackend=${viewModel.rendererNativeBackend}",
+                                    onConfirm = { newConfig ->
+                                        val m = parseVulkanConfig(newConfig)
+                                        viewModel.rendererNative = m["native"] == "true"
+                                        viewModel.rendererPresentMode = m["presentMode"] ?: "fifo"
+                                        viewModel.rendererDriverId = m["driverId"] ?: "system"
+                                        viewModel.rendererFilterMode = m["filterMode"]?.toIntOrNull() ?: 0
+                                        viewModel.rendererSwapRB = m["swapRB"] == "true"
+                                        viewModel.rendererSfCompatMode = m["sfCompatMode"] != "false"
+                                        viewModel.rendererNativeBackend = m["nativeBackend"] ?: "auto"
+                                        openSection = null
+                                    },
+                                    onDismiss = { openSection = null },
+                                    frameGenSelected = viewModel.frameGenEngine != "off",
+                                )
+                            }
+                        }
                         DeckChoiceRow(
                             label = "Display Backend",
                             hint = "Wayland routes launches through the embedded compositor",
@@ -295,12 +359,21 @@ internal fun DeckContainerDetailScreen(
                             selected = viewModel.fullscreenMode.toString(),
                             onPick = { viewModel.fullscreenMode = it.toInt() },
                         )
-                        DeckRow(
+                        DeckExpandableRow(
                             label = "Show FPS",
-                            configPanel = true,
-                            onConfigClick = { showFpsConfig = true },
+                            hint = "On-screen frame counter",
+                            expanded = openSection == "fps",
+                            onToggle = { openSection = if (openSection == "fps") null else "fps" },
                             control = { DeckToggle(viewModel.showFPS) { viewModel.showFPS = it } },
-                        )
+                        ) {
+                            CompositionLocalProvider(LocalInlineDialog provides true) {
+                                FpsCounterConfigDialog(
+                                    initialConfig = viewModel.fpsCounterConfig,
+                                    onConfirm = { viewModel.fpsCounterConfig = it; openSection = null },
+                                    onDismiss = { openSection = null },
+                                )
+                            }
+                        }
                         DeckRow(
                             label = "Auto Close on Exit",
                             control = { DeckToggle(viewModel.autoCloseOnExit) { viewModel.autoCloseOnExit = it } },
@@ -412,22 +485,18 @@ internal fun DeckContainerDetailScreen(
                     }
 
                     5 -> DeckGroup("Environment") {
-                        DeckRow(
+                        DeckExpandableRow(
                             label = "Env Vars",
-                            hint = "KEY=value pairs, one per line",
-                            configPanel = true,
-                            onConfigClick = { showEnvVarsEditor = true },
-                            control = {
-                                DeckValueChip(
-                                    text = viewModel.envVarsStr.lineSequence()
-                                        .filter { it.isNotBlank() }
-                                        .count()
-                                        .let { if (it == 0) "None" else "$it set" },
-                                    open = false,
-                                    onClick = { showEnvVarsEditor = true },
-                                )
-                            },
-                        )
+                            hint = "KEY=value pairs",
+                            expanded = openSection == "envVars",
+                            onToggle = { openSection = if (openSection == "envVars") null else "envVars" },
+                        ) {
+                            EnvVarsEditor(
+                                value = viewModel.envVarsStr,
+                                onValueChange = { viewModel.envVarsStr = it },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                         DeckChoiceRow(
                             label = "Startup Selection",
                             options = viewModel.startupSelectionEntries.mapIndexed { i, e -> e to i.toString() },
@@ -457,67 +526,8 @@ internal fun DeckContainerDetailScreen(
         }
 
         // ── Config panels (the classic editor's per-row settings dialogs) ──
-        val isVegasWrapper = StringUtils.parseIdentifier(viewModel.selectedDXWrapper).contains("vegas")
-        val relaxDxvkFilter =
-            StringUtils.parseIdentifier(viewModel.selectedGraphicsDriver) == "wrapper-compat-bcn"
-
-        if (showDxvkConfig) {
-            DxvkConfigDialog(
-                isArm64EC = viewModel.isArm64EC,
-                isVegas = isVegasWrapper,
-                containerRootDir = viewModel.container?.rootDir,
-                relaxDxvkFilter = relaxDxvkFilter,
-                initialConfig = viewModel.dxWrapperConfig,
-                onConfirm = { newConfig -> viewModel.dxWrapperConfig = newConfig; showDxvkConfig = false },
-                onDismiss = { showDxvkConfig = false },
-            )
-        }
-        if (showWineD3DConfig) {
-            WineD3DConfigDialog(
-                initialConfig = viewModel.dxWrapperConfig,
-                onConfirm = { newConfig -> viewModel.dxWrapperConfig = newConfig; showWineD3DConfig = false },
-                onDismiss = { showWineD3DConfig = false },
-            )
-        }
-        if (showFpsConfig) {
-            FpsCounterConfigDialog(
-                initialConfig = viewModel.fpsCounterConfig,
-                onConfirm = { newConfig -> viewModel.fpsCounterConfig = newConfig; showFpsConfig = false },
-                onDismiss = { showFpsConfig = false },
-            )
-        }
-        if (showEnvVarsEditor) {
-            EnvVarsEditorScreen(
-                value = viewModel.envVarsStr,
-                onValueChange = { viewModel.envVarsStr = it },
-                onDone = { showEnvVarsEditor = false },
-            )
-        }
-
-        if (showVulkanConfig) {
-            VulkanSettingsDialog(
-                initialConfig = "native=${viewModel.rendererNative}" +
-                    ";presentMode=${viewModel.rendererPresentMode}" +
-                    ";driverId=${viewModel.rendererDriverId}" +
-                    ";filterMode=${viewModel.rendererFilterMode}" +
-                    ";swapRB=${viewModel.rendererSwapRB}" +
-                    ";sfCompatMode=${viewModel.rendererSfCompatMode}" +
-                    ";nativeBackend=${viewModel.rendererNativeBackend}",
-                onConfirm = { newConfig ->
-                    val m = parseVulkanConfig(newConfig)
-                    viewModel.rendererNative       = m["native"] == "true"
-                    viewModel.rendererPresentMode  = m["presentMode"] ?: "fifo"
-                    viewModel.rendererDriverId     = m["driverId"] ?: "system"
-                    viewModel.rendererFilterMode   = m["filterMode"]?.toIntOrNull() ?: 0
-                    viewModel.rendererSwapRB       = m["swapRB"] == "true"
-                    viewModel.rendererSfCompatMode = m["sfCompatMode"] != "false"
-                    viewModel.rendererNativeBackend = m["nativeBackend"] ?: "auto"
-                    showVulkanConfig = false
-                },
-                onDismiss = { showVulkanConfig = false },
-                frameGenSelected = viewModel.frameGenEngine != "off",
-            )
-        }
+        // Config sections render inline (DeckExpandableRow) in their own tabs above — nothing to
+        // overlay here anymore. `openSection` just drives which one is expanded.
 
         // ── Save bar ─────────────────────────────────────────────────────────
         Row(
@@ -549,58 +559,3 @@ internal fun DeckContainerDetailScreen(
 private fun deckColorAsString(argb: Int): String =
     String.format(Locale.US, "#%06X", 0xFFFFFF and argb)
 
-/**
- * Deck-styled home for the structured env-var editor. The Environment tab used to dump a raw
- * one-line-per-pair [DeckTextRow], which is effectively unusable on a controller; this opens the
- * classic editor's add-picker / raw-toggle surface full-screen instead. Edits flow straight through
- * to [onValueChange] (the ViewModel) on every keystroke, so dismissing here needs no flush.
- */
-@Composable
-private fun EnvVarsEditorScreen(
-    value: String,
-    onValueChange: (String) -> Unit,
-    onDone: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Deck.background)
-            .padding(horizontal = 24.dp, vertical = 16.dp),
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = "Environment Variables",
-                    color = DeckPalette.onBackground,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    text = "KEY=value pairs — add, toggle, or edit as raw text",
-                    color = DeckPalette.onSurfaceVariant,
-                    fontSize = 12.5.sp,
-                )
-            }
-            DeckButton("Done", primary = true, onClick = onDone)
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .clip(DeckPalette.groupShape)
-                .background(DeckPalette.surface)
-                .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-        ) {
-            EnvVarsEditor(
-                value = value,
-                onValueChange = onValueChange,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
-}

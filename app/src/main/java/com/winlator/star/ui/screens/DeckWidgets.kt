@@ -1,6 +1,12 @@
 package com.winlator.star.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -168,6 +174,84 @@ internal fun DeckRow(
             .height(1.dp)
             .background(DeckPalette.line),
     )
+}
+
+/**
+ * A [DeckRow] whose chevron toggles an inline editor that expands BELOW it, pushing the rest of the
+ * group's content down (no dialog, no navigation). The chevron flips from right-pointing to
+ * down-pointing while open. Tap the header row or the chevron to toggle.
+ */
+@Composable
+internal fun DeckExpandableRow(
+    label: String,
+    hint: String? = null,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    control: @Composable () -> Unit = {},
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val rotation by animateFloatAsState(if (expanded) 90f else 0f, label = "deckExpandChevron")
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onToggle)
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+        ) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 12.dp),
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = DeckPalette.onBackground,
+                )
+                if (hint != null) {
+                    Text(
+                        text = hint,
+                        fontSize = 12.5.sp,
+                        color = DeckPalette.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            control()
+            Icon(
+                imageVector = Icons.Filled.ChevronRight,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = DeckPalette.primary,
+                modifier = Modifier
+                    .padding(start = 4.dp)
+                    .size(18.dp)
+                    .rotate(rotation),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(DeckPalette.line),
+        )
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(tween(220)) + fadeIn(tween(160)),
+            exit = shrinkVertically(tween(180)) + fadeOut(tween(120)),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(DeckPalette.surfaceVariant)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                content = content,
+            )
+        }
+    }
 }
 
 /** DroidDeck's on/off switch: a 52×30 pill track with a 22dp knob. */

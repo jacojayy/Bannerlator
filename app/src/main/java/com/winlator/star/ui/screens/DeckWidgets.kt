@@ -19,8 +19,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -107,14 +110,22 @@ internal fun DeckGroup(title: String, content: @Composable ColumnScope.() -> Uni
 
 /**
  * One setting: label and optional hint on the left, [control] on the right, hairline under it.
- * DroidDeck's `SettingsRow`.
+ * DroidDeck's `SettingsRow`. [configPanel] shows a small blue chevron after the control to signal
+ * that a config panel is available behind it.
  */
 @Composable
-internal fun DeckRow(label: String, hint: String? = null, control: @Composable () -> Unit) {
+internal fun DeckRow(
+    label: String,
+    hint: String? = null,
+    configPanel: Boolean = false,
+    onConfigClick: (() -> Unit)? = null,
+    control: @Composable () -> Unit,
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (onConfigClick != null) Modifier.clickable(onClick = onConfigClick) else Modifier)
             .padding(horizontal = 14.dp, vertical = 11.dp),
     ) {
         Column(
@@ -140,6 +151,16 @@ internal fun DeckRow(label: String, hint: String? = null, control: @Composable (
             }
         }
         control()
+        if (configPanel) {
+            Icon(
+                imageVector = Icons.Filled.ChevronRight,
+                contentDescription = "Has a config panel",
+                tint = DeckPalette.primary,
+                modifier = Modifier
+                    .padding(start = 4.dp)
+                    .size(18.dp),
+            )
+        }
     }
     Box(
         modifier = Modifier
@@ -226,9 +247,16 @@ internal fun DeckChoiceRow(
     options: List<Pair<String, String>>,
     selected: String,
     onPick: (String) -> Unit,
+    configPanel: Boolean = false,
+    onConfigClick: (() -> Unit)? = null,
 ) {
     var open by remember { mutableStateOf(false) }
-    DeckRow(label, hint) {
+    DeckRow(
+        label = label,
+        hint = hint,
+        configPanel = configPanel,
+        onConfigClick = onConfigClick,
+    ) {
         Box {
             DeckValueChip(
                 text = options.firstOrNull { it.first == selected }?.second ?: selected,

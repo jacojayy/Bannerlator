@@ -469,7 +469,7 @@ fun ContainerDetailScreen(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Parse the semicolon-separated Vulkan settings string ("native=..;presentMode=..;..") into a map.
-private fun parseVulkanConfig(s: String): Map<String, String> =
+internal fun parseVulkanConfig(s: String): Map<String, String> =
     s.split(";").mapNotNull {
         val i = it.indexOf('=')
         if (i <= 0) null else it.substring(0, i) to it.substring(i + 1)

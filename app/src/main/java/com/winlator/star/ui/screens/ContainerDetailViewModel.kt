@@ -78,6 +78,54 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
         // the create sentinel (-1) so getContainerById is never consulted; distinct so init can tell
         // "edit the defaults" from "create a new container".
         const val EDIT_DEFAULTS_ID = -2
+
+        /**
+         * The create payload for flows that build a container WITHOUT opening this editor — the Deck
+         * Add-Games "Cronos" path. It runs on a THROWAWAY form (never the shared editor instance, so
+         * an editor open elsewhere can't be disturbed) seeded exactly like a manual New Container:
+         * init(-1) applies the saved "New Container Defaults" profile for the default wine's arch, or
+         * the built-in Container.DEFAULT_* when no profile exists; [wineVersion] then goes through
+         * onWineVersionChanged — the same call the editor makes when that wine is picked in its
+         * dropdown — so the arch-dependent slice (emulator, box64/wowbox64 + FEXCore versions and
+         * presets, audio coercion) is re-seeded for THAT wine's arch. The result is the identical
+         * buildCreateData JSON the editor's FAB sends.
+         *
+         * This is what a bare `Container(0, mgr).getData()` cannot do: JSONObject.put(name, null)
+         * REMOVES the key, so a template's null cpuList/cpuListWoW64/emulator/box64Version/
+         * fexcoreVersion never reach the config file, and the container then dies at launch
+         * (GuestProgramLauncherComponent.box64Version/fexcoreVersion/emulator are all dereferenced
+         * unguarded) — the "invalid settings" a hand-made container never has.
+         *
+         * Returns null when no wine entry resolves: the caller must abort (the editor's own
+         * blank-wine gate, without its Toast).
+         */
+        fun buildFreshCreateData(
+            context: Context,
+            name: String,
+            wineVersion: String,
+            runAsAdmin: Boolean,
+        ): JSONObject? {
+            val vm = runCatching {
+                ContainerDetailViewModel(context.applicationContext as Application).also { it.init(-1) }
+            }.getOrNull() ?: return null
+            vm.containerName = name
+            if (wineVersion.isNotBlank()) vm.onWineVersionChanged(wineVersion)
+            if (vm.selectedWineVersion.isBlank()) return null
+            vm.runAsAdmin = runAsAdmin
+            return runCatching {
+                vm.buildCreateData(
+                    vm.graphicsDriverConfig,
+                    vm.dxWrapperConfig,
+                    vm.fpsCounterConfig,
+                    vm.envVarsStr,
+                    vm.cpuList,
+                    vm.cpuListWoW64,
+                    // Same conversion the editor's ColorPickerView does for its colorAsString, so the
+                    // seeded desktop background colour reaches desktopTheme byte-identically.
+                    String.format(Locale.ENGLISH, "#%06X", 0x00ffffff and vm.desktopBgColorInt),
+                )
+            }.getOrNull()
+        }
     }
 
     // ── Top-level fields ──────────────────────────────────────────────────────

@@ -1125,23 +1125,26 @@ internal fun DeckCronosReviewDialog(
     onKeep: () -> Unit,
     onEdit: () -> Unit,
 ) {
-    val cfg = remember(container) { runCatching { container.getDXWrapperConfig() }.getOrDefault("") }
+    val cfg = remember(container) { runCatching { container.getDXWrapperConfig() }.getOrNull() ?: "" }
     val dxvkVer = remember(cfg) { Regex("""(?:^|,)version=([^,]+)""").find(cfg)?.groupValues?.get(1) }
     val vkd3dVer = remember(cfg) { Regex("""(?:^|,)vkd3dVersion=([^,]+)""").find(cfg)?.groupValues?.get(1) }
+    // Every value is coerced to a non-null String: a container whose config predates a field (or
+    // was created without a defaults profile) hands back null, and Text(null) NPEs the moment this
+    // window composes — which is exactly how the post-create Cronos check crashed the app.
     val rows = remember(container, dxvkVer, vkd3dVer) {
         listOf(
-            "Wine" to (runCatching { container.wineVersion }.getOrDefault("?")),
-            "Graphics driver" to (runCatching { container.graphicsDriver }.getOrDefault("?")),
+            "Wine" to (runCatching { container.wineVersion }.getOrNull() ?: "?"),
+            "Graphics driver" to (runCatching { container.graphicsDriver }.getOrNull() ?: "?"),
             "DX wrapper" to buildString {
-                append(runCatching { container.getDXWrapper() }.getOrDefault("?"))
+                append(runCatching { container.getDXWrapper() }.getOrNull() ?: "?")
                 dxvkVer?.let { append(" (dxvk ") ; append(it); append(")") }
                 vkd3dVer?.let { append(" / vkd3d ") ; append(it) }
             },
-            "Emulator" to (runCatching { container.emulator }.getOrDefault("?")),
-            "Box64 preset" to (runCatching { container.box64Preset }.getOrDefault("-")),
-            "FEXCore preset" to (runCatching { container.fexCorePreset }.getOrDefault("-")),
-            "Screen size" to (runCatching { container.screenSize }.getOrDefault("?")),
-            "Audio" to (runCatching { container.audioDriver }.getOrDefault("?")),
+            "Emulator" to (runCatching { container.emulator }.getOrNull() ?: "?"),
+            "Box64 preset" to (runCatching { container.box64Preset }.getOrNull() ?: "-"),
+            "FEXCore preset" to (runCatching { container.getFEXCorePreset() }.getOrNull() ?: "-"),
+            "Screen size" to (runCatching { container.screenSize }.getOrNull() ?: "?"),
+            "Audio" to (runCatching { container.audioDriver }.getOrNull() ?: "?"),
         )
     }
 
@@ -1161,7 +1164,7 @@ internal fun DeckCronosReviewDialog(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                runCatching { container.name }.getOrDefault(""),
+                runCatching { container.name }.getOrNull() ?: "",
                 color = DeckPalette.onSurfaceVariant,
                 fontSize = 12.sp,
                 modifier = Modifier.padding(top = 2.dp, bottom = 14.dp),

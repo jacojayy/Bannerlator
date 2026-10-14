@@ -76,7 +76,6 @@ import com.winlator.star.XServerDisplayActivity
 import com.winlator.star.container.Container
 import com.winlator.star.contents.ContentProfile
 import com.winlator.star.contents.ContentsManager
-import com.winlator.star.core.NewContainerDefaults
 import com.winlator.star.container.ContainerManager
 import com.winlator.star.container.Shortcut
 import com.winlator.star.core.GameIdentifier
@@ -107,7 +106,6 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import com.winlator.star.ui.ControllerFocusIndication
@@ -605,33 +603,21 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                     pending = null
                     if (containerIndex < 0) {
                         // Cronos — a FRESH dedicated container with just this game's shortcut.
-                        // Seeded from the built-in Container defaults, but the Wine version is taken
-                        // from a container that already works on this device so prefix extraction
-                        // can't fail on an unavailable layer.
+                        // Built through ContainerDetailViewModel (the SAME form seeding +
+                        // buildCreateData the old UI's New Container FAB uses), so its config
+                        // matches a hand-made container exactly. A bare Container(0).getData()
+                        // cannot do that: JSONObject.put(name, null) REMOVES the key, so the null
+                        // cpuList/cpuListWoW64/emulator/box64Version/fexcoreVersion never reached
+                        // the config file and the container died at launch with invalid settings.
                         cronosName = name
                         cronosBusy = true
                         scope.launch(Dispatchers.IO) {
                             val mgr = ContainerManager(context).also { it.reloadContainers() }
                             val data = runCatching {
-                                val template = Container(0, mgr)
-                                // Built-in defaults first, then overlay the USER's saved
-                                // "New Container Defaults" profile — only non-empty keys, so a
-                                // stale/partial profile can never blank a valid field.
-                                val base = template.getData()
-                                NewContainerDefaults.load(context, NewContainerDefaults.ARCH_X86_64)
-                                    ?.let { raw ->
-                                        val profile = JSONObject(raw)
-                                        val keys = profile.keys()
-                                        while (keys.hasNext()) {
-                                            val k = keys.next()
-                                            val v = profile.opt(k)
-                                            if (v != null && v != JSONObject.NULL && v.toString().isNotEmpty()) {
-                                                base.put(k, v)
-                                            }
-                                        }
-                                    }
-                                // Wine pick = the first available Wine/Proton content profile,
-                                // exactly what a manual New Container selects.
+                                // Wine pick = the first entry a manual New Container offers
+                                // (installed Wine profiles first, then Proton), with the editor's
+                                // empty-list fallbacks so a device with no content still tries the
+                                // wine a working container already uses.
                                 val cm = ContentsManager(context).also { it.syncContents() }
                                 val wineList =
                                     cm.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_WINE)
@@ -640,11 +626,8 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                                             .map { ContentsManager.getEntryName(it) }
                                 val wine = wineList.firstOrNull()
                                     ?: mgr.getContainers().firstOrNull()?.wineVersion
-                                    ?: template.wineVersion
-                                base.put("name", name)
-                                base.put("wineVersion", wine)
-                                base.put("runAsAdmin", true)
-                                base
+                                    ?: Container(0, mgr).wineVersion
+                                ContainerDetailViewModel.buildFreshCreateData(context, name, wine, true)
                             }.getOrNull()
                             withContext(Dispatchers.Main) {
                                 if (data == null) {

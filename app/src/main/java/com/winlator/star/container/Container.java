@@ -1517,6 +1517,12 @@ public class Container {
                     break;
             }
         }
+
+        // Configs written outside the editor drop these keys (JSONObject.put(name, null) removes
+        // them) and the launch path dereferences them unguarded — heal with the editor defaults.
+        if (emulator == null || emulator.isEmpty()) emulator = DEFAULT_EMULATOR;
+        if (box64Version == null || box64Version.isEmpty()) box64Version = DefaultVersion.BOX64;
+        if (fexcoreVersion == null || fexcoreVersion.isEmpty()) fexcoreVersion = DefaultVersion.FEXCORE;
     }
 
     public static void checkObsoleteOrMissingProperties(JSONObject data) {

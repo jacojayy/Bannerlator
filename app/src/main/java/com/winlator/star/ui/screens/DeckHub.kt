@@ -1125,7 +1125,7 @@ internal fun DeckCronosReviewDialog(
     onKeep: () -> Unit,
     onEdit: () -> Unit,
 ) {
-    val cfg = remember(container) { runCatching { container.dxwrapperConfig }.getOrDefault("") }
+    val cfg = remember(container) { runCatching { container.getDXWrapperConfig() }.getOrDefault("") }
     val dxvkVer = remember(cfg) { Regex("""(?:^|,)version=([^,]+)""").find(cfg)?.groupValues?.get(1) }
     val vkd3dVer = remember(cfg) { Regex("""(?:^|,)vkd3dVersion=([^,]+)""").find(cfg)?.groupValues?.get(1) }
     val rows = remember(container, dxvkVer, vkd3dVer) {
@@ -1133,7 +1133,7 @@ internal fun DeckCronosReviewDialog(
             "Wine" to (runCatching { container.wineVersion }.getOrDefault("?")),
             "Graphics driver" to (runCatching { container.graphicsDriver }.getOrDefault("?")),
             "DX wrapper" to buildString {
-                append(runCatching { container.dxwrapper }.getOrDefault("?"))
+                append(runCatching { container.getDXWrapper() }.getOrDefault("?"))
                 dxvkVer?.let { append(" (dxvk ") ; append(it); append(")") }
                 vkd3dVer?.let { append(" / vkd3d ") ; append(it) }
             },

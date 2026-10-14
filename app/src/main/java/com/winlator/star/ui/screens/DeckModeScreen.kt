@@ -270,26 +270,6 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         )
                     },
             )
-
-            // Leave Deck Mode — the only chrome that sits over a hosted screen.
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 12.dp, end = 16.dp)
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Deck.surface)
-                    .border(1.dp, Deck.line, RoundedCornerShape(14.dp))
-                    .clickable { onExit() },
-            ) {
-                Text(
-                    text = "✕",
-                    color = Deck.onBackground,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
         }
     }
         if (!introDone) {

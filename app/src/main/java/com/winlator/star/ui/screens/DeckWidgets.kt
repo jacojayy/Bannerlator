@@ -330,9 +330,9 @@ internal fun DeckChoiceRow(
     hint: String? = null,
     options: List<Pair<String, String>>,
     selected: String,
-    onPick: (String) -> Unit,
     configPanel: Boolean = false,
     onConfigClick: (() -> Unit)? = null,
+    onPick: (String) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     DeckRow(

@@ -32,7 +32,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,7 +50,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.winlator.star.container.Container
 import com.winlator.star.core.StringUtils
 import com.winlator.star.store.deckTileFocus
-import com.winlator.star.ui.components.EnvVarsEditor
 import java.util.Locale
 
 /**
@@ -94,6 +92,9 @@ internal fun DeckContainerDetailScreen(
     // Which inline config section is expanded (null = all collapsed). One at a time, so a row's
     // editor pushes the rows below it down without stacking several open at once.
     var openSection by remember { mutableStateOf<String?>(null) }
+    // VEGAS stock-config download sheet (Deck reuses the classic sheet; VEGAS wrappers only).
+    var showStockConfigSheet by remember { mutableStateOf(false) }
+    val isVegasWrapper = StringUtils.parseIdentifier(viewModel.selectedDXWrapper).contains("vegas")
     val firstTabFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { firstTabFocus.requestFocus() }
 
@@ -259,14 +260,11 @@ internal fun DeckContainerDetailScreen(
                             expanded = openSection == "gfxDriver",
                             onToggle = { openSection = if (openSection == "gfxDriver") null else "gfxDriver" },
                         ) {
-                            CompositionLocalProvider(LocalInlineDialog provides true) {
-                                GraphicsDriverConfigDialog(
-                                    graphicsDriver = viewModel.selectedGraphicsDriver,
-                                    initialConfig = viewModel.graphicsDriverConfig,
-                                    onConfirm = { viewModel.graphicsDriverConfig = it; openSection = null },
-                                    onDismiss = { openSection = null },
-                                )
-                            }
+                            DeckGraphicsDriverConfigEditor(
+                                graphicsDriver = viewModel.selectedGraphicsDriver,
+                                initialConfig = viewModel.graphicsDriverConfig,
+                                onConfirm = { viewModel.graphicsDriverConfig = it; openSection = null },
+                            )
                         }
                         DeckChoiceRow(
                             label = "DX Wrapper",
@@ -280,26 +278,23 @@ internal fun DeckContainerDetailScreen(
                             expanded = openSection == "dxWrapper",
                             onToggle = { openSection = if (openSection == "dxWrapper") null else "dxWrapper" },
                         ) {
-                            CompositionLocalProvider(LocalInlineDialog provides true) {
-                                if (StringUtils.parseIdentifier(viewModel.selectedDXWrapper)
-                                        .let { it.contains("dxvk") || it.contains("vegas") }
-                                ) {
-                                    DxvkConfigDialog(
-                                        isArm64EC = viewModel.isArm64EC,
-                                        isVegas = StringUtils.parseIdentifier(viewModel.selectedDXWrapper).contains("vegas"),
-                                        containerRootDir = viewModel.container?.rootDir,
-                                        relaxDxvkFilter = StringUtils.parseIdentifier(viewModel.selectedGraphicsDriver) == "wrapper-compat-bcn",
-                                        initialConfig = viewModel.dxWrapperConfig,
-                                        onConfirm = { viewModel.dxWrapperConfig = it; openSection = null },
-                                        onDismiss = { openSection = null },
-                                    )
-                                } else {
-                                    WineD3DConfigDialog(
-                                        initialConfig = viewModel.dxWrapperConfig,
-                                        onConfirm = { viewModel.dxWrapperConfig = it; openSection = null },
-                                        onDismiss = { openSection = null },
-                                    )
-                                }
+                            if (StringUtils.parseIdentifier(viewModel.selectedDXWrapper)
+                                    .let { it.contains("dxvk") || it.contains("vegas") }
+                            ) {
+                                DeckDxvkConfigEditor(
+                                    isArm64EC = viewModel.isArm64EC,
+                                    isVegas = StringUtils.parseIdentifier(viewModel.selectedDXWrapper).contains("vegas"),
+                                    containerRootDir = viewModel.container?.rootDir,
+                                    relaxDxvkFilter = StringUtils.parseIdentifier(viewModel.selectedGraphicsDriver) == "wrapper-compat-bcn",
+                                    initialConfig = viewModel.dxWrapperConfig,
+                                    onConfirm = { viewModel.dxWrapperConfig = it; openSection = null },
+                                    onOpenConfigDownload = if (isVegasWrapper) { { showStockConfigSheet = true } } else null,
+                                )
+                            } else {
+                                DeckWineD3DConfigEditor(
+                                    initialConfig = viewModel.dxWrapperConfig,
+                                    onConfirm = { viewModel.dxWrapperConfig = it; openSection = null },
+                                )
                             }
                         }
                         DeckChoiceRow(
@@ -314,30 +309,27 @@ internal fun DeckContainerDetailScreen(
                             expanded = openSection == "renderer",
                             onToggle = { openSection = if (openSection == "renderer") null else "renderer" },
                         ) {
-                            CompositionLocalProvider(LocalInlineDialog provides true) {
-                                VulkanSettingsDialog(
-                                    initialConfig = "native=${viewModel.rendererNative}" +
-                                        ";presentMode=${viewModel.rendererPresentMode}" +
-                                        ";driverId=${viewModel.rendererDriverId}" +
-                                        ";filterMode=${viewModel.rendererFilterMode}" +
-                                        ";swapRB=${viewModel.rendererSwapRB}" +
-                                        ";sfCompatMode=${viewModel.rendererSfCompatMode}" +
-                                        ";nativeBackend=${viewModel.rendererNativeBackend}",
-                                    onConfirm = { newConfig ->
-                                        val m = parseVulkanConfig(newConfig)
-                                        viewModel.rendererNative = m["native"] == "true"
-                                        viewModel.rendererPresentMode = m["presentMode"] ?: "fifo"
-                                        viewModel.rendererDriverId = m["driverId"] ?: "system"
-                                        viewModel.rendererFilterMode = m["filterMode"]?.toIntOrNull() ?: 0
-                                        viewModel.rendererSwapRB = m["swapRB"] == "true"
-                                        viewModel.rendererSfCompatMode = m["sfCompatMode"] != "false"
-                                        viewModel.rendererNativeBackend = m["nativeBackend"] ?: "auto"
-                                        openSection = null
-                                    },
-                                    onDismiss = { openSection = null },
-                                    frameGenSelected = viewModel.frameGenEngine != "off",
-                                )
-                            }
+                            DeckVulkanConfigEditor(
+                                initialConfig = "native=${viewModel.rendererNative}" +
+                                    ";presentMode=${viewModel.rendererPresentMode}" +
+                                    ";driverId=${viewModel.rendererDriverId}" +
+                                    ";filterMode=${viewModel.rendererFilterMode}" +
+                                    ";swapRB=${viewModel.rendererSwapRB}" +
+                                    ";sfCompatMode=${viewModel.rendererSfCompatMode}" +
+                                    ";nativeBackend=${viewModel.rendererNativeBackend}",
+                                frameGenSelected = viewModel.frameGenEngine != "off",
+                                onConfirm = { newConfig ->
+                                    val m = parseVulkanConfig(newConfig)
+                                    viewModel.rendererNative = m["native"] == "true"
+                                    viewModel.rendererPresentMode = m["presentMode"] ?: "fifo"
+                                    viewModel.rendererDriverId = m["driverId"] ?: "system"
+                                    viewModel.rendererFilterMode = m["filterMode"]?.toIntOrNull() ?: 0
+                                    viewModel.rendererSwapRB = m["swapRB"] == "true"
+                                    viewModel.rendererSfCompatMode = m["sfCompatMode"] != "false"
+                                    viewModel.rendererNativeBackend = m["nativeBackend"] ?: "auto"
+                                    openSection = null
+                                },
+                            )
                         }
                         DeckChoiceRow(
                             label = "Display Backend",
@@ -366,13 +358,10 @@ internal fun DeckContainerDetailScreen(
                             onToggle = { openSection = if (openSection == "fps") null else "fps" },
                             control = { DeckToggle(viewModel.showFPS) { viewModel.showFPS = it } },
                         ) {
-                            CompositionLocalProvider(LocalInlineDialog provides true) {
-                                FpsCounterConfigDialog(
-                                    initialConfig = viewModel.fpsCounterConfig,
-                                    onConfirm = { viewModel.fpsCounterConfig = it; openSection = null },
-                                    onDismiss = { openSection = null },
-                                )
-                            }
+                            DeckFpsConfigEditor(
+                                initialConfig = viewModel.fpsCounterConfig,
+                                onConfirm = { viewModel.fpsCounterConfig = it; openSection = null },
+                            )
                         }
                         DeckRow(
                             label = "Auto Close on Exit",
@@ -491,7 +480,7 @@ internal fun DeckContainerDetailScreen(
                             expanded = openSection == "envVars",
                             onToggle = { openSection = if (openSection == "envVars") null else "envVars" },
                         ) {
-                            EnvVarsEditor(
+                            DeckEnvVarsEditor(
                                 value = viewModel.envVarsStr,
                                 onValueChange = { viewModel.envVarsStr = it },
                                 modifier = Modifier.fillMaxWidth(),
@@ -552,6 +541,10 @@ internal fun DeckContainerDetailScreen(
                 )
             }
         }
+    }
+
+    if (showStockConfigSheet) {
+        StockConfigDownloadSheet(onDismiss = { showStockConfigSheet = false })
     }
 }
 

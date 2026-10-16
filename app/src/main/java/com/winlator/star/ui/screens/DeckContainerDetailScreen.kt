@@ -94,6 +94,9 @@ internal fun DeckContainerDetailScreen(
     var openSection by remember { mutableStateOf<String?>(null) }
     // VEGAS stock-config download sheet (Deck reuses the classic sheet; VEGAS wrappers only).
     var showStockConfigSheet by remember { mutableStateOf(false) }
+    // Non-VEGAS DXVK download sheet + a refresh key so newly installed versions appear.
+    var showDxvkDownloadSheet by remember { mutableStateOf(false) }
+    var dxvkRefreshKey by remember { mutableStateOf(0) }
     val isVegasWrapper = StringUtils.parseIdentifier(viewModel.selectedDXWrapper).contains("vegas")
     val firstTabFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { firstTabFocus.requestFocus() }
@@ -289,6 +292,8 @@ internal fun DeckContainerDetailScreen(
                                     initialConfig = viewModel.dxWrapperConfig,
                                     onConfirm = { viewModel.dxWrapperConfig = it; openSection = null },
                                     onOpenConfigDownload = if (isVegasWrapper) { { showStockConfigSheet = true } } else null,
+                                    refreshKey = dxvkRefreshKey,
+                                    onDownloadDxvk = if (!isVegasWrapper) { { showDxvkDownloadSheet = true } } else null,
                                 )
                             } else {
                                 DeckWineD3DConfigEditor(
@@ -544,7 +549,15 @@ internal fun DeckContainerDetailScreen(
     }
 
     if (showStockConfigSheet) {
-        StockConfigDownloadSheet(onDismiss = { showStockConfigSheet = false })
+        StockConfigDownloadSheet(onDismiss = { showStockConfigSheet = false; dxvkRefreshKey++ })
+    }
+
+    if (showDxvkDownloadSheet) {
+        ContentDownloadSheet(
+            contentType = com.winlator.star.contents.ContentProfile.ContentType.CONTENT_TYPE_DXVK,
+            onDismiss = { showDxvkDownloadSheet = false },
+            onContentChanged = { dxvkRefreshKey++ },
+        )
     }
 }
 

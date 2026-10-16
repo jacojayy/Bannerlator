@@ -204,6 +204,27 @@ internal fun DeckConfigChipGrid(label: String, chips: List<Triple<String, Boolea
     }
 }
 
+/** A [DeckChoiceRow] with an optional trailing cloud-download action (version rows). */
+@Composable
+internal fun DeckChoiceRowWithDownload(
+    label: String,
+    options: List<Pair<String, String>>,
+    selected: String,
+    onPick: (String) -> Unit,
+    onDownload: (() -> Unit)?,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.weight(1f)) {
+            DeckChoiceRow(label = label, options = options, selected = selected, onPick = onPick)
+        }
+        if (onDownload != null) {
+            IconButton(onClick = onDownload, modifier = Modifier.padding(end = 6.dp)) {
+                Icon(Icons.Filled.Download, contentDescription = "Download $label", tint = DeckPalette.primary)
+            }
+        }
+    }
+}
+
 /** A Deck-styled popup for config sub-pickers (add key, value picker, …). */
 @Composable
 internal fun DeckConfigDialog(title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
@@ -1303,6 +1324,8 @@ internal fun DeckDxvkConfigEditor(
     initialConfig: String,
     onConfirm: (String) -> Unit,
     onOpenConfigDownload: (() -> Unit)? = null,
+    refreshKey: Int = 0,
+    onDownloadDxvk: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1336,7 +1359,7 @@ internal fun DeckDxvkConfigEditor(
     var showBackups by remember { mutableStateOf(false) }
     var restoreTarget by remember { mutableStateOf<java.io.File?>(null) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(refreshKey) {
         withContext(Dispatchers.IO) {
             val cm = ContentsManager(context)
             cm.syncContents()
@@ -1598,7 +1621,7 @@ internal fun DeckDxvkConfigEditor(
                 }
             }
         } else {
-            DeckChoiceRow("DXVK Version", null, filteredDxvk.map { it to it }, selectedDxvk) { selectedDxvk = it }
+            DeckChoiceRowWithDownload("DXVK Version", filteredDxvk.map { it to it }, selectedDxvk, { selectedDxvk = it }, onDownloadDxvk)
         }
         if (dxvkType != DXVKConfigDialog.DXVK_TYPE_NONE) {
             DeckRow(label = "Async", hint = "Compile shaders on background threads", control = { DeckToggle(asyncEnabled) { asyncEnabled = it } })

@@ -1326,6 +1326,8 @@ internal fun DeckDxvkConfigEditor(
     onOpenConfigDownload: (() -> Unit)? = null,
     refreshKey: Int = 0,
     onDownloadDxvk: (() -> Unit)? = null,
+    onDownloadVkd3d: (() -> Unit)? = null,
+    onDownloadD7vk: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1607,7 +1609,7 @@ internal fun DeckDxvkConfigEditor(
     val isDxvkLike = selectedDxvk.let { it.contains("dxvk") || it.contains("vegas") || it.isNotEmpty() }
 
     DeckConfigPanel(if (isVegas) "VEGAS / VKD3D" else "DXVK / VKD3D") {
-        DeckChoiceRow("VKD3D Version", null, vkd3dVersions.value.map { it to it }, selectedVkd3d) { selectedVkd3d = it }
+        DeckChoiceRowWithDownload("VKD3D Version", vkd3dVersions.value.map { it to it }, selectedVkd3d, { selectedVkd3d = it }, onDownloadVkd3d)
         if (isVegas) {
             if (filteredDxvk.isEmpty()) {
                 DeckConfigNote("No VEGAS build installed — download one via the config manager.")
@@ -1642,7 +1644,7 @@ internal fun DeckDxvkConfigEditor(
         DeckChoiceRow("Feature Level", null, featureLevelEntries.map { it to it }, selectedFeatureLevel) { selectedFeatureLevel = it }
         DeckChoiceRow("DDraw Wrapper", null, ddraEntries.map { it to it }, selectedDdra) { selectedDdra = it }
         if (StringUtils.parseIdentifier(selectedDdra) == "d7vk") {
-            DeckChoiceRow("D7VK Version", null, d7vkVersions.value.map { it to it }, selectedD7vk) { selectedD7vk = it }
+            DeckChoiceRowWithDownload("D7VK Version", d7vkVersions.value.map { it to it }, selectedD7vk, { selectedD7vk = it }, onDownloadD7vk)
         }
     }
 

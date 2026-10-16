@@ -92,10 +92,12 @@ internal fun DeckContainerDetailScreen(
     // Which inline config section is expanded (null = all collapsed). One at a time, so a row's
     // editor pushes the rows below it down without stacking several open at once.
     var openSection by remember { mutableStateOf<String?>(null) }
-    // VEGAS stock-config download sheet (Deck reuses the classic sheet; VEGAS wrappers only).
+    // VEGAS stock-config sheet (Deck-native; VEGAS wrappers only).
     var showStockConfigSheet by remember { mutableStateOf(false) }
-    // Non-VEGAS DXVK download sheet + a refresh key so newly installed versions appear.
+    // Deck-native component download sheets for DXVK / VKD3D / D7VK.
     var showDxvkDownloadSheet by remember { mutableStateOf(false) }
+    var showVkd3dDownloadSheet by remember { mutableStateOf(false) }
+    var showD7vkDownloadSheet by remember { mutableStateOf(false) }
     var dxvkRefreshKey by remember { mutableStateOf(0) }
     val isVegasWrapper = StringUtils.parseIdentifier(viewModel.selectedDXWrapper).contains("vegas")
     val firstTabFocus = remember { FocusRequester() }
@@ -294,6 +296,8 @@ internal fun DeckContainerDetailScreen(
                                     onOpenConfigDownload = if (isVegasWrapper) { { showStockConfigSheet = true } } else null,
                                     refreshKey = dxvkRefreshKey,
                                     onDownloadDxvk = if (!isVegasWrapper) { { showDxvkDownloadSheet = true } } else null,
+                                    onDownloadVkd3d = { showVkd3dDownloadSheet = true },
+                                    onDownloadD7vk = { showD7vkDownloadSheet = true },
                                 )
                             } else {
                                 DeckWineD3DConfigEditor(
@@ -549,13 +553,29 @@ internal fun DeckContainerDetailScreen(
     }
 
     if (showStockConfigSheet) {
-        StockConfigDownloadSheet(onDismiss = { showStockConfigSheet = false; dxvkRefreshKey++ })
+        DeckStockConfigSheet(onDismiss = { showStockConfigSheet = false; dxvkRefreshKey++ }, onContentChanged = { dxvkRefreshKey++ })
     }
 
     if (showDxvkDownloadSheet) {
-        ContentDownloadSheet(
-            contentType = com.winlator.star.contents.ContentProfile.ContentType.CONTENT_TYPE_DXVK,
+        DeckContentDownloadSheet(
+            contentTypes = listOf(com.winlator.star.contents.ContentProfile.ContentType.CONTENT_TYPE_DXVK),
             onDismiss = { showDxvkDownloadSheet = false },
+            onContentChanged = { dxvkRefreshKey++ },
+        )
+    }
+
+    if (showVkd3dDownloadSheet) {
+        DeckContentDownloadSheet(
+            contentTypes = listOf(com.winlator.star.contents.ContentProfile.ContentType.CONTENT_TYPE_VKD3D),
+            onDismiss = { showVkd3dDownloadSheet = false },
+            onContentChanged = { dxvkRefreshKey++ },
+        )
+    }
+
+    if (showD7vkDownloadSheet) {
+        DeckContentDownloadSheet(
+            contentTypes = listOf(com.winlator.star.contents.ContentProfile.ContentType.CONTENT_TYPE_D7VK),
+            onDismiss = { showD7vkDownloadSheet = false },
             onContentChanged = { dxvkRefreshKey++ },
         )
     }

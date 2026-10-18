@@ -130,7 +130,6 @@ import java.io.File
 import java.io.FileOutputStream
 import com.winlator.star.ui.ControllerFocusIndication
 import com.winlator.star.ui.SocialContent
-import com.winlator.star.ui.screens.contents.ContentsHubScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -257,7 +256,9 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
             .onPreviewKeyEvent { e ->
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (e.key) {
-                    Key.ButtonB -> { goBack(); true }
+                    Key.ButtonB -> {
+                        if (tabs.onBack?.invoke() == true) true else { goBack(); true }
+                    }
                     // DroidDeck steps pages with the shoulders; the tabs themselves are touch-only.
                     Key.ButtonL1 -> if (tabs.count > 0) {
                         tabs.step(-1)
@@ -348,7 +349,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         onSelect = { graphicPane = it },
                     )
                     "input_controls" -> InputControlsScreen()
-                    "contents" -> ContentsHubScreen()
+                    "contents" -> DeckContentsScreen()
                     "saves" -> SavesScreen()
                     "social_hub" -> SocialContent()
                     "settings" -> DeckSettingsScreen()

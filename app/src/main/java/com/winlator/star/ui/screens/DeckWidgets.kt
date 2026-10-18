@@ -66,6 +66,9 @@ internal class DeckTabHost {
     var index by mutableIntStateOf(0)
         private set
 
+    /** A page can claim the B button (e.g. a repository detail closes before leaving the section). */
+    var onBack: (() -> Boolean)? = null
+
     fun bind(pages: Int) {
         count = pages
         if (index !in 0 until pages) index = 0

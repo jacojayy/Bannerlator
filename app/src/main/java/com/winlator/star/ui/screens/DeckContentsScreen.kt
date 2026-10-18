@@ -978,15 +978,15 @@ private fun DeckSourceDetail(vm: ContentsHubViewModel, source: HubSource) {
             DeckIconAction(Icons.Filled.Refresh, "Refresh repository") { vm.refreshSelected() }
         }
         Spacer(Modifier.height(10.dp))
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        ) {
-            DeckFilterPill("All", filter == "All") { filter = "All" }
-            types.forEach { type ->
-                DeckFilterPill(type, filter == type) { filter = type }
-            }
-        }
+        val filterLabels = listOf("All") + types
+        DeckStretchyTabs(
+            labels = filterLabels,
+            selected = filterLabels.indexOf(filter).let { if (it < 0) 0 else it },
+            onSelect = { filter = filterLabels[it] },
+            focusable = true,
+            scroll = true,
+            height = 34.dp,
+        )
         Spacer(Modifier.height(10.dp))
         when {
             loading -> DeckLoading()
@@ -1009,29 +1009,6 @@ private fun DeckSourceDetail(vm: ContentsHubViewModel, source: HubSource) {
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun DeckFilterPill(label: String, active: Boolean, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(99.dp)
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .heightIn(min = 34.dp)
-            .clip(shape)
-            .background(if (active) DeckPalette.primary else DeckPalette.surface)
-            .border(1.dp, if (active) DeckPalette.primary else DeckPalette.line, shape)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 13.dp, vertical = 6.dp),
-    ) {
-        Text(
-            text = label,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = if (active) DeckPalette.onPrimary else DeckPalette.onSurfaceVariant,
-            maxLines = 1,
-        )
     }
 }
 

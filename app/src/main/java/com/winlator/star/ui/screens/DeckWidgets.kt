@@ -81,6 +81,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * One page row at a time (Storage sub-tabs, container editor tabs) binds itself here, so the Deck
@@ -596,9 +598,11 @@ internal fun DeckStretchyTabs(
     badges: List<Int>? = null,
     focusable: Boolean = false,
     scroll: Boolean = false,
+    fillWidth: Boolean = true,
     height: Dp = 40.dp,
 ) {
     val density = LocalDensity.current
+    val spread = fillWidth && !scroll
     val lefts = remember(labels.size) { mutableStateListOf<Float>() }
     val rights = remember(labels.size) { mutableStateListOf<Float>() }
     val start = remember { Animatable(0f) }
@@ -624,13 +628,17 @@ internal fun DeckStretchyTabs(
                 }
             }
             l >= start.value -> {
-                end.animateTo(r, tween(170, easing = DeckEase))
-                start.animateTo(l, tween(210, easing = DeckEase))
+                coroutineScope {
+                    launch { end.animateTo(r, tween(280, easing = DeckEase)) }
+                    launch { start.animateTo(l, tween(240, delayMillis = 100, easing = DeckEase)) }
+                }
                 lastSelected = selected
             }
             else -> {
-                start.animateTo(l, tween(170, easing = DeckEase))
-                end.animateTo(r, tween(210, easing = DeckEase))
+                coroutineScope {
+                    launch { start.animateTo(l, tween(280, easing = DeckEase)) }
+                    launch { end.animateTo(r, tween(240, delayMillis = 100, easing = DeckEase)) }
+                }
                 lastSelected = selected
             }
         }
@@ -638,7 +646,7 @@ internal fun DeckStretchyTabs(
 
     Box(
         modifier = modifier
-            .fillMaxWidth()
+            .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
             .height(height + 6.dp)
             .clip(RoundedCornerShape(13.dp))
             .background(DeckPalette.surfaceVariant)
@@ -647,7 +655,7 @@ internal fun DeckStretchyTabs(
     ) {
         Box(
             modifier = Modifier
-                .fillMaxSize()
+                .then(if (fillWidth) Modifier.fillMaxSize() else Modifier)
                 .then(if (scroll) Modifier.horizontalScroll(scrollState) else Modifier),
         ) {
             Box(Modifier.height(height)) {
@@ -658,7 +666,7 @@ internal fun DeckStretchyTabs(
                             .width(with(density) { (end.value - start.value).toDp() })
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(10.dp))
-                            .background(DeckPalette.primary),
+                            .border(2.dp, DeckPalette.primary, RoundedCornerShape(10.dp)),
                     )
                 }
                 Row(
@@ -666,7 +674,7 @@ internal fun DeckStretchyTabs(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier
                         .height(height)
-                        .then(if (scroll) Modifier else Modifier.fillMaxWidth()),
+                        .then(if (spread) Modifier.fillMaxWidth() else Modifier),
                 ) {
                     labels.forEachIndexed { index, label ->
                         DeckStretchyTab(
@@ -674,8 +682,8 @@ internal fun DeckStretchyTabs(
                             badge = badges?.getOrNull(index) ?: 0,
                             active = index == selected,
                             focusable = focusable,
-                            padding = if (scroll) 16.dp else 6.dp,
-                            modifier = if (scroll) Modifier else Modifier.weight(1f),
+                            padding = if (spread) 6.dp else 14.dp,
+                            modifier = if (spread) Modifier.weight(1f) else Modifier,
                             onClick = { onSelect(index) },
                             onMeasured = { left, right ->
                                 while (lefts.size <= index) {
@@ -708,7 +716,7 @@ private fun DeckStretchyTab(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val ink by animateColorAsState(
-        if (active) DeckPalette.onPrimary else DeckPalette.onSurfaceVariant,
+        if (active) DeckPalette.primary else DeckPalette.onSurfaceVariant,
         tween(190, easing = DeckEase),
         label = "deckTabInk",
     )
@@ -730,7 +738,7 @@ private fun DeckStretchyTab(
                 text = label,
                 color = ink,
                 fontSize = 13.sp,
-                fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
             )
             if (badge > 0) {
@@ -738,7 +746,7 @@ private fun DeckStretchyTab(
                     text = " ($badge)",
                     color = ink,
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                 )
             }

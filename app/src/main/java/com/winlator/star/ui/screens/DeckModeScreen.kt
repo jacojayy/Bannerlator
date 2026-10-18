@@ -806,51 +806,16 @@ private fun DeckGraphicsPane(pane: String, onSelect: (String) -> Unit) {
             "wrappers" -> WrapperManagerScreen()
             else -> AdrenoToolsScreen()
         }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        DeckStretchyTabs(
+            labels = listOf("GPU drivers", "Wrappers"),
+            selected = if (pane == "wrappers") 1 else 0,
+            onSelect = { onSelect(if (it == 1) "wrappers" else "gpu") },
+            focusable = true,
+            fillWidth = false,
+            height = 38.dp,
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(top = 12.dp, start = 16.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(Deck.surface)
-                .border(1.dp, Deck.line, RoundedCornerShape(14.dp))
-                .padding(6.dp),
-        ) {
-            DeckPaneChip(
-                label = "GPU drivers",
-                selected = pane == "gpu",
-                onClick = { onSelect("gpu") },
-            )
-            DeckPaneChip(
-                label = "Wrappers",
-                selected = pane == "wrappers",
-                onClick = { onSelect("wrappers") },
-            )
-        }
-    }
-}
-
-@Composable
-private fun DeckPaneChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (selected) Deck.primary.copy(alpha = 0.14f) else Color.Transparent)
-            .border(
-                width = 1.dp,
-                color = if (selected) Deck.primary else Color.Transparent,
-                shape = RoundedCornerShape(10.dp),
-            )
-            .clickable { onClick() }
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-    ) {
-        Text(
-            text = label,
-            color = if (selected) Deck.primary else Deck.onSurfaceVariant,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
+                .padding(top = 12.dp, start = 16.dp),
         )
     }
 }

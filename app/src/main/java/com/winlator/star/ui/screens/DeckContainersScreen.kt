@@ -2,12 +2,22 @@ package com.winlator.star.ui.screens
 
 import android.app.Activity
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -19,6 +29,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,6 +47,8 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SettingsBackupRestore
+import androidx.compose.material.icons.filled.SportsEsports
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -47,10 +60,16 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -65,22 +84,51 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.winlator.star.XServerDisplayActivity
 import com.winlator.star.XrActivity
 import com.winlator.star.container.Container
+import com.winlator.star.container.ContainerManager
+import com.winlator.star.container.Shortcut
 import com.winlator.star.core.FileUtils
 import com.winlator.star.core.StringUtils
+import com.winlator.star.core.WinePath
 import com.winlator.star.store.deckTileFocus
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** A game installed in its own dedicated (Cronos) container. */
+private data class DeckCronosItem(
+    val container: Container,
+    val shortcut: Shortcut,
+    val hub: HubGame?,
+    val store: String,
+    val gameDir: File?,
+)
 
 /**
- * Deck Mode's container list: the same containers and the same actions as the Containers tab
- * (run / edit / duplicate / remove / export / backup), rendered as DroidDeck cards.
+ * Deck Mode's Storage screen: two controller-first sub-tabs. Cronos lists games that live in
+ * their own dedicated container (cover, title, game size for store installs, container size) with
+ * remove/uninstall actions; Containers is the classic container list (run / edit / duplicate /
+ * remove / export / properties) rendered as DroidDeck cards.
  */
 @Composable
 internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: ContainersViewModel = viewModel()) {
     val context = LocalContext.current
     val activity = context as Activity
+    val scope = rememberCoroutineScope()
     val containers by vm.containers.collectAsState()
     val message by vm.message.collectAsState()
+    var subtab by remember { mutableStateOf(0) }
     var propertiesContainer by remember { mutableStateOf<Container?>(null) }
+    var removeGameFor by remember { mutableStateOf<DeckCronosItem?>(null) }
+    var removeContainerFor by remember { mutableStateOf<DeckCronosItem?>(null) }
+    var cronos by remember { mutableStateOf<List<DeckCronosItem>>(emptyList()) }
+    var cronosLoading by remember { mutableStateOf(true) }
+    var cronosEpoch by remember { mutableStateOf(0) }
+    val firstTabFocus = remember { FocusRequester() }
+
+    // Controller-first: the Storage pane opens focused on the Cronos tab pill, so the D-pad
+    // switches sub-tabs and drops into the list with no tap first.
+    LaunchedEffect(Unit) { runCatching { firstTabFocus.requestFocus() } }
 
     LaunchedEffect(message) {
         message?.let {
@@ -96,6 +144,12 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(containers, cronosEpoch) {
+        cronosLoading = true
+        cronos = withContext(Dispatchers.IO) { loadDeckCronos(context, containers) }
+        cronosLoading = false
     }
 
     Box(
@@ -116,108 +170,78 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "${containers.size} installed",
+                text = if (subtab == 0) "${cronos.size} games on their own container"
+                else "${containers.size} installed",
                 fontSize = 13.sp,
                 color = DeckPalette.onSurfaceVariant,
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusGroup(),
             ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .height(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(DeckPalette.primary)
-                        .clickable { onEditContainer(-1) }
-                        .padding(horizontal = 16.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Filled.Add,
-                            contentDescription = null,
-                            tint = DeckPalette.onPrimary,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = "New",
-                            color = DeckPalette.onPrimary,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                }
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .height(40.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(DeckPalette.surface)
-                        .border(1.dp, DeckPalette.line, RoundedCornerShape(12.dp))
-                        .clickable { onEditContainer(-2) }
-                        .padding(horizontal = 16.dp),
-                ) {
-                    Text(
-                        text = "Defaults",
-                        color = DeckPalette.onBackground,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
+                DeckStorageTabPill(
+                    label = "Cronos",
+                    active = subtab == 0,
+                    modifier = Modifier.focusRequester(firstTabFocus),
+                ) { subtab = 0 }
+                DeckStorageTabPill(label = "Containers", active = subtab == 1) { subtab = 1 }
             }
             Spacer(Modifier.height(12.dp))
 
-            if (containers.isEmpty()) {
-                Text(
-                    text = "No containers yet.",
-                    fontSize = 15.sp,
-                    color = DeckPalette.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 24.dp),
-                )
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(bottom = 24.dp),
-                ) {
-                    items(containers, key = { it.id }) { container ->
-                        DeckContainerCard(
-                            name = container.name,
-                            subtitle = listOf(container.wineVersion, container.screenSize)
-                                .filter { it.isNotEmpty() }
-                                .joinToString(" · "),
-                            onRun = {
-                                if (!XrActivity.isEnabled(context)) {
-                                    val intent = Intent(context, XServerDisplayActivity::class.java)
-                                    intent.putExtra("container_id", container.id)
-                                    if (container.displayBackend ==
-                                        Container.DISPLAY_BACKEND_WAYLAND
-                                    ) {
-                                        intent.putExtra("wayland_mode", true)
-                                    }
-                                    context.startActivity(intent)
-                                } else {
-                                    XrActivity.openIntent(activity, container.id, null)
-                                }
-                            },
-                            onEdit = { onEditContainer(container.id) },
-                            onDuplicate = { vm.duplicate(container) {} },
-                            onRemove = { vm.remove(container, context) {} },
-                            onExport = {
-                                vm.exportContainer(container) { path ->
-                                    val msg = if (path != null) "Exported to $path"
-                                    else "Export failed or already exists"
-                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                                }
-                            },
-                            onInfo = { propertiesContainer = container },
-                            onBackupRestore = { /* Backup/Restore opens a fork flow in the normal tab */ },
+            AnimatedContent(
+                targetState = subtab,
+                transitionSpec = {
+                    (slideInVertically(tween(300)) { it } + fadeIn(tween(200)))
+                        .togetherWith(
+                            slideOutVertically(tween(220)) { it } + fadeOut(tween(160)),
                         )
-                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .focusGroup(),
+                label = "storageTab",
+            ) { which ->
+                if (which == 0) {
+                    DeckCronosTab(
+                        games = cronos,
+                        loading = cronosLoading,
+                        onRemoveGame = { removeGameFor = it },
+                        onRemoveContainer = { removeContainerFor = it },
+                    )
+                } else {
+                    DeckStorageContainersTab(
+                        containers = containers,
+                        onNew = { onEditContainer(-1) },
+                        onDefaults = { onEditContainer(-2) },
+                        onEdit = onEditContainer,
+                        onRun = { container ->
+                            if (!XrActivity.isEnabled(context)) {
+                                val intent = Intent(context, XServerDisplayActivity::class.java)
+                                intent.putExtra("container_id", container.id)
+                                if (container.displayBackend == Container.DISPLAY_BACKEND_WAYLAND) {
+                                    intent.putExtra("wayland_mode", true)
+                                }
+                                context.startActivity(intent)
+                            } else {
+                                XrActivity.openIntent(activity, container.id, null)
+                            }
+                        },
+                        onDuplicate = { vm.duplicate(it) {} },
+                        onRemove = { vm.remove(it, context) {} },
+                        onExport = { container ->
+                            vm.exportContainer(container) { path ->
+                                val msg = if (path != null) "Exported to $path"
+                                else "Export failed or already exists"
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                            }
+                        },
+                        onInfo = { propertiesContainer = it },
+                    )
                 }
             }
         }
@@ -226,6 +250,517 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
     propertiesContainer?.let { current ->
         DeckPropertiesDialog(container = current, onDismiss = { propertiesContainer = null })
     }
+
+    removeGameFor?.let { item ->
+        val store = item.store.isNotEmpty()
+        DeckConfirmDialog(
+            title = if (store) "Uninstall game?" else "Remove game?",
+            message = if (store)
+                "\"${item.shortcut.name}\" and its installed files will be deleted. Its container stays."
+            else
+                "The shortcut and hub entry for \"${item.shortcut.name}\" will be removed. Its container stays.",
+            confirmLabel = if (store) "Uninstall" else "Remove",
+            danger = store,
+            onDismiss = { removeGameFor = null },
+            onConfirm = {
+                removeGameFor = null
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        HubGamesStore.remove(context, item.hub ?: deckHubGameOf(item))
+                        runCatching { item.shortcut.file.delete() }
+                        runCatching { File(item.shortcut.file.path.substringBeforeLast('.') + ".lnk").delete() }
+                        if (store) item.gameDir?.let { dir ->
+                            if (dir.isDirectory && deckIsStoreInstallDir(dir)) {
+                                runCatching { FileUtils.delete(dir) }
+                            }
+                        }
+                    }
+                    cronosEpoch++
+                    vm.refresh()
+                }
+            },
+        )
+    }
+
+    removeContainerFor?.let { item ->
+        DeckConfirmDialog(
+            title = "Remove container?",
+            message = "The container \"${item.container.name}\" and everything in it will be deleted.",
+            confirmLabel = "Remove Container",
+            danger = true,
+            onDismiss = { removeContainerFor = null },
+            onConfirm = {
+                removeContainerFor = null
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        HubGamesStore.remove(context, item.hub ?: deckHubGameOf(item))
+                    }
+                    vm.remove(item.container, context) { cronosEpoch++ }
+                }
+            },
+        )
+    }
+}
+
+/** One Studio-style sub-tab pill (same shape/motion as the container editor's tab row). */
+@Composable
+private fun DeckStorageTabPill(
+    label: String,
+    active: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .heightIn(min = 40.dp)
+            .deckTileFocus(interaction)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (active) DeckPalette.primary else DeckPalette.surface)
+            .border(
+                1.dp,
+                if (active) DeckPalette.primary else DeckPalette.line,
+                RoundedCornerShape(12.dp),
+            )
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = label,
+            color = if (active) DeckPalette.onPrimary else DeckPalette.onSurfaceVariant,
+            fontSize = 13.sp,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+        )
+    }
+}
+
+/** The Cronos sub-tab: dedicated-container games, biggest UI cards in the Storage screen. */
+@Composable
+private fun DeckCronosTab(
+    games: List<DeckCronosItem>,
+    loading: Boolean,
+    onRemoveGame: (DeckCronosItem) -> Unit,
+    onRemoveContainer: (DeckCronosItem) -> Unit,
+) {
+    when {
+        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = DeckPalette.primary)
+        }
+        games.isEmpty() -> Text(
+            text = "No Cronos games yet. Add one game per container from Home and it will show here.",
+            fontSize = 14.sp,
+            color = DeckPalette.onSurfaceVariant,
+            modifier = Modifier.padding(top = 12.dp),
+        )
+        else -> LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(bottom = 24.dp),
+        ) {
+            items(games, key = { it.shortcut.file.absolutePath }) { item ->
+                DeckCronosCard(
+                    item = item,
+                    onRemoveGame = { onRemoveGame(item) },
+                    onRemoveContainer = { onRemoveContainer(item) },
+                )
+            }
+        }
+    }
+}
+
+/** The Containers sub-tab: the classic container list, unchanged actions. */
+@Composable
+private fun DeckStorageContainersTab(
+    containers: List<Container>,
+    onNew: () -> Unit,
+    onDefaults: () -> Unit,
+    onEdit: (Int) -> Unit,
+    onRun: (Container) -> Unit,
+    onDuplicate: (Container) -> Unit,
+    onRemove: (Container) -> Unit,
+    onExport: (Container) -> Unit,
+    onInfo: (Container) -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(DeckPalette.primary)
+                    .clickable { onNew() }
+                    .padding(horizontal = 16.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = null,
+                        tint = DeckPalette.onPrimary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "New",
+                        color = DeckPalette.onPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .height(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(DeckPalette.surface)
+                    .border(1.dp, DeckPalette.line, RoundedCornerShape(12.dp))
+                    .clickable { onDefaults() }
+                    .padding(horizontal = 16.dp),
+            ) {
+                Text(
+                    text = "Defaults",
+                    color = DeckPalette.onBackground,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        if (containers.isEmpty()) {
+            Text(
+                text = "No containers yet.",
+                fontSize = 15.sp,
+                color = DeckPalette.onSurfaceVariant,
+                modifier = Modifier.padding(top = 24.dp),
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+            ) {
+                items(containers, key = { it.id }) { container ->
+                    DeckContainerCard(
+                        name = container.name,
+                        subtitle = listOf(container.wineVersion, container.screenSize)
+                            .filter { it.isNotEmpty() }
+                            .joinToString(" · "),
+                        onRun = { onRun(container) },
+                        onEdit = { onEdit(container.id) },
+                        onDuplicate = { onDuplicate(container) },
+                        onRemove = { onRemove(container) },
+                        onExport = { onExport(container) },
+                        onInfo = { onInfo(container) },
+                        onBackupRestore = { /* Backup/Restore opens a fork flow in the normal tab */ },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** One Cronos game: cover, title, store size + container size, remove/uninstall actions. */
+@Composable
+private fun DeckCronosCard(
+    item: DeckCronosItem,
+    onRemoveGame: () -> Unit,
+    onRemoveContainer: () -> Unit,
+) {
+    val cover = rememberDeckCover(deckCoverPath(item))
+    val containerSize = rememberDeckDirSize(item.container.rootDir)
+    val gameSize = rememberDeckDirSize(item.gameDir)
+    val store = item.store.isNotEmpty()
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(DeckPalette.groupShape)
+            .background(DeckPalette.surface)
+            .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+            .padding(12.dp),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(width = 84.dp, height = 112.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(DeckPalette.surfaceVariant),
+        ) {
+            if (cover != null) {
+                Image(
+                    bitmap = cover,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.SportsEsports,
+                    contentDescription = null,
+                    tint = DeckPalette.onSurfaceVariant,
+                    modifier = Modifier.size(36.dp),
+                )
+            }
+        }
+
+        Spacer(Modifier.width(14.dp))
+
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = item.shortcut.name,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                color = DeckPalette.onBackground,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = item.container.name,
+                fontSize = 12.sp,
+                color = DeckPalette.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(8.dp))
+            if (store) {
+                Text(
+                    text = "Game  " + if (gameSize >= 0) StringUtils.formatBytes(gameSize) else "…",
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = DeckPalette.onBackground,
+                )
+                Spacer(Modifier.height(2.dp))
+            }
+            Text(
+                text = "Container  " + if (containerSize >= 0) StringUtils.formatBytes(containerSize) else "…",
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = DeckPalette.onSurfaceVariant,
+            )
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            DeckOutlineButton(if (store) "Uninstall Game" else "Remove Game", onRemoveGame)
+            DeckDangerButton("Remove Container", onRemoveContainer)
+        }
+    }
+}
+
+@Composable
+private fun DeckOutlineButton(text: String, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .heightIn(min = 40.dp)
+            .deckTileFocus(interaction)
+            .clip(RoundedCornerShape(12.dp))
+            .background(DeckPalette.surfaceVariant)
+            .border(1.dp, DeckPalette.line2, RoundedCornerShape(12.dp))
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 14.dp),
+    ) {
+        Text(
+            text = text,
+            color = DeckPalette.onBackground,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+/** Red-tinted destructive action (Remove Container). */
+@Composable
+private fun DeckDangerButton(text: String, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .heightIn(min = 40.dp)
+            .deckTileFocus(interaction)
+            .clip(RoundedCornerShape(12.dp))
+            .background(DeckPalette.error.copy(alpha = 0.12f))
+            .border(1.dp, DeckPalette.error, RoundedCornerShape(12.dp))
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 14.dp),
+    ) {
+        Text(
+            text = text,
+            color = DeckPalette.error,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+/** Deck-styled confirmation used by the destructive Cronos actions. */
+@Composable
+private fun DeckConfirmDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    danger: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    DeckConfigDialog(title = title, onDismiss = onDismiss) {
+        DeckConfigNote(message)
+        Row(
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp),
+        ) {
+            DeckButton("Cancel", primary = false) { onDismiss() }
+            Spacer(Modifier.width(8.dp))
+            if (danger) DeckDangerButton(confirmLabel, onConfirm)
+            else DeckButton(confirmLabel) { onConfirm() }
+        }
+    }
+}
+
+/** Builds the Cronos list: every container that holds exactly one game shortcut. */
+private fun loadDeckCronos(context: Context, containers: List<Container>): List<DeckCronosItem> {
+    return runCatching {
+        val manager = ContainerManager(context).also { it.reloadContainers() }
+        val linuxId = runCatching { manager.getLinuxContainer().id }.getOrNull()
+        val byContainer = LinkedHashMap<Int, MutableList<Shortcut>>()
+        for (shortcut in manager.loadShortcuts()) {
+            val container = shortcut.container ?: continue
+            if (container.id == linuxId) continue
+            byContainer.getOrPut(container.id) { mutableListOf() }.add(shortcut)
+        }
+        val hubs = HubGamesStore.load(context).associateBy { it.shortcutPath }
+        byContainer.values.mapNotNull { list ->
+            val shortcut = list.singleOrNull() ?: return@mapNotNull null
+            val container = shortcut.container ?: return@mapNotNull null
+            val live = containers.firstOrNull { it.id == container.id } ?: container
+            val store = deckStoreSource(shortcut)
+            val gameDir = if (store.isNotEmpty()) {
+                runCatching {
+                    WinePath.resolveAndroidPath(live, shortcut.path)
+                        ?.let { deckGameRoot(it.parentFile ?: it) }
+                }.getOrNull()
+            } else null
+            DeckCronosItem(
+                container = live,
+                shortcut = shortcut,
+                hub = hubs[shortcut.file.absolutePath],
+                store = store,
+                gameDir = gameDir,
+            )
+        }.sortedBy { it.shortcut.name.lowercase() }
+    }.getOrDefault(emptyList())
+}
+
+private fun deckHubGameOf(item: DeckCronosItem) = HubGame(
+    name = item.shortcut.name,
+    containerId = item.container.id,
+    shortcutPath = item.shortcut.file.absolutePath,
+    appId = null,
+    coverPath = null,
+)
+
+/** Store tag from Extra Data, or the install path for legacy shortcuts written without one. */
+private fun deckStoreSource(shortcut: Shortcut): String {
+    val tagged = runCatching { shortcut.getExtra("storeSource", "") }.getOrNull().orEmpty()
+    if (tagged.isNotEmpty() && tagged != "custom") return tagged
+    val path = shortcut.path.lowercase()
+    return when {
+        path.contains("steam_games") || path.contains("steamapps") -> "steam"
+        path.contains("epic_games") -> "epic"
+        path.contains("gog_games") -> "gog"
+        path.contains("amazon") -> "amazon"
+        else -> ""
+    }
+}
+
+/** Never delete anything that does not look like a store's own games folder. */
+private fun deckIsStoreInstallDir(dir: File): Boolean {
+    if (dir.name.isBlank() || dir.parentFile == null) return false
+    val path = dir.absolutePath.lowercase()
+    return listOf("steam_games", "steamapps", "epic_games", "gog_games", "/amazon/", "/steam/")
+        .any { path.contains(it) }
+}
+
+/**
+ * The install root of a store game: walk up until the direct parent is a store root
+ * (steam_games / epic_games / gog_games / Amazon / steamapps common). Never guesses past it.
+ */
+private fun deckGameRoot(dir: File): File {
+    var current = dir
+    while (true) {
+        val parent = current.parentFile ?: return dir
+        val name = parent.name.lowercase()
+        if (name == "steam_games" || name == "epic_games" || name == "gog_games" ||
+            name == "amazon" || name == "common"
+        ) return current
+        current = parent
+    }
+}
+
+/** The best cover available: user-picked art, hub art, then the container's saved cover. */
+private fun deckCoverPath(item: DeckCronosItem): String? {
+    item.shortcut.customCoverArtPath?.takeIf { it.isNotEmpty() && File(it).isFile }?.let { return it }
+    item.hub?.coverPath?.takeIf { it.isNotEmpty() && File(it).isFile }?.let { return it }
+    val fallback = File(item.container.rootDir, "app_data/cover_arts/${item.shortcut.name}.png")
+    return fallback.takeIf { it.isFile }?.absolutePath
+}
+
+@Composable
+private fun rememberDeckCover(path: String?): ImageBitmap? =
+    remember(path) {
+        path?.let { file ->
+            runCatching {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(file, bounds)
+                var sample = 1
+                while (bounds.outWidth / sample > 320) sample *= 2
+                BitmapFactory.decodeFile(
+                    file,
+                    BitmapFactory.Options().apply { inSampleSize = sample },
+                )?.asImageBitmap()
+            }.getOrNull()
+        }
+    }
+
+/** Directory size computed once off the main thread; -1 while unknown/absent. */
+@Composable
+private fun rememberDeckDirSize(dir: File?): Long {
+    var size by remember(dir?.absolutePath) { mutableStateOf(-1L) }
+    LaunchedEffect(dir?.absolutePath) {
+        size = if (dir == null || !dir.exists()) -1L
+        else withContext(Dispatchers.IO) { deckDirSize(dir) }
+    }
+    return size
+}
+
+private fun deckDirSize(dir: File): Long {
+    var total = 0L
+    val stack = ArrayDeque<File>()
+    stack.addLast(dir)
+    while (stack.isNotEmpty()) {
+        val file = stack.removeLast()
+        if (file.isDirectory) file.listFiles()?.forEach { stack.addLast(it) }
+        else total += file.length()
+    }
+    return total
 }
 
 /** One container as a DroidDeck card: 14dp surface, name + subtitle, blue play pill, overflow. */

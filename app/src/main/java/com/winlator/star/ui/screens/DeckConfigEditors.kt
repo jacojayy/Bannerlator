@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,7 +55,18 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -229,6 +241,11 @@ internal fun DeckChoiceRowWithDownload(
 /** A Deck-styled popup for config sub-pickers (add key, value picker, …). */
 @Composable
 internal fun DeckConfigDialog(title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val focusManager = LocalFocusManager.current
+    val rootFocus = remember { FocusRequester() }
+    var rootFocused by remember { mutableStateOf(false) }
+    // Controller-first: the popup owns focus on open, D-pad walks it, and B closes it.
+    LaunchedEffect(Unit) { runCatching { rootFocus.requestFocus() } }
     Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -237,6 +254,28 @@ internal fun DeckConfigDialog(title: String, onDismiss: () -> Unit, content: @Co
                 .clip(RoundedCornerShape(16.dp))
                 .background(DeckPalette.surface)
                 .border(1.dp, DeckPalette.line2, RoundedCornerShape(16.dp))
+                .focusRequester(rootFocus)
+                .onFocusChanged { rootFocused = it.isFocused }
+                .focusable()
+                .onPreviewKeyEvent { e ->
+                    if (e.type == KeyEventType.KeyDown &&
+                        (e.key == Key.ButtonB || e.key == Key.Back)
+                    ) {
+                        onDismiss()
+                        true
+                    } else false
+                }
+                .onKeyEvent { e ->
+                    if (e.type != KeyEventType.KeyDown || !rootFocused) return@onKeyEvent false
+                    val dir = when (e.key) {
+                        Key.DirectionUp -> FocusDirection.Up
+                        Key.DirectionDown -> FocusDirection.Down
+                        Key.DirectionLeft -> FocusDirection.Left
+                        Key.DirectionRight -> FocusDirection.Right
+                        else -> null
+                    } ?: return@onKeyEvent false
+                    focusManager.moveFocus(dir)
+                }
                 .padding(16.dp),
         ) {
             Text(

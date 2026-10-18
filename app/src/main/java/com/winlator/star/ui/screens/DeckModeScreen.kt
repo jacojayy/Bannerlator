@@ -161,7 +161,7 @@ private class DeckSection(val key: String, val label: String, val icon: ImageVec
 
 private fun deckSections() = listOf(
     DeckSection("home", "Home", Icons.Filled.Apps),
-    DeckSection("containers", "Containers", Icons.Filled.Folder),
+    DeckSection("containers", "Storage", Icons.Filled.Folder),
     DeckSection("stores", "Stores", Icons.Filled.Storefront),
     DeckSection("file_manager", "Files", Icons.Filled.FolderOpen),
     DeckSection("input_controls", "Controls", Icons.Filled.SportsEsports),

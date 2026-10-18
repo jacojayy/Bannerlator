@@ -109,7 +109,7 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
                 .padding(horizontal = 22.dp, vertical = 18.dp),
         ) {
             Text(
-                text = "Containers",
+                text = "Storage",
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = DeckPalette.onBackground,

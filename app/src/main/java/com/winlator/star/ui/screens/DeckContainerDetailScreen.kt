@@ -3,8 +3,8 @@ package com.winlator.star.ui.screens
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
@@ -40,8 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -87,7 +86,9 @@ internal fun DeckContainerDetailScreen(
     val tabTitles = remember {
         listOf("General", "Graphics", "Performance", "CPU", "Input", "Environment", "Wine")
     }
-    var tab by remember { mutableStateOf(0) }
+    val tabs = LocalDeckTabs.current
+    val tab = tabs.index
+    LaunchedEffect(tabs) { tabs.bind(tabTitles.size) }
 
     // Which inline config section is expanded (null = all collapsed). One at a time, so a row's
     // editor pushes the rows below it down without stacking several open at once.
@@ -100,8 +101,6 @@ internal fun DeckContainerDetailScreen(
     var showD7vkDownloadSheet by remember { mutableStateOf(false) }
     var dxvkRefreshKey by remember { mutableStateOf(0) }
     val isVegasWrapper = StringUtils.parseIdentifier(viewModel.selectedDXWrapper).contains("vegas")
-    val firstTabFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { firstTabFocus.requestFocus() }
 
     Column(
         modifier = Modifier
@@ -151,13 +150,12 @@ internal fun DeckContainerDetailScreen(
             )
         }
 
-        // ── Top tab pills (controller-navigable; focus starts on the first) ──
+        // ── Top tab pills (touch-only; L1/R1 step them from anywhere in the pane) ──
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp, vertical = 4.dp)
-                .horizontalScroll(rememberScrollState())
-                .focusGroup(),
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             tabTitles.forEachIndexed { i, tabTitle ->
@@ -175,9 +173,9 @@ internal fun DeckContainerDetailScreen(
                             if (active) DeckPalette.primary else DeckPalette.line,
                             RoundedCornerShape(12.dp),
                         )
-                        .clickable(interactionSource = interaction, indication = null) { tab = i }
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .then(if (i == 0) Modifier.focusRequester(firstTabFocus) else Modifier),
+                        .focusProperties { canFocus = false }
+                        .clickable(interactionSource = interaction, indication = null) { tabs.select(i) }
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
                 ) {
                     Text(
                         tabTitle,
@@ -189,13 +187,20 @@ internal fun DeckContainerDetailScreen(
             }
         }
 
-        // ── Tab content — rapid bottom-to-top slide on every switch ──────────
+        // ── Tab content — L1/R1 drag the page sideways, DroidDeck's long glide ──
         AnimatedContent(
             targetState = tab,
             transitionSpec = {
-                (slideInVertically(tween(240)) { it } + fadeIn(tween(160)))
+                val forward = targetState >= initialState
+                (fadeIn(tween(300, delayMillis = 60, easing = DeckEase)) +
+                    slideInHorizontally(tween(420, delayMillis = 60, easing = DeckEase)) {
+                        if (forward) it / 24 else -it / 24
+                    })
                     .togetherWith(
-                        slideOutVertically(tween(140)) { -it / 4 } + fadeOut(tween(100)),
+                        fadeOut(tween(170, easing = DeckEase)) +
+                            slideOutHorizontally(tween(170, easing = DeckEase)) {
+                                if (forward) -it / 40 else it / 40
+                            },
                     )
             },
             modifier = Modifier

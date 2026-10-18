@@ -35,7 +35,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import com.winlator.star.store.deckTileFocus
@@ -53,6 +55,35 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
+/**
+ * One page row at a time (Storage sub-tabs, container editor tabs) binds itself here, so the Deck
+ * shell can drive L1/R1 even when focus sits on the side rail. Pills stay touch-only, never D-pad.
+ */
+internal class DeckTabHost {
+    var count by mutableIntStateOf(0)
+        private set
+    var index by mutableIntStateOf(0)
+        private set
+
+    fun bind(pages: Int) {
+        count = pages
+        if (index !in 0 until pages) index = 0
+    }
+
+    fun select(page: Int) {
+        if (page in 0 until count) index = page
+    }
+
+    fun step(delta: Int) {
+        if (count > 1) index = (index + delta + count) % count
+    }
+}
+
+internal val LocalDeckTabs = compositionLocalOf { DeckTabHost() }
+
+/** DroidDeck's own ease: quick off the mark, then a long glide — the "dragged" feel. */
+internal val DeckEase = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
 
 /** DroidDeck's Graphite palette, used by the Deck Mode widgets (same hex values as ui/Theme.kt). */
 internal object DeckPalette {

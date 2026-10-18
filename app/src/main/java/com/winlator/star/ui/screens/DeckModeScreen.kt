@@ -16,6 +16,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -94,10 +95,10 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -179,7 +180,6 @@ private fun deckSections() = listOf(
 @Composable
 internal fun DeckModeScreen(onExit: () -> Unit) {
     val context = LocalContext.current
-    val focusManager = LocalFocusManager.current
     var introDone by remember { mutableStateOf(false) }
     var section by remember { mutableStateOf("home") }
     var graphicPane by remember { mutableStateOf("gpu") }
@@ -196,12 +196,21 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     }
     BackHandler { goBack() }
 
-    // The pane owns focus the moment a tab opens, so the D-pad drives it without a tap first.
-    // The focused pane also forwards direction keys into the tab, and one Left reaches the rail.
-    val contentFocus = remember { FocusRequester() }
+    // The pump sits on the current rail item the moment the New UI opens, so the controller starts
+    // on the side bar — then Right/A drops into the pane and the tab drags in behind it.
+    val railFocus = remember { FocusRequester() }
+    val paneFocus = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
     var paneFocused by remember { mutableStateOf(false) }
-    LaunchedEffect(section, deckDetail, introDone) {
-        runCatching { contentFocus.requestFocus() }
+    val tabs = remember { DeckTabHost() }
+    LaunchedEffect(section, deckDetail) { tabs.bind(0) }
+    LaunchedEffect(introDone, section) {
+        if (introDone) runCatching { railFocus.requestFocus() }
+    }
+    // A detail opens from a card that is about to vanish: hand focus to the pane, never a tab pill.
+    LaunchedEffect(deckDetail) {
+        if (deckDetail != null) runCatching { paneFocus.requestFocus() }
+        else if (introDone) runCatching { railFocus.requestFocus() }
     }
 
     // Truly full screen: the system status/nav bars go with the top bar, restored on leaving.
@@ -237,20 +246,36 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
             error = Color(0xFFFF8A80),
         ),
     ) {
-        CompositionLocalProvider(LocalIndication provides remember { ControllerFocusIndication(Deck.primary) }) {
+        CompositionLocalProvider(
+            LocalIndication provides remember { ControllerFocusIndication(Deck.primary) },
+            LocalDeckTabs provides tabs,
+        ) {
     Row(
         modifier = Modifier
             .fillMaxSize()
             .background(Deck.background)
             .onPreviewKeyEvent { e ->
-                if (e.type == KeyEventType.KeyDown && e.key == Key.ButtonB) {
-                    goBack()
-                    true
-                } else false
+                if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (e.key) {
+                    Key.ButtonB -> { goBack(); true }
+                    // DroidDeck steps pages with the shoulders; the tabs themselves are touch-only.
+                    Key.ButtonL1 -> if (tabs.count > 0) {
+                        tabs.step(-1)
+                        runCatching { paneFocus.requestFocus() }
+                        true
+                    } else false
+                    Key.ButtonR1 -> if (tabs.count > 0) {
+                        tabs.step(1)
+                        runCatching { paneFocus.requestFocus() }
+                        true
+                    } else false
+                    else -> false
+                }
             },
     ) {
         DeckSideRail(
             selected = section,
+            focusRequester = railFocus,
             onSelect = { next ->
                 section = next
                 deckDetail = null
@@ -262,7 +287,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 .weight(1f)
                 .fillMaxHeight()
                 .clipToBounds()
-                .focusRequester(contentFocus)
+                .focusRequester(paneFocus)
                 .onFocusChanged { paneFocused = it.isFocused }
                 .focusable()
                 .onKeyEvent { e ->
@@ -282,9 +307,11 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
             AnimatedContent(
                 targetState = section,
                 transitionSpec = {
-                    (slideInVertically(tween(300)) { it } + fadeIn(tween(200)))
+                    (fadeIn(tween(300, delayMillis = 80, easing = DeckEase)) +
+                        slideInVertically(tween(420, delayMillis = 80, easing = DeckEase)) { it / 24 })
                         .togetherWith(
-                            slideOutVertically(tween(220)) { it } + fadeOut(tween(160)),
+                            fadeOut(tween(170, easing = DeckEase)) +
+                                slideOutVertically(tween(170, easing = DeckEase)) { -it / 40 },
                         )
                 },
                 modifier = Modifier.fillMaxSize(),
@@ -295,9 +322,11 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                     "containers" -> AnimatedContent(
                         targetState = deckDetail,
                         transitionSpec = {
-                            (slideInVertically(tween(300)) { it } + fadeIn(tween(200)))
+                            (fadeIn(tween(300, delayMillis = 80, easing = DeckEase)) +
+                                slideInVertically(tween(420, delayMillis = 80, easing = DeckEase)) { it / 24 })
                                 .togetherWith(
-                                    slideOutVertically(tween(220)) { it } + fadeOut(tween(160)),
+                                    fadeOut(tween(170, easing = DeckEase)) +
+                                        slideOutVertically(tween(170, easing = DeckEase)) { -it / 40 },
                                 )
                         },
                         modifier = Modifier.fillMaxSize(),
@@ -857,7 +886,7 @@ private fun DeckWordmark() {
  * with the signal blue when current — DroidDeck's SideRail, carrying this app's own sections.
  */
 @Composable
-private fun DeckSideRail(selected: String, onSelect: (String) -> Unit) {
+private fun DeckSideRail(selected: String, focusRequester: FocusRequester, onSelect: (String) -> Unit) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -872,6 +901,7 @@ private fun DeckSideRail(selected: String, onSelect: (String) -> Unit) {
                 label = item.label,
                 icon = item.icon,
                 current = selected == item.key,
+                modifier = if (selected == item.key) Modifier.focusRequester(focusRequester) else Modifier,
                 onClick = { onSelect(item.key) },
             )
         }
@@ -883,24 +913,38 @@ private fun DeckRailItem(
     label: String,
     icon: ImageVector,
     current: Boolean,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
+    // The selection tint glides between items instead of snapping — the rail "drags".
+    val tint by animateColorAsState(
+        targetValue = when {
+            current -> Deck.primary.copy(alpha = 0.14f)
+            focused -> Deck.surfaceVariant
+            else -> Color.Transparent
+        },
+        animationSpec = tween(260, easing = DeckEase),
+        label = "railTint",
+    )
+    val line by animateColorAsState(
+        targetValue = if (current || focused) Deck.primary else Color.Transparent,
+        animationSpec = tween(220, easing = DeckEase),
+        label = "railLine",
+    )
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
+            .then(modifier)
             .padding(bottom = 4.dp)
             .size(width = 80.dp, height = 56.dp)
             .deckTileFocus(interaction)
             .clip(RoundedCornerShape(14.dp))
-            .background(
-                if (current) Deck.primary.copy(alpha = 0.14f)
-                else if (focused) Deck.surfaceVariant else Color.Transparent,
-            )
+            .background(tint)
             .border(
                 width = 1.dp,
-                color = if (current || focused) Deck.primary else Color.Transparent,
+                color = line,
                 shape = RoundedCornerShape(14.dp),
             )
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),

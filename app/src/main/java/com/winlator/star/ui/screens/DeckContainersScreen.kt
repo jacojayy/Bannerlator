@@ -10,8 +10,8 @@ import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -66,8 +66,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -118,18 +117,16 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
     val scope = rememberCoroutineScope()
     val containers by vm.containers.collectAsState()
     val message by vm.message.collectAsState()
-    var subtab by remember { mutableStateOf(0) }
+    val tabs = LocalDeckTabs.current
+    val subtab = tabs.index
     var propertiesContainer by remember { mutableStateOf<Container?>(null) }
     var removeGameFor by remember { mutableStateOf<DeckCronosItem?>(null) }
     var removeContainerFor by remember { mutableStateOf<DeckCronosItem?>(null) }
     var cronos by remember { mutableStateOf<List<DeckCronosItem>>(emptyList()) }
     var cronosLoading by remember { mutableStateOf(true) }
     var cronosEpoch by remember { mutableStateOf(0) }
-    val firstTabFocus = remember { FocusRequester() }
-
-    // Controller-first: the Storage pane opens focused on the Cronos tab pill, so the D-pad
-    // switches sub-tabs and drops into the list with no tap first.
-    LaunchedEffect(Unit) { runCatching { firstTabFocus.requestFocus() } }
+    // The shell owns the page row: L1/R1 step these sub-tabs, so the pills never take D-pad focus.
+    LaunchedEffect(tabs) { tabs.bind(2) }
 
     LaunchedEffect(message) {
         message?.let {
@@ -184,21 +181,24 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
                     .fillMaxWidth()
                     .focusGroup(),
             ) {
-                DeckStorageTabPill(
-                    label = "Cronos",
-                    active = subtab == 0,
-                    modifier = Modifier.focusRequester(firstTabFocus),
-                ) { subtab = 0 }
-                DeckStorageTabPill(label = "Containers", active = subtab == 1) { subtab = 1 }
+                DeckStorageTabPill(label = "Cronos", active = subtab == 0) { tabs.select(0) }
+                DeckStorageTabPill(label = "Containers", active = subtab == 1) { tabs.select(1) }
             }
             Spacer(Modifier.height(12.dp))
 
             AnimatedContent(
                 targetState = subtab,
                 transitionSpec = {
-                    (slideInVertically(tween(300)) { it } + fadeIn(tween(200)))
+                    val forward = targetState >= initialState
+                    (fadeIn(tween(300, delayMillis = 60, easing = DeckEase)) +
+                        slideInHorizontally(tween(420, delayMillis = 60, easing = DeckEase)) {
+                            if (forward) it / 24 else -it / 24
+                        })
                         .togetherWith(
-                            slideOutVertically(tween(220)) { it } + fadeOut(tween(160)),
+                            fadeOut(tween(170, easing = DeckEase)) +
+                                slideOutHorizontally(tween(170, easing = DeckEase)) {
+                                    if (forward) -it / 40 else it / 40
+                                },
                         )
                 },
                 modifier = Modifier
@@ -316,6 +316,7 @@ private fun DeckStorageTabPill(
         contentAlignment = Alignment.Center,
         modifier = modifier
             .heightIn(min = 40.dp)
+            .focusProperties { canFocus = false }
             .deckTileFocus(interaction)
             .clip(RoundedCornerShape(12.dp))
             .background(if (active) DeckPalette.primary else DeckPalette.surface)

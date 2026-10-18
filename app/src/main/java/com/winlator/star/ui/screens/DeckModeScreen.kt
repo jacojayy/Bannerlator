@@ -12,8 +12,15 @@ import android.graphics.drawable.Icon
 import android.widget.Toast
 import android.widget.VideoView
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -24,6 +31,7 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -86,6 +94,16 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -94,6 +112,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
@@ -160,10 +179,30 @@ private fun deckSections() = listOf(
 @Composable
 internal fun DeckModeScreen(onExit: () -> Unit) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     var introDone by remember { mutableStateOf(false) }
     var section by remember { mutableStateOf("home") }
     var graphicPane by remember { mutableStateOf("gpu") }
     var deckDetail by remember { mutableStateOf<Int?>(null) }
+
+    // Controller-first back stack: B (or system Back) closes the container editor, then returns to
+    // Home from any tab, then leaves Deck Mode.
+    val goBack: () -> Unit = {
+        when {
+            deckDetail != null -> deckDetail = null
+            section != "home" -> section = "home"
+            else -> onExit()
+        }
+    }
+    BackHandler { goBack() }
+
+    // The pane owns focus the moment a tab opens, so the D-pad drives it without a tap first.
+    // The focused pane also forwards direction keys into the tab, and one Left reaches the rail.
+    val contentFocus = remember { FocusRequester() }
+    var paneFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(section, deckDetail, introDone) {
+        runCatching { contentFocus.requestFocus() }
+    }
 
     // Truly full screen: the system status/nav bars go with the top bar, restored on leaving.
     val view = LocalView.current
@@ -202,7 +241,13 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxSize()
-            .background(Deck.background),
+            .background(Deck.background)
+            .onPreviewKeyEvent { e ->
+                if (e.type == KeyEventType.KeyDown && e.key == Key.ButtonB) {
+                    goBack()
+                    true
+                } else false
+            },
     ) {
         DeckSideRail(
             selected = section,
@@ -216,33 +261,70 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .clipToBounds(),
+                .clipToBounds()
+                .focusRequester(contentFocus)
+                .onFocusChanged { paneFocused = it.isFocused }
+                .focusable()
+                .onKeyEvent { e ->
+                    if (e.type != KeyEventType.KeyDown || !paneFocused) return@onKeyEvent false
+                    val dir = when (e.key) {
+                        Key.DirectionUp -> FocusDirection.Up
+                        Key.DirectionDown -> FocusDirection.Down
+                        Key.DirectionLeft -> FocusDirection.Left
+                        Key.DirectionRight -> FocusDirection.Right
+                        else -> null
+                    } ?: return@onKeyEvent false
+                    focusManager.moveFocus(dir)
+                },
         ) {
-            when (section) {
-                "home" -> DeckHome(onEditContainer = { id -> section = "containers"; deckDetail = id })
-                "containers" -> {
-                    val detailId = deckDetail
-                    if (detailId != null) {
-                        DeckContainerDetailScreen(
-                            containerId = detailId,
-                            onNavigateBack = { deckDetail = null },
+            // Every tab switch slides the incoming pane up from the bottom while the outgoing one
+            // drops away — one motion for the whole shell.
+            AnimatedContent(
+                targetState = section,
+                transitionSpec = {
+                    (slideInVertically(tween(300)) { it } + fadeIn(tween(200)))
+                        .togetherWith(
+                            slideOutVertically(tween(220)) { it } + fadeOut(tween(160)),
                         )
-                    } else {
-                        DeckContainersScreen(onEditContainer = { id -> deckDetail = id })
+                },
+                modifier = Modifier.fillMaxSize(),
+                label = "deckSection",
+            ) { currentSection ->
+                when (currentSection) {
+                    "home" -> DeckHome(onEditContainer = { id -> section = "containers"; deckDetail = id })
+                    "containers" -> AnimatedContent(
+                        targetState = deckDetail,
+                        transitionSpec = {
+                            (slideInVertically(tween(300)) { it } + fadeIn(tween(200)))
+                                .togetherWith(
+                                    slideOutVertically(tween(220)) { it } + fadeOut(tween(160)),
+                                )
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        label = "deckDetail",
+                    ) { detailId ->
+                        if (detailId != null) {
+                            DeckContainerDetailScreen(
+                                containerId = detailId,
+                                onNavigateBack = { deckDetail = null },
+                            )
+                        } else {
+                            DeckContainersScreen(onEditContainer = { id -> deckDetail = id })
+                        }
                     }
+                    "stores" -> DeckStoresScreen()
+                    "file_manager" -> FileManagerScreen()
+                    "graphics" -> DeckGraphicsPane(
+                        pane = graphicPane,
+                        onSelect = { graphicPane = it },
+                    )
+                    "input_controls" -> InputControlsScreen()
+                    "contents" -> ContentsHubScreen()
+                    "saves" -> SavesScreen()
+                    "social_hub" -> SocialContent()
+                    "settings" -> DeckSettingsScreen()
+                    else -> DeckHome(onEditContainer = { id -> section = "containers"; deckDetail = id })
                 }
-                "stores" -> DeckStoresScreen()
-                "file_manager" -> FileManagerScreen()
-                "graphics" -> DeckGraphicsPane(
-                    pane = graphicPane,
-                    onSelect = { graphicPane = it },
-                )
-                "input_controls" -> InputControlsScreen()
-                "contents" -> ContentsHubScreen()
-                "saves" -> SavesScreen()
-                "social_hub" -> SocialContent()
-                "settings" -> DeckSettingsScreen()
-                else -> DeckHome(onEditContainer = { id -> section = "containers"; deckDetail = id })
             }
 
             // DroidDeck's corner light — one circular blue glow just inside the top right of every

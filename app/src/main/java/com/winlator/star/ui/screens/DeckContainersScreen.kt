@@ -8,6 +8,8 @@ import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,6 +67,7 @@ import com.winlator.star.XrActivity
 import com.winlator.star.container.Container
 import com.winlator.star.core.FileUtils
 import com.winlator.star.core.StringUtils
+import com.winlator.star.store.deckTileFocus
 import java.io.File
 
 /**
@@ -239,13 +242,21 @@ private fun DeckContainerCard(
     onBackupRestore: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clip(DeckPalette.groupShape)
             .background(DeckPalette.surface)
-            .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+            .border(
+                1.dp,
+                if (focused) DeckPalette.primary else DeckPalette.line,
+                DeckPalette.groupShape,
+            )
+            .deckTileFocus(interaction)
+            .clickable(interactionSource = interaction, indication = null, onClick = onEdit)
             .padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
     ) {
         Column(

@@ -1916,11 +1916,9 @@ private fun FgOverLimitWarning(
     }
 }
 
-// Off / 2× / 3× / 4× segmented button row. mult values 0/2/3/4; selected = filled accent.
+// Off / 2× / 3× / 4× segmented row. mult values 0/2/3/4; selected = blue stroke + translucent fill.
 @Composable
 private fun FgModelButtons(selected: Int, onSelect: (Int) -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
-    val accentDim = LocalAccentDim.current
     // win-fg's two optical-flow models: 3 = single-direction flow, 4 = block-grid
     // bidirectional flow with occlusion gating (softer at occlusion edges). Legacy
     // stored values 0-2 map to the standard flow (model 3), matching the layer's clamp.
@@ -1937,10 +1935,10 @@ private fun FgModelButtons(selected: Int, onSelect: (Int) -> Unit) {
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (isSel) accent else Color.Black)
+                    .background(if (isSel) DeckPalette.primary.copy(alpha = 0.16f) else DeckPalette.surfaceVariant)
                     .border(
-                        width = 1.dp,
-                        color = if (isSel) accent else accentDim,
+                        width = if (isSel) 1.5.dp else 1.dp,
+                        color = if (isSel) DeckPalette.primary else DeckPalette.line,
                         shape = RoundedCornerShape(8.dp)
                     )
                     .clickable { onSelect(model) }
@@ -1948,7 +1946,7 @@ private fun FgModelButtons(selected: Int, onSelect: (Int) -> Unit) {
             ) {
                 Text(
                     label,
-                    color = if (isSel) Color.Black else accent,
+                    color = if (isSel) DeckPalette.primary else DeckPalette.onBackground,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
                 )
@@ -1967,8 +1965,6 @@ private fun FgModelButtons(selected: Int, onSelect: (Int) -> Unit) {
  */
 @Composable
 private fun FgCaptureChips(selected: String, panelHeight: Int, onSelect: (String) -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
-    val accentDim = LocalAccentDim.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val heights = remember(panelHeight) {
         val minH = maxOf(16, panelHeight / 4)
@@ -1998,16 +1994,16 @@ private fun FgCaptureChips(selected: String, panelHeight: Int, onSelect: (String
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (isSel) accent else Color.Black)
-                    .border(1.dp, if (isSel) accent else accentDim, RoundedCornerShape(8.dp))
+                    .background(if (isSel) DeckPalette.primary.copy(alpha = 0.16f) else DeckPalette.surfaceVariant)
+                    .border(if (isSel) 1.5.dp else 1.dp, if (isSel) DeckPalette.primary else DeckPalette.line, RoundedCornerShape(8.dp))
                     .clickable { onSelect(value) }
                     .padding(horizontal = 12.dp, vertical = 8.dp)
             ) {
                 Text(
                     label,
-                    color = if (isSel) Color.Black else accent,
+                    color = if (isSel) DeckPalette.primary else DeckPalette.onBackground,
                     fontSize = 12.sp,
-                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
+                    fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Medium
                 )
             }
         }
@@ -2016,8 +2012,6 @@ private fun FgCaptureChips(selected: String, panelHeight: Int, onSelect: (String
 
 @Composable
 private fun FgMultiplierButtons(selected: Int, engine: String, enabled: Boolean = true, onSelect: (Int) -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
-    val accentDim = LocalAccentDim.current
     val dimmed = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
     // win-fg is a simple Off / On toggle for now (On = 2×); selecting On reveals the
     // model + flow-scale controls (gated on multiplier > 0). lsfg-vk keeps 2×/3×/4×.
@@ -2031,17 +2025,17 @@ private fun FgMultiplierButtons(selected: Int, engine: String, enabled: Boolean 
     ) {
         options.forEach { (mult, label) ->
             val isSel = selected == mult && enabled
-            // Unselected: black fill, dark-blue outline. Selected: solid blue fill, black text.
+            // Unselected: graphite tile + hairline outline. Selected: translucent blue + blue stroke.
             // Disabled (the engine can't run here): all dimmed, nothing clickable.
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (isSel) accent else Color.Black)
+                    .background(if (isSel) DeckPalette.primary.copy(alpha = 0.16f) else DeckPalette.surfaceVariant)
                     .border(
-                        width = 1.dp,
-                        color = if (isSel) accent else if (enabled) accentDim else dimmed,
+                        width = if (isSel) 1.5.dp else 1.dp,
+                        color = if (isSel) DeckPalette.primary else if (enabled) DeckPalette.line else dimmed,
                         shape = RoundedCornerShape(8.dp)
                     )
                     .clickable(enabled = enabled) { onSelect(mult) }
@@ -2049,9 +2043,9 @@ private fun FgMultiplierButtons(selected: Int, engine: String, enabled: Boolean 
             ) {
                 Text(
                     label,
-                    color = if (isSel) Color.Black else if (enabled) accent else dimmed,
+                    color = if (isSel) DeckPalette.primary else if (enabled) DeckPalette.onBackground else dimmed,
                     fontSize = 13.sp,
-                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
+                    fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Medium
                 )
             }
         }
@@ -2231,7 +2225,6 @@ private fun ReshadeSection() {
 // Solo/Stack mode switch — two pills. Solo = one effect active (A/B); Stack = layered subset.
 @Composable
 private fun ReshadeModeSelector(mode: String, onChange: (String) -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2242,17 +2235,17 @@ private fun ReshadeModeSelector(mode: String, onChange: (String) -> Unit) {
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (selected) accent.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surface)
-                    .border(1.dp, if (selected) accent else MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+                    .background(if (selected) DeckPalette.primary.copy(alpha = 0.16f) else DeckPalette.surfaceVariant)
+                    .border(if (selected) 1.5.dp else 1.dp, if (selected) DeckPalette.primary else DeckPalette.line, RoundedCornerShape(8.dp))
                     .clickable { onChange(value) }
                     .padding(vertical = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     label,
-                    color = if (selected) accent else MaterialTheme.colorScheme.onSurface,
+                    color = if (selected) DeckPalette.primary else DeckPalette.onBackground,
                     fontSize = 12.sp,
-                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                    fontWeight = FontWeight.SemiBold
                 )
             }
         }
@@ -2532,8 +2525,8 @@ private fun DebandControls(enabled: Boolean = true, onUserChange: () -> Unit = {
 // ───── Screen Effect Looks row ─────
 // The one-tap preset chips that head the Screen Effects section on both renderer paths.
 // Deliberately built out of the drawer's existing ToggleChipGrid so it reads as part of the
-// section rather than a new widget language: accent-filled when selected, black + accentDim
-// border otherwise, equal widths, three per row so the longest label ("Adaptive Sharpen")
+// section rather than a new widget language: translucent blue fill + blue stroke when selected,
+// graphite tile + hairline border otherwise, equal widths, three per row so the longest label ("Adaptive Sharpen")
 // wraps to two lines instead of overflowing the drawer's fixed 380dp shell.
 // `selected` == null means the user has moved one of the controls a Look owns — a trailing
 // "Custom" chip is appended and lights up. Tapping it does nothing (Custom is a state you
@@ -2572,8 +2565,6 @@ private fun LooksRow(selected: Int?, enabled: Boolean, onPick: (Int) -> Unit) {
 // drawer, so the user can flip between modes and settle on one before dismissing.
 @Composable
 private fun FullscreenModeButtons(selected: Int, onSelect: (Int) -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
-    val accentDim = LocalAccentDim.current
     val options = listOf(
         0 to stringResource(R.string.fullscreen_mode_off_short),
         1 to stringResource(R.string.fullscreen_mode_fit_short),
@@ -2594,10 +2585,10 @@ private fun FullscreenModeButtons(selected: Int, onSelect: (Int) -> Unit) {
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(if (isSel) accent else Color.Black)
+                            .background(if (isSel) DeckPalette.primary.copy(alpha = 0.16f) else DeckPalette.surfaceVariant)
                             .border(
-                                width = 1.dp,
-                                color = if (isSel) accent else accentDim,
+                                width = if (isSel) 1.5.dp else 1.dp,
+                                color = if (isSel) DeckPalette.primary else DeckPalette.line,
                                 shape = RoundedCornerShape(8.dp)
                             )
                             .clickable { onSelect(mode) }
@@ -2605,9 +2596,9 @@ private fun FullscreenModeButtons(selected: Int, onSelect: (Int) -> Unit) {
                     ) {
                         Text(
                             label,
-                            color = if (isSel) Color.Black else accent,
+                            color = if (isSel) DeckPalette.primary else DeckPalette.onBackground,
                             fontSize = 12.sp,
-                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
+                            fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Medium
                         )
                     }
                 }
@@ -2623,8 +2614,6 @@ private fun FullscreenModeButtons(selected: Int, onSelect: (Int) -> Unit) {
 // where there is no bar to move. 0/1/2 map to Container.ALIGN_CENTER/TOP/BOTTOM.
 @Composable
 private fun ScreenAlignmentButtons(selected: Int, enabled: Boolean = true, onSelect: (Int) -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
-    val accentDim = LocalAccentDim.current
     val options = listOf(
         0 to stringResource(R.string.screen_alignment_center_short),
         1 to stringResource(R.string.screen_alignment_top_short),
@@ -2641,10 +2630,10 @@ private fun ScreenAlignmentButtons(selected: Int, enabled: Boolean = true, onSel
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (isSel && enabled) accent else Color.Black)
+                    .background(if (isSel && enabled) DeckPalette.primary.copy(alpha = 0.16f) else DeckPalette.surfaceVariant)
                     .border(
-                        width = 1.dp,
-                        color = if (isSel && enabled) accent else accentDim,
+                        width = if (isSel && enabled) 1.5.dp else 1.dp,
+                        color = if (isSel && enabled) DeckPalette.primary else DeckPalette.line,
                         shape = RoundedCornerShape(8.dp)
                     )
                     .clickable(enabled = enabled) { onSelect(align) }
@@ -2654,11 +2643,11 @@ private fun ScreenAlignmentButtons(selected: Int, enabled: Boolean = true, onSel
                     label,
                     color = when {
                         !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                        isSel    -> Color.Black
-                        else     -> accent
+                        isSel    -> DeckPalette.primary
+                        else     -> DeckPalette.onBackground
                     },
                     fontSize = 12.sp,
-                    fontWeight = if (isSel && enabled) FontWeight.Bold else FontWeight.Medium
+                    fontWeight = if (isSel && enabled) FontWeight.SemiBold else FontWeight.Medium
                 )
             }
         }
@@ -2681,8 +2670,6 @@ private fun ScalingModeHeader(title: String, color: Color, modifier: Modifier = 
 
 @Composable
 private fun UpscalerModeButtons(selected: Int, enabled: Boolean, onSelect: (Int) -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
-    val accentDim = LocalAccentDim.current
     val options = listOf(
         0 to "None", 1 to "Linear", 2 to "Nearest",
         3 to "SGSR", 8 to "SGSR HQ", 4 to "FSR",
@@ -2701,10 +2688,10 @@ private fun UpscalerModeButtons(selected: Int, enabled: Boolean, onSelect: (Int)
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(if (isSel && enabled) accent else Color.Black)
+                            .background(if (isSel && enabled) DeckPalette.primary.copy(alpha = 0.16f) else DeckPalette.surfaceVariant)
                             .border(
-                                width = 1.dp,
-                                color = if (isSel && enabled) accent else accentDim,
+                                width = if (isSel && enabled) 1.5.dp else 1.dp,
+                                color = if (isSel && enabled) DeckPalette.primary else DeckPalette.line,
                                 shape = RoundedCornerShape(8.dp)
                             )
                             .clickable(enabled = enabled) { onSelect(mode) }
@@ -2714,11 +2701,11 @@ private fun UpscalerModeButtons(selected: Int, enabled: Boolean, onSelect: (Int)
                             label,
                             color = when {
                                 !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                                isSel    -> Color.Black
-                                else     -> accent
+                                isSel    -> DeckPalette.primary
+                                else     -> DeckPalette.onBackground
                             },
                             fontSize = 12.sp,
-                            fontWeight = if (isSel && enabled) FontWeight.Bold else FontWeight.Medium
+                            fontWeight = if (isSel && enabled) FontWeight.SemiBold else FontWeight.Medium
                         )
                     }
                 }
@@ -2733,8 +2720,6 @@ private fun UpscalerModeButtons(selected: Int, enabled: Boolean, onSelect: (Int)
 // phone together (Container.VIBRATION_MODE_BOTH).
 @Composable
 private fun VibrationModeButtons(selected: Int, enabled: Boolean = true, onSelect: (Int) -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
-    val accentDim = LocalAccentDim.current
     val options = listOf(0 to "Off", 1 to "Controller", 2 to "Device", 3 to "Both")
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -2747,10 +2732,10 @@ private fun VibrationModeButtons(selected: Int, enabled: Boolean = true, onSelec
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(if (isSel && enabled) accent else Color.Black)
+                    .background(if (isSel && enabled) DeckPalette.primary.copy(alpha = 0.16f) else DeckPalette.surfaceVariant)
                     .border(
-                        width = 1.dp,
-                        color = if (isSel && enabled) accent else accentDim,
+                        width = if (isSel && enabled) 1.5.dp else 1.dp,
+                        color = if (isSel && enabled) DeckPalette.primary else DeckPalette.line,
                         shape = RoundedCornerShape(8.dp)
                     )
                     .clickable(enabled = enabled) { onSelect(mode) }
@@ -2760,11 +2745,11 @@ private fun VibrationModeButtons(selected: Int, enabled: Boolean = true, onSelec
                     label,
                     color = when {
                         !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                        isSel    -> Color.Black
-                        else     -> accent
+                        isSel    -> DeckPalette.primary
+                        else     -> DeckPalette.onBackground
                     },
                     fontSize = 11.sp,
-                    fontWeight = if (isSel && enabled) FontWeight.Bold else FontWeight.Medium
+                    fontWeight = if (isSel && enabled) FontWeight.SemiBold else FontWeight.Medium
                 )
             }
         }
@@ -2772,7 +2757,7 @@ private fun VibrationModeButtons(selected: Int, enabled: Boolean = true, onSelec
 }
 
 // Multi-select cousin of FullscreenModeButtons: each item toggles independently, but shares the exact
-// box style (accent fill + bold black text ON; black bg + accentDim 1dp border + accent medium text OFF)
+// box style (translucent blue fill + blue stroke ON; graphite tile + hairline border OFF)
 // and the aligned equal-width grid (weight(1f), short rows padded with Spacer so widths stay equal).
 // Callers build the list of currently-VISIBLE chips FIRST, then this chunks per row — so per-style
 // gating never leaves holes or misaligns the grid.
@@ -2784,8 +2769,6 @@ private fun VibrationModeButtons(selected: Int, enabled: Boolean = true, onSelec
 @Composable
 private fun ModeChipGrid(items: List<Triple<String, Boolean, () -> Unit>>, perRow: Int,
                          enabled: Boolean = true, disabledIndices: Set<Int> = emptySet()) {
-    val accent = MaterialTheme.colorScheme.primary
-    val accentDim = LocalAccentDim.current
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         items.withIndex().chunked(perRow).forEach { row ->
             Row(
@@ -2800,10 +2783,10 @@ private fun ModeChipGrid(items: List<Triple<String, Boolean, () -> Unit>>, perRo
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(if (isOn && chipEnabled) accent else Color.Black)
+                            .background(if (isOn && chipEnabled) DeckPalette.primary.copy(alpha = 0.16f) else DeckPalette.surfaceVariant)
                             .border(
-                                width = 1.dp,
-                                color = if (isOn && chipEnabled) accent else accentDim,
+                                width = if (isOn && chipEnabled) 1.5.dp else 1.dp,
+                                color = if (isOn && chipEnabled) DeckPalette.primary else DeckPalette.line,
                                 shape = RoundedCornerShape(8.dp)
                             )
                             .clickable(enabled = chipEnabled) { onTap() }
@@ -2813,11 +2796,11 @@ private fun ModeChipGrid(items: List<Triple<String, Boolean, () -> Unit>>, perRo
                             label,
                             color = when {
                                 !chipEnabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-                                isOn         -> Color.Black
-                                else         -> accent
+                                isOn         -> DeckPalette.primary
+                                else         -> DeckPalette.onBackground
                             },
                             fontSize = 12.sp,
-                            fontWeight = if (isOn && chipEnabled) FontWeight.Bold else FontWeight.Medium
+                            fontWeight = if (isOn && chipEnabled) FontWeight.SemiBold else FontWeight.Medium
                         )
                     }
                 }
@@ -2837,15 +2820,13 @@ private data class ToggleChipItem(
     val onToggle: (Boolean) -> Unit
 )
 
-// Compact stand-in for a run of ToggleRows: same chip language as ModeChipGrid above (accent fill +
-// bold black text ON; black bg + accentDim 1dp border + accent medium text OFF, equal widths, short
+// Compact stand-in for a run of ToggleRows: same chip language as ModeChipGrid above (blue stroke +
+// blue text ON; graphite tile + hairline border OFF, equal widths, short
 // rows padded with Spacer), but every chip toggles independently. Packing adjacent toggles 2–4 per
 // row is where the vertical space comes back — a Switch row costs ~4x the height of a chip.
 // Disabled chips keep ToggleRow's alpha-0.4 grey-out and swallow taps.
 @Composable
 private fun ToggleChipGrid(items: List<ToggleChipItem>, perRow: Int = 3) {
-    val accent = MaterialTheme.colorScheme.primary
-    val accentDim = LocalAccentDim.current
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         items.chunked(perRow).forEach { row ->
             // IntrinsicSize.Min + fillMaxHeight keeps a row level when one label wraps to two lines.
@@ -2866,10 +2847,10 @@ private fun ToggleChipGrid(items: List<ToggleChipItem>, perRow: Int = 3) {
                             .weight(1f)
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(8.dp))
-                            .background(if (isOn) accent else Color.Black)
+                            .background(if (isOn) DeckPalette.primary.copy(alpha = 0.16f) else DeckPalette.surfaceVariant)
                             .border(
-                                width = 1.dp,
-                                color = if (isOn) accent else accentDim,
+                                width = if (isOn) 1.5.dp else 1.dp,
+                                color = if (isOn) DeckPalette.primary else DeckPalette.line,
                                 shape = RoundedCornerShape(8.dp)
                             )
                             .then(
@@ -2880,11 +2861,11 @@ private fun ToggleChipGrid(items: List<ToggleChipItem>, perRow: Int = 3) {
                     ) {
                         Text(
                             item.label,
-                            color = if (isOn) Color.Black else accent,
+                            color = if (isOn) DeckPalette.primary else DeckPalette.onBackground,
                             fontSize = 12.sp,
                             lineHeight = 14.sp,
                             textAlign = TextAlign.Center,
-                            fontWeight = if (isOn) FontWeight.Bold else FontWeight.Medium
+                            fontWeight = if (isOn) FontWeight.SemiBold else FontWeight.Medium
                         )
                     }
                 }
@@ -3567,20 +3548,20 @@ private fun PresentModeSection(state: XServerDrawerState) {
 // ───── 3-stop chip selector (skin / color / outline) ─────
 @Composable
 private fun HudChipRow(label: String, options: List<String>, selected: Int, onSelect: (Int) -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
         Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.height(4.dp))
         Row(modifier = Modifier.fillMaxWidth()) {
             options.forEachIndexed { idx, opt ->
                 val sel = idx == selected
-                // Selected = accent fill / black text, matching the scaling + frame-gen buttons.
+                // Selected = translucent blue fill + blue stroke, matching every Deck chip row.
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .padding(end = if (idx < options.lastIndex) 6.dp else 0.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (sel) accent else MaterialTheme.colorScheme.surface)
+                        .background(if (sel) DeckPalette.primary.copy(alpha = 0.16f) else DeckPalette.surfaceVariant)
+                        .border(if (sel) 1.5.dp else 1.dp, if (sel) DeckPalette.primary else DeckPalette.line, RoundedCornerShape(10.dp))
                         .clickable { onSelect(idx) }
                         .padding(vertical = 8.dp),
                     contentAlignment = Alignment.Center
@@ -3588,8 +3569,8 @@ private fun HudChipRow(label: String, options: List<String>, selected: Int, onSe
                     Text(
                         opt,
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (sel) Color.Black else MaterialTheme.colorScheme.onSurface,
-                        fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal
+                        color = if (sel) DeckPalette.primary else DeckPalette.onBackground,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }

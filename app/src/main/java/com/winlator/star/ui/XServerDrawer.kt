@@ -6,18 +6,17 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -30,7 +29,6 @@ import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,6 +46,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.foundation.BorderStroke
@@ -73,6 +72,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -97,7 +97,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
@@ -120,6 +119,8 @@ import com.winlator.star.reshade.ReshadeLoadout
 import com.winlator.star.reshade.ReshadeManager
 import com.winlator.star.ui.components.ColorPicker
 import com.winlator.star.ui.screens.HelpDialog
+import com.winlator.star.ui.screens.DeckPalette
+import com.winlator.star.ui.screens.DeckStretchyTabs
 import com.winlator.star.ui.screens.MenuItemDivider
 import com.winlator.star.ui.screens.WatchdogSection
 import com.winlator.star.ui.screens.outlinedMenuCard
@@ -150,8 +151,58 @@ fun setupComposeView(view: ComposeView) {
     }
 }
 
+/** Deck palette forced for the in-game drawer: graphite surfaces, one signal blue. */
+private val DeckDrawerScheme = darkColorScheme(
+    primary = DeckPalette.primary,
+    onPrimary = DeckPalette.onPrimary,
+    primaryContainer = Color(0xFF0F2940),
+    onPrimaryContainer = Color(0xFFD3ECFF),
+    secondary = DeckPalette.onSurfaceVariant,
+    onSecondary = DeckPalette.onPrimary,
+    secondaryContainer = DeckPalette.surfaceVariant,
+    onSecondaryContainer = DeckPalette.onBackground,
+    tertiary = Color(0xFF9ED8FF),
+    onTertiary = DeckPalette.onPrimary,
+    background = DeckPalette.background,
+    onBackground = DeckPalette.onBackground,
+    surface = DeckPalette.surface,
+    onSurface = DeckPalette.onBackground,
+    surfaceVariant = DeckPalette.surfaceVariant,
+    onSurfaceVariant = DeckPalette.onSurfaceVariant,
+    surfaceContainer = DeckPalette.surface,
+    surfaceContainerLow = DeckPalette.surface,
+    surfaceContainerLowest = DeckPalette.background,
+    surfaceContainerHigh = DeckPalette.surfaceVariant,
+    surfaceContainerHighest = DeckPalette.surfaceVariant,
+    surfaceTint = Color.Transparent,
+    inverseSurface = DeckPalette.onBackground,
+    inverseOnSurface = DeckPalette.background,
+    error = DeckPalette.error,
+    onError = DeckPalette.onPrimary,
+    errorContainer = Color(0xFF3A1416),
+    onErrorContainer = Color(0xFFFFDAD6),
+    outline = DeckPalette.line2,
+    outlineVariant = DeckPalette.line,
+    scrim = Color.Black,
+)
+
+/** Deck's dim accent rides in LocalAccentDim, which most drawer controls use for fills/tracks. */
+private val DeckDrawerAccentDim = Color(0xFF0E3D63)
+
 @Composable
 fun XServerDrawer() {
+    MaterialTheme(
+        colorScheme = DeckDrawerScheme,
+        typography = MaterialTheme.typography,
+    ) {
+        CompositionLocalProvider(LocalAccentDim provides DeckDrawerAccentDim) {
+            XServerDrawerContent()
+        }
+    }
+}
+
+@Composable
+private fun XServerDrawerContent() {
     val state = XServerDrawerState
     val selectedTab by state.selectedTab.collectAsState()
     val isPaused by state.isPaused.collectAsState()
@@ -166,26 +217,17 @@ fun XServerDrawer() {
     val menuOpen by XServerDialogState.menuOpen.collectAsState()
     LaunchedEffect(menuOpen) { if (menuOpen) com.winlator.star.store.InGameFriendsSource.poke() }
     val pauseIcon = if (isPaused) R.drawable.icon_play else R.drawable.icon_pause
-    val accent = MaterialTheme.colorScheme.primary
-    val surface = MaterialTheme.colorScheme.surface
 
-    // ── Shell: Command Center / Game Bar style — a floating rounded card inset from the screen
-    // edges instead of the old edge-to-edge panel. The gutters are deliberately UNPAINTED: this
-    // view used to lay its own black-60% frame there, on top of the DrawerLayout's scrim (also
-    // 60%), and the two stacked into a much darker rectangle hugging the card — the gray "box"
-    // around the drawer. Leaving the gutters clear lets the host's single scrim show through
-    // evenly, so the card reads as floating on one uniform dim. Inside: a top rounded-rectangle
-    // strip of selectable tab chips (horizontally scrollable, with the task/pause/exit actions
-    // trailing after a divider), then the accent seam, then the selected tab's menu underneath.
+    // ── Shell: a Deck command surface — a floating graphite card, a compact live session header,
+    // a stretchy Deck tab strip, then the selected tab's panel. The gutters stay unpainted so the
+    // host's single dim shows evenly and the card reads as floating over the game.
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 14.dp, vertical = 14.dp),
+            .padding(horizontal = 12.dp, vertical = 12.dp),
     ) {
-        // Touch sink, bottom-most child: the card deliberately isn't clickable (its chips, rows and
-        // sliders own their own taps), so a tap on the empty panel or the gutters would fall through
-        // this drawer view to the game surface and the virtual controls underneath. Eating every
-        // event here keeps the drawer modal without touching anything above it.
+        // Touch sink, bottom-most child: eat every event on the empty panel and gutters so a tap
+        // can never fall through to the game surface / virtual controls underneath.
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -200,136 +242,101 @@ fun XServerDrawer() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .shadow(10.dp, RoundedCornerShape(22.dp), clip = false)
-                .clip(RoundedCornerShape(22.dp))
-                .background(surface)
-                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f), RoundedCornerShape(22.dp))
-                .padding(12.dp),
+                .shadow(16.dp, RoundedCornerShape(20.dp), clip = false)
+                .clip(RoundedCornerShape(20.dp))
+                .background(DeckPalette.background)
+                .border(1.dp, DeckPalette.line2, RoundedCornerShape(20.dp))
+                .padding(horizontal = 12.dp, vertical = 10.dp),
         ) {
-            // ── Top strip: one rounded rectangle holding the tab chips ──
+            // Header: live session state on the left, the three session actions on the right.
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
-                    .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f), RoundedCornerShape(16.dp))
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                // Up to nine 44dp chips never fit the 380dp shell, so the tab group scrolls sideways.
-                val stripTabs = remember(friendsSource.tabVisible, tvConnected, castSupported) {
-                    buildList {
-                        add(TabType.GRAPHICS)
-                        add(TabType.HUD)
-                        add(TabType.RESHADE)
-                        add(TabType.CONTROLS)
-                        add(TabType.AUDIO)
-                        add(TabType.ADVANCED)
-                        if (friendsSource.tabVisible) add(TabType.FRIENDS)
-                        if (com.winlator.star.FeatureFlags.TV_OUTPUT_ENABLED && (tvConnected || castSupported)) add(TabType.TV)
-                    }
-                }
-                BoxWithConstraints(modifier = Modifier.weight(1f)) {
-                    val stripState = rememberScrollState()
-                    // Keep the selected chip in view when the selection changes from elsewhere (the
-                    // task-manager action, a deep link); a tap on a chip is already on screen.
-                    val stripIndex = stripTabs.indexOf(selectedTab)
-                    // LocalDensity.current is a @Composable read: capture it HERE, in the
-                    // composable scope, then use it inside the LaunchedEffect below (a plain
-                    // suspend lambda, where composable reads are a compile error).
-                    val stripDensity = LocalDensity.current
-                    LaunchedEffect(stripIndex, stripState.maxValue) {
-                        if (stripIndex >= 0 && stripState.maxValue > 0) {
-                            val chip = with(stripDensity) { 50.dp.toPx() }
-                            val start = chip * stripIndex
-                            val end = start + with(stripDensity) { 44.dp.toPx() }
-                            val view = with(stripDensity) { maxWidth.toPx() }
-                            if (start < stripState.value) {
-                                stripState.animateScrollTo(start.roundToInt())
-                            } else if (end > stripState.value + view) {
-                                stripState.animateScrollTo((end - view).roundToInt())
-                            }
-                        }
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(stripState),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        stripTabs.forEach { tab ->
-                            when (tab) {
-                                TabType.HUD -> FpsTabButton(selectedTab == TabType.HUD) {
-                                    handleTabClick(TabType.HUD, state)
-                                }
-                                TabType.FRIENDS -> FriendsTabButton(
-                                    isSelected = selectedTab == TabType.FRIENDS,
-                                    unread = friendsUnread.values.any { it > 0 },
-                                ) { handleTabClick(TabType.FRIENDS, state) }
-                                TabType.TV -> TvTabButton(selectedTab == TabType.TV) {
-                                    handleTabClick(TabType.TV, state)
-                                }
-                                else -> {
-                                    val icon = when (tab) {
-                                        TabType.RESHADE -> R.drawable.icon_screen_effect
-                                        TabType.CONTROLS -> R.drawable.icon_input_controls
-                                        TabType.AUDIO -> R.drawable.icon_audio
-                                        TabType.ADVANCED -> R.drawable.icon_debug
-                                        else -> R.drawable.icon_display
-                                    }
-                                    TabIconButton(icon, selectedTab == tab) { handleTabClick(tab, state) }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Trailing actions: task manager / pause / exit stay out of the tab scroll.
                 Box(
                     modifier = Modifier
-                        .padding(horizontal = 5.dp)
-                        .width(1.dp)
-                        .height(28.dp)
-                        .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)),
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(if (isPaused) DeckPalette.onSurfaceVariant else DeckPalette.good),
                 )
-                TabIconButton(R.drawable.icon_task_manager, selectedTab == TabType.TASK_MANAGER) {
+                Spacer(Modifier.width(9.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "SESSION",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 1.8.sp,
+                        color = DeckPalette.onSurfaceVariant,
+                    )
+                    Text(
+                        text = if (isPaused) "Paused" else "Running",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = DeckPalette.onBackground,
+                        maxLines = 1,
+                    )
+                }
+                DeckHeaderIcon(R.drawable.icon_task_manager, "Task manager") {
                     state.selectTab(TabType.TASK_MANAGER)
                     state.onTaskManager?.run()
                 }
-                Spacer(Modifier.width(5.dp))
-                TabIconButton(pauseIcon, isSelected = false) {
+                Spacer(Modifier.width(6.dp))
+                DeckHeaderIcon(pauseIcon, if (isPaused) "Resume" else "Pause") {
                     state.onPauseResume?.run(); state.onClose?.run()
                 }
-                Spacer(Modifier.width(5.dp))
-                TabIconButton(R.drawable.icon_exit, isSelected = false) {
+                Spacer(Modifier.width(6.dp))
+                DeckHeaderIcon(R.drawable.icon_exit, "Exit session", tint = DeckPalette.error) {
                     state.onExit?.run()
                 }
             }
 
             Spacer(Modifier.height(10.dp))
 
-            // Accent seam under the strip — the old full-height rail seam, turned horizontal.
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(1.5.dp)
-                    .background(accent),
+            val stripTabs = remember(friendsSource.tabVisible, tvConnected, castSupported) {
+                buildList {
+                    add(TabType.GRAPHICS)
+                    add(TabType.HUD)
+                    add(TabType.RESHADE)
+                    add(TabType.CONTROLS)
+                    add(TabType.AUDIO)
+                    add(TabType.ADVANCED)
+                    if (friendsSource.tabVisible) add(TabType.FRIENDS)
+                    if (com.winlator.star.FeatureFlags.TV_OUTPUT_ENABLED && (tvConnected || castSupported)) add(TabType.TV)
+                    add(TabType.TASK_MANAGER)
+                }
+            }
+            val unreadTotal = friendsUnread.values.sum()
+            val tabBadges = remember(stripTabs, unreadTotal) {
+                stripTabs.map { if (it == TabType.FRIENDS) unreadTotal else 0 }
+            }
+            // Deck stretchy tabs: one scrolling strip, blue stroke slides onto the new tab.
+            DeckStretchyTabs(
+                labels = stripTabs.map { tabLabel(it) },
+                selected = stripTabs.indexOf(selectedTab).coerceAtLeast(0),
+                onSelect = { handleTabClick(stripTabs[it], state) },
+                badges = tabBadges,
+                scroll = true,
+                height = 34.dp,
             )
 
             Spacer(Modifier.height(10.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(DeckPalette.line),
+            )
+            Spacer(Modifier.height(10.dp))
 
-            // The selected tab's menu, stacked below the strip. The Friends tab owns its own
-            // scrolling (a LazyColumn roster/thread with the send box pinned at the bottom) —
-            // nesting that inside the pane's verticalScroll is illegal in Compose, so that one
-            // tab skips it, exactly as the old rail layout did.
+            // The selected tab's panel. Friends owns its own scrolling (LazyColumn roster/thread
+            // with a pinned send box), so it opts out of the pane's verticalScroll.
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
                     .fillMaxWidth()
                     .then(if (selectedTab == TabType.FRIENDS) Modifier else Modifier.verticalScroll(rememberScrollState()))
-                    .padding(horizontal = 4.dp),
+                    .padding(horizontal = 2.dp),
             ) {
                 when (selectedTab) {
                     TabType.GRAPHICS -> GraphicsContent(state)
@@ -347,7 +354,47 @@ fun XServerDrawer() {
     }
 }
 
+private fun tabLabel(tab: TabType): String = when (tab) {
+    TabType.GRAPHICS -> "Graphics"
+    TabType.HUD -> "FPS"
+    TabType.RESHADE -> "Effects"
+    TabType.CONTROLS -> "Controls"
+    TabType.AUDIO -> "Audio"
+    TabType.ADVANCED -> "Advanced"
+    TabType.FRIENDS -> "Friends"
+    TabType.TV -> "TV"
+    TabType.TASK_MANAGER -> "Tasks"
+}
+
+/** Compact header action: a graphite tile with a hairline border, 34dp, icon only. */
+@Composable
+private fun DeckHeaderIcon(
+    iconRes: Int,
+    contentDescription: String,
+    tint: Color = DeckPalette.onSurfaceVariant,
+    onClick: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(DeckPalette.surface)
+            .border(1.dp, DeckPalette.line, RoundedCornerShape(10.dp))
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(17.dp),
+        )
+    }
+}
+
 private fun handleTabClick(tab: TabType, state: XServerDrawerState) {
+    if (tab == TabType.TASK_MANAGER && state.selectedTab.value != tab) state.onTaskManager?.run()
     state.selectTab(tab)
 }
 
@@ -650,154 +697,37 @@ private fun TvContent(state: XServerDrawerState) {
     Spacer(Modifier.height(12.dp))
 }
 
-// ───── Modern Tab Button ─────
-
-@Composable
-private fun TabIconButton(iconRes: Int, isSelected: Boolean, onClick: () -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
-    val accentDim = LocalAccentDim.current
-    // Selected = filled accent pill (accent → dim), matching the rebuild preview.
-    val bgBrush = if (isSelected)
-        Brush.verticalGradient(listOf(accent, accentDim))
-    else
-        Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
-
-    val borderColor = if (isSelected) accent.copy(alpha = 0.6f) else Color(0xFF333333)
-    val tintColor = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-
-    Box(
-        modifier = Modifier
-            .size(44.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(bgBrush, RoundedCornerShape(12.dp))
-            .border(1.5.dp, borderColor, RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (isSelected) {
-            Canvas(Modifier.size(44.dp)) {
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(accent.copy(alpha = 0.25f), Color.Transparent),
-                        radius = size.minDimension / 2f
-                    ),
-                    radius = size.minDimension / 2f
-                )
-            }
-        }
-        Icon(
-            painter = painterResource(iconRes),
-            contentDescription = null,
-            tint = tintColor,
-            modifier = Modifier.size(22.dp),
-        )
-    }
-}
-
-@Composable
-private fun FpsTabButton(isSelected: Boolean, onClick: () -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
-    val accentDim = LocalAccentDim.current
-    // Selected = filled accent pill (accent → dim), matching the rebuild preview.
-    val bgBrush = if (isSelected)
-        Brush.verticalGradient(listOf(accent, accentDim))
-    else
-        Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
-
-    val borderColor = if (isSelected) accent.copy(alpha = 0.6f) else Color(0xFF333333)
-    val textColor = if (isSelected) Color.White else accent
-
-    Box(
-        modifier = Modifier
-            .size(44.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(bgBrush, RoundedCornerShape(12.dp))
-            .border(1.5.dp, borderColor, RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (isSelected) {
-            Canvas(Modifier.size(44.dp)) {
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(accent.copy(alpha = 0.25f), Color.Transparent),
-                        radius = size.minDimension / 2f
-                    ),
-                    radius = size.minDimension / 2f
-                )
-            }
-        }
-        Text(
-            text = "FPS",
-            color = textColor,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
-        )
-    }
-}
-
-// TV tab: a text "TV" pill (mirrors the FPS tab) instead of an icon.
-@Composable
-private fun TvTabButton(isSelected: Boolean, onClick: () -> Unit) {
-    val accent = MaterialTheme.colorScheme.primary
-    val accentDim = LocalAccentDim.current
-    val bgBrush = if (isSelected)
-        Brush.verticalGradient(listOf(accent, accentDim))
-    else
-        Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent))
-
-    val borderColor = if (isSelected) accent.copy(alpha = 0.6f) else Color(0xFF333333)
-    val textColor = if (isSelected) Color.White else accent
-
-    Box(
-        modifier = Modifier
-            .size(44.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(bgBrush, RoundedCornerShape(12.dp))
-            .border(1.5.dp, borderColor, RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (isSelected) {
-            Canvas(Modifier.size(44.dp)) {
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(accent.copy(alpha = 0.25f), Color.Transparent),
-                        radius = size.minDimension / 2f
-                    ),
-                    radius = size.minDimension / 2f
-                )
-            }
-        }
-        Text(
-            text = "TV",
-            color = textColor,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
-        )
-    }
-}
-
 // ───── Section Header ─────
 
 @Composable
 private fun SectionHeader(title: String) {
-    val accent = MaterialTheme.colorScheme.primary
-    Column(modifier = Modifier.padding(bottom = 10.dp)) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp, fontWeight = FontWeight.Bold),
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Spacer(Modifier.height(4.dp))
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp, bottom = 10.dp),
+    ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth(0.4f)
-                .height(2.dp)
-                .background(
-                    Brush.horizontalGradient(listOf(accent, accent.copy(alpha = 0.1f))),
-                    RoundedCornerShape(1.dp)
-                )
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(DeckPalette.primary),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = title.uppercase(),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.6.sp,
+            color = DeckPalette.primary,
+            maxLines = 1,
+        )
+        Spacer(Modifier.width(10.dp))
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(DeckPalette.line),
         )
     }
 }
@@ -898,8 +828,8 @@ private fun AccentButton(text: String, modifier: Modifier = Modifier, onClick: (
         modifier = modifier.fillMaxWidth().height(42.dp),
         shape = RoundedCornerShape(10.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = accentDim,
-            contentColor = Color.White
+            containerColor = DeckPalette.primary,
+            contentColor = DeckPalette.onPrimary
         )
     ) {
         Text(text, fontWeight = FontWeight.SemiBold)

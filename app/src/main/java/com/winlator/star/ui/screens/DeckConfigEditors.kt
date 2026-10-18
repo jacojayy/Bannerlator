@@ -57,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
@@ -142,6 +143,7 @@ internal fun DeckConfigTextField(
     minHeight: androidx.compose.ui.unit.Dp = 0.dp,
     isError: Boolean = false,
 ) {
+    val edit = rememberDeckEditState()
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
         Text(
             text = label,
@@ -149,27 +151,43 @@ internal fun DeckConfigTextField(
             fontSize = 12.sp,
             modifier = Modifier.padding(bottom = 4.dp),
         )
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            singleLine = singleLine,
-            isError = isError,
-            keyboardOptions = if (numeric) KeyboardOptions(keyboardType = KeyboardType.Number) else KeyboardOptions.Default,
-            colors = TextFieldDefaults.colors(
-                focusedContainerColor = DeckPalette.surfaceVariant,
-                unfocusedContainerColor = DeckPalette.surfaceVariant,
-                focusedTextColor = DeckPalette.onBackground,
-                unfocusedTextColor = DeckPalette.onBackground,
-                focusedIndicatorColor = DeckPalette.primary,
-                unfocusedIndicatorColor = DeckPalette.line2,
-                errorIndicatorColor = DeckPalette.error,
-                cursorColor = DeckPalette.primary,
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(if (minHeight > 0.dp) Modifier.heightIn(min = minHeight) else Modifier)
-                .clip(RoundedCornerShape(10.dp)),
-        )
+        Box(Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = singleLine,
+                readOnly = !edit.editing,
+                isError = isError,
+                keyboardOptions = if (numeric) KeyboardOptions(keyboardType = KeyboardType.Number) else KeyboardOptions.Default,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = DeckPalette.surfaceVariant,
+                    unfocusedContainerColor = DeckPalette.surfaceVariant,
+                    focusedTextColor = DeckPalette.onBackground,
+                    unfocusedTextColor = DeckPalette.onBackground,
+                    focusedIndicatorColor = DeckPalette.primary,
+                    unfocusedIndicatorColor = DeckPalette.line2,
+                    errorIndicatorColor = DeckPalette.error,
+                    cursorColor = DeckPalette.primary,
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusProperties { canFocus = edit.editing }
+                    .focusRequester(edit.fieldFocus)
+                    .onFocusChanged { if (edit.editing && !it.isFocused) edit.editing = false }
+                    .onPreviewKeyEvent { event ->
+                        if (edit.editing && event.type == KeyEventType.KeyDown &&
+                            (event.key == Key.ButtonB || event.key == Key.Back)
+                        ) {
+                            edit.returnFocus = true
+                            edit.editing = false
+                            true
+                        } else false
+                    }
+                    .then(if (minHeight > 0.dp) Modifier.heightIn(min = minHeight) else Modifier)
+                    .clip(RoundedCornerShape(10.dp)),
+            )
+            if (!edit.editing) DeckEditOverlay(edit, Modifier.matchParentSize())
+        }
     }
 }
 
@@ -242,6 +260,7 @@ internal fun DeckChoiceRowWithDownload(
 @Composable
 internal fun DeckConfigDialog(title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     val focusManager = LocalFocusManager.current
+    val editTracker = LocalDeckEditTracker.current
     val rootFocus = remember { FocusRequester() }
     var rootFocused by remember { mutableStateOf(false) }
     // Controller-first: the popup owns focus on open, D-pad walks it, and B closes it.
@@ -261,8 +280,8 @@ internal fun DeckConfigDialog(title: String, onDismiss: () -> Unit, content: @Co
                     if (e.type == KeyEventType.KeyDown &&
                         (e.key == Key.ButtonB || e.key == Key.Back)
                     ) {
-                        onDismiss()
-                        true
+                        // While one of the popup's text fields is editing, B leaves the field.
+                        if (editTracker.editing) false else { onDismiss(); true }
                     } else false
                 }
                 .onKeyEvent { e ->

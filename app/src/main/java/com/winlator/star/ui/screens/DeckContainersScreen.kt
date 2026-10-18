@@ -66,7 +66,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -175,15 +174,11 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
             )
             Spacer(Modifier.height(10.dp))
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusGroup(),
-            ) {
-                DeckStorageTabPill(label = "Cronos", active = subtab == 0) { tabs.select(0) }
-                DeckStorageTabPill(label = "Containers", active = subtab == 1) { tabs.select(1) }
-            }
+            DeckStretchyTabs(
+                labels = listOf("Cronos", "Containers"),
+                selected = subtab,
+                onSelect = { tabs.select(it) },
+            )
             Spacer(Modifier.height(12.dp))
 
             AnimatedContent(
@@ -299,40 +294,6 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
                     vm.remove(item.container, context) { cronosEpoch++ }
                 }
             },
-        )
-    }
-}
-
-/** One Studio-style sub-tab pill (same shape/motion as the container editor's tab row). */
-@Composable
-private fun DeckStorageTabPill(
-    label: String,
-    active: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val interaction = remember { MutableInteractionSource() }
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = modifier
-            .heightIn(min = 40.dp)
-            .focusProperties { canFocus = false }
-            .deckTileFocus(interaction)
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (active) DeckPalette.primary else DeckPalette.surface)
-            .border(
-                1.dp,
-                if (active) DeckPalette.primary else DeckPalette.line,
-                RoundedCornerShape(12.dp),
-            )
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Text(
-            text = label,
-            color = if (active) DeckPalette.onPrimary else DeckPalette.onSurfaceVariant,
-            fontSize = 13.sp,
-            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
         )
     }
 }

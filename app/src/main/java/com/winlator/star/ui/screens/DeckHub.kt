@@ -46,7 +46,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -562,13 +561,7 @@ internal fun HubConfirmDialog(
                 )
 
                 Spacer(Modifier.height(14.dp))
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Game name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                DeckConfigTextField("Game name", name, { name = it })
 
                 if (mode == HubAddMode.CRONOS) {
                     Spacer(Modifier.height(10.dp))

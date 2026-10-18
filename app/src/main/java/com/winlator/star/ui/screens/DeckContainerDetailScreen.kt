@@ -8,23 +8,16 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -39,8 +32,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -48,7 +39,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.winlator.star.container.Container
 import com.winlator.star.core.StringUtils
-import com.winlator.star.store.deckTileFocus
 import java.util.Locale
 
 /**
@@ -150,42 +140,14 @@ internal fun DeckContainerDetailScreen(
             )
         }
 
-        // ── Top tab pills (touch-only; L1/R1 step them from anywhere in the pane) ──
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp, vertical = 4.dp)
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            tabTitles.forEachIndexed { i, tabTitle ->
-                val active = tab == i
-                val interaction = remember { MutableInteractionSource() }
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .heightIn(min = 40.dp)
-                        .deckTileFocus(interaction)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(if (active) DeckPalette.primary else DeckPalette.surface)
-                        .border(
-                            1.dp,
-                            if (active) DeckPalette.primary else DeckPalette.line,
-                            RoundedCornerShape(12.dp),
-                        )
-                        .focusProperties { canFocus = false }
-                        .clickable(interactionSource = interaction, indication = null) { tabs.select(i) }
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                ) {
-                    Text(
-                        tabTitle,
-                        color = if (active) DeckPalette.onPrimary else DeckPalette.onSurfaceVariant,
-                        fontSize = 13.sp,
-                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                    )
-                }
-            }
-        }
+        // ── Top tabs — L1/R1 step them; the accent pill stretches onto the new one ──
+        DeckStretchyTabs(
+            labels = tabTitles,
+            selected = tab,
+            onSelect = { tabs.select(it) },
+            scroll = true,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+        )
 
         // ── Tab content — L1/R1 drag the page sideways, DroidDeck's long glide ──
         AnimatedContent(

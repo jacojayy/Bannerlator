@@ -202,6 +202,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     val focusManager = LocalFocusManager.current
     var paneFocused by remember { mutableStateOf(false) }
     val tabs = remember { DeckTabHost() }
+    val editTracker = remember { DeckEditTracker() }
     LaunchedEffect(section, deckDetail) { tabs.bind(0) }
     LaunchedEffect(introDone, section) {
         if (introDone) runCatching { railFocus.requestFocus() }
@@ -248,6 +249,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
         CompositionLocalProvider(
             LocalIndication provides remember { ControllerFocusIndication(Deck.primary) },
             LocalDeckTabs provides tabs,
+            LocalDeckEditTracker provides editTracker,
         ) {
     Row(
         modifier = Modifier
@@ -257,7 +259,10 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (e.key) {
                     Key.ButtonB -> {
-                        if (tabs.onBack?.invoke() == true) true else { goBack(); true }
+                        // A text field that is taking input owns B first (it just closes the IME).
+                        if (editTracker.editing) false
+                        else if (tabs.onBack?.invoke() == true) true
+                        else { goBack(); true }
                     }
                     // DroidDeck steps pages with the shoulders; the tabs themselves are touch-only.
                     Key.ButtonL1 -> if (tabs.count > 0) {

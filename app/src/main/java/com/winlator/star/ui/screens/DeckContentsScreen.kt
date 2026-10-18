@@ -90,9 +90,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -201,14 +208,11 @@ internal fun DeckContentsScreen(vm: ContentsHubViewModel = viewModel()) {
                 }
             }
             Spacer(Modifier.height(12.dp))
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                DeckContentsTab.values().forEachIndexed { index, entry ->
-                    DeckContentsPill(entry.label, tab == index) { tabs.select(index) }
-                }
-            }
+            DeckStretchyTabs(
+                labels = DeckContentsTab.values().map { it.label },
+                selected = tab,
+                onSelect = { tabs.select(it) },
+            )
             Spacer(Modifier.height(12.dp))
             AnimatedContent(
                 targetState = tab,
@@ -241,35 +245,6 @@ internal fun DeckContentsScreen(vm: ContentsHubViewModel = viewModel()) {
 }
 
 // ── Chrome ────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun DeckContentsPill(label: String, active: Boolean, onClick: () -> Unit) {
-    val interaction = remember { MutableInteractionSource() }
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .heightIn(min = 40.dp)
-            .focusProperties { canFocus = false }
-            .deckTileFocus(interaction)
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (active) DeckPalette.primary else DeckPalette.surface)
-            .border(
-                1.dp,
-                if (active) DeckPalette.primary else DeckPalette.line,
-                RoundedCornerShape(12.dp),
-            )
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Text(
-            text = label,
-            color = if (active) DeckPalette.onPrimary else DeckPalette.onSurfaceVariant,
-            fontSize = 13.sp,
-            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-            maxLines = 1,
-        )
-    }
-}
 
 @Composable
 private fun DeckIconAction(
@@ -525,61 +500,78 @@ private fun DeckContentsBrowseTab(vm: ContentsHubViewModel) {
 private fun DeckSearchField(query: String, onQuery: (String) -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
+    val edit = rememberDeckEditState()
     val shape = RoundedCornerShape(12.dp)
-    BasicTextField(
-        value = query,
-        onValueChange = onQuery,
-        singleLine = true,
-        textStyle = TextStyle(color = DeckPalette.onBackground, fontSize = 14.sp),
-        cursorBrush = SolidColor(DeckPalette.primary),
-        interactionSource = interaction,
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 46.dp)
-            .clip(shape)
-            .background(DeckPalette.surface)
-            .border(1.dp, if (focused) DeckPalette.primary else DeckPalette.line, shape),
-        decorationBox = { inner ->
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-            ) {
-                Icon(
-                    Icons.Filled.Search,
-                    contentDescription = null,
-                    tint = if (focused) DeckPalette.primary else DeckPalette.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(Modifier.width(10.dp))
-                Box(Modifier.weight(1f)) {
-                    if (query.isEmpty()) {
-                        Text(
-                            text = "Search every repository...",
-                            fontSize = 14.sp,
-                            color = DeckPalette.onSurfaceVariant,
-                        )
-                    }
-                    inner()
-                }
-                if (query.isNotEmpty()) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(26.dp)
-                            .clip(CircleShape)
-                            .clickable { onQuery("") },
+    Box(Modifier.fillMaxWidth()) {
+        BasicTextField(
+            value = query,
+            onValueChange = onQuery,
+            singleLine = true,
+            readOnly = !edit.editing,
+            textStyle = TextStyle(color = DeckPalette.onBackground, fontSize = 14.sp),
+            cursorBrush = SolidColor(DeckPalette.primary),
+            interactionSource = interaction,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 46.dp)
+                .focusProperties { canFocus = edit.editing }
+                .focusRequester(edit.fieldFocus)
+                .onFocusChanged { if (edit.editing && !it.isFocused) edit.editing = false }
+                .onPreviewKeyEvent { event ->
+                    if (edit.editing && event.type == KeyEventType.KeyDown &&
+                        (event.key == Key.ButtonB || event.key == Key.Back)
                     ) {
-                        Icon(
-                            Icons.Filled.Close,
-                            contentDescription = "Clear search",
-                            tint = DeckPalette.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp),
-                        )
+                        edit.returnFocus = true
+                        edit.editing = false
+                        true
+                    } else false
+                }
+                .clip(shape)
+                .background(DeckPalette.surface)
+                .border(1.dp, if (focused) DeckPalette.primary else DeckPalette.line, shape),
+            decorationBox = { inner ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Search,
+                        contentDescription = null,
+                        tint = if (focused) DeckPalette.primary else DeckPalette.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Box(Modifier.weight(1f)) {
+                        if (query.isEmpty()) {
+                            Text(
+                                text = "Search every repository...",
+                                fontSize = 14.sp,
+                                color = DeckPalette.onSurfaceVariant,
+                            )
+                        }
+                        inner()
+                    }
+                    if (query.isNotEmpty()) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(26.dp)
+                                .clip(CircleShape)
+                                .clickable { onQuery("") },
+                        ) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = "Clear search",
+                                tint = DeckPalette.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
                     }
                 }
-            }
-        },
-    )
+            },
+        )
+        if (!edit.editing) DeckEditOverlay(edit, Modifier.matchParentSize())
+    }
 }
 
 @Composable

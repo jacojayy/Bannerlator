@@ -1,6 +1,9 @@
 package com.winlator.star.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -10,19 +13,24 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -35,9 +43,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import com.winlator.star.store.deckTileFocus
@@ -46,15 +57,30 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 
 /**
  * One page row at a time (Storage sub-tabs, container editor tabs) binds itself here, so the Deck
@@ -468,6 +494,258 @@ internal fun DeckSliderRow(
     }
 }
 
+/**
+ * A Deck text field waits for A/Enter before it starts editing, so the D-pad never falls into a
+ * text box (or raises the IME) while the player is just navigating. B / Back leaves the field and
+ * returns the cursor to the same row.
+ */
+internal class DeckEditState {
+    var editing by mutableStateOf(false)
+    internal var returnFocus = false
+    internal var trackerHeld = false
+    internal val fieldFocus = FocusRequester()
+}
+
+/**
+ * Lets the surrounding screen (or popup) know a field is taking input, so the B button closes the
+ * keyboard before it closes the screen. One field can be editing at a time, hence a single flag.
+ */
+internal class DeckEditTracker {
+    private var active by mutableIntStateOf(0)
+    val editing: Boolean get() = active > 0
+    internal fun hold() { active++ }
+    internal fun release() { if (active > 0) active-- }
+}
+
+internal val LocalDeckEditTracker = compositionLocalOf { DeckEditTracker() }
+
+@Composable
+internal fun rememberDeckEditState(): DeckEditState {
+    val state = remember { DeckEditState() }
+    val tracker = LocalDeckEditTracker.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(state.editing) {
+        if (state.editing && !state.trackerHeld) {
+            state.trackerHeld = true
+            tracker.hold()
+        } else if (!state.editing && state.trackerHeld) {
+            state.trackerHeld = false
+            tracker.release()
+        }
+        if (state.editing) {
+            runCatching { state.fieldFocus.requestFocus() }
+            keyboard?.show()
+        } else {
+            keyboard?.hide()
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            if (state.trackerHeld) {
+                state.trackerHeld = false
+                tracker.release()
+            }
+        }
+    }
+    BackHandler(enabled = state.editing) {
+        state.returnFocus = true
+        state.editing = false
+    }
+    return state
+}
+
+/** Transparent focus target laid over a field while it is not editing. A / Enter starts editing. */
+@Composable
+internal fun DeckEditOverlay(state: DeckEditState, modifier: Modifier = Modifier) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        if (state.returnFocus) {
+            state.returnFocus = false
+            runCatching { focus.requestFocus() }
+        }
+    }
+    Box(
+        modifier = modifier
+            .focusRequester(focus)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) { state.editing = true }
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown &&
+                    (event.key == Key.ButtonA || event.key == Key.Enter)
+                ) {
+                    state.editing = true
+                    true
+                } else false
+            },
+    )
+}
+
+/**
+ * Deck's stretchy tab strip: the accent pill grows toward the tab being opened, then contracts onto
+ * it (the Steam Deck / DroidDeck tab feel) instead of sliding at a fixed width. Callers drive
+ * selection with L1/R1; [focusable] keeps the labels on the D-pad path for the store tab bars.
+ */
+@Composable
+internal fun DeckStretchyTabs(
+    labels: List<String>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    badges: List<Int>? = null,
+    focusable: Boolean = false,
+    scroll: Boolean = false,
+    height: Dp = 40.dp,
+) {
+    val density = LocalDensity.current
+    val lefts = remember(labels.size) { mutableStateListOf<Float>() }
+    val rights = remember(labels.size) { mutableStateListOf<Float>() }
+    val start = remember { Animatable(0f) }
+    val end = remember { Animatable(0f) }
+    var lastSelected by remember { mutableIntStateOf(-1) }
+    val scrollState = rememberScrollState()
+
+    val targetLeft = lefts.getOrNull(selected)
+    val targetRight = rights.getOrNull(selected)
+    LaunchedEffect(selected, targetLeft, targetRight) {
+        val l = targetLeft ?: return@LaunchedEffect
+        val r = targetRight ?: return@LaunchedEffect
+        when {
+            lastSelected == -1 -> {
+                start.snapTo(l)
+                end.snapTo(r)
+                lastSelected = selected
+            }
+            selected == lastSelected -> {
+                if (start.value != l || end.value != r) {
+                    start.snapTo(l)
+                    end.snapTo(r)
+                }
+            }
+            l >= start.value -> {
+                end.animateTo(r, tween(170, easing = DeckEase))
+                start.animateTo(l, tween(210, easing = DeckEase))
+                lastSelected = selected
+            }
+            else -> {
+                start.animateTo(l, tween(170, easing = DeckEase))
+                end.animateTo(r, tween(210, easing = DeckEase))
+                lastSelected = selected
+            }
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(height + 6.dp)
+            .clip(RoundedCornerShape(13.dp))
+            .background(DeckPalette.surfaceVariant)
+            .border(1.dp, DeckPalette.line2, RoundedCornerShape(13.dp))
+            .padding(3.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(if (scroll) Modifier.horizontalScroll(scrollState) else Modifier),
+        ) {
+            Box(Modifier.height(height)) {
+                if (end.value > start.value) {
+                    Box(
+                        Modifier
+                            .offset { IntOffset(start.value.roundToInt(), 0) }
+                            .width(with(density) { (end.value - start.value).toDp() })
+                            .fillMaxHeight()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(DeckPalette.primary),
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .height(height)
+                        .then(if (scroll) Modifier else Modifier.fillMaxWidth()),
+                ) {
+                    labels.forEachIndexed { index, label ->
+                        DeckStretchyTab(
+                            label = label,
+                            badge = badges?.getOrNull(index) ?: 0,
+                            active = index == selected,
+                            focusable = focusable,
+                            padding = if (scroll) 16.dp else 6.dp,
+                            modifier = if (scroll) Modifier else Modifier.weight(1f),
+                            onClick = { onSelect(index) },
+                            onMeasured = { left, right ->
+                                while (lefts.size <= index) {
+                                    lefts.add(0f)
+                                    rights.add(0f)
+                                }
+                                if (lefts[index] != left || rights[index] != right) {
+                                    lefts[index] = left
+                                    rights[index] = right
+                                }
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeckStretchyTab(
+    label: String,
+    badge: Int,
+    active: Boolean,
+    focusable: Boolean,
+    padding: Dp,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    onMeasured: (Float, Float) -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val ink by animateColorAsState(
+        if (active) DeckPalette.onPrimary else DeckPalette.onSurfaceVariant,
+        tween(190, easing = DeckEase),
+        label = "deckTabInk",
+    )
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .fillMaxHeight()
+            .then(if (focusable) Modifier else Modifier.focusProperties { canFocus = false })
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .onGloballyPositioned { coords ->
+                val left = coords.positionInParent().x
+                onMeasured(left, left + coords.size.width)
+            }
+            .padding(horizontal = padding),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = label,
+                color = ink,
+                fontSize = 13.sp,
+                fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            if (badge > 0) {
+                Text(
+                    text = " ($badge)",
+                    color = ink,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
 /** A label + editable text field in the Deck style (same TextField colors used across Deck). */
 @Composable
 internal fun DeckTextRow(
@@ -478,25 +756,42 @@ internal fun DeckTextRow(
     width: Dp = 300.dp,
     mask: Boolean = false,
 ) {
+    val edit = rememberDeckEditState()
     DeckRow(label, hint) {
-        TextField(
-            value = value,
-            onValueChange = onValueChange,
-            singleLine = true,
-            visualTransformation = if (mask && value.isNotEmpty()) PasswordVisualTransformation() else VisualTransformation.None,
-            colors = TextFieldDefaults.colors(
-                focusedContainerColor = DeckPalette.surfaceVariant,
-                unfocusedContainerColor = DeckPalette.surfaceVariant,
-                focusedTextColor = DeckPalette.onBackground,
-                unfocusedTextColor = DeckPalette.onBackground,
-                focusedIndicatorColor = DeckPalette.primary,
-                unfocusedIndicatorColor = DeckPalette.line2,
-                cursorColor = DeckPalette.primary,
-            ),
-            modifier = Modifier
-                .width(width)
-                .clip(RoundedCornerShape(10.dp)),
-        )
+        Box(Modifier.width(width)) {
+            TextField(
+                value = value,
+                onValueChange = onValueChange,
+                singleLine = true,
+                readOnly = !edit.editing,
+                visualTransformation = if (mask && value.isNotEmpty()) PasswordVisualTransformation() else VisualTransformation.None,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = DeckPalette.surfaceVariant,
+                    unfocusedContainerColor = DeckPalette.surfaceVariant,
+                    focusedTextColor = DeckPalette.onBackground,
+                    unfocusedTextColor = DeckPalette.onBackground,
+                    focusedIndicatorColor = DeckPalette.primary,
+                    unfocusedIndicatorColor = DeckPalette.line2,
+                    cursorColor = DeckPalette.primary,
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusProperties { canFocus = edit.editing }
+                    .focusRequester(edit.fieldFocus)
+                    .onFocusChanged { if (edit.editing && !it.isFocused) edit.editing = false }
+                    .onPreviewKeyEvent { event ->
+                        if (edit.editing && event.type == KeyEventType.KeyDown &&
+                            (event.key == Key.ButtonB || event.key == Key.Back)
+                        ) {
+                            edit.returnFocus = true
+                            edit.editing = false
+                            true
+                        } else false
+                    }
+                    .clip(RoundedCornerShape(10.dp)),
+            )
+            if (!edit.editing) DeckEditOverlay(edit, Modifier.matchParentSize())
+        }
     }
 }
 

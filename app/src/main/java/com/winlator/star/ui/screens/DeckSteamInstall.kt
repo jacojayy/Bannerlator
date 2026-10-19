@@ -2,6 +2,7 @@ package com.winlator.star.ui.screens
 
 import android.os.Handler
 import android.os.Looper
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
@@ -24,12 +25,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.winlator.star.store.AmazonLaunchHelper
+import com.winlator.star.store.StarLaunchBridge
+import com.winlator.star.store.SteamAchievement
+import com.winlator.star.store.SteamAchievementStore
 import com.winlator.star.store.SteamDatabase
 import com.winlator.star.store.SteamDepotDownloader
 import com.winlator.star.store.SteamForegroundService
 import com.winlator.star.store.SteamPrefs
 import com.winlator.star.store.SteamRepository
 import com.winlator.star.store.SteamSdInstall
+import com.winlator.star.store.SteamStoreSearch
 import com.winlator.star.store.StoreDownloadTier
 import com.winlator.star.store.download.DownloadRegistry
 import com.winlator.star.store.download.DownloadScope
@@ -38,6 +44,8 @@ import com.winlator.star.store.download.Store
 import com.winlator.star.store.download.formatDownloadSize
 import com.winlator.star.store.download.formatDownloadSpeed
 import com.winlator.star.store.download.formatEta
+import com.winlator.star.ui.findActivity
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -71,6 +79,11 @@ internal fun DeckSteamInstall(target: DeckSteamTarget, onBack: () -> Unit, onOpe
     var sdEnabled by remember { mutableStateOf(false) }
     var checking by remember { mutableStateOf(true) }
     var notReadyMsg by remember { mutableStateOf<String?>(null) }
+    var details by remember { mutableStateOf<SteamStoreSearch.SteamGameDetails?>(null) }
+    var achievements by remember { mutableStateOf<List<SteamAchievement>?>(null) }
+    var dbGame by remember { mutableStateOf<SteamDatabase.GameRow?>(null) }
+    val installed = dbGame?.isInstalled == true
+    val activity = context.findActivity()
 
     val active = row != null && (
         row.state == DownloadState.DOWNLOADING ||
@@ -128,6 +141,34 @@ internal fun DeckSteamInstall(target: DeckSteamTarget, onBack: () -> Unit, onOpe
         }
         checking = false
         notReadyMsg = msg
+    }
+
+    // Store facts (description / release year) and Steam achievements — one IO pass per page.
+    LaunchedEffect(target.appId) {
+        val loaded = withContext(Dispatchers.IO) {
+            val row = runCatching {
+                SteamRepository.getInstance().database.getGame(target.appId)
+            }.getOrNull()
+            val info = runCatching { SteamStoreSearch.fetchDetails(target.appId) }.getOrNull()
+            val ach = runCatching {
+                if (!SteamRepository.getInstance().isLoggedIn) emptyList()
+                else SteamAchievementStore.fetch(context, target.appId)
+                    .ifEmpty { SteamAchievementStore.cached(context, target.appId) }
+            }.getOrDefault(emptyList())
+            Triple(row, info, ach)
+        }
+        dbGame = loaded.first
+        details = loaded.second
+        achievements = loaded.third
+    }
+
+    // A finished download flips the DB row to installed; refresh so the Add Game button agrees.
+    LaunchedEffect(finished) {
+        if (finished) {
+            dbGame = withContext(Dispatchers.IO) {
+                runCatching { SteamRepository.getInstance().database.getGame(target.appId) }.getOrNull()
+            }
+        }
     }
 
     // SD-card detection is a volume walk — keep it off the main thread, once per screen.
@@ -246,7 +287,7 @@ internal fun DeckSteamInstall(target: DeckSteamTarget, onBack: () -> Unit, onOpe
     DeckInstallShell(
         title = target.title,
         art = target.art,
-        dev = "",
+        dev = dbGame?.developer ?: "",
         onBack = onBack,
         progress = row?.pct ?: 0,
         status = status,
@@ -258,6 +299,52 @@ internal fun DeckSteamInstall(target: DeckSteamTarget, onBack: () -> Unit, onOpe
         paused = row?.state == DownloadState.PAUSED,
         onOpenStore = if (!checking && (notReadyMsg != null || errorText != null)) onOpenStore else null,
         storeLabel = "Steam",
+        description = details?.shortDescription ?: "",
+        releaseDate = details?.releaseYear ?: "",
+        achievements = achievements,
+        achievementsLoading = achievements == null,
+        installed = installed,
+        onAddGame = {
+            val act = activity
+            if (act != null) {
+                Thread {
+                    val game = runCatching {
+                        SteamRepository.getInstance().database.getGame(target.appId)
+                    }.getOrNull()
+                    if (game == null || !game.isInstalled || game.installDir.isBlank()) {
+                        main.post {
+                            Toast.makeText(
+                                context, "Installed game executable not found", Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        return@Thread
+                    }
+                    val files = mutableListOf<File>()
+                    AmazonLaunchHelper.collectExe(File(game.installDir), files)
+                    if (files.isEmpty()) {
+                        main.post {
+                            Toast.makeText(
+                                context, "No executable found", Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        return@Thread
+                    }
+                    val lower = game.name.lowercase()
+                    files.sortWith { a, b ->
+                        AmazonLaunchHelper.scoreExe(b, lower) - AmazonLaunchHelper.scoreExe(a, lower)
+                    }
+                    val cover = "https://shared.steamstatic.com/store_item_assets/steam/apps/" +
+                        "${target.appId}/library_600x900.jpg"
+                    main.post {
+                        StarLaunchBridge.addToLauncher(act, game.name, files[0].absolutePath, cover)
+                    }
+                }.start()
+            } else {
+                Toast.makeText(
+                    context, "Installed game executable not found", Toast.LENGTH_SHORT,
+                ).show()
+            }
+        },
         onStart = { pickerOpen = true },
         onCancel = {
             val h = handle

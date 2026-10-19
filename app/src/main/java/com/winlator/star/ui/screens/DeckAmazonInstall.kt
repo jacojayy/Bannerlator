@@ -2,6 +2,7 @@ package com.winlator.star.ui.screens
 
 import android.os.Handler
 import android.os.Looper
+import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -11,11 +12,13 @@ import androidx.compose.ui.platform.LocalContext
 import com.winlator.star.store.AmazonCredentialStore
 import com.winlator.star.store.AmazonDownloadManager
 import com.winlator.star.store.AmazonGame
+import com.winlator.star.store.StarLaunchBridge
 import com.winlator.star.store.deckResolveExe
 import com.winlator.star.store.download.DownloadRegistry
 import com.winlator.star.store.download.DownloadScope
 import com.winlator.star.store.download.Store
 import com.winlator.star.store.download.StoreDownloadHooks
+import com.winlator.star.ui.findActivity
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -38,6 +41,8 @@ internal fun DeckAmazonInstall(game: AmazonGame, onBack: () -> Unit, onOpenStore
     var errorText by remember { mutableStateOf<String?>(null) }
     var started by remember { mutableStateOf(false) }
     val cancelled = remember { AtomicBoolean(false) }
+    val installed = prefs.getString("amazon_exe_${game.productId}", null) != null
+    val activity = context.findActivity()
 
     DeckInstallShell(
         title = game.title,
@@ -51,6 +56,21 @@ internal fun DeckAmazonInstall(game: AmazonGame, onBack: () -> Unit, onOpenStore
         started = started,
         storeLabel = "Amazon",
         onOpenStore = onOpenStore,
+        publisher = game.publisher ?: "",
+        installed = installed,
+        onAddGame = {
+            val exe = prefs.getString("amazon_exe_${game.productId}", null)
+            if (activity != null && !exe.isNullOrEmpty()) {
+                StarLaunchBridge.addToLauncher(
+                    activity, game.title, exe,
+                    (game.artUrl ?: "").ifBlank { game.heroUrl ?: "" }, "amazon", true,
+                )
+            } else {
+                Toast.makeText(
+                    context, "Installed game executable not found", Toast.LENGTH_SHORT,
+                ).show()
+            }
+        },
         onStart = {
             errorText = null
             started = true

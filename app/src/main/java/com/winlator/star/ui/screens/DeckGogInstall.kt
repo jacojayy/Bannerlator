@@ -2,6 +2,7 @@ package com.winlator.star.ui.screens
 
 import android.os.Handler
 import android.os.Looper
+import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -11,10 +12,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.winlator.star.store.GogDownloadManager
 import com.winlator.star.store.GogGame
+import com.winlator.star.store.GogInstallState
+import com.winlator.star.store.GogLaunchHelper
 import com.winlator.star.store.GogLibraryRepo
 import com.winlator.star.store.StoreNet
 import com.winlator.star.store.download.Store
 import com.winlator.star.store.download.StoreDownloadHooks
+import com.winlator.star.ui.findActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -80,6 +84,9 @@ internal fun DeckGogInstall(game: GogGame, onBack: () -> Unit, onOpenStore: (() 
         if (!owned) notOwned = true
     }
 
+    val installed = GogInstallState.isInstalled(context, game.gameId)
+    val activity = context.findActivity()
+
     val shownError = when {
         errorText != null -> errorText
         notOwned -> "Not in your library yet."
@@ -100,6 +107,22 @@ internal fun DeckGogInstall(game: GogGame, onBack: () -> Unit, onOpenStore: (() 
         onPauseResume = null,
         onOpenStore = if (!checking && (notOwned || errorText != null)) onOpenStore else null,
         storeLabel = "GOG",
+        description = game.description ?: "",
+        installed = installed,
+        onAddGame = {
+            val exe = context
+                .getSharedPreferences("bh_gog_prefs", android.content.Context.MODE_PRIVATE)
+                .getString("gog_exe_${game.gameId}", null)
+            if (activity != null && !exe.isNullOrEmpty()) {
+                GogLaunchHelper.addToLauncherWithPrereqs(
+                    activity, game.title, exe, game.imageUrl, game.gameId,
+                )
+            } else {
+                Toast.makeText(
+                    context, "Installed game executable not found", Toast.LENGTH_SHORT,
+                ).show()
+            }
+        },
         onStart = {
             val cb = object : GogDownloadManager.Callback {
                 override fun onProgress(msg: String, p: Int) {

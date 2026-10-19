@@ -2,6 +2,7 @@ package com.winlator.star.ui.screens
 
 import android.os.Handler
 import android.os.Looper
+import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -13,12 +14,15 @@ import com.winlator.star.store.EpicCancelPolicy
 import com.winlator.star.store.EpicCredentialStore
 import com.winlator.star.store.EpicDownloadManager
 import com.winlator.star.store.EpicGame
+import com.winlator.star.store.EpicInstallState
 import com.winlator.star.store.EpicInstallTags
+import com.winlator.star.store.StarLaunchBridge
 import com.winlator.star.store.deckResolveExe
 import com.winlator.star.store.download.DownloadRegistry
 import com.winlator.star.store.download.DownloadScope
 import com.winlator.star.store.download.Store
 import com.winlator.star.store.download.StoreDownloadHooks
+import com.winlator.star.ui.findActivity
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
@@ -41,6 +45,8 @@ internal fun DeckEpicInstall(game: EpicGame, onBack: () -> Unit, onOpenStore: ((
     var errorText by remember { mutableStateOf<String?>(null) }
     var started by remember { mutableStateOf(false) }
     val cancelled = remember { AtomicBoolean(false) }
+    val installed = EpicInstallState.isInstalled(context, game.appName)
+    val activity = context.findActivity()
 
     DeckInstallShell(
         title = game.title,
@@ -54,6 +60,24 @@ internal fun DeckEpicInstall(game: EpicGame, onBack: () -> Unit, onOpenStore: ((
         started = started,
         storeLabel = "Epic",
         onOpenStore = onOpenStore,
+        description = game.description ?: "",
+        releaseDate = game.releaseDate ?: "",
+        installed = installed,
+        onAddGame = {
+            val exe = context
+                .getSharedPreferences("bh_epic_prefs", android.content.Context.MODE_PRIVATE)
+                .getString("epic_exe_${game.appName}", null)
+            if (activity != null && !exe.isNullOrEmpty()) {
+                StarLaunchBridge.addToLauncher(
+                    activity, game.title, exe, game.artCover,
+                    StarLaunchBridge.EpicMeta(game.appName, game.namespace, game.catalogItemId),
+                )
+            } else {
+                Toast.makeText(
+                    context, "Installed game executable not found", Toast.LENGTH_SHORT,
+                ).show()
+            }
+        },
         onStart = {
             errorText = null
             started = true

@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,19 +25,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.winlator.star.store.GameFacts
+import com.winlator.star.store.SteamAchievement
 
 /**
- * Shared scaffold for the in-Deck install screens (GOG / Epic / Amazon / Steam). Draws Back row,
- * cover art, title, developer, then the install state machine: idle shows Install (plus the
- * "Open in <store>" escape hatch a caller can offer when the game is not in the library), running
- * shows progress + status + Cancel with an optional Pause/Resume, plus the done and error states.
- * Every store screen feeds the same inputs; the extra handles default off.
+ * Shared scaffold for the in-Deck install/detail screens (GOG / Epic / Amazon / Steam) — the
+ * DroidDeck game page: back row, hero banner with the title and credits over a store gradient,
+ * Metacritic + HowLongToBeat facts, the install state machine, the store's description and (Steam)
+ * achievements. Every store feeds the same inputs; the extra handles default off.
  */
 @Composable
 internal fun DeckInstallShell(
@@ -56,7 +60,15 @@ internal fun DeckInstallShell(
     paused: Boolean = false,
     onOpenStore: (() -> Unit)? = null,
     storeLabel: String = "",
+    publisher: String = "",
+    releaseDate: String = "",
+    description: String = "",
+    achievements: List<SteamAchievement>? = null,
+    achievementsLoading: Boolean = false,
+    installed: Boolean = false,
+    onAddGame: (() -> Unit)? = null,
 ) {
+    val shape = RoundedCornerShape(12.dp)
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -79,38 +91,96 @@ internal fun DeckInstallShell(
         }
         Spacer(Modifier.size(14.dp))
 
-        val shape = RoundedCornerShape(12.dp)
-        if (!art.isNullOrEmpty()) {
-            AsyncImage(
-                model = art,
-                contentDescription = title,
-                contentScale = ContentScale.Crop,
+        // ── Hero: art banner with the page's identity burned into its foot, DroidDeck style. ──
+        val released = GameFacts.releaseLabel(releaseDate) ?: releaseDate.takeIf { it.isNotBlank() }
+        val byline = listOfNotNull(
+            dev.takeIf { it.isNotBlank() },
+            publisher.takeIf { it.isNotBlank() && !it.equals(dev, ignoreCase = true) },
+            released,
+        ).joinToString(" · ")
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(210.dp)
+                .clip(shape)
+                .background(Deck.surface)
+                .border(1.dp, Deck.line, shape),
+        ) {
+            if (!art.isNullOrEmpty()) {
+                AsyncImage(
+                    model = art,
+                    contentDescription = title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(200.dp)
-                    .clip(shape)
-                    .background(Deck.surface)
-                    .border(1.dp, Deck.line, shape),
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            0.45f to Deck.background.copy(alpha = 0.35f),
+                            1f to Deck.background.copy(alpha = 0.96f),
+                        ),
+                    ),
             )
-            Spacer(Modifier.size(12.dp))
+            Column(
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+            ) {
+                val eyebrow = when {
+                    installed || finished -> "INSTALLED"
+                    storeLabel.isNotBlank() -> storeLabel.uppercase()
+                    else -> ""
+                }
+                if (eyebrow.isNotBlank()) {
+                    Text(
+                        text = eyebrow,
+                        color = Deck.primary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 1.4.sp,
+                    )
+                }
+                Text(
+                    text = title,
+                    color = Deck.onBackground,
+                    fontSize = 23.sp,
+                    lineHeight = 26.sp,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (byline.isNotBlank()) {
+                    Text(
+                        text = byline,
+                        color = Deck.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
-        Text(
-            text = title,
-            color = Deck.onBackground,
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Black,
-            maxLines = 2,
-        )
-        if (dev.isNotEmpty()) {
-            Text(dev, color = Deck.onSurfaceVariant, fontSize = 12.sp)
-        }
-        Spacer(Modifier.size(18.dp))
 
-        if (finished) {
-            Text("Installed.", color = Deck.primary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            return@Column
-        }
-        if (started && error == null) {
+        Spacer(Modifier.size(10.dp))
+        DeckScoresRow(rememberDeckScores(title))
+        Spacer(Modifier.size(14.dp))
+
+        if (finished || installed) {
+            Text("Installed", color = Deck.primary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            if (onAddGame != null) {
+                Spacer(Modifier.size(10.dp))
+                DeckButton("Add Game", primary = true) { onAddGame() }
+            }
+            if (onOpenStore != null) {
+                Spacer(Modifier.size(8.dp))
+                DeckButton("Open in $storeLabel", primary = false) { onOpenStore() }
+            }
+        } else if (started && error == null) {
             LinearProgressIndicator(
                 progress = { (progress.coerceIn(0, 100)) / 100f },
                 modifier = Modifier.fillMaxWidth(),
@@ -138,6 +208,11 @@ internal fun DeckInstallShell(
                 if (canInstall) Spacer(Modifier.size(8.dp))
                 DeckButton("Open in $storeLabel", primary = !canInstall) { onOpenStore() }
             }
+        }
+
+        DeckAboutCard(GameFacts.cleanText(description))
+        if (achievements != null || achievementsLoading) {
+            DeckAchievementsRow(achievements.orEmpty(), achievementsLoading)
         }
     }
 }

@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -25,13 +24,11 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,6 +54,7 @@ import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,7 +68,6 @@ import com.winlator.star.store.GogStoreCatalog
 import com.winlator.star.store.SteamStoreCatalog
 import com.winlator.star.store.StoreCatalogDetailActivity
 import com.winlator.star.store.deckTileFocus
-import com.winlator.star.store.AmazonMainActivity
 import com.winlator.star.store.AmazonUserData
 import com.winlator.star.store.AmazonGame
 import com.winlator.star.store.AmazonGameDetailActivity
@@ -95,13 +92,10 @@ import com.winlator.star.store.rememberStorefrontLayout
 import com.winlator.star.store.download.DownloadRegistry
 import android.widget.Toast
 import com.winlator.star.store.EpicLoginActivity
-import com.winlator.star.store.EpicMainActivity
 import com.winlator.star.store.EpicUserData
 import com.winlator.star.store.GogLoginActivity
-import com.winlator.star.store.GogMainActivity
 import com.winlator.star.store.GogUserData
 import com.winlator.star.store.SteamLoginActivity
-import com.winlator.star.store.SteamMainActivity
 import com.winlator.star.store.SteamSessionManager
 import com.winlator.star.ui.Screen
 import com.winlator.star.ui.theme.AppThemeState
@@ -110,13 +104,13 @@ import com.winlator.star.ui.theme.AppThemeState
  * Deck Mode's Stores section — a redesign of the store experience in DroidDeck's language, backed
  * by WinHub's REAL accounts (no mock data):
  *
- *  • The chip row is DroidDeck's `StoreChips` — a pill per store whose brand dot is lit only while
- *    that store's account is actually signed in — plus the shared Downloads chip.
+ *  • The store row is a Deck stretchy tab strip — one tab per store, brand dot lit only while that
+ *    store's account is actually signed in — with the shared Downloads tile in the title row.
  *  • Not signed in → DroidDeck's `SignInCard` hero: the store's tilted brand wall behind gradient
  *    scrims and a radial glow, its name at 42sp, and a large **Sign in** that opens WinHub's real
  *    login Activity for that store.
- *  • Signed in → the store's real cached account (name, and GOG's owned-game count) with Open /
- *    Downloads, opening the same store Activity the normal UI's drawer does.
+ *  • Signed in → storefront, one unified Library grid across every signed-in store (games only),
+ *    Settings, and for Steam the Friends/Profile panes.
  *
  * Sign-in is read live from each store's own session (`GogUserData`/`EpicUserData`/`AmazonUserData`
  * cached profiles and `SteamSessionManager`), so it stays truthful after a login round-trip.
@@ -138,18 +132,6 @@ private val deckStores = listOf(
     DeckStoreTile(Screen.Steam, "Steam", Color(0xFF16293D), Color(0xFF7CC4FF), Color(0xFF1A9FFF)),
 )
 
-/** The store Activities `MainActivity.launchStore` starts — 1:1 with the normal UI drawer. */
-private fun launchDeckStore(context: Context, screen: Screen) {
-    val cls = when (screen) {
-        Screen.Gog -> GogMainActivity::class.java
-        Screen.Epic -> EpicMainActivity::class.java
-        Screen.Amazon -> AmazonMainActivity::class.java
-        Screen.Steam -> SteamMainActivity::class.java
-        else -> return
-    }
-    context.startActivity(Intent(context, cls))
-}
-
 /** WinHub's real per-store login Activities (what each store's Sign in opens). */
 private fun launchDeckLogin(context: Context, screen: Screen) {
     val cls = when (screen) {
@@ -170,19 +152,6 @@ private fun deckSignedIn(context: Context, screen: Screen): Boolean = when (scre
     Screen.Steam -> SteamSessionManager.isLoggedOn()
     else -> false
 }
-
-/** The signed-in account's display name, when that store caches one. */
-private fun deckAccountName(context: Context, screen: Screen): String? = when (screen) {
-    Screen.Gog -> GogUserData.cached(context)?.username
-    Screen.Epic -> EpicUserData.cached(context)?.displayName
-    Screen.Amazon -> AmazonUserData.cached(context)?.name
-    else -> null
-}
-
-/** GOG alone caches an owned-games count in its profile; the rest report nothing rather than guess. */
-private fun deckOwnedCount(context: Context, screen: Screen): Int? =
-    if (screen == Screen.Gog) GogUserData.cached(context)?.ownedGames else null
-
 
 /** One owned game: cover art, and how to open its real per-store detail screen. */
 private data class DeckOwnedGame(
@@ -276,36 +245,71 @@ private fun deckOwnedGames(context: Context, screen: Screen): List<DeckOwnedGame
     }
 }.getOrDefault(emptyList())
 
-/** The signed-in store's owned-games grid, loaded off the main thread from the real cache. */
+/** Every signed-in store's cached games in ONE flat list — the Library is games, nothing else. */
+private fun deckAllOwnedGames(context: Context): List<DeckOwnedGame> {
+    val seen = HashSet<String>()
+    return deckStores
+        .flatMap { tile -> runCatching { deckOwnedGames(context, tile.screen) }.getOrDefault(emptyList()) }
+        .filter { seen.add(it.title.lowercase()) }
+        .sortedBy { it.title.lowercase() }
+}
+
+/** The unified library: one full-height cover grid across all stores. */
 @Composable
-private fun DeckLibraryGrid(tile: DeckStoreTile, context: Context, onGameClick: (DeckOwnedGame) -> Unit) {
-    var games by remember(tile.screen) { mutableStateOf<List<DeckOwnedGame>>(emptyList()) }
-    LaunchedEffect(tile.screen) {
-        games = withContext(Dispatchers.IO) { deckOwnedGames(context, tile.screen) }
+private fun DeckLibraryPane(context: Context, onGameClick: (DeckOwnedGame) -> Unit) {
+    var games by remember { mutableStateOf<List<DeckOwnedGame>?>(null) }
+    LaunchedEffect(Unit) {
+        games = withContext(Dispatchers.IO) { deckAllOwnedGames(context) }
     }
-    Text(
-        text = if (games.isEmpty()) "Library"
-        else "Library - ${games.size} game${if (games.size == 1) "" else "s"}",
-        style = MaterialTheme.typography.titleSmall,
-        color = Deck.onSurfaceVariant,
-    )
-    Spacer(Modifier.size(8.dp))
-    if (games.isEmpty()) {
-        Text(
-            text = "No cached library yet - open ${tile.screen.label} to sync it.",
-            color = Deck.onSurfaceVariant,
-            fontSize = 12.sp,
-        )
-    } else {
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 116.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.heightIn(max = 380.dp).fillMaxWidth(),
-        ) {
-            itemsIndexed(games, key = { i, g -> "$i-${g.title}" }) { index, game ->
-                DeckRise(index = index % 10) {
-                    DeckGameCard(game) { onGameClick(game) }
+    val list = games
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "LIBRARY",
+                color = Deck.primary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 1.6.sp,
+            )
+            if (list != null && list.isNotEmpty()) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "${list.size} game${if (list.size == 1) "" else "s"}",
+                    color = Deck.onSurfaceVariant,
+                    fontSize = 12.sp,
+                )
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        when {
+            list == null -> Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("Loading library...", color = Deck.onSurfaceVariant, fontSize = 13.sp)
+            }
+            list.isEmpty() -> Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "No games yet. Sign in and sync a store to fill your library.",
+                    color = Deck.onSurfaceVariant,
+                    fontSize = 13.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                )
+            }
+            else -> LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 108.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                itemsIndexed(list, key = { index, game -> "$index-${game.title}" }) { index, game ->
+                    DeckRise(index = index % 10) {
+                        DeckGameCard(game) { onGameClick(game) }
+                    }
                 }
             }
         }
@@ -752,20 +756,54 @@ internal fun DeckStoresScreen() {
             .background(Deck.background)
             .padding(horizontal = 24.dp, vertical = 14.dp),
     ) {
-        Text(
-            text = "Stores",
-            color = Deck.onBackground,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Black,
-            maxLines = 1,
-        )
-        Spacer(Modifier.size(2.dp))
-        Text(
-            text = "GOG, Epic Games, Amazon Games and Steam",
-            color = Deck.onSurfaceVariant,
-            fontSize = 12.sp,
-            maxLines = 2,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Stores",
+                    color = Deck.onBackground,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Black,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.size(2.dp))
+                Text(
+                    text = "GOG, Epic Games, Amazon Games and Steam",
+                    color = Deck.onSurfaceVariant,
+                    fontSize = 12.sp,
+                    maxLines = 2,
+                )
+            }
+            // Shared download queue: compact graphite tile with a live count.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(Deck.surfaceVariant)
+                    .border(1.dp, Deck.line, RoundedCornerShape(13.dp))
+                    .clickable { showDownloads = true }
+                    .padding(horizontal = 12.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Download,
+                    contentDescription = "Downloads",
+                    tint = if (activeDownloads > 0) Deck.primary else Deck.onSurfaceVariant,
+                    modifier = Modifier.size(17.dp),
+                )
+                if (activeDownloads > 0) {
+                    Text(
+                        text = activeDownloads.toString(),
+                        color = Deck.primary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
         Spacer(Modifier.size(14.dp))
 
         if (!showStores) {
@@ -781,70 +819,18 @@ internal fun DeckStoresScreen() {
                 }
             }
         } else {
-            // ── Chip row: DroidDeck's StoreChips — the dot is lit only while signed in ──
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                deckStores.forEach { tile ->
-                    val on = tile.screen == selected
-                    val signed = deckSignedIn(context, tile.screen)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 44.dp)
-                            .clip(RoundedCornerShape(99.dp))
-                            .background(if (on) tile.fill else Deck.surface)
-                            .border(1.dp, if (on) tile.dot else Deck.line, RoundedCornerShape(99.dp))
-                            .clickable { selected = tile.screen }
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .clip(CircleShape)
-                                .background(tile.dot.copy(alpha = if (signed) 1f else 0.35f)),
-                        )
-                        Text(
-                            text = tile.chip,
-                            color = if (on) tile.ink else Deck.onSurfaceVariant,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-                // DroidDeck's fourth chip: the download queue the stores share.
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 44.dp)
-                        .clip(RoundedCornerShape(99.dp))
-                        .background(Deck.surface)
-                        .border(1.dp, Deck.line, RoundedCornerShape(99.dp))
-                        .clickable { showDownloads = true }
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                ) {
-                    Icon(
-                        Icons.Filled.Download, contentDescription = null, tint = Deck.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Text(
-                        text = if (activeDownloads > 0) "Downloads ($activeDownloads)" else "Downloads",
-                        color = Deck.onSurfaceVariant,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
+            // ── Store tabs: the Deck stretchy strip (stroke expands then closes), brand dot lit
+            // only while signed in. Downloads lives in the title row above.
+            DeckStretchyTabs(
+                labels = deckStores.map { it.chip },
+                dots = deckStores.map { tile ->
+                    tile.dot.copy(alpha = if (deckSignedIn(context, tile.screen)) 1f else 0.35f)
+                },
+                selected = deckStores.indexOfFirst { it.screen == selected }.coerceAtLeast(0),
+                onSelect = { selected = deckStores[it].screen },
+                scroll = true,
+                height = 38.dp,
+            )
 
             Spacer(Modifier.size(16.dp))
 
@@ -878,9 +864,7 @@ internal fun DeckStoresScreen() {
                         0 -> DeckPaneScroll {
                             DeckStoreFront(active, context, onBrowseTap, showMature)
                         }
-                        1 -> DeckPaneScroll {
-                            DeckAccountCard(active, context, openOwned) { showDownloads = true }
-                        }
+                        1 -> DeckLibraryPane(context, openOwned)
                         2 -> DeckStoreSettingsPane(
                             showMature = showMature,
                             onShowMatureChange = { v ->
@@ -1015,66 +999,6 @@ private fun DeckTiltedWall(tile: DeckStoreTile) {
                 }
             }
         }
-    }
-}
-
-/** Signed in: the store's real cached account, with the actions that open it — 1:1 with the drawer. */
-@Composable
-private fun DeckAccountCard(
-    tile: DeckStoreTile,
-    context: Context,
-    onGameClick: (DeckOwnedGame) -> Unit,
-    onDownloads: () -> Unit,
-) {
-    val name = deckAccountName(context, tile.screen)
-    val owned = deckOwnedCount(context, tile.screen)
-    DeckGroup(tile.screen.label) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            // DroidDeck's StoreLogo: a rounded tile in the brand fill with its short label.
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(tile.fill)
-                    .border(1.dp, tile.dot.copy(alpha = 0.5f), RoundedCornerShape(14.dp)),
-            ) {
-                Text(
-                    text = tile.chip,
-                    color = tile.ink,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Black,
-                    maxLines = 1,
-                )
-            }
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = name ?: "Signed in",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Deck.onBackground,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = if (owned != null) "$owned games owned"
-                    else "${tile.screen.label} account connected",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Deck.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        Spacer(Modifier.size(14.dp))
-        DeckButton("Open ${tile.screen.label}", primary = true) {
-            launchDeckStore(context, tile.screen)
-        }
-        DeckButton("Downloads", primary = false) {
-            onDownloads()
-        }
-        Spacer(Modifier.size(16.dp))
-        DeckLibraryGrid(tile, context, onGameClick)
     }
 }
 

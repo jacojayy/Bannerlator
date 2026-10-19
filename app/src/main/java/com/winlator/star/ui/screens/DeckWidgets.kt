@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -596,6 +597,7 @@ internal fun DeckStretchyTabs(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
     badges: List<Int>? = null,
+    dots: List<Color?>? = null,
     focusable: Boolean = false,
     scroll: Boolean = false,
     fillWidth: Boolean = true,
@@ -680,6 +682,7 @@ internal fun DeckStretchyTabs(
                         DeckStretchyTab(
                             label = label,
                             badge = badges?.getOrNull(index) ?: 0,
+                            dot = dots?.getOrNull(index),
                             active = index == selected,
                             focusable = focusable,
                             padding = if (spread) 6.dp else 14.dp,
@@ -707,6 +710,7 @@ internal fun DeckStretchyTabs(
 private fun DeckStretchyTab(
     label: String,
     badge: Int,
+    dot: Color?,
     active: Boolean,
     focusable: Boolean,
     padding: Dp,
@@ -734,6 +738,15 @@ private fun DeckStretchyTab(
             .padding(horizontal = padding),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            if (dot != null) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(dot),
+                )
+                Spacer(Modifier.width(6.dp))
+            }
             Text(
                 text = label,
                 color = ink,

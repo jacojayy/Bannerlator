@@ -248,34 +248,43 @@ private fun XServerDrawerContent() {
                 .border(1.dp, DeckPalette.line2, RoundedCornerShape(20.dp))
                 .padding(horizontal = 12.dp, vertical = 10.dp),
         ) {
-            // Header: live session state on the left, the three session actions on the right.
+            // Header: the WinHub wordmark on the left, the session actions on the right.
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(7.dp)
-                        .clip(CircleShape)
-                        .background(if (isPaused) DeckPalette.onSurfaceVariant else DeckPalette.good),
-                )
-                Spacer(Modifier.width(9.dp))
-                Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
                     Text(
-                        text = "SESSION",
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 1.8.sp,
-                        color = DeckPalette.onSurfaceVariant,
-                    )
-                    Text(
-                        text = if (isPaused) "Paused" else "Running",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        text = "Win",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = (-0.4).sp,
                         color = DeckPalette.onBackground,
                         maxLines = 1,
                     )
+                    Text(
+                        text = "Hub",
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = (-0.4).sp,
+                        color = DeckPalette.primary,
+                        maxLines = 1,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(DeckPalette.primary),
+                    )
                 }
+                DeckHeaderIcon(R.drawable.icon_keyboard, "Show keyboard") {
+                    state.onClose?.run(); state.onKeyboard?.run()
+                }
+                Spacer(Modifier.width(6.dp))
                 DeckHeaderIcon(R.drawable.icon_task_manager, "Task manager") {
                     state.selectTab(TabType.TASK_MANAGER)
                     state.onTaskManager?.run()

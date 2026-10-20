@@ -22,6 +22,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,9 +70,10 @@ internal fun DeckInstallShell(
     achievements: List<SteamAchievement>? = null,
     achievementsLoading: Boolean = false,
     installed: Boolean = false,
-    onAddGame: (() -> Unit)? = null,
+    addGame: DeckAddRequest? = null,
 ) {
     val shape = RoundedCornerShape(12.dp)
+    var addOpen by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -172,9 +177,9 @@ internal fun DeckInstallShell(
 
         if (finished || installed) {
             Text("Installed", color = Deck.primary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            if (onAddGame != null) {
+            if (addGame != null) {
                 Spacer(Modifier.size(10.dp))
-                DeckButton("Add Game", primary = true) { onAddGame() }
+                DeckButton("Add Game", primary = true) { addOpen = true }
             }
             if (onOpenStore != null) {
                 Spacer(Modifier.size(8.dp))
@@ -214,5 +219,8 @@ internal fun DeckInstallShell(
         if (achievements != null || achievementsLoading) {
             DeckAchievementsRow(achievements.orEmpty(), achievementsLoading)
         }
+    }
+    if (addOpen && addGame != null) {
+        DeckStoreAddFlow(request = addGame, onDismiss = { addOpen = false })
     }
 }

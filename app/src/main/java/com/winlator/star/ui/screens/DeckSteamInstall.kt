@@ -1,8 +1,5 @@
 package com.winlator.star.ui.screens
 
-import android.os.Handler
-import android.os.Looper
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
@@ -26,7 +23,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.winlator.star.store.AmazonLaunchHelper
-import com.winlator.star.store.StarLaunchBridge
 import com.winlator.star.store.SteamAchievement
 import com.winlator.star.store.SteamAchievementStore
 import com.winlator.star.store.SteamDatabase
@@ -44,7 +40,6 @@ import com.winlator.star.store.download.Store
 import com.winlator.star.store.download.formatDownloadSize
 import com.winlator.star.store.download.formatDownloadSpeed
 import com.winlator.star.store.download.formatEta
-import com.winlator.star.ui.findActivity
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -67,7 +62,6 @@ internal data class DeckSteamTarget(val appId: Int, val title: String, val art: 
 internal fun DeckSteamInstall(target: DeckSteamTarget, onBack: () -> Unit, onOpenStore: (() -> Unit)? = null) {
     val context = LocalContext.current
     val appCtx = remember(context) { context.applicationContext }
-    val main = remember { Handler(Looper.getMainLooper()) }
     val entries by DownloadRegistry.entries.collectAsState()
     val row = entries.firstOrNull { it.key == "${Store.STEAM}:${target.appId}" }
     var starting by remember { mutableStateOf(false) }
@@ -83,7 +77,6 @@ internal fun DeckSteamInstall(target: DeckSteamTarget, onBack: () -> Unit, onOpe
     var achievements by remember { mutableStateOf<List<SteamAchievement>?>(null) }
     var dbGame by remember { mutableStateOf<SteamDatabase.GameRow?>(null) }
     val installed = dbGame?.isInstalled == true
-    val activity = context.findActivity()
 
     val active = row != null && (
         row.state == DownloadState.DOWNLOADING ||
@@ -304,47 +297,28 @@ internal fun DeckSteamInstall(target: DeckSteamTarget, onBack: () -> Unit, onOpe
         achievements = achievements,
         achievementsLoading = achievements == null,
         installed = installed,
-        onAddGame = {
-            val act = activity
-            if (act != null) {
-                Thread {
-                    val game = runCatching {
-                        SteamRepository.getInstance().database.getGame(target.appId)
-                    }.getOrNull()
-                    if (game == null || !game.isInstalled || game.installDir.isBlank()) {
-                        main.post {
-                            Toast.makeText(
-                                context, "Installed game executable not found", Toast.LENGTH_SHORT,
-                            ).show()
-                        }
-                        return@Thread
-                    }
+        addGame = DeckAddRequest(
+            title = target.title,
+            coverUrl = "https://shared.steamstatic.com/store_item_assets/steam/apps/" +
+                "${target.appId}/library_600x900.jpg",
+            appId = target.appId,
+            resolveExe = {
+                val game = runCatching {
+                    SteamRepository.getInstance().database.getGame(target.appId)
+                }.getOrNull()
+                if (game == null || !game.isInstalled || game.installDir.isBlank()) {
+                    null
+                } else {
                     val files = mutableListOf<File>()
                     AmazonLaunchHelper.collectExe(File(game.installDir), files)
-                    if (files.isEmpty()) {
-                        main.post {
-                            Toast.makeText(
-                                context, "No executable found", Toast.LENGTH_SHORT,
-                            ).show()
-                        }
-                        return@Thread
-                    }
                     val lower = game.name.lowercase()
                     files.sortWith { a, b ->
                         AmazonLaunchHelper.scoreExe(b, lower) - AmazonLaunchHelper.scoreExe(a, lower)
                     }
-                    val cover = "https://shared.steamstatic.com/store_item_assets/steam/apps/" +
-                        "${target.appId}/library_600x900.jpg"
-                    main.post {
-                        StarLaunchBridge.addToLauncher(act, game.name, files[0].absolutePath, cover)
-                    }
-                }.start()
-            } else {
-                Toast.makeText(
-                    context, "Installed game executable not found", Toast.LENGTH_SHORT,
-                ).show()
-            }
-        },
+                    files.firstOrNull()?.absolutePath
+                }
+            },
+        ),
         onStart = { pickerOpen = true },
         onCancel = {
             val h = handle

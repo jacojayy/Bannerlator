@@ -245,21 +245,17 @@ private fun deckOwnedGames(context: Context, screen: Screen): List<DeckOwnedGame
     }
 }.getOrDefault(emptyList())
 
-/** Every signed-in store's cached games in ONE flat list — the Library is games, nothing else. */
-private fun deckAllOwnedGames(context: Context): List<DeckOwnedGame> {
-    val seen = HashSet<String>()
-    return deckStores
-        .flatMap { tile -> runCatching { deckOwnedGames(context, tile.screen) }.getOrDefault(emptyList()) }
-        .filter { seen.add(it.title.lowercase()) }
-        .sortedBy { it.title.lowercase() }
-}
+/** The selected store's own cached library, sorted by title — never mixed with other stores. */
+private fun deckLibraryGames(context: Context, screen: Screen): List<DeckOwnedGame> = runCatching {
+    deckOwnedGames(context, screen).sortedBy { it.title.lowercase() }
+}.getOrDefault(emptyList())
 
-/** The unified library: one full-height cover grid across all stores. */
+/** One store's library: its own full-height cover grid, reloaded when the store tab changes. */
 @Composable
-private fun DeckLibraryPane(context: Context, onGameClick: (DeckOwnedGame) -> Unit) {
-    var games by remember { mutableStateOf<List<DeckOwnedGame>?>(null) }
-    LaunchedEffect(Unit) {
-        games = withContext(Dispatchers.IO) { deckAllOwnedGames(context) }
+private fun DeckLibraryPane(screen: Screen, context: Context, onGameClick: (DeckOwnedGame) -> Unit) {
+    var games by remember(screen) { mutableStateOf<List<DeckOwnedGame>?>(null) }
+    LaunchedEffect(screen) {
+        games = withContext(Dispatchers.IO) { deckLibraryGames(context, screen) }
     }
     val list = games
     Column(modifier = Modifier.fillMaxSize()) {
@@ -293,7 +289,7 @@ private fun DeckLibraryPane(context: Context, onGameClick: (DeckOwnedGame) -> Un
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = "No games yet. Sign in and sync a store to fill your library.",
+                    text = "No games yet. Sign in to this store and sync to fill its library.",
                     color = Deck.onSurfaceVariant,
                     fontSize = 13.sp,
                     textAlign = TextAlign.Center,
@@ -864,7 +860,7 @@ internal fun DeckStoresScreen() {
                         0 -> DeckPaneScroll {
                             DeckStoreFront(active, context, onBrowseTap, showMature)
                         }
-                        1 -> DeckLibraryPane(context, openOwned)
+                        1 -> DeckLibraryPane(active.screen, context, openOwned)
                         2 -> DeckStoreSettingsPane(
                             showMature = showMature,
                             onShowMatureChange = { v ->

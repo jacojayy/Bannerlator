@@ -95,6 +95,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import com.winlator.star.container.Shortcut
 import com.winlator.star.core.FileUtils
+import coil.compose.AsyncImage
 import com.winlator.star.store.GameFacts
 import com.winlator.star.store.GoldbergComponent
 import com.winlator.star.store.GoldbergMode
@@ -315,7 +316,7 @@ internal fun HubCarousel(
     if (entries.isEmpty()) return
     val current = selected.coerceIn(0, entries.size - 1)
     Box(
-        contentAlignment = Alignment.Center,
+        contentAlignment = Alignment.CenterStart,
         modifier = modifier
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown &&
@@ -369,7 +370,7 @@ internal fun HubCarousel(
                 },
                 label = "hubRot",
             )
-            val translateX by animateFloatAsState(delta * 122f, label = "hubX")
+            val translateX by animateFloatAsState(delta * 96f, label = "hubX")
             val alphaAnim by animateFloatAsState(
                 if (isSelected) 1f else 0.82f - 0.15f * min(distance, 3),
                 label = "hubAlpha",
@@ -377,7 +378,7 @@ internal fun HubCarousel(
 
             Box(
                 modifier = Modifier
-                    .size(width = 170.dp, height = 255.dp)
+                    .size(width = 132.dp, height = 198.dp)
                     .zIndex((10 - distance).toFloat())
                     .offset(x = translateX.dp)
                     .graphicsLayer {
@@ -444,37 +445,6 @@ internal fun HubCarousel(
                             ),
                     )
                 }
-                // Title + where it came from, burned into the top of the cover.
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                0f to Color.Black.copy(alpha = 0.74f),
-                                1f to Color.Transparent,
-                            ),
-                        )
-                        .padding(horizontal = 9.dp, vertical = 7.dp),
-                ) {
-                    Text(
-                        text = entry.title,
-                        color = Color.White,
-                        fontSize = if (isSelected) 13.sp else 11.sp,
-                        lineHeight = if (isSelected) 15.sp else 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = hubOriginLabel(entry).uppercase(),
-                        color = Color(0xFF8FD4FF),
-                        fontSize = if (isSelected) 9.sp else 8.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 1.1.sp,
-                        maxLines = 1,
-                    )
-                }
                 if (isSelected) {
                     Box(
                         Modifier
@@ -505,18 +475,23 @@ internal fun DeckHubGamePage(
 ) {
     val context = LocalContext.current
     var description by remember(entry.title) { mutableStateOf<String?>(null) }
+    var bannerId by remember(entry.title) { mutableStateOf(entry.game?.appId?.takeIf { it > 0 }) }
     val scores = rememberDeckScores(entry.title)
     val origin = hubOriginLabel(entry)
     val hours = remember(entry.title) { hubPlaytimeLabel(context, entry.title) }
 
     LaunchedEffect(entry.title) {
-        description = withContext(Dispatchers.IO) {
+        val resolved = withContext(Dispatchers.IO) {
             runCatching {
-                val appId = entry.game?.appId?.takeIf { it > 0 }
-                    ?: SteamStoreSearch.searchByName(entry.title).firstOrNull()?.appId
-                appId?.let { SteamStoreSearch.fetchDetails(it)?.shortDescription }
+                val appId = bannerId ?: SteamStoreSearch.searchByName(entry.title).firstOrNull()?.appId
+                appId to appId?.let { SteamStoreSearch.fetchDetails(it)?.shortDescription }
             }.getOrNull()
         }
+        bannerId = resolved?.first ?: bannerId
+        description = resolved?.second
+    }
+    val bannerUrl = bannerId?.let {
+        "https://shared.steamstatic.com/store_item_assets/steam/apps/$it/header.jpg"
     }
 
     Box(
@@ -537,9 +512,10 @@ internal fun DeckHubGamePage(
                     .clip(RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp))
                     .background(DeckPalette.surface),
             ) {
-                entry.bitmap?.let { bmp ->
-                    Image(
-                        bitmap = bmp.asImageBitmap(),
+                val art: Any? = bannerUrl ?: entry.bitmap
+                if (art != null) {
+                    AsyncImage(
+                        model = art,
                         contentDescription = entry.title,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.matchParentSize(),
@@ -656,7 +632,7 @@ private fun hubPlaytimeLabel(context: Context, name: String): String {
 }
 
 /** "Steam" / "Epic" / "GOG" / "Amazon" for store-added games, "Custom" for hand-added ones. */
-private fun hubOriginLabel(entry: HubEntry): String =
+internal fun hubOriginLabel(entry: HubEntry): String =
     entry.game?.store?.takeIf { it.isNotBlank() }
         ?: if (entry.game?.appId != null) "Steam" else "Custom"
 
@@ -797,7 +773,12 @@ internal fun HubConfirmDialog(
                 .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
                 .padding(horizontal = 20.dp, vertical = 18.dp),
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 560.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
                 Text(
                     text = "Is the game correct?",
                     fontSize = 18.sp,
@@ -991,8 +972,8 @@ internal fun HubConfirmDialog(
 }
 
 // ── Deck-styled launch-method menu + the SteamLite/Goldberg launch pipeline behind it ──────────────
-// Steam-origin games get SteamLite (real client) / Goldberg (offline emulator) / Raw .exe; every
-// other source is Raw-only — the same source gates as the old UI's LaunchMethodSheet, restyled.
+// Every shortcut gets the old UI's full method list — SteamLite (real client) / Goldberg (offline
+// emulator) / Raw .exe — because the old sheet is reachable from Games for any source too.
 @Composable
 internal fun DeckLaunchMethodDialog(
     shortcut: Shortcut,
@@ -1019,20 +1000,18 @@ internal fun DeckLaunchMethodDialog(
     }
     var rememberChoice by remember(shortcut) { mutableStateOf(shortcut.getExtra("launchModeRemembered", "") == "1") }
 
-    val methods = remember(isSteam) {
-        if (isSteam) listOf(
-            Triple("RealSteam", "SteamLite", "Real Steam client - online, VAC, cloud saves"),
-            Triple("Goldberg", "Goldberg", "Offline Steam emulator - no login"),
-            Triple("Raw", "Raw .exe", "Run the game directly - no Steam layer"),
-        ) else listOf(
-            Triple("Raw", "Raw .exe", "Run the game directly - no Steam layer"),
-        )
-    }
+    val methods = listOf(
+        Triple("RealSteam", "SteamLite", "Real Steam client - online, VAC, cloud saves"),
+        Triple("Goldberg", "Goldberg", "Offline Steam emulator - no login"),
+        Triple("Raw", "Raw .exe", "Run the game directly - no Steam layer"),
+    )
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             Modifier
                 .fillMaxWidth(0.92f)
+                .heightIn(max = 560.dp)
+                .verticalScroll(rememberScrollState())
                 .clip(DeckPalette.groupShape)
                 .background(DeckPalette.surface)
                 .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
@@ -1405,6 +1384,8 @@ internal fun DeckCronosReviewDialog(
         Column(
             Modifier
                 .fillMaxWidth(0.88f)
+                .heightIn(max = 560.dp)
+                .verticalScroll(rememberScrollState())
                 .clip(DeckPalette.groupShape)
                 .background(DeckPalette.surface)
                 .border(1.dp, DeckPalette.line, DeckPalette.groupShape)

@@ -419,6 +419,18 @@ internal val featuredCovers = listOf(
                 )
 
 /** Decode a bundled cover at roughly capsule resolution so the wall stays light on RAM. */
+/** Best-effort store tag for a hand-added exe, so home doesn't call every Steam game "Custom". */
+private fun hubStoreFromPath(path: String): String? {
+    val p = path.lowercase()
+    return when {
+        p.contains("steamapps") || p.contains("steam_games") || p.contains("/steam/") -> "Steam"
+        p.contains("epic games") -> "Epic"
+        p.contains("gog games") || p.contains("gog galaxy") -> "GOG"
+        p.contains("amazon games") -> "Amazon"
+        else -> null
+    }
+}
+
 internal fun decodeCover(context: Context, asset: String): Bitmap? = runCatching {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     context.assets.open(asset).use { BitmapFactory.decodeStream(it, null, bounds) }
@@ -457,7 +469,7 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
             }
             entries = HubGamesStore.load(context).map { g ->
                 HubEntry(g.name, g.coverPath?.let { BitmapFactory.decodeFile(it) }, g)
-            }
+            }.also { loaded -> selected = (loaded.size - 1).coerceAtLeast(0) }
             containers = ContainerManager(context).also { it.reloadContainers() }.getContainers().toList()
         }
     }
@@ -510,26 +522,73 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
             .background(Deck.background)
             .clipToBounds(),
     ) {
-        DeckCapsuleWall(
-            covers = wallCovers,
-            driftMs = if (covers.isEmpty()) 75_000 else 40_000,
-        )
-        DeckWallFade()
+        val hero = entries?.getOrNull(selected)?.bitmap
+        if (hero != null) {
+            // The last game you looked at / played owns the banner behind the whole home screen.
+            Image(
+                bitmap = hero.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = 0.5f },
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Deck.background.copy(alpha = 0.35f),
+                            0.55f to Deck.background.copy(alpha = 0.82f),
+                            1f to Deck.background,
+                        ),
+                    ),
+            )
+        } else {
+            DeckCapsuleWall(
+                covers = wallCovers,
+                driftMs = if (covers.isEmpty()) 75_000 else 40_000,
+            )
+            DeckWallFade()
+        }
 
         // The library — center stage, a 3D coverflow of every added game.
         entries?.let { list ->
             if (list.isNotEmpty()) {
-                HubCarousel(
-                    entries = list,
-                    selected = selected,
-                    onSelect = { selected = it },
-                    onOpen = { idx -> pageFor = list.getOrNull(idx) },
-                    onMenu = { idx -> gameMenuFor = list.getOrNull(idx) },
+                Column(
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
+                        .align(Alignment.BottomStart)
                         .fillMaxWidth()
-                        .padding(bottom = 46.dp),
-                )
+                        .padding(start = 24.dp, bottom = 20.dp),
+                ) {
+                    list.getOrNull(selected)?.let { sel ->
+                        Text(
+                            text = hubOriginLabel(sel).uppercase(),
+                            color = Color(0xFF8FD4FF),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 1.6.sp,
+                        )
+                        Text(
+                            text = sel.title,
+                            color = Color.White,
+                            fontSize = 22.sp,
+                            lineHeight = 25.sp,
+                            fontWeight = FontWeight.Black,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    HubCarousel(
+                        entries = list,
+                        selected = selected,
+                        onSelect = { selected = it },
+                        onOpen = { idx -> pageFor = list.getOrNull(idx) },
+                        onMenu = { idx -> gameMenuFor = list.getOrNull(idx) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             } else {
                 Text(
                     "No games yet — tap Add Games",
@@ -751,7 +810,10 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                                         val added = runCatching {
                                             val desktop = ExeShortcutImporter.addToShortcuts(context, created, file, name, appId)
                                             val finalCover = coverPath ?: appId?.let { fetchHubCover(context, it) }
-                                            val game = HubGame(name, created.id, desktop.absolutePath, appId, finalCover)
+                                            val game = HubGame(
+                                                name, created.id, desktop.absolutePath, appId, finalCover,
+                                                hubStoreFromPath(file.absolutePath),
+                                            )
                                             HubGamesStore.add(context, game)
                                             HubEntry(name, finalCover?.let { BitmapFactory.decodeFile(it) }, game)
                                         }.getOrNull()
@@ -782,7 +844,10 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                         val added = runCatching {
                             val desktop = ExeShortcutImporter.addToShortcuts(context, container, file, name, appId)
                             val finalCover = coverPath ?: appId?.let { fetchHubCover(context, it) }
-                            val game = HubGame(name, container.id, desktop.absolutePath, appId, finalCover)
+                            val game = HubGame(
+                                name, container.id, desktop.absolutePath, appId, finalCover,
+                                hubStoreFromPath(file.absolutePath),
+                            )
                             HubGamesStore.add(context, game)
                             HubEntry(name, finalCover?.let { BitmapFactory.decodeFile(it) }, game)
                         }.getOrNull()

@@ -155,7 +155,7 @@ internal object HubGamesStore {
                 shortcutPath = o.optString("shortcutPath"),
                 appId = if (o.isNull("appId")) null else o.optInt("appId"),
                 coverPath = o.optString("coverPath").takeIf { it.isNotEmpty() },
-                store = o.optString("store").takeIf { it.isNotEmpty() },
+                store = o.optString("store").takeIf { it.isNotBlank() && !it.equals("null", true) },
             )
         }
         }.getOrDefault(emptyList())
@@ -394,7 +394,7 @@ internal fun HubCarousel(
                         if (isSelected) {
                             Modifier.drawWithContent {
                                 drawContent()
-                                val w = 4.dp.toPx()
+                                val w = 2.5.dp.toPx()
                                 val span = size.width + size.height
                                 val x = -span + span * 2f * strokePhase
                                 drawRoundRect(
@@ -633,7 +633,7 @@ private fun hubPlaytimeLabel(context: Context, name: String): String {
 
 /** "Steam" / "Epic" / "GOG" / "Amazon" for store-added games, "Custom" for hand-added ones. */
 internal fun hubOriginLabel(entry: HubEntry): String =
-    entry.game?.store?.takeIf { it.isNotBlank() }
+    entry.game?.store?.takeIf { it.isNotBlank() && !it.equals("null", true) }
         ?: if (entry.game?.appId != null) "Steam" else "Custom"
 
 // ── Where an added game lives: an existing container (Master) vs its own clone (Cronos) ──────────

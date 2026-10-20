@@ -469,7 +469,12 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
             }
             entries = HubGamesStore.load(context).map { g ->
                 HubEntry(g.name, g.coverPath?.let { BitmapFactory.decodeFile(it) }, g)
-            }.also { loaded -> selected = (loaded.size - 1).coerceAtLeast(0) }
+            }
+            val loaded = entries.orEmpty()
+            val lastPlayed = context.getSharedPreferences("hub_prefs", Context.MODE_PRIVATE)
+                .getString("last_played", null)
+            val lastIndex = loaded.indexOfFirst { it.game?.shortcutPath == lastPlayed }
+            selected = if (lastIndex >= 0) lastIndex else (loaded.size - 1).coerceAtLeast(0)
             containers = ContainerManager(context).also { it.reloadContainers() }.getContainers().toList()
         }
     }
@@ -495,6 +500,10 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
             Toast.makeText(context, "Add this game first — use Add Games", Toast.LENGTH_SHORT).show()
             return
         }
+        context.getSharedPreferences("hub_prefs", Context.MODE_PRIVATE)
+            .edit().putString("last_played", game.shortcutPath).apply()
+        selected = (entries.orEmpty().indexOfFirst { it.game?.shortcutPath == game.shortcutPath })
+            .takeIf { it >= 0 } ?: selected
         launchSteam = game.appId != null || game.store == "Steam"
         scope.launch(Dispatchers.IO) {
             val shortcut = runCatching {
@@ -522,35 +531,11 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
             .background(Deck.background)
             .clipToBounds(),
     ) {
-        val hero = entries?.getOrNull(selected)?.bitmap
-        if (hero != null) {
-            // The last game you looked at / played owns the banner behind the whole home screen.
-            Image(
-                bitmap = hero.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = 0.5f },
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0f to Deck.background.copy(alpha = 0.35f),
-                            0.55f to Deck.background.copy(alpha = 0.82f),
-                            1f to Deck.background,
-                        ),
-                    ),
-            )
-        } else {
-            DeckCapsuleWall(
-                covers = wallCovers,
-                driftMs = if (covers.isEmpty()) 75_000 else 40_000,
-            )
-            DeckWallFade()
-        }
+        DeckCapsuleWall(
+            covers = wallCovers,
+            driftMs = if (covers.isEmpty()) 75_000 else 40_000,
+        )
+        DeckWallFade()
 
         // The library — center stage, a 3D coverflow of every added game.
         entries?.let { list ->
@@ -559,15 +544,17 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .fillMaxWidth()
-                        .padding(start = 24.dp, bottom = 20.dp),
+                        .padding(start = 24.dp, end = 24.dp, bottom = 20.dp),
                 ) {
-                    list.getOrNull(selected)?.let { sel ->
+                    val sel = list.getOrNull(selected)
+                    if (sel != null) {
                         Text(
                             text = hubOriginLabel(sel).uppercase(),
                             color = Color(0xFF8FD4FF),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.SemiBold,
                             letterSpacing = 1.6.sp,
+                            modifier = Modifier.padding(bottom = 2.dp),
                         )
                         Text(
                             text = sel.title,
@@ -579,6 +566,46 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                             overflow = TextOverflow.Ellipsis,
                         )
                         Spacer(Modifier.height(8.dp))
+                        // The last played game's own cover, cropped horizontal — the home banner.
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(140.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Deck.surface)
+                                .border(1.dp, Deck.line, RoundedCornerShape(16.dp)),
+                        ) {
+                            val art: Any? = sel.bitmap
+                            if (art is android.graphics.Bitmap) {
+                                Image(
+                                    bitmap = art.asImageBitmap(),
+                                    contentDescription = sel.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.matchParentSize(),
+                                )
+                            } else {
+                                Box(
+                                    Modifier
+                                        .matchParentSize()
+                                        .background(
+                                            Brush.linearGradient(
+                                                listOf(Deck.surfaceVariant, Deck.surface),
+                                            ),
+                                        ),
+                                )
+                            }
+                            Box(
+                                Modifier
+                                    .matchParentSize()
+                                    .background(
+                                        Brush.horizontalGradient(
+                                            0f to Color.Black.copy(alpha = 0.55f),
+                                            0.7f to Color.Transparent,
+                                        ),
+                                    ),
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
                     }
                     HubCarousel(
                         entries = list,

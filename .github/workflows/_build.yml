@@ -377,7 +377,8 @@ jobs:
         echo "audio bundle: $before files before, $after after"
         # Exactly one entry more, counted the same way on both sides: the whole bundle is never swapped, only the sink added to it.
         test "$after" -eq $((before + 1))
-        tar --use-compress-program=unzstd -tf app/src/main/assets/pulseaudio.tzst | grep -q 'module-directaudio-sink.so'
+        # No grep -q: it exits on the first hit, SIGPIPEs tar mid-listing and pipefail turns that into a red build.
+        tar --use-compress-program=unzstd -tf app/src/main/assets/pulseaudio.tzst | grep -F 'module-directaudio-sink.so' >/dev/null
         rm -rf pa-bundle sink-out
 
     - name: Cache LSFG native library

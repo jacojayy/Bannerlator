@@ -428,7 +428,7 @@ internal fun decodeCover(context: Context, asset: String): Bitmap? = runCatching
     context.assets.open(asset).use { BitmapFactory.decodeStream(it, null, opts) }
 }.getOrNull()
 
-/** Home: the cover wall behind a 3D games carousel — WinHub wordmark, Start Hubbing, Add Games. */
+/** Home: the cover wall behind a bottom-anchored 3D carousel — WinHub wordmark, Add Games. */
 @Composable
 private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
     val context = LocalContext.current
@@ -440,6 +440,8 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
     var selected by remember { mutableStateOf(0) }
     var pending by remember { mutableStateOf<Pair<File, GameIdentifier.GameIdentity>?>(null) }
     var launchRequest by remember { mutableStateOf<Shortcut?>(null) }
+    var launchSteam by remember { mutableStateOf<Boolean?>(null) }
+    var pageFor by remember { mutableStateOf<HubEntry?>(null) }
     var addModeMenu by remember { mutableStateOf(false) }
     var addMode by remember { mutableStateOf(HubAddMode.MASTER) }
     var cronosBusy by remember { mutableStateOf(false) }
@@ -475,12 +477,13 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
         }
     }
 
-    fun startHubbing() {
-        val game = entries?.getOrNull(selected)?.game
+    fun playEntry(entry: HubEntry) {
+        val game = entry.game
         if (game == null) {
-            Toast.makeText(context, "Add this game first — use Add Games, bottom right", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Add this game first — use Add Games", Toast.LENGTH_SHORT).show()
             return
         }
+        launchSteam = game.appId != null || game.store == "Steam"
         scope.launch(Dispatchers.IO) {
             val shortcut = runCatching {
                 val container = containers.find { it.id == game.containerId } ?: return@runCatching null
@@ -520,11 +523,12 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                     entries = list,
                     selected = selected,
                     onSelect = { selected = it },
+                    onOpen = { idx -> pageFor = list.getOrNull(idx) },
                     onMenu = { idx -> gameMenuFor = list.getOrNull(idx) },
                     modifier = Modifier
-                        .align(Alignment.Center)
+                        .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .padding(bottom = 72.dp),
+                        .padding(bottom = 46.dp),
                 )
             } else {
                 Text(
@@ -538,20 +542,18 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
 
         Column(
             modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 36.dp, bottom = 44.dp, end = 20.dp),
+                .align(Alignment.TopStart)
+                .padding(start = 36.dp, top = 30.dp, end = 20.dp),
         ) {
             DeckWordmark()
-            Spacer(Modifier.height(16.dp))
-            HubGradientButton("Start Hubbing", onClick = { startHubbing() })
         }
 
         HubGradientButton(
             text = "Add Games",
             onClick = { addModeMenu = true },
             modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 28.dp, bottom = 44.dp),
+                .align(Alignment.TopEnd)
+                .padding(end = 28.dp, top = 26.dp),
         )
 
         if (addModeMenu) {
@@ -594,18 +596,7 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                 title = game?.name ?: entry.title,
                 onPlay = {
                     gameMenuFor = null
-                    val g = entry.game ?: return@DeckGameMenu
-                    val shortcut = runCatching {
-                        val container = containers.find { it.id == g.containerId } ?: return@runCatching null
-                        val desktop = File(g.shortcutPath)
-                        if (!desktop.isFile) return@runCatching null
-                        Shortcut(container, desktop)
-                    }.getOrNull()
-                    if (shortcut == null) {
-                        Toast.makeText(context, "That game's shortcut is missing — re-add it", Toast.LENGTH_SHORT).show()
-                    } else {
-                        launchRequest = shortcut
-                    }
+                    playEntry(entry)
                 },
                 onSettings = {
                     gameMenuFor = null
@@ -685,8 +676,26 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
         DeckLaunchStack(
             activity = activity,
             request = launchRequest,
-            onMenuClosed = { launchRequest = null },
+            onMenuClosed = { launchRequest = null; launchSteam = null },
+            steamOverride = launchSteam,
         )
+
+        pageFor?.let { entry ->
+            DeckHubGamePage(
+                entry = entry,
+                onBack = { pageFor = null },
+                onPlay = { pageFor = null; playEntry(entry) },
+                onSettings = {
+                    val g = entry.game
+                    pageFor = null
+                    if (g == null || containers.none { it.id == g.containerId }) {
+                        Toast.makeText(context, "Container not found", Toast.LENGTH_SHORT).show()
+                    } else {
+                        onEditContainer(g.containerId)
+                    }
+                },
+            )
+        }
 
         pending?.let { (file, identity) ->
             HubConfirmDialog(

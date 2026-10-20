@@ -21,11 +21,13 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -34,10 +36,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Home
@@ -89,6 +94,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import com.winlator.star.container.Shortcut
 import com.winlator.star.core.FileUtils
+import com.winlator.star.store.GameFacts
 import com.winlator.star.store.GoldbergComponent
 import com.winlator.star.store.GoldbergMode
 import com.winlator.star.store.GoldbergPatcher
@@ -258,7 +264,7 @@ internal fun fetchHubCover(context: Context, appId: Int): String? {
 
 /**
  * The Home tab's primary action: a dark-blue → signal-blue gradient pill, the DroidDeck
- * controller-friendly CTA. Used for "Start Hubbing" and "Add Games".
+ * controller-friendly CTA. Used for "Play" on the game page and "Add Games" on home.
  */
 @Composable
 internal fun HubGradientButton(
@@ -301,6 +307,7 @@ internal fun HubCarousel(
     entries: List<HubEntry>,
     selected: Int,
     onSelect: (Int) -> Unit,
+    onOpen: (Int) -> Unit,
     onMenu: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -379,7 +386,7 @@ internal fun HubCarousel(
                         alpha = alphaAnim
                         cameraDistance = 12f * density
                     }
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(18.dp))
                     .background(DeckPalette.surface)
                     .then(
                         if (isSelected) {
@@ -400,16 +407,16 @@ internal fun HubCarousel(
                                     ),
                                     topLeft = Offset(w / 2f, w / 2f),
                                     size = Size(size.width - w, size.height - w),
-                                    cornerRadius = CornerRadius(10.dp.toPx() - w / 2f),
+                                    cornerRadius = CornerRadius(18.dp.toPx() - w / 2f),
                                     style = Stroke(width = w),
                                 )
                             }
                         } else {
-                            Modifier.border(1.dp, DeckPalette.line, RoundedCornerShape(10.dp))
+                            Modifier.border(1.dp, DeckPalette.line, RoundedCornerShape(18.dp))
                         },
                     )
                     .combinedClickable(
-                        onClick = { onSelect(index) },
+                        onClick = { if (isSelected) onOpen(index) else onSelect(index) },
                         onLongClick = { onMenu(index) },
                     ),
             ) {
@@ -482,6 +489,169 @@ internal fun HubCarousel(
             }
         }
     }
+}
+
+/**
+ * The modern Deck game page a carousel cover opens into: banner, title, origin, Metacritic /
+ * HowLongToBeat and hours played, the store blurb, then Play + Settings.
+ */
+@Composable
+internal fun DeckHubGamePage(
+    entry: HubEntry,
+    onBack: () -> Unit,
+    onPlay: () -> Unit,
+    onSettings: () -> Unit,
+) {
+    val context = LocalContext.current
+    var description by remember(entry.title) { mutableStateOf<String?>(null) }
+    val scores = rememberDeckScores(entry.title)
+    val origin = hubOriginLabel(entry)
+    val hours = remember(entry.title) { hubPlaytimeLabel(context, entry.title) }
+
+    LaunchedEffect(entry.title) {
+        description = withContext(Dispatchers.IO) {
+            runCatching {
+                val appId = entry.game?.appId?.takeIf { it > 0 }
+                    ?: SteamStoreSearch.searchByName(entry.title).firstOrNull()?.appId
+                appId?.let { SteamStoreSearch.fetchDetails(it)?.shortDescription }
+            }.getOrNull()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DeckPalette.background)
+            .pointerInput(Unit) { detectTapGestures { } },
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(310.dp)
+                    .clip(RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp))
+                    .background(DeckPalette.surface),
+            ) {
+                entry.bitmap?.let { bmp ->
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = entry.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0f to Color.Black.copy(alpha = 0.25f),
+                                0.5f to Color.Transparent,
+                                1f to DeckPalette.background,
+                            ),
+                        ),
+                )
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(horizontal = 24.dp, vertical = 18.dp),
+                ) {
+                    Text(
+                        text = origin.uppercase(),
+                        color = Color(0xFF8FD4FF),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 1.8.sp,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = entry.title,
+                        color = Color.White,
+                        fontSize = 30.sp,
+                        lineHeight = 33.sp,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            Column(modifier = Modifier.padding(horizontal = 24.dp)) {
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DeckHubStat("Hours played", hours)
+                    DeckHubStat("Source", origin)
+                }
+                DeckScoresRow(scores)
+                description?.let { DeckAboutCard(GameFacts.cleanText(it)) }
+                Spacer(Modifier.height(18.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    HubGradientButton("Play", onClick = onPlay)
+                    DeckButton("Settings", primary = false, onClick = onSettings)
+                }
+                Spacer(Modifier.height(28.dp))
+            }
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .padding(start = 20.dp, top = 18.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color.Black.copy(alpha = 0.42f))
+                .clickable(onClick = onBack)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            Icon(
+                Icons.Filled.ArrowBack,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text("Back", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+private fun DeckHubStat(label: String, value: String) {
+    Column(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(DeckPalette.surfaceVariant)
+            .border(1.dp, DeckPalette.line, RoundedCornerShape(10.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = label.uppercase(),
+            color = DeckPalette.onSurfaceVariant,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.1.sp,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = value,
+            color = DeckPalette.onBackground,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
+    }
+}
+
+/** Local session clock written by XServerDisplayActivity into playtime_stats (ms). */
+private fun hubPlaytimeLabel(context: Context, name: String): String {
+    val ms = context.getSharedPreferences("playtime_stats", Context.MODE_PRIVATE)
+        .getLong("${name}_playtime", 0L)
+    if (ms < 60_000L) return "—"
+    val hours = ms / 3_600_000f
+    return if (hours < 10f) String.format("%.1f h", hours) else "${hours.toInt()} h"
 }
 
 /** "Steam" / "Epic" / "GOG" / "Amazon" for store-added games, "Custom" for hand-added ones. */
@@ -826,10 +996,11 @@ internal fun HubConfirmDialog(
 internal fun DeckLaunchMethodDialog(
     shortcut: Shortcut,
     onDismiss: () -> Unit,
+    steamOverride: Boolean? = null,
     onLaunch: (mode: String, goldbergMode: GoldbergMode?, remember: Boolean) -> Unit,
 ) {
     val context = LocalContext.current
-    val isSteam = remember(shortcut) { isSteamOriginShortcut(shortcut) }
+    val isSteam = remember(shortcut, steamOverride) { steamOverride ?: isSteamOriginShortcut(shortcut) }
     val appId = remember(shortcut) { steamAppIdOf(shortcut) }
     SteamPrefs.init(context)
     var method by remember(shortcut) {
@@ -975,7 +1146,12 @@ internal fun DeckLaunchMethodDialog(
  * flow with deck-styled progress chrome. [request] non-null opens the method menu for that shortcut.
  */
 @Composable
-internal fun DeckLaunchStack(activity: Activity, request: Shortcut?, onMenuClosed: () -> Unit) {
+internal fun DeckLaunchStack(
+    activity: Activity,
+    request: Shortcut?,
+    onMenuClosed: () -> Unit,
+    steamOverride: Boolean? = null,
+) {
     val context = LocalContext.current
     var preflightFor by remember { mutableStateOf<Shortcut?>(null) }
     var componentDownloadFor by remember { mutableStateOf<Shortcut?>(null) }
@@ -1041,6 +1217,7 @@ internal fun DeckLaunchStack(activity: Activity, request: Shortcut?, onMenuClose
         DeckLaunchMethodDialog(
             shortcut = s,
             onDismiss = onMenuClosed,
+            steamOverride = steamOverride,
             onLaunch = { mode, gm, rememberChoice ->
                 onMenuClosed()
                 s.putExtra("launchMode", mode)

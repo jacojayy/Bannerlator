@@ -126,8 +126,8 @@ private data class DeckStoreTile(
 
 /** DroidDeck `sourceColours()` mapped onto WinHub's four store screens (order = `Screen.storeItems`). */
 private val deckStores = listOf(
-    DeckStoreTile(Screen.Gog, "GOG", Color(0xFF3A1A3C), Color(0xFFE6A3EA), Color(0xFFC25BC8)),
-    DeckStoreTile(Screen.Epic, "Epic", Color(0xFF2A2A2A), Color(0xFFDDDDDD), Color(0xFFBDBDBD)),
+    DeckStoreTile(Screen.Gog, "GOG", Color(0xFF3A1A3C), Color(0xFFE6A3EA), Color(0xFFA855F7)),
+    DeckStoreTile(Screen.Epic, "Epic", Color(0xFF2A2A2A), Color(0xFFDDDDDD), Color(0xFFFFFFFF)),
     DeckStoreTile(Screen.Amazon, "Amazon", Color(0xFF3A2A0A), Color(0xFFFFC266), Color(0xFFFF9900)),
     DeckStoreTile(Screen.Steam, "Steam", Color(0xFF16293D), Color(0xFF7CC4FF), Color(0xFF1A9FFF)),
 )
@@ -824,7 +824,6 @@ internal fun DeckStoresScreen() {
                 },
                 selected = deckStores.indexOfFirst { it.screen == selected }.coerceAtLeast(0),
                 onSelect = { selected = deckStores[it].screen },
-                scroll = true,
                 height = 38.dp,
             )
 

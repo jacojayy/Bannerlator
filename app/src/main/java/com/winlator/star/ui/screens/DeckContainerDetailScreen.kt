@@ -189,9 +189,27 @@ internal fun DeckContainerDetailScreen(
                         DeckChoiceRow(
                             label = "Screen Size",
                             options = viewModel.screenSizeEntries.map { it to it },
-                            selected = viewModel.selectedScreenSize,
+                            selected = viewModel.screenSizeEntries.firstOrNull {
+                                it.equals(viewModel.selectedScreenSize, ignoreCase = true)
+                            } ?: viewModel.selectedScreenSize,
                             onPick = { viewModel.selectedScreenSize = it },
                         )
+                        if (viewModel.selectedScreenSize.equals("custom", ignoreCase = true)) {
+                            DeckTextRow(
+                                label = "Custom Width",
+                                hint = "Even pixel width, e.g. 1280",
+                                value = viewModel.customWidth,
+                                onValueChange = { viewModel.customWidth = it },
+                                width = 360.dp,
+                            )
+                            DeckTextRow(
+                                label = "Custom Height",
+                                hint = "Even pixel height, e.g. 720",
+                                value = viewModel.customHeight,
+                                onValueChange = { viewModel.customHeight = it },
+                                width = 360.dp,
+                            )
+                        }
                         DeckChoiceRow(
                             label = "Wine Version",
                             hint = "The Wine / Proton layer this container runs on",
@@ -395,7 +413,7 @@ internal fun DeckContainerDetailScreen(
                         )
                         DeckChoiceRow(
                             label = "Box64 Preset",
-                            options = viewModel.box64PresetEntries.mapIndexed { i, e -> e to i.toString() },
+                            options = viewModel.box64PresetEntries.mapIndexed { i, e -> i.toString() to e },
                             selected = viewModel.selectedBox64PresetIndex.toString(),
                             onPick = { viewModel.selectedBox64PresetIndex = it.toInt() },
                         )
@@ -408,7 +426,7 @@ internal fun DeckContainerDetailScreen(
                             )
                             DeckChoiceRow(
                                 label = "FEXCore Preset",
-                                options = viewModel.fexCorePresetEntries.mapIndexed { i, e -> e to i.toString() },
+                                options = viewModel.fexCorePresetEntries.mapIndexed { i, e -> i.toString() to e },
                                 selected = viewModel.selectedFEXCorePresetIndex.toString(),
                                 onPick = { viewModel.selectedFEXCorePresetIndex = it.toInt() },
                             )
@@ -464,7 +482,7 @@ internal fun DeckContainerDetailScreen(
                         }
                         DeckChoiceRow(
                             label = "Startup Selection",
-                            options = viewModel.startupSelectionEntries.mapIndexed { i, e -> e to i.toString() },
+                            options = viewModel.startupSelectionEntries.mapIndexed { i, e -> i.toString() to e },
                             selected = viewModel.selectedStartupSelection.toString(),
                             onPick = { viewModel.selectedStartupSelection = it.toInt() },
                         )
@@ -479,7 +497,7 @@ internal fun DeckContainerDetailScreen(
                         )
                         DeckChoiceRow(
                             label = "Mouse Warp",
-                            options = viewModel.mouseWarpEntries.mapIndexed { i, e -> e to i.toString() },
+                            options = viewModel.mouseWarpEntries.mapIndexed { i, e -> i.toString() to e },
                             selected = viewModel.selectedMouseWarpIndex.toString(),
                             onPick = { viewModel.selectedMouseWarpIndex = it.toInt() },
                         )

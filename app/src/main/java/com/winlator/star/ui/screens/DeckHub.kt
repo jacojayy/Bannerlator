@@ -8,7 +8,13 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.widget.Toast
 import android.provider.OpenableColumns
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -56,9 +62,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.ui.input.key.Key
@@ -112,6 +123,8 @@ internal data class HubGame(
     val shortcutPath: String,
     val appId: Int?,
     val coverPath: String?,
+    /** Store this came from ("Steam", "Epic", "GOG", "Amazon"); null when added by hand. */
+    val store: String? = null,
 )
 
 /** filesDir/hub_games.json — the user's Add Games picks, persisted across launches. */
@@ -134,6 +147,7 @@ internal object HubGamesStore {
                 shortcutPath = o.optString("shortcutPath"),
                 appId = if (o.isNull("appId")) null else o.optInt("appId"),
                 coverPath = o.optString("coverPath").takeIf { it.isNotEmpty() },
+                store = o.optString("store").takeIf { it.isNotEmpty() },
             )
         }
         }.getOrDefault(emptyList())
@@ -163,6 +177,7 @@ internal object HubGamesStore {
                     put("shortcutPath", g.shortcutPath)
                     put("appId", g.appId ?: JSONObject.NULL)
                     put("coverPath", g.coverPath ?: JSONObject.NULL)
+                    put("store", g.store ?: JSONObject.NULL)
                 })
             }
             FileUtils.writeString(File(context.filesDir, FILE_NAME), arr.toString())
@@ -320,6 +335,15 @@ internal fun HubCarousel(
                 }
             },
     ) {
+        // One infinite clock for the selected cover's stroke: blue -> light blue, sliding around
+        // the frame while the tile is focused.
+        val shimmer = rememberInfiniteTransition(label = "hubStroke")
+        val strokePhase by shimmer.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(durationMillis = 2600, easing = LinearEasing)),
+            label = "hubStrokePhase",
+        )
         entries.forEachIndexed { index, entry ->
             val delta = index - current
             val distance = abs(delta)
@@ -357,10 +381,32 @@ internal fun HubCarousel(
                     }
                     .clip(RoundedCornerShape(10.dp))
                     .background(DeckPalette.surface)
-                    .border(
-                        width = if (isSelected) 2.dp else 1.dp,
-                        color = if (isSelected) DeckPalette.primary else DeckPalette.line,
-                        shape = RoundedCornerShape(10.dp),
+                    .then(
+                        if (isSelected) {
+                            Modifier.drawWithContent {
+                                drawContent()
+                                val w = 4.dp.toPx()
+                                val span = size.width + size.height
+                                val x = -span + span * 2f * strokePhase
+                                drawRoundRect(
+                                    brush = Brush.linearGradient(
+                                        colors = listOf(
+                                            Color(0xFF1A9FFF),
+                                            Color(0xFFA6E3FF),
+                                            Color(0xFF1A9FFF),
+                                        ),
+                                        start = Offset(x, 0f),
+                                        end = Offset(x + span, size.height),
+                                    ),
+                                    topLeft = Offset(w / 2f, w / 2f),
+                                    size = Size(size.width - w, size.height - w),
+                                    cornerRadius = CornerRadius(10.dp.toPx() - w / 2f),
+                                    style = Stroke(width = w),
+                                )
+                            }
+                        } else {
+                            Modifier.border(1.dp, DeckPalette.line, RoundedCornerShape(10.dp))
+                        },
                     )
                     .combinedClickable(
                         onClick = { onSelect(index) },
@@ -390,6 +436,37 @@ internal fun HubCarousel(
                             ),
                     )
                 }
+                // Title + where it came from, burned into the top of the cover.
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                0f to Color.Black.copy(alpha = 0.74f),
+                                1f to Color.Transparent,
+                            ),
+                        )
+                        .padding(horizontal = 9.dp, vertical = 7.dp),
+                ) {
+                    Text(
+                        text = entry.title,
+                        color = Color.White,
+                        fontSize = if (isSelected) 13.sp else 11.sp,
+                        lineHeight = if (isSelected) 15.sp else 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = hubOriginLabel(entry).uppercase(),
+                        color = Color(0xFF8FD4FF),
+                        fontSize = if (isSelected) 9.sp else 8.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 1.1.sp,
+                        maxLines = 1,
+                    )
+                }
                 if (isSelected) {
                     Box(
                         Modifier
@@ -406,6 +483,11 @@ internal fun HubCarousel(
         }
     }
 }
+
+/** "Steam" / "Epic" / "GOG" / "Amazon" for store-added games, "Custom" for hand-added ones. */
+private fun hubOriginLabel(entry: HubEntry): String =
+    entry.game?.store?.takeIf { it.isNotBlank() }
+        ?: if (entry.game?.appId != null) "Steam" else "Custom"
 
 // ── Where an added game lives: an existing container (Master) vs its own clone (Cronos) ──────────
 internal enum class HubAddMode { MASTER, CRONOS }

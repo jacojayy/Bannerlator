@@ -108,6 +108,7 @@ internal fun DeckGogInstall(game: GogGame, onBack: () -> Unit, onOpenStore: (() 
         installed = installed,
         addGame = DeckAddRequest(
             title = game.title,
+            store = "GOG",
             coverUrl = game.imageUrl.ifEmpty { null },
             resolveExe = { prefs.getString("gog_exe_${game.gameId}", null) },
         ),

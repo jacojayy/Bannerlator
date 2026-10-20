@@ -302,6 +302,7 @@ internal fun DeckSteamInstall(target: DeckSteamTarget, onBack: () -> Unit, onOpe
         installed = installed,
         addGame = DeckAddRequest(
             title = target.title,
+            store = "Steam",
             coverUrl = "https://shared.steamstatic.com/store_item_assets/steam/apps/" +
                 "${target.appId}/library_600x900.jpg",
             appId = target.appId,

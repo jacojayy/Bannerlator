@@ -61,6 +61,7 @@ internal fun DeckEpicInstall(game: EpicGame, onBack: () -> Unit, onOpenStore: ((
         installed = installed,
         addGame = DeckAddRequest(
             title = game.title,
+            store = "Epic",
             coverUrl = game.artCover.ifBlank { null } ?: game.artSquare.ifBlank { null },
             resolveExe = { prefs.getString("epic_exe_${game.appName}", null) },
         ),

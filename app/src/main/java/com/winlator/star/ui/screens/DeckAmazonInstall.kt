@@ -56,6 +56,7 @@ internal fun DeckAmazonInstall(game: AmazonGame, onBack: () -> Unit, onOpenStore
         installed = installed,
         addGame = DeckAddRequest(
             title = game.title,
+            store = "Amazon",
             coverUrl = game.artUrl.ifBlank { null } ?: game.heroUrl.ifBlank { null },
             resolveExe = { prefs.getString("amazon_exe_${game.productId}", null) },
         ),

@@ -43,6 +43,7 @@ import kotlin.coroutines.resume
  */
 internal data class DeckAddRequest(
     val title: String,
+    val store: String? = null,
     val coverUrl: String? = null,
     val appId: Int? = null,
     val resolveExe: suspend () -> String?,
@@ -116,7 +117,7 @@ internal fun DeckStoreAddFlow(request: DeckAddRequest, onDismiss: () -> Unit) {
                         }
                         val created = createDeckCronosContainer(context, name) ?: return@runCatching null
                         withContext(Dispatchers.IO) {
-                            linkStoreGame(context, created, File(path), name, appId, art)
+                            linkStoreGame(context, created, File(path), name, appId, art, request.store)
                         }
                     }.getOrNull()
                     busy = false
@@ -142,7 +143,7 @@ internal fun DeckStoreAddFlow(request: DeckAddRequest, onDismiss: () -> Unit) {
                             withContext(Dispatchers.IO) { fetchHubCover(context, it) }
                         }
                         withContext(Dispatchers.IO) {
-                            linkStoreGame(context, container, File(path), name, appId, art)
+                            linkStoreGame(context, container, File(path), name, appId, art, request.store)
                         }
                     }.getOrNull()
                     busy = false
@@ -166,9 +167,10 @@ private fun linkStoreGame(
     name: String,
     appId: Int?,
     coverPath: String?,
+    store: String?,
 ): HubGame {
     val desktop = ExeShortcutImporter.addToShortcuts(context, container, exeFile, name, appId)
-    val game = HubGame(name, container.id, desktop.absolutePath, appId, coverPath)
+    val game = HubGame(name, container.id, desktop.absolutePath, appId, coverPath, store)
     HubGamesStore.add(context, game)
     return game
 }

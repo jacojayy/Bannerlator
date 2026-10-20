@@ -1,5 +1,7 @@
 package com.winlator.star.ui.screens
 
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
@@ -62,6 +64,7 @@ internal data class DeckSteamTarget(val appId: Int, val title: String, val art: 
 internal fun DeckSteamInstall(target: DeckSteamTarget, onBack: () -> Unit, onOpenStore: (() -> Unit)? = null) {
     val context = LocalContext.current
     val appCtx = remember(context) { context.applicationContext }
+    val main = remember { Handler(Looper.getMainLooper()) }
     val entries by DownloadRegistry.entries.collectAsState()
     val row = entries.firstOrNull { it.key == "${Store.STEAM}:${target.appId}" }
     var starting by remember { mutableStateOf(false) }

@@ -871,9 +871,9 @@ internal fun DeckStretchyTabs(
     badges: List<Int>? = null,
     dots: List<Color?>? = null,
     focusable: Boolean = false,
-    // True only where merely passing over a tab should switch content (none of the multi-strip
-    // screens: focus-select made Stores hop stores while you were just walking to the next control).
-    selectOnFocus: Boolean = true,
+    // Off by default: focus only highlights a tab, A selects it. Focus-select made content change
+    // under the player while they were just walking past a strip.
+    selectOnFocus: Boolean = false,
     scroll: Boolean = false,
     fillWidth: Boolean = true,
     height: Dp = 40.dp,

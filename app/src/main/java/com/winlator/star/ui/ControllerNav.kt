@@ -11,13 +11,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -91,11 +94,14 @@ private class ControllerFocusInstance(private val color: Color) : IndicationInst
 fun ControllerNavRoot(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     val focusManager = LocalFocusManager.current
     val rootFocus = remember { FocusRequester() }
+    // True only while this invisible root holds focus (i.e. a screen change just dropped it).
+    var rootFocused by remember { mutableStateOf(false) }
     CompositionLocalProvider(LocalControllerRootFocus provides rootFocus) {
         Box(
             modifier
                 .fillMaxSize()
                 .focusRequester(rootFocus)
+                .onFocusChanged { rootFocused = it.isFocused }
                 .focusable()
                 .onKeyEvent { e ->
                     if (e.type != KeyEventType.KeyDown) return@onKeyEvent false
@@ -106,9 +112,13 @@ fun ControllerNavRoot(modifier: Modifier = Modifier, content: @Composable () -> 
                         Key.DirectionRight -> FocusDirection.Right
                         else -> null
                     } ?: return@onKeyEvent false
-                    // `Next` is the reseed: focus was just dropped on this root (screen changed),
-                    // so nothing is focused yet and the direction should enter the tree instead.
-                    focusManager.moveFocus(dir) || focusManager.moveFocus(FocusDirection.Next)
+                    // Reseed ONLY when the root itself is focused (screen just changed). If a real
+                    // control has focus, a failed direction must do nothing: falling back to `Next`
+                    // is what made Left walk DOWN the list when there was no target to the left.
+                    val moved = focusManager.moveFocus(dir)
+                    if (moved) true
+                    else if (rootFocused) focusManager.moveFocus(FocusDirection.Next)
+                    else false
                 },
         ) { content() }
     }

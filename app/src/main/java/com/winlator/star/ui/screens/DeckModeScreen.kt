@@ -108,6 +108,7 @@ import com.winlator.star.core.GameIdentifier
 import com.winlator.star.store.SaveManagerScreen
 import com.winlator.star.store.deckTileFocus
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -136,6 +137,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -217,14 +219,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     // The pump sits on the current rail item the moment the New UI opens, so the controller starts
     // on the side bar — then Right/A drops into the pane and the tab drags in behind it.
     val railFocus = remember { FocusRequester() }
-    // L1/R1 walk the rail itself — one visible, predictable result per press (a section change),
-    // instead of nudging focus sideways through whatever happened to be next.
-    val sectionOrder = remember { deckSections().map { it.key } }
-    val stepSection: (Int) -> Unit = { step ->
-        val i = sectionOrder.indexOf(section).coerceAtLeast(0)
-        section = sectionOrder[((i + step) % sectionOrder.size + sectionOrder.size) % sectionOrder.size]
-        deckDetail = null
-    }
+    val focusManager = LocalFocusManager.current
     val tabs = remember { DeckTabHost() }
     val backLayer = remember { DeckBackLayer() }
     val editTracker = remember { DeckEditTracker() }
@@ -292,8 +287,9 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         else if (tabs.onBack?.invoke() == true) true
                         else { goBack(); true }
                     }
-                    Key.ButtonL1 -> { if (!editTracker.editing) stepSection(-1); true }
-                    Key.ButtonR1 -> { if (!editTracker.editing) stepSection(1); true }
+                    // Shoulders are just wide horizontal steps. They never change the rail or a tab.
+                    Key.ButtonL1 -> focusManager.moveFocus(FocusDirection.Left)
+                    Key.ButtonR1 -> focusManager.moveFocus(FocusDirection.Right)
                     else -> false
                 }
             },
@@ -371,7 +367,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
             // Controller legend: the one place a player can look to know what L1/R1 do here.
             // Draw-only text, so it never becomes a focus stop.
             Text(
-                text = "A Select   B Back   L1/R1 Section   Stick / D-pad Move",
+                text = "A Select   B Back   L1/R1 Move   Stick / D-pad Move",
                 color = Deck.onSurfaceVariant.copy(alpha = 0.75f),
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,

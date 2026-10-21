@@ -258,7 +258,6 @@ private fun DeckIconAction(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .size(44.dp)
-            .deckTileFocus(interaction)
             .clip(RoundedCornerShape(11.dp))
             .border(1.dp, DeckPalette.line, RoundedCornerShape(11.dp))
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
@@ -281,7 +280,6 @@ private fun DeckAction(
         modifier = modifier
             .heightIn(min = 44.dp)
             .alpha(if (enabled) 1f else 0.42f)
-            .deckTileFocus(interaction)
             .clip(RoundedCornerShape(12.dp))
             .background(if (primary) DeckPalette.primary else DeckPalette.surface)
             .border(
@@ -316,7 +314,6 @@ private fun DeckDangerAction(text: String, onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .heightIn(min = 44.dp)
-            .deckTileFocus(interaction)
             .clip(RoundedCornerShape(12.dp))
             .background(DeckPalette.error.copy(alpha = 0.12f))
             .border(1.dp, DeckPalette.error, RoundedCornerShape(12.dp))
@@ -595,7 +592,6 @@ private fun DeckCategoryCard(category: DeckContentCategory, onClick: () -> Unit)
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 96.dp)
-            .deckTileFocus(interaction)
             .clip(shape)
             .background(DeckPalette.surface)
             .border(1.dp, DeckPalette.line, shape)
@@ -893,7 +889,6 @@ private fun DeckSourceCard(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .deckTileFocus(interaction)
             .clip(shape)
             .background(DeckPalette.surface)
             .border(1.dp, DeckPalette.line, shape)
@@ -1156,8 +1151,7 @@ private fun DeckSavedFolder(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .deckTileFocus(interaction)
-                .clickable(interactionSource = interaction, indication = null, onClick = onToggle)
+                    .clickable(interactionSource = interaction, indication = null, onClick = onToggle)
                 .padding(14.dp),
         ) {
             Box(
@@ -1469,8 +1463,7 @@ private fun DeckInstalledComponents(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .deckTileFocus(interaction)
-                .clickable(interactionSource = interaction, indication = null, onClick = onToggle)
+                    .clickable(interactionSource = interaction, indication = null, onClick = onToggle)
                 .padding(14.dp),
         ) {
             Box(

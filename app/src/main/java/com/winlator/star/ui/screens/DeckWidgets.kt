@@ -1042,7 +1042,6 @@ internal fun DeckButton(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .heightIn(min = 44.dp)
-            .deckTileFocus(interaction)
             .clip(RoundedCornerShape(12.dp))
             .background(if (primary) DeckPalette.primary else DeckPalette.surface)
             .border(

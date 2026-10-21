@@ -287,7 +287,6 @@ internal fun HubGradientButton(
         contentAlignment = Alignment.Center,
         modifier = modifier
             .height(46.dp)
-            .deckTileFocus(interaction)
             .clip(RoundedCornerShape(12.dp))
             .background(
                 Brush.horizontalGradient(

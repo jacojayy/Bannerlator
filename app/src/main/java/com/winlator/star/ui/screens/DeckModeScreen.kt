@@ -1045,7 +1045,6 @@ private fun DeckRailItem(
             .then(modifier)
             .padding(bottom = 4.dp)
             .size(width = 80.dp, height = 56.dp)
-            .deckTileFocus(interaction)
             .clip(RoundedCornerShape(14.dp))
             .background(tint)
             .border(
@@ -1506,8 +1505,7 @@ private fun DeckHomeShelf(
                                 val right = left + coords.size.width
                                 if (rights[index] != right) rights[index] = right
                             }
-                            .deckTileFocus(interaction)
-                            .clip(cardShape)
+                                            .clip(cardShape)
                             .background(Deck.surface)
                             .border(1.dp, Deck.line, cardShape)
                             .onFocusChanged {

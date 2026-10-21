@@ -541,7 +541,6 @@ private fun DeckOutlineButton(text: String, onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .heightIn(min = 40.dp)
-            .deckTileFocus(interaction)
             .clip(RoundedCornerShape(12.dp))
             .background(DeckPalette.surfaceVariant)
             .border(1.dp, DeckPalette.line2, RoundedCornerShape(12.dp))
@@ -565,7 +564,6 @@ private fun DeckDangerButton(text: String, onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .heightIn(min = 40.dp)
-            .deckTileFocus(interaction)
             .clip(RoundedCornerShape(12.dp))
             .background(DeckPalette.error.copy(alpha = 0.12f))
             .border(1.dp, DeckPalette.error, RoundedCornerShape(12.dp))
@@ -763,7 +761,6 @@ private fun DeckContainerCard(
                 if (focused) DeckPalette.primary else DeckPalette.line,
                 DeckPalette.groupShape,
             )
-            .deckTileFocus(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onEdit)
             .padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
     ) {

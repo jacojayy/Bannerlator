@@ -325,7 +325,6 @@ private fun DeckGameCard(game: DeckOwnedGame, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .height(150.dp)
-            .deckTileFocus(interaction)
             .clip(shape)
             .background(Deck.surface)
             .deckOuterFocusStroke(interaction, shape)
@@ -522,7 +521,6 @@ private fun DeckHeroCard(item: DeckBrowseItem, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .height(200.dp)
-            .deckTileFocus(interaction)
             .clip(shape)
             .background(Deck.surface)
             .deckOuterFocusStroke(interaction, shape)
@@ -578,7 +576,6 @@ private fun DeckBrowseCard(item: DeckBrowseItem, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .width(150.dp)
-            .deckTileFocus(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {
         Box(

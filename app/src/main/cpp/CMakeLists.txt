@@ -255,6 +255,3 @@ target_link_libraries(steamctrl
 
 # Embedded Wayland compositor (experimental parallel runtime) — see waylandcomp/CMakeLists.txt.
 add_subdirectory(waylandcomp)
-
-# proot: the Linux runtime container (gamescope sessions); see proot/CMakeLists.txt.
-add_subdirectory(proot)

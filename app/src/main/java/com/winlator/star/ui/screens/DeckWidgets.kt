@@ -13,8 +13,11 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,10 +62,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -72,6 +77,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -113,6 +119,62 @@ internal class DeckTabHost {
 }
 
 internal val LocalDeckTabs = compositionLocalOf { DeckTabHost() }
+
+/**
+ * A page/detail opened on top of a Deck section can claim B before the shell leaves the section.
+ * The handler returns true when it consumed the press.
+ */
+internal class DeckBackLayer {
+    var onBack: (() -> Boolean)? = null
+}
+
+internal val LocalDeckBack = compositionLocalOf { DeckBackLayer() }
+
+/**
+ * Dialogs live in their own window, so the Deck shell's root key handler never sees their keys.
+ * This makes the dialog body the focus owner: opening it parks focus there, the D-pad walks into
+ * the rows/buttons, and B closes the dialog. Apply it to the dialog's root Column/Box.
+ */
+@Composable
+internal fun Modifier.deckDialogNav(onBack: () -> Unit = {}): Modifier {
+    val focusManager = LocalFocusManager.current
+    val root = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { root.requestFocus() } }
+    return this
+        .focusRequester(root)
+        .focusable()
+        .onPreviewKeyEvent { e ->
+            if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            if (e.key == Key.ButtonB || e.key == Key.Back || e.key == Key.Escape) {
+                onBack()
+                true
+            } else {
+                val dir = when (e.key) {
+                    Key.DirectionUp -> FocusDirection.Up
+                    Key.DirectionDown -> FocusDirection.Down
+                    Key.DirectionLeft -> FocusDirection.Left
+                    Key.DirectionRight -> FocusDirection.Right
+                    else -> null
+                } ?: return@onPreviewKeyEvent false
+                focusManager.moveFocus(dir) || focusManager.moveFocus(FocusDirection.Next)
+            }
+        }
+}
+
+/**
+ * The Deck focus frame: every controller-focusable surface (tiles, pills, buttons) turns its
+ * hairline outline into a 2dp blue stroke the moment the D-pad lands on it. Touch never sees it.
+ */
+@Composable
+internal fun Modifier.deckFocusBorder(
+    interaction: InteractionSource,
+    shape: Shape,
+    base: Color = DeckPalette.line,
+    focusColor: Color = DeckPalette.primary,
+): Modifier {
+    val focused by interaction.collectIsFocusedAsState()
+    return border(if (focused) 2.dp else 1.dp, if (focused) focusColor else base, shape)
+}
 
 /** DroidDeck's own ease: quick off the mark, then a long glide — the "dragged" feel. */
 internal val DeckEase = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
@@ -730,6 +792,8 @@ private fun DeckStretchyTab(
             .fillMaxHeight()
             .then(if (focusable) Modifier else Modifier.focusProperties { canFocus = false })
             .clip(RoundedCornerShape(10.dp))
+            .deckFocusBorder(interaction, RoundedCornerShape(10.dp), Color.Transparent)
+            .onFocusChanged { if (focusable && it.isFocused && !active) onClick() }
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .onGloballyPositioned { coords ->
                 val left = coords.positionInParent().x
@@ -831,10 +895,11 @@ internal fun DeckButton(
             .deckTileFocus(interaction)
             .clip(RoundedCornerShape(12.dp))
             .background(if (primary) DeckPalette.primary else DeckPalette.surface)
-            .border(
-                width = 1.dp,
-                color = if (primary) DeckPalette.primary else DeckPalette.line,
+            .deckFocusBorder(
+                interaction = interaction,
                 shape = RoundedCornerShape(12.dp),
+                base = if (primary) DeckPalette.primary else DeckPalette.line,
+                focusColor = if (primary) DeckPalette.onPrimary else DeckPalette.primary,
             )
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 16.dp),

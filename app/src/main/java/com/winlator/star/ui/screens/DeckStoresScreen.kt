@@ -324,7 +324,7 @@ private fun DeckGameCard(game: DeckOwnedGame, onClick: () -> Unit) {
             .deckTileFocus(interaction)
             .clip(shape)
             .background(Deck.surface)
-            .border(1.dp, Deck.line, shape)
+            .deckFocusBorder(interaction, shape)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {
         val art = game.art
@@ -515,7 +515,7 @@ private fun DeckHeroCard(item: DeckBrowseItem, onClick: () -> Unit) {
             .deckTileFocus(interaction)
             .clip(shape)
             .background(Deck.surface)
-            .border(1.dp, Deck.line, shape)
+            .deckFocusBorder(interaction, shape)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {
         val art = item.art
@@ -773,6 +773,7 @@ internal fun DeckStoresScreen() {
                 )
             }
             // Shared download queue: compact graphite tile with a live count.
+            val downloadInteraction = remember { MutableInteractionSource() }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -780,8 +781,11 @@ internal fun DeckStoresScreen() {
                     .height(44.dp)
                     .clip(RoundedCornerShape(13.dp))
                     .background(Deck.surfaceVariant)
-                    .border(1.dp, Deck.line, RoundedCornerShape(13.dp))
-                    .clickable { showDownloads = true }
+                    .deckFocusBorder(downloadInteraction, RoundedCornerShape(13.dp))
+                    .clickable(
+                        interactionSource = downloadInteraction,
+                        indication = null,
+                    ) { showDownloads = true }
                     .padding(horizontal = 12.dp),
             ) {
                 Icon(
@@ -824,6 +828,7 @@ internal fun DeckStoresScreen() {
                 },
                 selected = deckStores.indexOfFirst { it.screen == selected }.coerceAtLeast(0),
                 onSelect = { selected = deckStores[it].screen },
+                focusable = true,
                 height = 38.dp,
             )
 

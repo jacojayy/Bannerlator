@@ -209,6 +209,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     val focusManager = LocalFocusManager.current
     var paneFocused by remember { mutableStateOf(false) }
     val tabs = remember { DeckTabHost() }
+    val backLayer = remember { DeckBackLayer() }
     val editTracker = remember { DeckEditTracker() }
     LaunchedEffect(section, deckDetail) { tabs.bind(0) }
     LaunchedEffect(introDone, section) {
@@ -256,6 +257,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
         CompositionLocalProvider(
             LocalIndication provides remember { ControllerFocusIndication(Deck.primary) },
             LocalDeckTabs provides tabs,
+            LocalDeckBack provides backLayer,
             LocalDeckEditTracker provides editTracker,
         ) {
     Row(
@@ -268,6 +270,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                     Key.ButtonB -> {
                         // A text field that is taking input owns B first (it just closes the IME).
                         if (editTracker.editing) false
+                        else if (backLayer.onBack?.invoke() == true) true
                         else if (tabs.onBack?.invoke() == true) true
                         else { goBack(); true }
                     }
@@ -532,6 +535,16 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
         }
     }
 
+    val backLayer = LocalDeckBack.current
+    DisposableEffect(pageFor) {
+        backLayer.onBack = if (pageFor != null) {
+            { pageFor = null; true }
+        } else {
+            null
+        }
+        onDispose { backLayer.onBack = null }
+    }
+
     val wallCovers = remember(covers) {
         if (covers.isEmpty()) List(12) { index -> DeckCover("", index / 12f) } else covers
     }
@@ -539,6 +552,16 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
         modifier = Modifier
             .fillMaxSize()
             .background(Deck.background)
+            .onPreviewKeyEvent { e ->
+                // Y is the game's options, the controller's answer to a long-press.
+                if (e.type == KeyEventType.KeyDown && e.key == Key.ButtonY) {
+                    val focused = entries?.getOrNull(selected) ?: return@onPreviewKeyEvent false
+                    gameMenuFor = focused
+                    true
+                } else {
+                    false
+                }
+            }
             .clipToBounds(),
     ) {
         DeckCapsuleWall(
@@ -558,7 +581,7 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                 )
             } else {
                 val continuePlaying = remember(list) { orderedForHome(list, context) }
-                val hero = continuePlaying.firstOrNull()
+                val hero = list.getOrNull(selected) ?: continuePlaying.firstOrNull()
                 LazyColumn(
                     contentPadding = PaddingValues(
                         start = 24.dp, end = 24.dp, top = 76.dp, bottom = 24.dp,
@@ -586,6 +609,7 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                             context = context,
                             onOpen = { pageFor = it },
                             onMenu = { gameMenuFor = it },
+                            onFocus = { selected = list.indexOf(it) },
                         )
                     }
                     item(key = "shelf-installed") {
@@ -596,6 +620,7 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                             context = context,
                             onOpen = { pageFor = it },
                             onMenu = { gameMenuFor = it },
+                            onFocus = { selected = list.indexOf(it) },
                         )
                     }
                     if (list.size > 1) {
@@ -615,6 +640,7 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
         }
 
         // Add Games is just a + in the corner now.
+        val addInteraction = remember { MutableInteractionSource() }
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
@@ -623,8 +649,11 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                 .size(46.dp)
                 .clip(CircleShape)
                 .background(Deck.surface)
-                .border(1.dp, Deck.line, CircleShape)
-                .clickable { addModeMenu = true },
+                .deckFocusBorder(addInteraction, CircleShape)
+                .clickable(
+                    interactionSource = addInteraction,
+                    indication = null,
+                ) { addModeMenu = true },
         ) {
             Icon(
                 Icons.Filled.Add,
@@ -1260,14 +1289,20 @@ private fun DeckHomeHero(
     onMenu: () -> Unit,
 ) {
     val shape = RoundedCornerShape(24.dp)
+    val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(216.dp)
             .clip(shape)
             .background(Deck.surface)
-            .border(1.dp, Deck.line, shape)
-            .combinedClickable(onClick = onOpen, onLongClick = onMenu),
+            .deckFocusBorder(interaction, shape)
+            .combinedClickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onOpen,
+                onLongClick = onMenu,
+            ),
     ) {
         entry.bitmap?.let { bmp ->
             Image(
@@ -1346,6 +1381,7 @@ private fun DeckHomeShelf(
     context: Context,
     onOpen: (HubEntry) -> Unit,
     onMenu: (HubEntry) -> Unit,
+    onFocus: (HubEntry) -> Unit = {},
 ) {
     if (entries.isEmpty()) return
     Column {
@@ -1360,14 +1396,19 @@ private fun DeckHomeShelf(
         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(entries, key = { it.game?.shortcutPath ?: it.title }) { entry ->
                 val cardShape = RoundedCornerShape(16.dp)
+                val interaction = remember { MutableInteractionSource() }
                 Box(
                     modifier = Modifier
                         .width(if (wide) 214.dp else 132.dp)
                         .height(if (wide) 120.dp else 198.dp)
+                        .deckTileFocus(interaction)
                         .clip(cardShape)
                         .background(Deck.surface)
-                        .border(1.dp, Deck.line, cardShape)
+                        .deckFocusBorder(interaction, cardShape)
+                        .onFocusChanged { if (it.isFocused) onFocus(entry) }
                         .combinedClickable(
+                            interactionSource = interaction,
+                            indication = null,
                             onClick = { onOpen(entry) },
                             onLongClick = { onMenu(entry) },
                         ),

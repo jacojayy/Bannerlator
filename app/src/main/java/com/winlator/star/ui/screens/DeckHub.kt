@@ -19,6 +19,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -78,6 +79,12 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -106,6 +113,7 @@ import com.winlator.star.store.SteamLoginActivity
 import com.winlator.star.store.SteamPrefs
 import com.winlator.star.store.SteamSessionManager
 import com.winlator.star.store.SteamStoreSearch
+import com.winlator.star.store.deckTileFocus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -274,18 +282,25 @@ internal fun HubGradientButton(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
+    val interaction = remember { MutableInteractionSource() }
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
             .height(46.dp)
+            .deckTileFocus(interaction)
             .clip(RoundedCornerShape(12.dp))
             .background(
                 Brush.horizontalGradient(
                     listOf(Color(0xFF0A2E52), Color(0xFF1A9FFF)),
                 ),
             )
-            .border(1.dp, Color(0xFF59C1FF).copy(alpha = 0.55f), RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .deckFocusBorder(
+                interaction = interaction,
+                shape = RoundedCornerShape(12.dp),
+                base = Color(0xFF59C1FF).copy(alpha = 0.55f),
+                focusColor = Color.White,
+            )
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 24.dp),
     ) {
         Text(
@@ -506,9 +521,26 @@ internal fun DeckHubGamePage(
         animationSpec = tween(200),
         label = "hubPageAlpha",
     )
+    val pageFocus = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
+    // The page owns the D-pad while it is open: focus lands here, then walks the chips and buttons.
+    LaunchedEffect(Unit) { runCatching { pageFocus.requestFocus() } }
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .focusRequester(pageFocus)
+            .focusable()
+            .onKeyEvent { e ->
+                if (e.type != KeyEventType.KeyDown) return@onKeyEvent false
+                val dir = when (e.key) {
+                    Key.DirectionUp -> FocusDirection.Up
+                    Key.DirectionDown -> FocusDirection.Down
+                    Key.DirectionLeft -> FocusDirection.Left
+                    Key.DirectionRight -> FocusDirection.Right
+                    else -> null
+                } ?: return@onKeyEvent false
+                focusManager.moveFocus(dir)
+            }
             .graphicsLayer {
                 scaleX = pageScale
                 scaleY = pageScale
@@ -670,6 +702,7 @@ internal fun DeckAddModeMenu(onPick: (HubAddMode) -> Unit, onDismiss: () -> Unit
                 .clip(DeckPalette.groupShape)
                 .background(DeckPalette.surface)
                 .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                .deckDialogNav(onDismiss)
                 .padding(22.dp),
         ) {
             Text(
@@ -788,6 +821,7 @@ internal fun HubConfirmDialog(
                 .clip(DeckPalette.groupShape)
                 .background(DeckPalette.surface)
                 .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                .deckDialogNav(onDismiss)
                 .padding(horizontal = 20.dp, vertical = 18.dp),
         ) {
             Column(
@@ -1032,6 +1066,7 @@ internal fun DeckLaunchMethodDialog(
                 .clip(DeckPalette.groupShape)
                 .background(DeckPalette.surface)
                 .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                .deckDialogNav(onDismiss)
                 .padding(22.dp),
         ) {
             Text(
@@ -1331,6 +1366,7 @@ internal fun DeckGameMenu(
                 .clip(DeckPalette.groupShape)
                 .background(DeckPalette.surface)
                 .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                .deckDialogNav(onDismiss)
                 .padding(vertical = 10.dp),
         ) {
             Text(
@@ -1415,6 +1451,7 @@ internal fun DeckCronosReviewDialog(
                 .clip(DeckPalette.groupShape)
                 .background(DeckPalette.surface)
                 .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                .deckDialogNav(onKeep)
                 .padding(22.dp),
         ) {
             Text(

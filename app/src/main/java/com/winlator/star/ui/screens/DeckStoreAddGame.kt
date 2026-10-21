@@ -231,6 +231,7 @@ private fun DeckAddBusyDialog(text: String) {
                 .clip(DeckPalette.groupShape)
                 .background(DeckPalette.surface)
                 .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                .deckDialogNav()
                 .padding(22.dp),
         ) {
             Text(

@@ -911,6 +911,7 @@ internal fun DeckPropertiesDialog(container: Container, onDismiss: () -> Unit) {
                 .clip(DeckPalette.groupShape)
                 .background(DeckPalette.surface)
                 .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                .deckDialogNav(onDismiss)
                 .padding(horizontal = 20.dp, vertical = 18.dp),
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {

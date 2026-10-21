@@ -89,6 +89,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -373,6 +374,8 @@ fun FileManagerScreen(
     // default landing is unchanged (internal root); C: is an opt-in jump. Null for every other picker.
     driveCPath: File? = null,
     onPick: ((File) -> Unit)? = null,
+    // Deck ("New UI") host: swap the Material chrome for Deck pills/cards. Behaviour is identical.
+    deckMode: Boolean = false,
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -1097,10 +1100,11 @@ fun FileManagerScreen(
         )
     }
 
+    CompositionLocalProvider(LocalDeckMode provides deckMode) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(if (deckMode) DeckPalette.background else MaterialTheme.colorScheme.background),
     ) {
         // ── Pick-mode title ──
         if (pickMode && !pickerTitle.isNullOrEmpty()) {
@@ -1133,7 +1137,17 @@ fun FileManagerScreen(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .padding(
+                    start = if (deckMode) 12.dp else 0.dp,
+                    end = if (deckMode) 12.dp else 0.dp,
+                    top = if (deckMode) 6.dp else 0.dp,
+                )
+                .clip(RoundedCornerShape(if (deckMode) 14.dp else 0.dp))
+                .background(if (deckMode) DeckPalette.surface else MaterialTheme.colorScheme.surfaceContainer)
+                .then(
+                    if (deckMode) Modifier.border(1.dp, DeckPalette.line, RoundedCornerShape(14.dp))
+                    else Modifier,
+                )
                 .padding(horizontal = 8.dp, vertical = 6.dp),
         ) {
             IconButton(onClick = { goUp() }, enabled = currentDir != currentRoot) {
@@ -1562,11 +1576,38 @@ fun FileManagerScreen(
             if (favItems.isNotEmpty()) add(RailSection("★ FAVORITES", favItems))
         }
 
+        if (deckMode && (!pickMode || driveCPath != null)) {
+            // Deck replaces the collapsible rail with a horizontal pill strip: every rail target
+            // (drives, quick folders, pinned favourites) plus the Favorites view stays reachable,
+            // and pills select on focus so D-pad users land on the one they navigate to.
+            val deckLocations = buildList {
+                add(RailItem("★ Favorites", Icons.Filled.Star, showFavorites) { showFavorites = true })
+                addAll(storageItems)
+                addAll(quickItems)
+                addAll(favItems)
+            }
+            val deckSelected = deckLocations.indexOfFirst { it.selected }
+            if (deckLocations.size > 1) {
+                DeckStretchyTabs(
+                    labels = deckLocations.map { it.label },
+                    selected = deckSelected,
+                    onSelect = { deckLocations.getOrNull(it)?.onClick?.invoke() },
+                    focusable = true,
+                    scroll = true,
+                    fillWidth = false,
+                    height = 34.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
+        }
+
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             // The slim picker normally hides the rail; the add-a-game-from-C: flow (driveCPath set) is
             // the exception — it shows the rail so the "Drive C:" location item is reachable. Pickers
             // that don't pass driveCPath keep the rail hidden exactly as before.
-            if (!pickMode || driveCPath != null) {
+            if ((!pickMode || driveCPath != null) && !deckMode) {
                 CollapsibleRail(state = fmRailState, title = "Files", sections = locationSections, outlinedItems = true)
             }
             Box(modifier = Modifier.weight(1f).fillMaxSize()) {
@@ -1782,6 +1823,7 @@ fun FileManagerScreen(
         } // end rail + content Row
         // (New Folder moved into the top toolbar; the bottom bar was removed to reclaim its strip.)
     }
+    }
 }
 
 // The context-menu item list shared by the list rows (FileItemRow) and the grid tiles
@@ -1941,6 +1983,7 @@ private fun FileItemRow(
     // Image files show a real thumbnail instead of the generic file icon (handy when picking a
     // wallpaper/icon). Coil sizes the decode to the 36dp slot and caches it, so scrolling stays smooth.
     val isImage = !isDir && file.extension.lowercase() in IMAGE_THUMB_EXTS
+    val deck = LocalDeckMode.current
 
     // For real PE executables, try to pull out the embedded application icon (async, off the main thread).
     var exeIcon by remember(file.absolutePath) { mutableStateOf<ImageBitmap?>(null) }
@@ -1961,14 +2004,18 @@ private fun FileItemRow(
                 onClick = { if (selectionMode) onToggleSelect() else onTap() },
                 onLongClick = onLongPress,
             ),
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(if (deck) 14.dp else 10.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-            else MaterialTheme.colorScheme.surfaceContainer,
+            containerColor = when {
+                selected -> DeckPalette.primary.copy(alpha = 0.18f)
+                deck -> DeckPalette.surface
+                else -> MaterialTheme.colorScheme.surfaceContainer
+            },
         ),
         border = BorderStroke(
             1.dp,
-            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+            if (selected) DeckPalette.primary
+            else if (deck) DeckPalette.line else MaterialTheme.colorScheme.outline,
         ),
     ) {
         Row(
@@ -2285,6 +2332,7 @@ private fun FileGridTile(
 ) {
     val isDir = file.isDirectory
     val isImage = !isDir && file.extension.lowercase() in IMAGE_THUMB_EXTS
+    val deck = LocalDeckMode.current
     var exeIcon by remember(file.absolutePath) { mutableStateOf<ImageBitmap?>(null) }
     if (!isDir && file.name.lowercase().endsWith(".exe")) {
         LaunchedEffect(file.absolutePath) {
@@ -2301,14 +2349,18 @@ private fun FileGridTile(
                     onClick = { if (selectionMode) onToggleSelect() else onTap() },
                     onLongClick = onLongPress,
                 ),
-            shape = RoundedCornerShape(10.dp),
+            shape = RoundedCornerShape(if (deck) 14.dp else 10.dp),
             colors = CardDefaults.cardColors(
-                containerColor = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                else MaterialTheme.colorScheme.surfaceContainer,
+                containerColor = when {
+                    selected -> DeckPalette.primary.copy(alpha = 0.18f)
+                    deck -> DeckPalette.surface
+                    else -> MaterialTheme.colorScheme.surfaceContainer
+                },
             ),
             border = BorderStroke(
                 1.dp,
-                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                if (selected) DeckPalette.primary
+                else if (deck) DeckPalette.line else MaterialTheme.colorScheme.outline,
             ),
         ) {
             Column(

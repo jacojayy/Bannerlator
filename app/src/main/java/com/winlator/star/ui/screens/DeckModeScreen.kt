@@ -373,7 +373,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         }
                     }
                     "stores" -> DeckStoresScreen()
-                    "file_manager" -> FileManagerScreen()
+                    "file_manager" -> FileManagerScreen(deckMode = true)
                     "graphics" -> DeckGraphicsPane(
                         pane = graphicPane,
                         onSelect = { graphicPane = it },

@@ -331,6 +331,13 @@ internal fun Modifier.deckFocusBorder(
 /** DroidDeck's own ease: quick off the mark, then a long glide — the "dragged" feel. */
 internal val DeckEase = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
 
+/**
+ * True while rendering inside the Deck shell ("New UI"). Screens hosted by both shells
+ * (File Manager, Save Manager) read this to swap their legacy Material surfaces for Deck
+ * ones without threading a flag through every private composable.
+ */
+internal val LocalDeckMode = compositionLocalOf { false }
+
 /** DroidDeck's Graphite palette, used by the Deck Mode widgets (same hex values as ui/Theme.kt). */
 internal object DeckPalette {
     val background = Color(0xFF0A0B0D)

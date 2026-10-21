@@ -32,6 +32,7 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -45,11 +46,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.wrapContentHeight
@@ -57,6 +62,7 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
@@ -479,6 +485,9 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
         }
     }
 
+    val lastPlayedPath = context.getSharedPreferences("hub_prefs", Context.MODE_PRIVATE)
+        .getString("last_played", null)
+
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch(Dispatchers.IO) {
@@ -537,72 +546,92 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
         )
         DeckWallFade()
 
-        // The library — center stage, a 3D coverflow of every added game.
+        // ── Home, bannercode deck style: a hero for what you're playing, then shelves. ──
         entries?.let { list ->
-            if (list.isNotEmpty()) {
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth()
-                        .padding(start = 24.dp, end = 24.dp, bottom = 20.dp),
-                ) {
-                    val sel = list.getOrNull(selected)
-                    if (sel != null) {
-                        Text(
-                            text = hubPlaytimeLabel(context, sel.title).let {
-                                if (it == "not played yet") "NOT PLAYED YET" else "$it played".uppercase()
-                            },
-                            color = Color(0xFF8FD4FF),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            letterSpacing = 1.6.sp,
-                            modifier = Modifier.padding(bottom = 2.dp),
-                        )
-                        Text(
-                            text = sel.title,
-                            color = Color.White,
-                            fontSize = 22.sp,
-                            lineHeight = 25.sp,
-                            fontWeight = FontWeight.Black,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(bottom = 8.dp),
-                        )
-                    }
-                    HubCarousel(
-                        entries = list,
-                        selected = selected,
-                        onSelect = { selected = it },
-                        onOpen = { idx -> pageFor = list.getOrNull(idx) },
-                        onMenu = { idx -> gameMenuFor = list.getOrNull(idx) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            } else {
+            if (list.isEmpty()) {
                 Text(
-                    "No games yet — tap Add Games",
+                    "No games yet — tap +",
                     color = DeckPalette.onSurfaceVariant,
                     fontSize = 14.sp,
                     modifier = Modifier.align(Alignment.Center),
                 )
+            } else {
+                val continuePlaying = remember(list) { orderedForHome(list, context) }
+                val hero = continuePlaying.firstOrNull()
+                LazyColumn(
+                    contentPadding = PaddingValues(
+                        start = 24.dp, end = 24.dp, top = 76.dp, bottom = 24.dp,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    if (hero != null) {
+                        item(key = "hero") {
+                            DeckHomeHero(
+                                entry = hero,
+                                playtime = hubPlaytimeLabel(context, hero.title),
+                                isContinue = hero.game?.shortcutPath == lastPlayedPath,
+                                onOpen = { pageFor = hero },
+                                onPlay = { playEntry(hero) },
+                                onMenu = { gameMenuFor = hero },
+                            )
+                        }
+                    }
+                    item(key = "shelf-continue") {
+                        DeckHomeShelf(
+                            title = "Continue playing",
+                            entries = continuePlaying.take(8),
+                            wide = true,
+                            context = context,
+                            onOpen = { pageFor = it },
+                            onMenu = { gameMenuFor = it },
+                        )
+                    }
+                    item(key = "shelf-installed") {
+                        DeckHomeShelf(
+                            title = "Installed",
+                            entries = list,
+                            wide = false,
+                            context = context,
+                            onOpen = { pageFor = it },
+                            onMenu = { gameMenuFor = it },
+                        )
+                    }
+                    if (list.size > 1) {
+                        item(key = "shelf-recent") {
+                            DeckHomeShelf(
+                                title = "Recently added",
+                                entries = list.takeLast(8).reversed(),
+                                wide = false,
+                                context = context,
+                                onOpen = { pageFor = it },
+                                onMenu = { gameMenuFor = it },
+                            )
+                        }
+                    }
+                }
             }
         }
 
-        Column(
+        // Add Games is just a + in the corner now.
+        Box(
+            contentAlignment = Alignment.Center,
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .padding(start = 36.dp, top = 30.dp, end = 20.dp),
+                .padding(start = 20.dp, top = 18.dp)
+                .size(46.dp)
+                .clip(CircleShape)
+                .background(Deck.surface)
+                .border(1.dp, Deck.line, CircleShape)
+                .clickable { addModeMenu = true },
         ) {
-            DeckWordmark()
+            Icon(
+                Icons.Filled.Add,
+                contentDescription = "Add games",
+                tint = Deck.onBackground,
+                modifier = Modifier.size(22.dp),
+            )
         }
-
-        HubGradientButton(
-            text = "Add Games",
-            onClick = { addModeMenu = true },
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(end = 28.dp, top = 26.dp),
-        )
 
         if (addModeMenu) {
             DeckAddModeMenu(
@@ -1207,5 +1236,172 @@ private fun DeckIntro(onDone: () -> Unit) {
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 32.dp),
         )
+    }
+}
+
+/** Last played first, the rest in add order — the home's "Continue playing" shelf. */
+private fun orderedForHome(list: List<HubEntry>, context: Context): List<HubEntry> {
+    val last = context.getSharedPreferences("hub_prefs", Context.MODE_PRIVATE)
+        .getString("last_played", null)
+    val idx = list.indexOfFirst { it.game?.shortcutPath == last }
+    return if (idx > 0) listOf(list[idx]) + list.filterIndexed { i, _ -> i != idx } else list
+}
+
+/** The big banner in the bannercode deck home: art on the right, title + facts on the left. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DeckHomeHero(
+    entry: HubEntry,
+    playtime: String,
+    isContinue: Boolean,
+    onOpen: () -> Unit,
+    onPlay: () -> Unit,
+    onMenu: () -> Unit,
+) {
+    val shape = RoundedCornerShape(24.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(216.dp)
+            .clip(shape)
+            .background(Deck.surface)
+            .border(1.dp, Deck.line, shape)
+            .combinedClickable(onClick = onOpen, onLongClick = onMenu),
+    ) {
+        entry.bitmap?.let { bmp ->
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = entry.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.matchParentSize(),
+            )
+        }
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(
+                    Brush.horizontalGradient(
+                        0f to Deck.surface,
+                        0.45f to Deck.surface.copy(alpha = 0.82f),
+                        1f to Color.Transparent,
+                    ),
+                ),
+        )
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        0.55f to Color.Transparent,
+                        1f to Deck.background.copy(alpha = 0.9f),
+                    ),
+                ),
+        )
+        Column(
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(horizontal = 22.dp, vertical = 18.dp),
+        ) {
+            Text(
+                text = if (isContinue) "CONTINUE PLAYING" else "READY TO PLAY",
+                color = Deck.primary,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 1.8.sp,
+            )
+            Text(
+                text = entry.title,
+                color = Color.White,
+                fontSize = 26.sp,
+                lineHeight = 29.sp,
+                fontWeight = FontWeight.Black,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = playtime.uppercase() + " PLAYED",
+                color = Deck.onSurfaceVariant,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 1.2.sp,
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                DeckButton("Play", primary = true, onClick = onPlay)
+                DeckButton("Details", primary = false, onClick = onOpen)
+            }
+        }
+    }
+}
+
+/** One horizontal shelf of games with the playtime burned into a bottom gradient. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun DeckHomeShelf(
+    title: String,
+    entries: List<HubEntry>,
+    wide: Boolean,
+    context: Context,
+    onOpen: (HubEntry) -> Unit,
+    onMenu: (HubEntry) -> Unit,
+) {
+    if (entries.isEmpty()) return
+    Column {
+        Text(
+            text = title.uppercase(),
+            color = Deck.onSurfaceVariant,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.6.sp,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(entries, key = { it.game?.shortcutPath ?: it.title }) { entry ->
+                val cardShape = RoundedCornerShape(16.dp)
+                Box(
+                    modifier = Modifier
+                        .width(if (wide) 214.dp else 132.dp)
+                        .height(if (wide) 120.dp else 198.dp)
+                        .clip(cardShape)
+                        .background(Deck.surface)
+                        .border(1.dp, Deck.line, cardShape)
+                        .combinedClickable(
+                            onClick = { onOpen(entry) },
+                            onLongClick = { onMenu(entry) },
+                        ),
+                ) {
+                    entry.bitmap?.let { bmp ->
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = entry.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.matchParentSize(),
+                        )
+                    }
+                    Box(
+                        Modifier
+                            .matchParentSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    0.55f to Color.Transparent,
+                                    1f to Color.Black.copy(alpha = 0.78f),
+                                ),
+                            ),
+                    )
+                    Text(
+                        text = hubPlaytimeLabel(context, entry.title).uppercase(),
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 1.sp,
+                        maxLines = 1,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(9.dp),
+                    )
+                }
+            }
+        }
     }
 }

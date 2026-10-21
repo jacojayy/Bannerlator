@@ -494,9 +494,26 @@ internal fun DeckHubGamePage(
         "https://shared.steamstatic.com/store_item_assets/steam/apps/$it/header.jpg"
     }
 
+    var pageIn by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { pageIn = true }
+    val pageScale by animateFloatAsState(
+        targetValue = if (pageIn) 1f else 0.9f,
+        animationSpec = tween(240),
+        label = "hubPageScale",
+    )
+    val pageAlpha by animateFloatAsState(
+        targetValue = if (pageIn) 1f else 0f,
+        animationSpec = tween(200),
+        label = "hubPageAlpha",
+    )
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .graphicsLayer {
+                scaleX = pageScale
+                scaleY = pageScale
+                alpha = pageAlpha
+            }
             .background(DeckPalette.background)
             .pointerInput(Unit) { detectTapGestures { } },
     ) {

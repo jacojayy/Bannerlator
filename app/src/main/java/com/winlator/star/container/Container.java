@@ -500,16 +500,15 @@ public class Container {
     public static final String EXTRA_RUNTIME = "runtime";
 
     public String getRuntime() {
-        return RUNTIME_GAMESCOPE.equals(getExtra(EXTRA_RUNTIME, RUNTIME_WINE))
-                ? RUNTIME_GAMESCOPE : RUNTIME_WINE;
+        return RUNTIME_WINE;
     }
 
     public void setRuntime(String value) {
-        putExtra(EXTRA_RUNTIME, RUNTIME_GAMESCOPE.equals(value) ? RUNTIME_GAMESCOPE : RUNTIME_WINE);
+        // Linux/gamescope runtime retired: Wine is the only runtime.
     }
 
     public boolean isGamescopeRuntime() {
-        return RUNTIME_GAMESCOPE.equals(getRuntime());
+        return false;
     }
 
     // --- OpenGL safe mode (per-container), stored in extraData. Wayland sessions only. ---

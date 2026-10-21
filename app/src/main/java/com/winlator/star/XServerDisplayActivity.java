@@ -2462,7 +2462,9 @@ public class XServerDisplayActivity extends AppCompatActivity {
         container = containerManager.getContainerById(getIntent().getIntExtra("container_id", 0));
 
         componentInstallerExe = getIntent().getStringExtra("component_installer_exe");
-        waylandMode = getIntent().getBooleanExtra("wayland_mode", false);
+        // Wayland and the Linux (gamescope) runtime are retired: every session is a Wine X11
+        // session. The launch extras that used to switch them on are ignored.
+        waylandMode = false;
         // "Launch this game on the TV": the launcher aimed this session at an external display and told
         // us which one. That extra is only what was ASKED for — the system can decline a launch display
         // without anything throwing — so read where the window really ended up and decide from that.
@@ -2568,15 +2570,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // every Wine container runs the X11 path. The Linux (gamescope) runtime below still pins
         // Wayland on its own, which is the one remaining consumer of the compositor.
 
-        // Runtime: the game's override, else the container's. gamescope is a Wayland client of our
-        // compositor and has nothing to draw on otherwise, so it pins the backend to Wayland.
-        String runtime = shortcut != null ? shortcut.getExtra(Container.EXTRA_RUNTIME, "") : "";
-        if (runtime.isEmpty()) runtime = container.getRuntime();
-        gamescopeMode = Container.RUNTIME_GAMESCOPE.equals(runtime);
-        if (gamescopeMode) {
-            waylandMode = true;
-            Log.i("XServerDisplayActivity", "runtime: gamescope (Linux), display server: Wayland");
-        }
+        // Runtime: the Linux/gamescope runtime is retired; Wine is the only runtime left.
+        gamescopeMode = false;
 
         // In-game Friends tab (drawer): read the friends/chat opt-in once for this launch and start
         // watching for a live source. The RealSteam hint keeps the app-session source from flashing up

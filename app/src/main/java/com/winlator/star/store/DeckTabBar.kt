@@ -18,7 +18,7 @@ internal fun DeckTabBar(
     selected: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
-    selectOnFocus: Boolean = true,
+    selectOnFocus: Boolean = false,
 ) {
     DeckStretchyTabs(
         labels = tabs.map { it.label },

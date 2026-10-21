@@ -60,14 +60,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -130,6 +135,35 @@ internal class DeckBackLayer {
 }
 
 internal val LocalDeckBack = compositionLocalOf { DeckBackLayer() }
+
+/**
+ * The Deck selection stroke: drawn *outside* the tile with the tile's radius grown by [gap], so it
+ * reads as a rounded ring hugging the artwork instead of a square line painted inside it.
+ */
+@Composable
+internal fun Modifier.deckOuterFocusStroke(
+    interaction: InteractionSource,
+    shape: RoundedCornerShape,
+    strokeWidth: Dp = 2.5.dp,
+    gap: Dp = 3.dp,
+    focusColor: Color = DeckPalette.primary,
+): Modifier {
+    val focused by interaction.collectIsFocusedAsState()
+    return drawWithContent {
+        drawContent()
+        if (focused) {
+            val g = gap.toPx()
+            val radius = shape.topStart.toPx(size, this) + g
+            drawRoundRect(
+                color = focusColor,
+                topLeft = Offset(-g, -g),
+                size = Size(size.width + g * 2f, size.height + g * 2f),
+                cornerRadius = CornerRadius(radius, radius),
+                style = Stroke(width = strokeWidth.toPx()),
+            )
+        }
+    }
+}
 
 /**
  * Dialogs live in their own window, so the Deck shell's root key handler never sees their keys.
@@ -896,10 +930,14 @@ internal fun DeckButton(
             .deckTileFocus(interaction)
             .clip(RoundedCornerShape(12.dp))
             .background(if (primary) DeckPalette.primary else DeckPalette.surface)
-            .deckFocusBorder(
+            .border(
+                width = 1.dp,
+                color = if (primary) DeckPalette.primary else DeckPalette.line,
+                shape = RoundedCornerShape(12.dp),
+            )
+            .deckOuterFocusStroke(
                 interaction = interaction,
                 shape = RoundedCornerShape(12.dp),
-                base = if (primary) DeckPalette.primary else DeckPalette.line,
                 focusColor = if (primary) DeckPalette.onPrimary else DeckPalette.primary,
             )
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)

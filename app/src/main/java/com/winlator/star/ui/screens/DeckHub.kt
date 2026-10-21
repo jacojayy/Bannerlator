@@ -294,10 +294,10 @@ internal fun HubGradientButton(
                     listOf(Color(0xFF0A2E52), Color(0xFF1A9FFF)),
                 ),
             )
-            .deckFocusBorder(
+            .border(1.dp, Color(0xFF59C1FF).copy(alpha = 0.55f), RoundedCornerShape(12.dp))
+            .deckOuterFocusStroke(
                 interaction = interaction,
                 shape = RoundedCornerShape(12.dp),
-                base = Color(0xFF59C1FF).copy(alpha = 0.55f),
                 focusColor = Color.White,
             )
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)

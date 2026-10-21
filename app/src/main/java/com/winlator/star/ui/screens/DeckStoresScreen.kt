@@ -324,7 +324,7 @@ private fun DeckGameCard(game: DeckOwnedGame, onClick: () -> Unit) {
             .deckTileFocus(interaction)
             .clip(shape)
             .background(Deck.surface)
-            .deckFocusBorder(interaction, shape)
+            .deckOuterFocusStroke(interaction, shape)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {
         val art = game.art
@@ -515,7 +515,7 @@ private fun DeckHeroCard(item: DeckBrowseItem, onClick: () -> Unit) {
             .deckTileFocus(interaction)
             .clip(shape)
             .background(Deck.surface)
-            .deckFocusBorder(interaction, shape)
+            .deckOuterFocusStroke(interaction, shape)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {
         val art = item.art

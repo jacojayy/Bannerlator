@@ -56,6 +56,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.animation.core.Animatable
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import kotlinx.coroutines.coroutineScope
+import kotlin.math.roundToInt
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.wrapContentHeight
@@ -112,6 +121,10 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -1296,7 +1309,7 @@ private fun DeckHomeHero(
             .height(216.dp)
             .clip(shape)
             .background(Deck.surface)
-            .deckFocusBorder(interaction, shape)
+            .deckOuterFocusStroke(interaction, shape)
             .combinedClickable(
                 interactionSource = interaction,
                 indication = null,
@@ -1371,7 +1384,11 @@ private fun DeckHomeHero(
     }
 }
 
-/** One horizontal shelf of games with the playtime burned into a bottom gradient. */
+/**
+ * One horizontal shelf with the Deck's dragging selection stroke: the ring stretches to the newly
+ * focused card, then its trailing edge catches up — the same motion as the tabs, so the D-pad and
+ * the stores row feel identical.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun DeckHomeShelf(
@@ -1384,6 +1401,59 @@ private fun DeckHomeShelf(
     onFocus: (HubEntry) -> Unit = {},
 ) {
     if (entries.isEmpty()) return
+    val cardWidth = if (wide) 214.dp else 132.dp
+    val cardHeight = if (wide) 120.dp else 198.dp
+    val cardShape = RoundedCornerShape(16.dp)
+    val density = LocalDensity.current
+    val scroll = rememberScrollState()
+    val lefts = remember(entries) { mutableStateListOf<Float>() }
+    val rights = remember(entries) { mutableStateListOf<Float>() }
+    var focused by remember(entries) { mutableIntStateOf(-1) }
+    var hasFocus by remember { mutableStateOf(false) }
+    val start = remember { Animatable(0f) }
+    val end = remember { Animatable(0f) }
+    var lastFocused by remember { mutableIntStateOf(-1) }
+
+    val targetLeft = lefts.getOrNull(focused)
+    val targetRight = rights.getOrNull(focused)
+    LaunchedEffect(focused, targetLeft, targetRight) {
+        val l = targetLeft ?: return@LaunchedEffect
+        val r = targetRight ?: return@LaunchedEffect
+        when {
+            lastFocused == -1 -> {
+                start.snapTo(l)
+                end.snapTo(r)
+                lastFocused = focused
+            }
+            focused == lastFocused -> {
+                if (start.value != l || end.value != r) {
+                    start.snapTo(l)
+                    end.snapTo(r)
+                }
+            }
+            l >= start.value -> {
+                coroutineScope {
+                    launch { end.animateTo(r, tween(280, easing = DeckEase)) }
+                    launch { start.animateTo(l, tween(240, delayMillis = 100, easing = DeckEase)) }
+                }
+                lastFocused = focused
+            }
+            else -> {
+                coroutineScope {
+                    launch { start.animateTo(l, tween(280, easing = DeckEase)) }
+                    launch { end.animateTo(r, tween(240, delayMillis = 100, easing = DeckEase)) }
+                }
+                lastFocused = focused
+            }
+        }
+    }
+    // Keep the focused card (and the ring around it) inside the viewport.
+    LaunchedEffect(focused) {
+        val l = lefts.getOrNull(focused) ?: return@LaunchedEffect
+        val edge = with(density) { 56.dp.toPx() }
+        scroll.animateScrollTo((l - edge).coerceIn(0f, scroll.maxValue.toFloat()).roundToInt())
+    }
+
     Column {
         Text(
             text = title.uppercase(),
@@ -1393,55 +1463,96 @@ private fun DeckHomeShelf(
             letterSpacing = 1.6.sp,
             modifier = Modifier.padding(bottom = 8.dp),
         )
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(entries, key = { it.game?.shortcutPath ?: it.title }) { entry ->
-                val cardShape = RoundedCornerShape(16.dp)
-                val interaction = remember { MutableInteractionSource() }
-                Box(
-                    modifier = Modifier
-                        .width(if (wide) 214.dp else 132.dp)
-                        .height(if (wide) 120.dp else 198.dp)
-                        .deckTileFocus(interaction)
-                        .clip(cardShape)
-                        .background(Deck.surface)
-                        .deckFocusBorder(interaction, cardShape)
-                        .onFocusChanged { if (it.isFocused) onFocus(entry) }
-                        .combinedClickable(
-                            interactionSource = interaction,
-                            indication = null,
-                            onClick = { onOpen(entry) },
-                            onLongClick = { onMenu(entry) },
-                        ),
-                ) {
-                    entry.bitmap?.let { bmp ->
-                        Image(
-                            bitmap = bmp.asImageBitmap(),
-                            contentDescription = entry.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.matchParentSize(),
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(cardHeight)
+                .onFocusChanged { hasFocus = it.hasFocus }
+                .drawWithContent {
+                    drawContent()
+                    if (hasFocus && end.value > start.value) {
+                        val gap = 3.dp.toPx()
+                        val x = start.value - scroll.value - gap
+                        drawRoundRect(
+                            color = Deck.primary,
+                            topLeft = Offset(x, -gap),
+                            size = Size(
+                                end.value - start.value + gap * 2f,
+                                size.height + gap * 2f,
+                            ),
+                            cornerRadius = CornerRadius(16.dp.toPx() + gap, 16.dp.toPx() + gap),
+                            style = Stroke(width = 2.5.dp.toPx()),
                         )
                     }
+                },
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.horizontalScroll(scroll),
+            ) {
+                entries.forEachIndexed { index, entry ->
+                    val interaction = remember(entry) { MutableInteractionSource() }
                     Box(
-                        Modifier
-                            .matchParentSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    0.55f to Color.Transparent,
-                                    1f to Color.Black.copy(alpha = 0.78f),
-                                ),
-                            ),
-                    )
-                    Text(
-                        text = hubPlaytimeLabel(context, entry.title).uppercase(),
-                        color = Color.White,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 1.sp,
-                        maxLines = 1,
                         modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(9.dp),
-                    )
+                            .width(cardWidth)
+                            .height(cardHeight)
+                            .onGloballyPositioned { coords ->
+                                val left = coords.positionInParent().x
+                                while (lefts.size <= index) {
+                                    lefts.add(0f)
+                                    rights.add(0f)
+                                }
+                                if (lefts[index] != left) lefts[index] = left
+                                val right = left + coords.size.width
+                                if (rights[index] != right) rights[index] = right
+                            }
+                            .deckTileFocus(interaction)
+                            .clip(cardShape)
+                            .background(Deck.surface)
+                            .border(1.dp, Deck.line, cardShape)
+                            .onFocusChanged {
+                                if (it.isFocused) {
+                                    focused = index
+                                    onFocus(entry)
+                                }
+                            }
+                            .combinedClickable(
+                                interactionSource = interaction,
+                                indication = null,
+                                onClick = { onOpen(entry) },
+                                onLongClick = { onMenu(entry) },
+                            ),
+                    ) {
+                        entry.bitmap?.let { bmp ->
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = entry.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.matchParentSize(),
+                            )
+                        }
+                        Box(
+                            Modifier
+                                .matchParentSize()
+                                .background(
+                                    Brush.verticalGradient(
+                                        0.55f to Color.Transparent,
+                                        1f to Color.Black.copy(alpha = 0.78f),
+                                    ),
+                                ),
+                        )
+                        Text(
+                            text = hubPlaytimeLabel(context, entry.title).uppercase(),
+                            color = Color.White,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 1.sp,
+                            maxLines = 1,
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(9.dp),
+                        )
+                    }
                 }
             }
         }

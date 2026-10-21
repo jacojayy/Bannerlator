@@ -273,14 +273,17 @@ internal fun Modifier.deckOuterFocusStroke(
     return drawWithContent {
         drawContent()
         if (focused) {
-            val g = gap.toPx()
-            val radius = shape.topStart.toPx(size, this) + g
+            // Drawn INSIDE the bounds: a ring painted outside is clipped away by the caller's
+            // .clip(shape) (hero banner, blue buttons, store cards), which is why they had no stroke.
+            val sw = strokeWidth.toPx()
+            val inset = sw / 2f
+            val radius = shape.topStart.toPx(size, this) - inset
             drawRoundRect(
                 color = focusColor,
-                topLeft = Offset(-g, -g),
-                size = Size(size.width + g * 2f, size.height + g * 2f),
-                cornerRadius = CornerRadius(radius, radius),
-                style = Stroke(width = strokeWidth.toPx()),
+                topLeft = Offset(inset, inset),
+                size = Size(size.width - sw, size.height - sw),
+                cornerRadius = CornerRadius(radius.coerceAtLeast(0f), radius.coerceAtLeast(0f)),
+                style = Stroke(width = sw),
             )
         }
     }
@@ -304,14 +307,16 @@ internal fun Modifier.deckSelfFocusStroke(
         .drawWithContent {
             drawContent()
             if (!focused) return@drawWithContent
-            val g = gap.toPx()
-            val radius = shape.topStart.toPx(size, this) + g
+            // Inset, for the same reason as deckOuterFocusStroke: clips eat an outer ring.
+            val sw = strokeWidth.toPx()
+            val inset = sw / 2f
+            val radius = shape.topStart.toPx(size, this) - inset
             drawRoundRect(
                 color = focusColor,
-                topLeft = Offset(-g, -g),
-                size = Size(size.width + g * 2f, size.height + g * 2f),
-                cornerRadius = CornerRadius(radius, radius),
-                style = Stroke(width = strokeWidth.toPx()),
+                topLeft = Offset(inset, inset),
+                size = Size(size.width - sw, size.height - sw),
+                cornerRadius = CornerRadius(radius.coerceAtLeast(0f), radius.coerceAtLeast(0f)),
+                style = Stroke(width = sw),
             )
         }
 }

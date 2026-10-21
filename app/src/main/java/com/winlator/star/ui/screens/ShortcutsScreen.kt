@@ -226,9 +226,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import com.winlator.star.container.Container
 import com.winlator.star.container.GameDetails
 import com.winlator.star.container.Shortcut
-import com.winlator.star.linux.LinuxRuntimeInstaller
-import com.winlator.star.linux.LinuxRuntimeUpdate
-import com.winlator.star.linux.LinuxShortcuts
 import com.winlator.star.reshade.ReshadeManager
 import com.winlator.star.contentdialog.GraphicsDriverConfigDialog
 import com.winlator.star.contents.AdrenotoolsManager
@@ -534,9 +531,6 @@ fun ShortcutsScreen(
                 return
             }
         }
-        // The Linux runtime's own entry is not a Windows game: SteamLite, Goldberg and "Raw .exe"
-        // all mean nothing for it, and the sheet was an extra tap on every single launch.
-        if (LinuxShortcuts.isLinuxEntry(shortcut)) { launchShortcutNow(activity, shortcut); return }
         val remembered = shortcut.getExtra("launchMode", "").isNotEmpty() &&
             shortcut.getExtra("launchModeRemembered", "") == "1"
         when {
@@ -5238,7 +5232,7 @@ private fun ShortcutItemLayoutL(
                     showGog = remember(shortcut) { isGogShortcut(shortcut) },
                     showAmazon = remember(shortcut) { isAmazonShortcut(shortcut) },
                     showCustom = remember(shortcut) { isCustomOriginShortcut(shortcut) },
-                                    showLinux = remember(shortcut) { LinuxShortcuts.isLinuxEntry(shortcut) },
+                                    showLinux = false,
                     modifier = Modifier.padding(start = 6.dp),
                 )
             }
@@ -5519,7 +5513,7 @@ private fun ShortcutGridItem(
             showGog = remember(shortcut) { isGogShortcut(shortcut) },
             showAmazon = remember(shortcut) { isAmazonShortcut(shortcut) },
             showCustom = remember(shortcut) { isCustomOriginShortcut(shortcut) },
-            showLinux = remember(shortcut) { LinuxShortcuts.isLinuxEntry(shortcut) },
+            showLinux = false,
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .padding(6.dp),
@@ -5558,52 +5552,6 @@ private fun ShortcutGridItem(
                 // The Linux entry is the runtime's own tile, so it carries the runtime's state:
                 // while an install runs, the same "Downloading 45% · about 2 min left" the Contents
                 // tab shows, from the same source; otherwise a chip when a newer build is waiting.
-                if (remember(shortcut) { LinuxShortcuts.isLinuxEntry(shortcut) }) {
-                    val rt by LinuxRuntimeUpdate.state.collectAsState()
-                    val linuxCtx = LocalContext.current
-                    val linuxScope = rememberCoroutineScope()
-                    // Ask the catalog once so the chip appears even when Contents was never opened.
-                    LaunchedEffect(Unit) {
-                        LinuxRuntimeUpdate.refreshInstalled(linuxCtx)
-                        if (rt.available == null) {
-                            val rel = withContext(Dispatchers.IO) { LinuxRuntimeInstaller.fetchRelease() }
-                            LinuxRuntimeUpdate.setAvailable(rel)
-                        }
-                    }
-                    if (rt.busy) {
-                        Spacer(Modifier.height(3.dp))
-                        Text(
-                            text = LinuxRuntimeUpdate.line(rt),
-                            fontSize = 10.sp,
-                            color = Color.White,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        LinearProgressIndicator(
-                            progress = { if (rt.percent in 0..100) rt.percent / 100f else 0f },
-                            modifier = Modifier.fillMaxWidth().height(3.dp).padding(top = 2.dp),
-                        )
-                    } else if (rt.updateAvailable) {
-                        Spacer(Modifier.height(3.dp))
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(MaterialTheme.colorScheme.primary)
-                                .clickable {
-                                    linuxScope.launch { LinuxRuntimeUpdate.runInstall(linuxCtx) }
-                                }
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = "Update to ${rt.available}",
-                                fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                maxLines = 1,
-                            )
-                        }
-                    }
-                }
             }
         }
 
@@ -6251,7 +6199,7 @@ internal fun ShortcutSettingsDialogScreen(
     // dxwrapper, no guest launcher exist there (XServerDisplayActivity.setupLinuxSession) - so those
     // rows are conditioned off rather than shown as settings that quietly do nothing. Stored values
     // are never touched: an entry converted either way keeps whatever it had.
-    val isLinuxEntry = remember { com.winlator.star.linux.LinuxShortcuts.isLinuxEntry(shortcut) }
+    val isLinuxEntry = false
     var epicEosEnabled by remember { mutableStateOf(shortcut.getExtra("epicEos", "1") != "0") }
     // Manual override: force the -epicovt ownership-token path even when the auto
     // DenuvoDetector misses an obfuscated Denuvo exe. Default OFF.
@@ -6366,60 +6314,7 @@ internal fun ShortcutSettingsDialogScreen(
     // Wayland GAME driver override (per-game, same extra name as the container's): "" = the
     // container's choice. Only shown when the effective backend is Wayland; see core.WaylandGameDriver.
     var waylandGameDriverOverride by remember { mutableStateOf(shortcut.getExtra("waylandGameDriver", "")) }
-    // Which Vulkan driver a LINUX session draws with ("" = the one inside the runtime). Separate
-    // from the row above it in the editor, which picks the Android driver that displays the session.
-    var linuxVulkanDriverOverride by remember {
-        mutableStateOf(shortcut.getExtra(com.winlator.star.core.LinuxVulkanDriver.EXTRA, ""))
-    }
-    // The Linux session's performance switches, one extra each.
-    // LinuxTuning owns what an unset one means, so the editor and the launch path can never disagree about a default.
-    var linuxGlThread by remember {
-        mutableStateOf(com.winlator.star.linux.LinuxTuning.isOn(
-            shortcut, com.winlator.star.linux.LinuxTuning.EXTRA_GLTHREAD))
-    }
-    var linuxLazyDescriptors by remember {
-        mutableStateOf(com.winlator.star.linux.LinuxTuning.isOn(
-            shortcut, com.winlator.star.linux.LinuxTuning.EXTRA_LAZY_DESCRIPTORS))
-    }
-    var linuxNoGlError by remember {
-        mutableStateOf(com.winlator.star.linux.LinuxTuning.isOn(
-            shortcut, com.winlator.star.linux.LinuxTuning.EXTRA_NO_GL_ERROR))
-    }
-    var linuxDeckMode by remember {
-        mutableStateOf(com.winlator.star.linux.LinuxTuning.isOn(
-            shortcut, com.winlator.star.linux.LinuxTuning.EXTRA_STEAMDECK))
-    }
-    // Scaling mode and scaling filter: gamescope's own controls, the same ones the Quick Access Menu offers.
-    // LinuxTuning validates each against what this gamescope accepts, so a stale saved value reads as unset.
-    var linuxScaler by remember { mutableStateOf(com.winlator.star.linux.LinuxTuning.scaler(shortcut)) }
-    // "" follows Deck mode; LinuxTuning.steamChannel says what that resolves to.
-    var linuxSteamChannel by remember {
-        mutableStateOf(shortcut.getExtra(com.winlator.star.linux.LinuxTuning.EXTRA_STEAM_CHANNEL, "").let { v -> if (v in com.winlator.star.linux.LinuxTuning.STEAM_CHANNELS) v else "" })
-    }
-    var linuxFilter by remember { mutableStateOf(com.winlator.star.linux.LinuxTuning.filter(shortcut)) }
-    // The app's own games in the client's library, their shared saves, and any Games folders (LinuxAppGames).
-    var linuxAppGames by remember {
-        mutableStateOf(com.winlator.star.linux.LinuxTuning.isOn(
-            shortcut, com.winlator.star.linux.LinuxTuning.EXTRA_APP_GAMES))
-    }
-    var linuxShareSaves by remember {
-        mutableStateOf(com.winlator.star.linux.LinuxTuning.isOn(
-            shortcut, com.winlator.star.linux.LinuxTuning.EXTRA_SHARE_SAVES))
-    }
-    var linuxGamesFolders by remember { mutableStateOf(com.winlator.star.linux.LinuxAppGames.folders(shortcut)) }
-    val gamesFolderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        val path = uri?.let { runCatching { FileUtils.getFilePathFromUri(context, it) }.getOrNull() }
-        when {
-            uri == null -> {}
-            path.isNullOrEmpty() || !File(path).isDirectory ->
-                Toast.makeText(context, "That folder cannot be used: pick one on internal storage or an SD card", Toast.LENGTH_LONG).show()
-            path.contains(com.winlator.star.linux.LinuxAppGames.FOLDER_SEPARATOR) ->
-                Toast.makeText(context, "Folder names with | cannot be used", Toast.LENGTH_LONG).show()
-            path !in linuxGamesFolders -> linuxGamesFolders = linuxGamesFolders + path
-        }
-    }
     // Deck mode is only turned on through a warning that says what it breaks.
-    var confirmDeckMode by remember { mutableStateOf(false) }
     // HDR output override (per-game, same extra name as the container's): "" = the container's,
     // "1" on, "0" off. Only shown when the effective backend is Wayland; see display.WaylandHdr.
     var waylandHdrOverride by remember { mutableStateOf(com.winlator.star.display.WaylandHdr.shortcutChoice(shortcut)) }
@@ -6764,10 +6659,6 @@ internal fun ShortcutSettingsDialogScreen(
 
     // AndroidView refs
     val cpuListViewRef = remember { mutableStateOf<CPUListView?>(null) }
-    // A Linux entry splits the affinity in two (see the Advanced tab): the Steam client plus the
-    // compositor drawing its UI, and the games the client launches. Wine keeps the single list above.
-    val linuxClientCpuListViewRef = remember { mutableStateOf<CPUListView?>(null) }
-    val linuxGameCpuListViewRef = remember { mutableStateOf<CPUListView?>(null) }
 
     // Icon
     var iconBitmap by remember { mutableStateOf<Bitmap?>(shortcut.icon) }
@@ -6931,10 +6822,6 @@ internal fun ShortcutSettingsDialogScreen(
         val wincomps = winComponents.joinToString(",") { "${it.key}=${it.selectedIndex}" }
         val envVars = envVarsStr
         val cpuList = cpuListViewRef.value?.getCheckedCPUListAsString() ?: shortcut.getExtra("cpuList", shortcut.container.getCPUList(true))
-        val linuxClientCpuList = linuxClientCpuListViewRef.value?.getCheckedCPUListAsString()
-            ?: shortcut.getExtra("linuxClientCpuList", shortcut.container.getCPUList(true))
-        val linuxGameCpuList = linuxGameCpuListViewRef.value?.getCheckedCPUListAsString()
-            ?: shortcut.getExtra("linuxGameCpuList", shortcut.container.getCPUList(true))
 
         val b64PresetId = box64Presets.getOrElse(selectedBox64PresetIndex) { null }?.id ?: Box64Preset.COMPATIBILITY
         val fexPresetId = fexCorePresets.getOrElse(selectedFexCorePresetIndex) { null }?.id ?: FEXCorePreset.COMPATIBILITY
@@ -6966,7 +6853,6 @@ internal fun ShortcutSettingsDialogScreen(
                 else displayBackendOverride.ifEmpty { null })
             // Wayland game driver override: "" clears the extra (container default).
             putExtra("waylandGameDriver", waylandGameDriverOverride.ifEmpty { null })
-            putExtra(com.winlator.star.core.LinuxVulkanDriver.EXTRA, linuxVulkanDriverOverride.ifEmpty { null })
             // HDR output override: "" clears the extra (container default).
             putExtra(com.winlator.star.display.WaylandHdr.EXTRA, waylandHdrOverride.ifEmpty { null })
             // Unreal Engine HDR override: "" clears the extra (container default).
@@ -7051,23 +6937,6 @@ internal fun ShortcutSettingsDialogScreen(
             putExtra("wincomponents", wincomps)
             putExtra("envVars", envVars.ifEmpty { null })
             putExtra("cpuList", cpuList)
-            // Only a Linux entry draws the two pickers, so only a Linux entry writes their keys — a
-            // Wine shortcut keeps exactly the extras it had.
-            if (isLinuxEntry) {
-                putExtra("linuxClientCpuList", linuxClientCpuList)
-                putExtra("linuxGameCpuList", linuxGameCpuList)
-                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_GLTHREAD, if (linuxGlThread) "1" else "0")
-                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_LAZY_DESCRIPTORS, if (linuxLazyDescriptors) "1" else "0")
-                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_NO_GL_ERROR, if (linuxNoGlError) "1" else "0")
-                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_STEAMDECK, if (linuxDeckMode) "1" else "0")
-                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_STEAM_CHANNEL, linuxSteamChannel.ifEmpty { null })
-                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_SCALER, linuxScaler.ifEmpty { null })
-                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_FILTER, linuxFilter.ifEmpty { null })
-                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_APP_GAMES, if (linuxAppGames) "1" else "0")
-                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_SHARE_SAVES, if (linuxShareSaves) "1" else "0")
-                putExtra(com.winlator.star.linux.LinuxTuning.EXTRA_GAMES_FOLDERS,
-                    linuxGamesFolders.joinToString(com.winlator.star.linux.LinuxAppGames.FOLDER_SEPARATOR).ifEmpty { null })
-            }
             saveData()
         }
     }
@@ -7100,20 +6969,6 @@ internal fun ShortcutSettingsDialogScreen(
                 // cursor can never land on a row that isn't drawn (see the render conditionals).
                 if (!isLinuxEntry) add("displayBackend")
                 if (effectiveWaylandShortcut && !isLinuxEntry) { add("waylandGameDriver"); add("waylandDriverCfg") }
-                if (isLinuxEntry) add("linuxVulkanDriver")
-                if (isLinuxEntry) {
-                    add(com.winlator.star.linux.LinuxTuning.EXTRA_GLTHREAD)
-                    add(com.winlator.star.linux.LinuxTuning.EXTRA_LAZY_DESCRIPTORS)
-                    add(com.winlator.star.linux.LinuxTuning.EXTRA_NO_GL_ERROR)
-                    add(com.winlator.star.linux.LinuxTuning.EXTRA_STEAMDECK)
-                    add(com.winlator.star.linux.LinuxTuning.EXTRA_STEAM_CHANNEL)
-                    add(com.winlator.star.linux.LinuxTuning.EXTRA_SCALER)
-                    add(com.winlator.star.linux.LinuxTuning.EXTRA_FILTER)
-                    add(com.winlator.star.linux.LinuxTuning.EXTRA_APP_GAMES)
-                    if (linuxAppGames) add(com.winlator.star.linux.LinuxTuning.EXTRA_SHARE_SAVES)
-                    linuxGamesFolders.forEach { add("linuxGamesFolderRemove:$it") }
-                    add("linuxGamesFolderAdd")
-                }
                 if (effectiveWaylandShortcut || isLinuxEntry) add(com.winlator.star.display.WaylandHdr.EXTRA)
                 if (!isLinuxEntry) {
                     add(com.winlator.star.core.UnrealHdr.EXTRA)
@@ -7778,8 +7633,6 @@ internal fun ShortcutSettingsDialogScreen(
                     // Wayland GAME driver choices + the variant Auto resolves to (native probe, off-main
                     // under graphicsProbeMutex with the compositor choices; cached after the first run).
                     var waylandGameDriverValues by remember { mutableStateOf<List<String>>(emptyList()) }
-                    // Imported Linux ICDs, for a Linux entry's draw-driver row (same probe pass).
-                    var linuxVulkanDriverValues by remember { mutableStateOf<List<String>>(emptyList()) }
                     var waylandAutoPick by remember { mutableStateOf(com.winlator.star.core.WaylandGameDriver.autoVariantIfKnown()) }
                     LaunchedEffect(effectiveWaylandShortcut, isLinuxEntry) {
                         if (!effectiveWaylandShortcut && !isLinuxEntry) return@LaunchedEffect
@@ -7787,7 +7640,6 @@ internal fun ShortcutSettingsDialogScreen(
                         compositorChoicesLoaded = true
                         waylandGameDriverValues = com.winlator.star.core.WaylandGameDriver.optionValues(gfxContext)
                         waylandAutoPick = waylandAutoVariant(gfxContext)
-                        linuxVulkanDriverValues = com.winlator.star.core.LinuxVulkanDriver.optionValues(gfxContext)
                     }
                     val compositorVersion = GraphicsDriverConfigDialog.getVersion(graphicsDriverConfig) ?: ""
                     if (!effectiveWaylandShortcut && !isLinuxEntry) {
@@ -7798,188 +7650,6 @@ internal fun ShortcutSettingsDialogScreen(
                         // Proton. Imported "-Linux" zips only; "" leaves the runtime's own driver in
                         // place. A stored id whose import is gone stays listed and labelled, and the
                         // launch path falls back to the runtime's driver for it.
-                        if (isLinuxEntry) {
-                            // The row above is live on this path and "System"/a missing driver is a
-                            // black screen here too, so the same warning applies - it used to be
-                            // inside the Wayland-only branch below.
-                            if (compositorDriverUnusable(compositorVersion, compositorChoices, compositorChoicesLoaded)) {
-                                Text(
-                                    "The display driver above cannot show this session. \"System\" or a driver that is no "
-                                        + "longer installed leaves the compositor on the system Vulkan, which shows a black screen.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                                Spacer(Modifier.height(8.dp))
-                            }
-                            val linuxValues = if (linuxVulkanDriverOverride.isEmpty() || linuxVulkanDriverOverride in linuxVulkanDriverValues)
-                                linuxVulkanDriverValues.ifEmpty { listOf("") }
-                            else linuxVulkanDriverValues + linuxVulkanDriverOverride
-                            val linuxLabels = linuxValues.map { com.winlator.star.core.LinuxVulkanDriver.optionLabel(gfxContext, it) }
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                DpDrop(
-                                    dp, "linuxVulkanDriver",
-                                    label = "Draw driver (Linux runtime)",
-                                    options = linuxLabels,
-                                    selected = linuxLabels[linuxValues.indexOf(linuxVulkanDriverOverride).coerceAtLeast(0)],
-                                    onSelect = { linuxVulkanDriverOverride = linuxValues[linuxLabels.indexOf(it)] },
-                                    modifier = Modifier.weight(1f)
-                                )
-                                IconButton(onClick = {
-                                    helpText = com.winlator.star.core.LinuxVulkanDriver.HELP_TEXT +
-                                        if (linuxVulkanDriverValues.size > 1) ""
-                                        else " Nothing imported yet: Contents → Installed → Linux runtime drivers."
-                                }) {
-                                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                                }
-                            }
-                            Spacer(Modifier.height(8.dp))
-
-                            // Performance switches for the chain that draws the client's interface.
-                            // They make that chain cheaper rather than asking for more hardware.
-                            // None of them is device-proven.
-                            // Change ONE, launch, and read the HUD; the session's device.txt says what was set when the number was taken.
-                            Text("Performance (experimental)", style = MaterialTheme.typography.titleSmall)
-                            Spacer(Modifier.height(4.dp))
-                            PerfEditRow(dp, com.winlator.star.linux.LinuxTuning.EXTRA_GLTHREAD,
-                                "Threaded GL (mesa_glthread)", linuxGlThread,
-                                com.winlator.star.linux.LinuxTuning.defaultOn(
-                                    com.winlator.star.linux.LinuxTuning.EXTRA_GLTHREAD)) { linuxGlThread = it }
-                            PerfEditRow(dp, com.winlator.star.linux.LinuxTuning.EXTRA_LAZY_DESCRIPTORS,
-                                "Lazy descriptors (ZINK_DESCRIPTORS)", linuxLazyDescriptors,
-                                com.winlator.star.linux.LinuxTuning.defaultOn(
-                                    com.winlator.star.linux.LinuxTuning.EXTRA_LAZY_DESCRIPTORS)) { linuxLazyDescriptors = it }
-                            PerfEditRow(dp, com.winlator.star.linux.LinuxTuning.EXTRA_NO_GL_ERROR,
-                                "Skip GL error checks (MESA_NO_ERROR)", linuxNoGlError,
-                                com.winlator.star.linux.LinuxTuning.defaultOn(
-                                    com.winlator.star.linux.LinuxTuning.EXTRA_NO_GL_ERROR)) { linuxNoGlError = it }
-                            PerfEditRow(dp, com.winlator.star.linux.LinuxTuning.EXTRA_STEAMDECK,
-                                "Steam Deck mode (-steamdeck)", linuxDeckMode,
-                                com.winlator.star.linux.LinuxTuning.defaultOn(
-                                    com.winlator.star.linux.LinuxTuning.EXTRA_STEAMDECK)) { on ->
-                                if (on) confirmDeckMode = true else linuxDeckMode = false
-                            }
-                            if (linuxDeckMode) {
-                                Text(
-                                    "Deck mode is on: games do not receive the controller. If a Steam Client update shows under System that will not install, do not press Apply on it.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            }
-                            if (confirmDeckMode) {
-                                OutlinedAlertDialog(
-                                    onDismissRequest = { confirmDeckMode = false },
-                                    title = { Text("Turn on Steam Deck mode?") },
-                                    text = {
-                                        Text(
-                                            "Deck mode makes the Steam client behave as it does on a Steam Deck and adds the Quick Access Menu.\n\n"
-                                                + "Known problems, found on device:\n"
-                                                + "\u2022 Games stop receiving the controller. Steam's own menus still work, but in a game the pad does nothing.\n"
-                                                + "\u2022 The client may show a Steam Client update under System that will not install. Deck mode now uses the Steam Deck beta channel to avoid it, but if it appears, do not press Apply.\n"
-                                                + "\u2022 The Quick Access Menu's performance overlay cannot be turned on.\n\n"
-                                                + "The scaling controls below do the useful part without it, and the in-game drawer's FPS limit caps the frame rate. Turn Deck mode off again if a game stops responding to the controller."
-                                        )
-                                    },
-                                    confirmButton = {
-                                        TextButton(onClick = { linuxDeckMode = true; confirmDeckMode = false }) { Text("Turn on anyway") }
-                                    },
-                                    dismissButton = {
-                                        TextButton(onClick = { confirmDeckMode = false }) { Text("Keep it off") }
-                                    },
-                                )
-                            }
-                            val channelLabels = com.winlator.star.linux.LinuxTuning.STEAM_CHANNELS.map {
-                                when (it) {
-                                    "" -> if (linuxDeckMode) "Automatic (Steam Deck beta, for Deck mode)" else "Automatic (public beta)"
-                                    "publicbeta" -> "Public beta"
-                                    else -> "Steam Deck beta"
-                                }
-                            }
-                            DpDrop(
-                                dp, com.winlator.star.linux.LinuxTuning.EXTRA_STEAM_CHANNEL,
-                                label = "Steam client update channel",
-                                options = channelLabels,
-                                selected = channelLabels[com.winlator.star.linux.LinuxTuning.STEAM_CHANNELS.indexOf(linuxSteamChannel).coerceAtLeast(0)],
-                                onSelect = { linuxSteamChannel = com.winlator.star.linux.LinuxTuning.STEAM_CHANNELS[channelLabels.indexOf(it).coerceAtLeast(0)] }
-                            )
-                            val scalerLabels = com.winlator.star.linux.LinuxTuning.SCALERS.map { if (it.isEmpty()) "Default" else it.replaceFirstChar(Char::uppercase) }
-                            DpDrop(
-                                dp, com.winlator.star.linux.LinuxTuning.EXTRA_SCALER,
-                                label = "Scaling mode",
-                                options = scalerLabels,
-                                selected = scalerLabels[com.winlator.star.linux.LinuxTuning.SCALERS.indexOf(linuxScaler).coerceAtLeast(0)],
-                                onSelect = { linuxScaler = com.winlator.star.linux.LinuxTuning.SCALERS[scalerLabels.indexOf(it).coerceAtLeast(0)] }
-                            )
-                            val filterLabels = com.winlator.star.linux.LinuxTuning.FILTERS.map {
-                                when (it) {
-                                    "" -> "Default"
-                                    "fsr", "nis", "sgsr" -> it.uppercase()
-                                    else -> it.replaceFirstChar(Char::uppercase)
-                                }
-                            }
-                            DpDrop(
-                                dp, com.winlator.star.linux.LinuxTuning.EXTRA_FILTER,
-                                label = "Scaling filter",
-                                options = filterLabels,
-                                selected = filterLabels[com.winlator.star.linux.LinuxTuning.FILTERS.indexOf(linuxFilter).coerceAtLeast(0)],
-                                onSelect = { linuxFilter = com.winlator.star.linux.LinuxTuning.FILTERS[filterLabels.indexOf(it).coerceAtLeast(0)] }
-                            )
-                            Text(
-                                "Scaling mode and filter only matter when a game renders below the session's resolution. "
-                                    + "FSR, NIS and SGSR upscale and sharpen; SGSR is Qualcomm's, made for Adreno.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.height(8.dp))
-
-                            // The app's own games in the client's library (LinuxAppGames and the runtime's bannerlator-steam-shortcuts).
-                            Text("Your games in Steam", style = MaterialTheme.typography.titleSmall)
-                            Spacer(Modifier.height(4.dp))
-                            PerfEditRow(dp, com.winlator.star.linux.LinuxTuning.EXTRA_APP_GAMES,
-                                "Show my Games-tab games in Steam", linuxAppGames,
-                                com.winlator.star.linux.LinuxTuning.defaultOn(
-                                    com.winlator.star.linux.LinuxTuning.EXTRA_APP_GAMES)) { linuxAppGames = it }
-                            if (linuxAppGames) {
-                                PerfEditRow(dp, com.winlator.star.linux.LinuxTuning.EXTRA_SHARE_SAVES,
-                                    "Share saves with the app", linuxShareSaves,
-                                    com.winlator.star.linux.LinuxTuning.defaultOn(
-                                        com.winlator.star.linux.LinuxTuning.EXTRA_SHARE_SAVES)) { linuxShareSaves = it }
-                            }
-                            Text(
-                                "Games you added in the Games tab show in Steam's library under Non-Steam and run with Steam's Proton. "
-                                    + "Steam's own games are already there, and Epic and Amazon games need the app's own launch, so those are left out. "
-                                    + "Shared saves: the game's Documents, AppData and Saved Games folders are the same ones its container uses, so progress carries over both ways. "
-                                    + "Do not run the same game in the app and in Steam at the same time.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text("Games folders", fontSize = 13.sp)
-                            for (folder in linuxGamesFolders) {
-                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                                    Text(folder, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                                    DpButton(dp, "linuxGamesFolderRemove:$folder",
-                                        onActivate = { linuxGamesFolders = linuxGamesFolders - folder }) {
-                                        TextButton(onClick = { linuxGamesFolders = linuxGamesFolders - folder }) { Text("Remove") }
-                                    }
-                                }
-                            }
-                            DpButton(dp, "linuxGamesFolderAdd", onActivate = { gamesFolderPicker.launch(null) }) {
-                                TextButton(onClick = { gamesFolderPicker.launch(null) }) { Text("Add a games folder\u2026") }
-                            }
-                            Text(
-                                "Each folder inside a games folder is one game; the app picks the program to start in it. They show in Steam the same way.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                "Threaded GL, lazy descriptors and skipped GL error checks make the chain that draws the client's interface cheaper. "
-                                    + "None is proven on this device yet, so change one at a time.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.height(8.dp))
-                        }
                         if (!isLinuxEntry) {
                         // "System"/empty falls back to the system libvulkan, which can't import the
                         // game's dmabufs (black screen) — mirrors XServerDisplayActivity's resolve; so
@@ -8727,12 +8397,6 @@ internal fun ShortcutSettingsDialogScreen(
             cpuListViewRef = cpuListViewRef,
             initialCpuList = shortcut.getExtra("cpuList", shortcut.container.getCPUList(true)),
             onCpuListSnapshot = { shortcut.putExtra("cpuList", it) },
-            linuxClientCpuListViewRef = linuxClientCpuListViewRef,
-            initialLinuxClientCpuList = shortcut.getExtra("linuxClientCpuList", shortcut.container.getCPUList(true)),
-            onLinuxClientCpuListSnapshot = { shortcut.putExtra("linuxClientCpuList", it) },
-            linuxGameCpuListViewRef = linuxGameCpuListViewRef,
-            initialLinuxGameCpuList = shortcut.getExtra("linuxGameCpuList", shortcut.container.getCPUList(true)),
-            onLinuxGameCpuListSnapshot = { shortcut.putExtra("linuxGameCpuList", it) },
             sharpnessEffectEntries = sharpnessEffectEntries,
             selectedSharpnessEffect = selectedSharpnessEffect,
             onSharpnessEffectChange = { selectedSharpnessEffect = it },
@@ -9278,13 +8942,6 @@ private fun ScAdvancedTab(
     cpuListViewRef: MutableState<CPUListView?>,
     initialCpuList: String,
     onCpuListSnapshot: (String) -> Unit,
-    // Linux-only: the Steam client + compositor list, and the list a client-launched game gets.
-    linuxClientCpuListViewRef: MutableState<CPUListView?> = mutableStateOf<CPUListView?>(null),
-    initialLinuxClientCpuList: String = "",
-    onLinuxClientCpuListSnapshot: (String) -> Unit = {},
-    linuxGameCpuListViewRef: MutableState<CPUListView?> = mutableStateOf<CPUListView?>(null),
-    initialLinuxGameCpuList: String = "",
-    onLinuxGameCpuListSnapshot: (String) -> Unit = {},
     sharpnessEffectEntries: List<String>,
     selectedSharpnessEffect: String,
     onSharpnessEffectChange: (String) -> Unit,
@@ -9309,10 +8966,6 @@ private fun ScAdvancedTab(
         onDispose {
             cpuListViewRef.value?.let { onCpuListSnapshot(it.checkedCPUListAsString) }
             cpuListViewRef.value = null
-            linuxClientCpuListViewRef.value?.let { onLinuxClientCpuListSnapshot(it.checkedCPUListAsString) }
-            linuxClientCpuListViewRef.value = null
-            linuxGameCpuListViewRef.value?.let { onLinuxGameCpuListSnapshot(it.checkedCPUListAsString) }
-            linuxGameCpuListViewRef.value = null
         }
     }
     // On arm64ec containers the x86 backend is WOWBox64, not Box64 — label it correctly (matching
@@ -9486,40 +9139,6 @@ private fun ScAdvancedTab(
         }
         }
 
-        // A Linux session runs two things that want different cores: the Steam client (the compositor
-        // draws its Big Picture UI, which is what feels sluggish) and whatever game the client launches.
-        // The Wine path has the one process tree, so it keeps the single section below.
-        if (isLinuxEntry) {
-            // Each section's title is drawn by SectionBox, so the "?" goes in that box's own top corner.
-            SectionBox(title = "Steam client cores") {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    LinuxHelp(true, R.string.help_linux_client_cores) { helpRes = it }
-                }
-                AndroidView(
-                    factory = { ctx ->
-                        CPUListView(ctx).also { cpv ->
-                            cpv.setCheckedCPUList(initialLinuxClientCpuList)
-                            linuxClientCpuListViewRef.value = cpv
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().wrapContentHeight()
-                )
-            }
-            SectionBox(title = "Game cores") {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    LinuxHelp(true, R.string.help_linux_game_cores) { helpRes = it }
-                }
-                AndroidView(
-                    factory = { ctx ->
-                        CPUListView(ctx).also { cpv ->
-                            cpv.setCheckedCPUList(initialLinuxGameCpuList)
-                            linuxGameCpuListViewRef.value = cpv
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().wrapContentHeight()
-                )
-            }
-        } else {
         SectionBox(title = stringResource(R.string.processor_affinity)) {
             AndroidView(
                 factory = { ctx ->
@@ -9531,7 +9150,7 @@ private fun ScAdvancedTab(
                 modifier = Modifier.fillMaxWidth().wrapContentHeight()
             )
         }
-        }
+        
 
         // vkBasalt (sharpness) and the ReShade loadout are Vulkan layers switched on through the Wine
         // environment, which the gamescope path never builds; the client's games load neither.
@@ -9991,9 +9610,6 @@ private fun isGogShortcut(shortcut: Shortcut): Boolean =
  * is excluded, so store-library games never show the CUSTOM badge.
  */
 private fun isCustomOriginShortcut(shortcut: Shortcut): Boolean {
-    // The Linux runtime's own entries carry no store tag, so they would otherwise read as
-    // user-added games. They are neither: they get their own badge.
-    if (LinuxShortcuts.isLinuxEntry(shortcut)) return false
     val src = shortcut.getExtra("storeSource", "")
     if (src.isNotEmpty() && src != "custom") return false
     if (isSteamOriginShortcut(shortcut)) return false

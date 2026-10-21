@@ -777,16 +777,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
                     line = line.toLowerCase();
                     // The layer's Mesa EGL/Zink. "libegl.so.1" is Mesa's soname — Android's platform
                     // EGL is /system/lib64/libEGL.so (no ".1"), so this can't match the host's.
-                    // In a gamescope session the Mesa GL stack is NOT evidence of a GL game: the
-                    // session script exports GALLIUM_DRIVER=zink and MESA_LOADER_DRIVER_OVERRIDE=zink
-                    // for everything in it (Steam's CEF needs GL and the rootfs ships no native GL
-                    // driver), so gamescope, Xwayland, Steam and its helpers all map libgallium -
-                    // eleven processes in one measured session - and a Proton game inherits the same
-                    // environment while rendering D3D11 through DXVK. Treat it the way the X11
-                    // resolver already treats opengl32: resident, and proof of nothing. Zink runs GL
-                    // on Vulkan here anyway, so the neutral "Vulkan" stays underlying-accurate.
-                    if (!gamescopeMode && (line.indexOf("libegl.so.1") >= 0 || line.indexOf("libgallium") >= 0
-                            || line.indexOf("libwayland-egl.so") >= 0)) { gl = true; break; }
+                    if (line.indexOf("libegl.so.1") >= 0 || line.indexOf("libgallium") >= 0
+                            || line.indexOf("libwayland-egl.so") >= 0) { gl = true; break; }
                     if (line.indexOf("winevulkan.so") >= 0 || line.indexOf("winevulkan.dll") >= 0
                             || line.indexOf("vulkan-1.dll") >= 0) vulkan = true;
                 }
@@ -1410,31 +1402,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
                 // Layered resolver, highest-confidence signal first (each returns null to fall through):
                 //   P1 guest self-report (AIO Graphics Test) · P2 engine log (Unity Player.log) ·
                 //   P3 wrapper logs (arm64ec-proof DXVK/VKD3D ground truth) · P4 /proc/maps module scan.
-                // A LINUX session has no Wine container to reason about, and every resolver below
-                // reads one: the engine and wrapper logs live in the container's prefix, and the
-                // /proc/maps scan walks wine processes. In a Linux session they answer with
-                // whatever the LAST WINE GAME left behind - which is how the pill read
-                // "D3D12 · VKD3D" while only the Steam client was running. Ask that session's own
-                // processes instead, and show nothing rather than a leftover.
-                if (isLinuxRuntimeSession()) {
-                    String lx = resolveLinuxSessionApi();
-                    if (lx != null && !lx.equals(lastApi)) {
-                        lastApi = lx;
-                        final String lxLabel = lx.equals(rendererMode) ? lx : rendererMode + " | " + lx;
-                        final String lxFinal = lx;
-                        runOnUiThread(() -> {
-                            hudRendererLabel = lxLabel;
-                            hudEngineShort = lxFinal;
-                            if (frameRatingHorizontal != null) frameRatingHorizontal.setRenderer(lxLabel);
-                            if (frameRating != null) frameRating.setRenderer(lxLabel);
-                            if (perfHud != null) perfHud.setEngineLabel(lxFinal);
-                            if (gameNativeHud != null) gameNativeHud.setEngineLabel(lxFinal);
-                            if (fusionHud != null) fusionHud.setEngineLabel(lxFinal);
-                        });
-                    }
-                    try { Thread.sleep(2000); } catch (InterruptedException e) { return; }
-                    continue;
-                }
                 String api = readAppDeclaredApi();                                  // P1
                 if (api == null) api = resolveApiFromEngineLogTopLevel(fallback);   // P2
                 if (api == null) api = resolveApiFromWrapperLogs(fallback);         // P3
@@ -1474,68 +1441,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
         dxApiThread.start();
     }
 
-    /** True while this activity is running the Linux runtime rather than a Wine container. */
-    private boolean isLinuxRuntimeSession() {
-        return com.winlator.star.linux.LinuxShortcuts.isLinuxEntry(shortcut);
-    }
-
-    /**
-     * The graphics API a LINUX session is really using, read from the processes of that session -
-     * they run under this app's uid, so their /proc/&lt;pid&gt;/maps is readable here.
-     *
-     * <p>Two things can be true at once and the game wins: the Steam client's own interface is
-     * OpenGL through the runtime's Zink, and a game the client launched is Direct3D through the
-     * DXVK/VKD3D inside Valve's Proton. Both end in Vulkan on the same Turnip. Nothing here reads
-     * a Wine prefix, so nothing an earlier Wine game left behind can be reported.
-     *
-     * @return "D3D12 · VKD3D", "D3D11 · DXVK", "D3D9 · DXVK", "Zink", or null when only the
-     *         compositor's own Vulkan is in evidence (the neutral label then stands).
-     */
-    private String resolveLinuxSessionApi() {
-        String root;
-        try {
-            root = com.winlator.star.linux.LinuxRuntime.rootDir(this).getAbsolutePath();
-        } catch (Exception e) {
-            return null;
-        }
-        String[] pids = new File("/proc").list();
-        if (pids == null) return null;
-        boolean zink = false, dxvk = false, vkd3d = false, d3d11 = false, d3d9 = false;
-        for (String pid : pids) {
-            if (pid.isEmpty() || !Character.isDigit(pid.charAt(0))) continue;
-            // Identify the session's processes by their MAPPINGS, not by /proc/<pid>/exe: proot
-            // execs everything through its own loader, so exe resolves to
-            // .../com.termux/files/usr/libexec/proot/loader for every one of them and a check on
-            // it matches nothing (device-checked). Their libraries are mapped by host path, so the
-            // runtime's directory appears in maps - and that is the file we need to read anyway.
-            boolean ours = false;
-            try (java.io.BufferedReader r = new java.io.BufferedReader(
-                    new java.io.FileReader("/proc/" + pid + "/maps"))) {
-                String line;
-                while ((line = r.readLine()) != null) {
-                    if (!ours) {
-                        if (line.indexOf(root) < 0) continue;
-                        ours = true;
-                    }
-                    if (line.indexOf("vkd3d") >= 0 || line.indexOf("d3d12") >= 0) vkd3d = true;
-                    else if (line.indexOf("dxvk") >= 0) dxvk = true;
-                    if (line.indexOf("d3d11.dll") >= 0 || line.indexOf("d3d10") >= 0) d3d11 = true;
-                    else if (line.indexOf("d3d9.dll") >= 0) d3d9 = true;
-                    else if (line.indexOf("zink") >= 0) zink = true;
-                }
-            } catch (Exception ignored) {
-                // Another uid's process (unreadable) or one that exited mid-read: both are normal,
-                // and the next poll two seconds later sees the truth.
-            }
-        }
-        if (vkd3d) return "D3D12 \u00b7 VKD3D";
-        if (d3d11) return dxvk ? "D3D11 \u00b7 DXVK" : "D3D11";
-        if (d3d9) return dxvk ? "D3D9 \u00b7 DXVK" : "D3D9";
-        if (dxvk) return "D3D \u00b7 DXVK";
-        if (zink) return "Zink";
-        return null;
-    }
-
     private void stopDxApiDetection() {
         if (dxApiThread != null) { dxApiThread.interrupt(); dxApiThread = null; }
     }
@@ -1549,10 +1454,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
     // our embedded compositor instead of the X11 server. All branches are guarded by this flag,
     // so the X11 path is unchanged when it's false. See WAYLAND_RUNTIME.md.
     private boolean waylandMode = false;
-    // The session runs gamescope in the Linux runtime instead of Wine; the compositor is its display.
-    private boolean gamescopeMode = false;
-    /** This Linux session's log folder, for the teardown collection. */
-    private File linuxSessionLogDir;
     // HUD metric sampling for wayland mode (see startWaylandCompositor): its own thread, never the
     // compositor's. update() self-throttles to 500 ms and posts the view refresh to the UI thread.
     private android.os.HandlerThread waylandHudThread;
@@ -2566,12 +2467,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
             shortcut = new Shortcut(container, new File(shortcutPath));
         }
 
-        // Wayland is retired for Wine sessions: stored/overridden display backends are ignored and
-        // every Wine container runs the X11 path. The Linux (gamescope) runtime below still pins
-        // Wayland on its own, which is the one remaining consumer of the compositor.
-
-        // Runtime: the Linux/gamescope runtime is retired; Wine is the only runtime left.
-        gamescopeMode = false;
+        // Wayland is retired: stored/overridden display backends are ignored and every session
+        // runs the X11 path.
 
         // In-game Friends tab (drawer): read the friends/chat opt-in once for this launch and start
         // watching for a live source. The RealSteam hint keeps the app-session source from flashing up
@@ -2719,7 +2616,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // selected layer must ship winewayland.so AND its bundled Wayland Turnip, else the compositor
         // start, the registry driver write and the winex11.drv hide below would all run against a
         // layer that can't drive them. Fall back to X11 and say so.
-        if (waylandMode && !gamescopeMode
+        if (waylandMode
                 && !com.winlator.star.core.WineWaylandSupport.isWaylandCapable(wineInfo)) {
             Log.w("XServerDisplayActivity", "wayland: layer " + wineVersion + " (" + wineInfo.path
                     + ") lacks winewayland.so and/or lib/libvulkan_freedreno_wayland.so; launching on X11");
@@ -2791,12 +2688,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // but a container/shortcut written before this gate (or whose layer was swapped elsewhere) can
         // still arrive here as "directaudio" — the last place it could be applied to the guest registry.
         // Fall back to the default driver so an unsupported layer never gets Audio=directaudio.
-        // Not on the gamescope path: that check asks whether the CONTAINER's Wine layer can load
-        // the driver, and a Linux session does not use it - the game runs on whichever Proton the
-        // Steam client resolved, carrying its own Wine. Answering the wrong question here would
-        // refuse DirectAudio on the strength of a layer that is not running. The real check lives
-        // in the Proton wrapper, which reads the Wine version of the tree it is about to start.
-        if (!gamescopeMode && "directaudio".equals(audioDriver)
+        if ("directaudio".equals(audioDriver)
                 && !DirectAudioSupport.isSupported(wineVersion)) {
             audioDriver = Container.DEFAULT_AUDIO_DRIVER;
         }
@@ -3097,28 +2989,19 @@ public class XServerDisplayActivity extends AppCompatActivity {
                     sweepStaleWineProcesses();
                     // Every step of this stage prepares a WINE PREFIX: the display driver into its
                     // registry, its system files, install scripts, audio driver, refresh unlock, the
-                    // Epic overlay. A Linux session has no prefix - it runs gamescope and Valve's
-                    // native client - and its settings container has no .wine beneath it, so the
-                    // first registry edit met a missing user.reg and threw. It only ever ran here
-                    // because the entry used to sit in a real container, whose unused prefix absorbed
-                    // all of it. Nothing below is read by the Linux session; setupXEnvironment
-                    // branches into it before any of this would matter.
-                    if (!gamescopeMode) {
-                        preloaderDialog.step(2, "Preparing Wine & graphics driver…");
-                        setWineDisplayDriver();   // BEFORE setupWineSystemFiles starts the first wineserver
-                        setupWineSystemFiles();
-                        // Steam install-recipe robustness pass: a steamAppId-tagged game's installScript.vdf
-                        // Registry + Copy Files land in this prefix before the game boots (covers shortcuts made
-                        // before the feature or re-bound to a new container). Local stages only — the Run
-                        // Process step (EA Desktop installer) is driven from the Games tab's EA setup flow.
-                        runSteamInstallScriptPreLaunch();
-                        extractGraphicsDriverFiles();
-                        changeWineAudioDriver();
-                        applyGameRefreshRateUnlock();
-                        provisionEpicOverlay();
-                    } else {
-                        preloaderDialog.step(2, "Preparing the Linux runtime…");
-                    }
+                    // Epic overlay.
+                    preloaderDialog.step(2, "Preparing Wine & graphics driver…");
+                    setWineDisplayDriver();   // BEFORE setupWineSystemFiles starts the first wineserver
+                    setupWineSystemFiles();
+                    // Steam install-recipe robustness pass: a steamAppId-tagged game's installScript.vdf
+                    // Registry + Copy Files land in this prefix before the game boots (covers shortcuts made
+                    // before the feature or re-bound to a new container). Local stages only — the Run
+                    // Process step (EA Desktop installer) is driven from the Games tab's EA setup flow.
+                    runSteamInstallScriptPreLaunch();
+                    extractGraphicsDriverFiles();
+                    changeWineAudioDriver();
+                    applyGameRefreshRateUnlock();
+                    provisionEpicOverlay();
                     stage[0] = "Building environment";
                     setupXEnvironment();
                 } catch (Exception e) {
@@ -5337,22 +5220,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
                 handler.removeCallbacks(savePlaytimeRunnable);
                 if (midiHandler != null) midiHandler.stop();
                 // Unregister sensor listener to avoid memory leaks
-                // A Linux session's log bundle is collected HERE, before the components are stopped:
-                // the exit callback also collects, but it fires from the monitor thread after the
-                // session is killed, while this runnable carries on to finish the process - the
-                // first bundle on the device had one of forty-five Steam logs and no crash buffer,
-                // cut off between files. A few seconds, on a worker, bounded; the shutdown dialog
-                // is up. The callback then finds nothing left to do.
-                if (gamescopeMode && linuxSessionLogDir != null) {
-                    final File bundle = linuxSessionLogDir;
-                    linuxSessionLogDir = null;
-                    Thread collector = new Thread(() -> com.winlator.star.linux.SessionLogs.collect(
-                            XServerDisplayActivity.this, bundle, new File(getFilesDir(), "pulseaudio/pulse.log")),
-                            "session-log-collect");
-                    collector.start();
-                    try { collector.join(8000); } catch (InterruptedException ignored) {}
-                    if (collector.isAlive()) Log.w("XServerDisplayActivity", "session log collection still running at shutdown; leaving it");
-                }
                 if (environment != null) environment.stopEnvironmentComponents();
                 // Release the Steam Controller (SDL closes it, so it drops back to its own
                 // keyboard/mouse mode) before WinHandler tears the slots down.
@@ -6917,7 +6784,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // Abnormal teardown (no exit() worker ran): never leave the app's Steam session suspended.
         // Non-blocking — the reconnect is posted to the CM pump. No-op unless a real-Steam launch
         // suspended it this session.
-        linuxSessionWatchStop = true;
         releaseRealSteamSession("activity destroyed", 0L);
         clearOfflineSteamPresence("activity destroyed");
         // Hide the drawer's Friends tab source + leave any in-game chat thread (the full Friends
@@ -8258,10 +8124,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
             if (winStarted) return;
             winStarted = true;
             cancelLaunchTimers();
-            // A Linux session uncovers at once: the Steam client plays its start-up sound on its
-            // first frame, and the grace held the loading screen over it for five audible seconds
-            // (device-heard). The grace stays for Wine, where the boot steps are worth a glance.
-            long grace = gamescopeMode ? 0L : LAUNCH_OVERLAY_GRACE_MS;
+            long grace = LAUNCH_OVERLAY_GRACE_MS;
             new android.os.Handler(getMainLooper()).postDelayed(
                     preloaderDialog::closeOnUiThread, grace);
         }));
@@ -8513,7 +8376,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // system Vulkan has no dma-buf extensions, vkCreateDevice fails and the user gets a black
         // screen with nothing said. It is the state a container carries when nobody ever picked a
         // driver, or when the one it names was removed. Rather than start that session, take the
-        // bundled Turnip this GPU supports (LinuxSettings.defaultDrawDriver - NOT the first entry
+        // bundled Turnip this GPU supports (NOT the first entry
         // of the picker's list: that is v819, the proprietary blob, which has no dma-buf
         // extensions either and gave a fresh install the very same black screen, device-seen
         // 2026-09-22) so a clean install boots. (The problem is WinNative's c01a89f0; it
@@ -8522,7 +8385,13 @@ public class XServerDisplayActivity extends AppCompatActivity {
             try {
                 com.winlator.star.contents.AdrenotoolsManager atm =
                         new com.winlator.star.contents.AdrenotoolsManager(this);
-                String candidate = com.winlator.star.linux.LinuxSettings.defaultDrawDriver(this);
+                String candidate = null;
+                for (String id : getResources().getStringArray(R.array.wrapper_graphics_driver_version_entries)) {
+                    if (id == null || id.isEmpty() || id.equals("System")) continue;
+                    if (!com.winlator.star.core.GPUInformation.isDriverSupported(id, this)) continue;
+                    if (id.toLowerCase().contains("turnip")) { candidate = id; break; }
+                    if (candidate == null) candidate = id;
+                }
                 String lib = candidate != null ? atm.getLibraryName(candidate) : null;
                 if (lib != null && !lib.isEmpty()) {
                     driverPath = atm.getDriverPath(candidate);
@@ -8714,862 +8583,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
         return bmp;
     }
 
-    /**
-     * A gamescope session. proot runs the Linux runtime's session script, which starts gamescope as
-     * a Wayland client of the compositor this activity already brought up; gamescope then execs the
-     * script again inside itself for the program. Nothing of Wine is involved — no prefix, no
-     * wineserver, no dxwrapper — and the PulseAudio socket is the only imagefs service the guest
-     * reaches.
-     *
-     * <p>Ported from WinNative's gamescope runtime (GPL-3.0).
-     */
-    /**
-     * The Linux runtime's Steam client is a SECOND client on the same account, and Valve allows one:
-     * whichever logs in last wins and the other is told 'Session Replaced' and refuses to reconnect.
-     * The app logs in for its own store, so without this the app displaces the Linux client seconds
-     * after it signs in — the client sits on "logging in", then Steam exits, and gamescope's primary
-     * child dying takes the whole session down ("back to the games screen").
-     *
-     * <p>The Windows real-Steam path already does this through {@link #suspendAppSteamSessionForRealSteam()},
-     * but that is a no-op unless {@code maybeStageRealSteam()} armed a plan, and the gamescope branch
-     * returns long before any of that runs. Hold the session the same way and mark it with
-     * {@link #realSteamSessionHeld}, which is what {@link #releaseRealSteamSession} keys off — onDestroy
-     * already calls it ungated, so the app's own session comes back when the session ends.
-     */
-    /**
-     * Other apps on the device that embed their own Steam client. Valve allows one client per
-     * account, and one of these auto-reconnects the moment ours displaces it - so the Linux client
-     * is signed out 2-3 seconds after every login and sits on "Logging in..." with the downloads
-     * reporting no internet. Measured on a Pocket FIT: GameHub's SteamKit client logged on at the
-     * exact second of every one of nine kicks in a day. An app cannot force-stop another without
-     * root, so this names the culprit instead of leaving the user to guess.
-     */
-    private static final String[] COMPETING_STEAM_CLIENTS = {
-            "com.xiaoji.egggame",     // GameHub
-    };
-
-    /**
-     * Which of {@link #COMPETING_STEAM_CLIENTS} are installed. Installed, not running: since
-     * Android 7 {@code getRunningAppProcesses()} returns only the caller's own processes, so a
-     * process check can never see another app (tested - GameHub with two live processes went
-     * unnoticed). {@code getPackageInfo} is fine at targetSdk 28, which predates package-visibility
-     * filtering.
-     */
-    private java.util.List<String> installedCompetingSteamClients() {
-        java.util.List<String> out = new java.util.ArrayList<>();
-        for (String pkg : COMPETING_STEAM_CLIENTS) {
-            try { getPackageManager().getPackageInfo(pkg, 0); out.add(pkg); }
-            catch (Throwable ignore) {}
-        }
-        return out;
-    }
-
-    private static String competingClientName(String pkg) {
-        return "com.xiaoji.egggame".equals(pkg) ? "GameHub" : pkg;
-    }
-
-    /** Where the Linux DirectAudio driver is staged, relative to the runtime root. */
-    static final String LINUX_DIRECTAUDIO_DIR = "usr/local/lib/directaudio";
-
-    private volatile boolean linuxSessionWatchStop = false;
-
-    /**
-     * The Linux session's loading screen, kept current until the client draws. A first run
-     * downloads the Steam client and then its update before anything can be drawn - three and a
-     * half minutes of black on the FIT, long enough that people close the app believing it hung,
-     * which is exactly what happened during testing. The overlay used to be force-closed two
-     * seconds after the guest started (a guard against a shm-only desktop that never presents),
-     * so this mirror had nothing left to write on. Now it drives the centered status screen every
-     * half second - milestone, download percentage, a clock, a hint - and the compositor's
-     * first-frame hook closes the overlay when there is a picture to show. Best-effort: the log is
-     * the source of truth and nothing here affects the launch. The deadline is the one guard left:
-     * a session that never presents is still uncovered eventually rather than hidden for good.
-     */
-    private void showLinuxFirstRunProgress(final File sessionLog) {
-        final com.winlator.star.linux.LinuxLoadingState loading =
-                new com.winlator.star.linux.LinuxLoadingState(this);
-        Thread t = new Thread(() -> {
-            long deadline = System.currentTimeMillis() + 10 * 60 * 1000L;
-            String restartSeen = null;
-            while (!linuxSessionWatchStop) {
-                try { Thread.sleep(500); } catch (InterruptedException e) { return; }
-                boolean up = preloaderDialog != null && preloaderDialog.isShowing();
-                if (up && !winStarted && System.currentTimeMillis() > deadline) {
-                    Log.w("XServerDisplayActivity", "Linux session: no first frame after 10 min; uncovering the session");
-                    runOnUiThread(() -> { if (!winStarted) preloaderDialog.closeOnUiThread(); });
-                    deadline = Long.MAX_VALUE;
-                }
-                // Always read (a tail of the log, cheap): the screen updates only while it is up,
-                // but the restart milestone below has to be seen while it is down.
-                try { loading.update(sessionLog); } catch (Throwable ignore) {}
-                // A first run restarts the client once, after the compatibility layer has landed
-                // (bannerlator-session). The client's window goes away for ~20 s; put the screen
-                // back for it and re-arm the compositor's first-frame signal, which dismisses it
-                // again exactly as it did the first time.
-                String step = loading.step();
-                if (step.contains("restarting the Steam client") && !step.equals(restartSeen)) {
-                    restartSeen = step;
-                    loading.restartClock();
-                    deadline = System.currentTimeMillis() + 10 * 60 * 1000L;
-                    runOnUiThread(() -> {
-                        winStarted = false;
-                        com.winlator.star.core.PreloaderState.show("Steam is restarting once…");
-                        try { com.winlator.star.wayland.WaylandCompositor.nativeResetFirstFrame(); }
-                        catch (Throwable e) { Log.w("XServerDisplayActivity", "first-frame re-arm unavailable", e); }
-                    });
-                }
-            }
-        }, "LinuxLoadingScreen");
-        t.setDaemon(true);
-        t.start();
-    }
-
-    /**
-     * The check that actually works, because it reads the symptom rather than guessing at the
-     * cause: the runtime's Steam client writes {@code 'Session Replaced'} to its own connection log
-     * the moment another client takes the account, and that file is ours to read. Watch the bytes
-     * appended after the session starts for a few minutes and say so plainly the first time it
-     * happens - naming the installed app if there is one, and catching apps this code has never
-     * heard of otherwise. Off the launch path; stops with the activity.
-     */
-    private void watchLinuxSteamForSessionReplaced() {
-        final File log = new File(com.winlator.star.linux.LinuxRuntime.rootDir(this),
-                "root/.local/share/Steam/logs/connection_log.txt");
-        final long startLen = log.isFile() ? log.length() : 0L;
-        linuxSessionWatchStop = false;
-        Thread t = new Thread(() -> {
-            long offset = startLen;
-            long deadline = System.currentTimeMillis() + 4 * 60 * 1000L;
-            while (!linuxSessionWatchStop && System.currentTimeMillis() < deadline) {
-                try { Thread.sleep(5000); } catch (InterruptedException e) { return; }
-                if (!log.isFile()) continue;
-                long len = log.length();
-                if (len < offset) offset = 0;              // rotated
-                if (len == offset) continue;
-                try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(log, "r")) {
-                    raf.seek(offset);
-                    byte[] buf = new byte[(int) Math.min(len - offset, 512 * 1024)];
-                    int got = raf.read(buf);
-                    offset = len;
-                    if (got <= 0) continue;
-                    String chunk = new String(buf, 0, got, java.nio.charset.StandardCharsets.UTF_8);
-                    if (chunk.contains("Session Replaced")) {
-                        java.util.List<String> installed = installedCompetingSteamClients();
-                        String hint = installed.isEmpty()
-                                ? "another app on this device is signed into your Steam account. Close it and launch again."
-                                : "close " + competingClientName(installed.get(0)) + " - it is signed into your Steam account too - and launch again.";
-                        Log.w("BH_REALSTEAM", "Linux Steam client was signed out ('Session Replaced'); installed rivals: " + installed);
-                        runOnUiThread(() -> showToast(this, "Steam signed the Linux client out: " + hint));
-                        return;
-                    }
-                } catch (Throwable ignore) {}
-            }
-        }, "LinuxSteamSessionWatch");
-        t.setDaemon(true);
-        t.start();
-    }
-
-    private void suspendAppSteamForLinuxSession() {
-        // Warn about the clients we cannot stop before holding the one we can. Installed is the
-        // most a normal app can know; the watcher below catches the actual sign-out.
-        java.util.List<String> rivals = installedCompetingSteamClients();
-        if (!rivals.isEmpty()) {
-            String who = competingClientName(rivals.get(0));
-            Log.w("BH_REALSTEAM", "competing Steam client installed: " + rivals);
-            // Ask Android to stop them first. This is not the force-stop a user performs from
-            // Settings - it ends background processes and leaves anything in the foreground alone -
-            // but that is exactly the case that keeps happening: GameHub declares boot receivers,
-            // so it is running from the moment the phone starts without ever being opened, and it
-            // takes the Steam login off the client 2-3 seconds after every sign-in. Telling the
-            // user to close an app they never opened is not much help.
-            boolean asked = false;
-            try {
-                android.app.ActivityManager am =
-                        (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
-                if (am != null) {
-                    for (String pkg : rivals) am.killBackgroundProcesses(pkg);
-                    asked = true;
-                    Log.i("BH_REALSTEAM", "asked Android to stop background processes of " + rivals);
-                }
-            } catch (Throwable t) {
-                Log.w("BH_REALSTEAM", "could not stop competing Steam clients", t);
-            }
-            // Still say so: a foreground rival survives this, and the watcher below is what proves
-            // whether the sign-out actually happened.
-            final boolean stopped = asked;
-            runOnUiThread(() -> showToast(this, stopped
-                    ? "Closed " + who + " in the background - it signs into your Steam account."
-                    : "If " + who + " is open, close it first - it signs into your Steam account "
-                      + "and will sign the Linux client out."));
-        }
-        watchLinuxSteamForSessionReplaced();
-        if (realSteamSessionHeld) return;
-        try {
-            SteamRepository.getInstance().suspendForRealSteam();
-            realSteamSessionHeld = true;
-            Log.i("BH_REALSTEAM", "app Steam session suspended for the Linux runtime's Steam client");
-        } catch (Throwable t) {
-            Log.w("BH_REALSTEAM", "could not suspend the app's Steam session for the Linux client — "
-                    + "it may be logged out with 'Session Replaced'", t);
-        }
-    }
-
-    private void setupLinuxSession(String rootPath) {
-        if (!com.winlator.star.linux.LinuxRuntime.isInstalled(this)) {
-            throw new IllegalStateException("The Linux runtime is not installed."
-                    + " Install it from Components before launching a gamescope session.");
-        }
-        try {
-            com.winlator.star.linux.LinuxRuntime.writeAccounts(this);
-        } catch (java.io.IOException e) {
-            throw new IllegalStateException(e);
-        }
-        // Cheap (about 600 KB) and unconditional: the driver is only USED when the session is told
-        // to, but having it in place costs nothing and means selecting DirectAudio never has to
-        // wait for a copy, or fail because one never happened.
-        stageLinuxDirectAudio();
-        // The PulseAudio bundle, for the same reason and with a sharper edge. Elsewhere it is
-        // unpacked only when the container notices the app's version code has changed, and dev
-        // builds deliberately freeze that - so a rebuilt daemon or module never reached the device
-        // and the old one was used instead, with nothing to say so. That is exactly how a
-        // module-pipe-source built for 17.0 stayed in place against a 13.0 daemon, refused on
-        // sight, leaving the Steam client reporting no microphone. Refreshed every session here,
-        // like the session scripts, so what runs is always what the APK carries.
-        TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD, this, "pulseaudio.tzst",
-                new File(getFilesDir(), "pulseaudio"));
-
-        List<String> session = linuxSessionArgs();
-        // Only the Steam mode signs in; a desktop session has no client and needs no hold. The
-        // desktop can of course start Steam by hand, but taking the app's store offline for every
-        // file-manager session would be a worse trade.
-        if (session.contains(com.winlator.star.linux.LinuxRuntime.MODE_STEAM)) {
-            suspendAppSteamForLinuxSession();
-        }
-        File runtimeDir = new File(getFilesDir(), ".wayland-rt");
-        runtimeDir.mkdirs();
-
-        environment = new XEnvironment(this, imageFs);
-
-        List<String> guest = new ArrayList<>();
-        guest.add("/usr/bin/env");
-        guest.add("-i");
-        guest.add("HOME=/root");
-        guest.add("USER=root");
-        guest.add("PATH=/usr/local/bin:/usr/bin:/bin");
-        guest.add("TERM=xterm-256color");
-        guest.add("LANG=C.UTF-8");
-        // Without this the session is UTC and the client's clock and log timestamps are hours off
-        // from the device's. (WinNative, maxjivi05, cb52935c.)
-        guest.add("TZ=" + java.util.TimeZone.getDefault().getID());
-        guest.add("XDG_RUNTIME_DIR=" + runtimeDir.getPath());
-        guest.add("XDG_SESSION_TYPE=wayland");
-        guest.add("WAYLAND_DISPLAY=wayland-0");
-        guest.add("GAMESCOPE_FORCE_GENERAL_QUEUE=1");
-        // The preload goes in the rootfs's /etc/ld.so.preload, not here: Steam rebuilds
-        // LD_PRELOAD for every game process and appends to its own overlay entry without a
-        // separator, which turns ours into one nonexistent path and drops it silently.
-        // Steam's CEF needs GL and the rootfs ships no native GL driver: route it through Zink.
-        guest.add("MESA_LOADER_DRIVER_OVERRIDE=zink");
-        guest.add("GALLIUM_DRIVER=zink");
-        guest.add("LIBGL_KOPPER_DRI2=true");
-        File icd = com.winlator.star.linux.LinuxRuntime.vulkanIcd(this);
-        if (icd != null) guest.add("VK_ICD_FILENAMES=" + icd.getPath());
-        // PulseAudio always, whatever the container's audio driver says. The Steam client is a
-        // native Linux program and has no other way to make a sound: its menus, its music and its
-        // voice chat all go through here. Selecting anything else used to wire nothing at all and
-        // launch the whole session silent, which read as "DirectAudio broke the client" when in
-        // fact nothing had been set up. DirectAudio is not an alternative to this on the Linux
-        // path - it replaces the audio driver INSIDE Wine, so it changes what games do and leaves
-        // the client alone.
-        // DirectAudio is chosen per shortcut and changes what GAMES do; the client keeps
-        // PulseAudio either way. The microphone is its own opt-in on top, and the helper only opens
-        // an input stream when asked - so a user who wants game sound but no recording gets exactly
-        // that, and Android's recording indicator stays off.
-        boolean wantsDirectAudio = "directaudio".equals(audioDriver);
-        boolean wantsMic = wantsDirectAudio && directMicRequestedInEnv()
-                && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-                        == PackageManager.PERMISSION_GRANTED;
-        File audioDir = new File(getFilesDir(), "directaudio");
-        //noinspection ResultOfMethodCallIgnored
-        audioDir.mkdirs();
-        // Both paths sit under the app's files directory, which the session binds at its own path,
-        // so the same string is valid on both sides and nothing has to be translated.
-        File relaySocket = new File(audioDir, "relay.sock");
-        File micFifo = wantsMic ? new File(audioDir, "mic.fifo") : null;
-
-        // The battery the client reads, written from Android's battery API and bound over /sys/class/power_supply below.
-        // Without it the client's top bar and its Quick Access Menu show no battery at all.
-        File linuxBatteryDir = new File(getFilesDir(), "linux-session/sys/power_supply");
-        //noinspection ResultOfMethodCallIgnored
-        linuxBatteryDir.mkdirs();
-        environment.addComponent(new com.winlator.star.linux.LinuxBatteryComponent(linuxBatteryDir));
-        guest.add("PULSE_SERVER=unix:" + rootPath + UnixSocketConfig.PULSE_SERVER_PATH);
-        PulseAudioComponent linuxPulse = new PulseAudioComponent(
-                UnixSocketConfig.createSocket(rootPath, UnixSocketConfig.PULSE_SERVER_PATH),
-                micFifo != null ? micFifo.getAbsolutePath() : null);
-        // With DirectAudio chosen, the client's own sound goes through the relay too, not only its games'.
-        // The daemon fills the relay's ring and the relay, outside proot, drives the device; this is what cures the choppy client sound.
-        if (wantsDirectAudio) linuxPulse.setRelaySocket(relaySocket.getAbsolutePath());
-        environment.addComponent(linuxPulse);
-
-        if (wantsDirectAudio) {
-            environment.addComponent(new com.winlator.star.xenvironment.components
-                    .DirectAudioRelayComponent(relaySocket, micFifo));
-            // Read by the Proton wrappers, which point Wine at the driver and name it in the
-            // prefix. Absent, they take an early return and the game uses Proton's own audio - so
-            // this variable is the whole of the selection.
-            guest.add("BL_DIRECTAUDIO=/" + LINUX_DIRECTAUDIO_DIR);
-            guest.add("BANNER_AUDIO_DIRECT_RELAY=" + relaySocket.getAbsolutePath());
-            Log.i("XServerDisplayActivity", "DirectAudio selected for games"
-                    + (wantsMic ? " with microphone" : " (no microphone)"));
-        }
-        guest.add("BL_WIDTH=" + xServer.screenInfo.width);
-        guest.add("BL_HEIGHT=" + xServer.screenInfo.height);
-        // A Linux session is never capped through gamescope.
-        // gamescope's rate is set once for the whole session, so a cap there also holds the client's menus to it.
-        // A limiter left at 60 ran Big Picture at 60 on a 144 Hz panel, which read as the client being sluggish rather than as a setting doing its job.
-        // The panel's own highest mode is used instead (BL_REFRESH below), and a cap is the in-game drawer's FPS limit.
-        guest.add("BL_FPS=0");
-        // gamescope advertises this as the session's refresh rate, and a game reads it as the
-        // display's: without it gamescope falls back to 60, so a 120 Hz panel offers only 60 Hz in
-        // game settings and titles cap themselves there. The panel's highest mode is the honest
-        // answer, the same number the frame pacer uses as its ceiling.
-        int panelHz = Math.round(currentDisplayRefreshHz());
-        if (panelHz > 1) guest.add("BL_REFRESH=" + panelHz);
-        // Debug logging until the runtime is stable: every launch gets its own file under the
-        // public Downloads folder — the whole session (proot, gamescope, Steam stdout) goes in it,
-        // and the script copies Steam's own logs beside it at exit — so a user can hand over a
-        // folder without digging into app-private storage.
-        // One folder per session now (see SessionLogs): the guest log, the controller diagnostics,
-        // a device and a network report written before anything starts, the app's own logcat while
-        // launch logging is on, and at teardown the audio log, the crash buffer and Steam's own logs
-        // scrubbed of credentials. Same layout as the SteamDeck standalone app's bundles.
-        // The account's owned games for the registrar, so every one of them is mapped to the ARM64
-        // tool BEFORE the client is asked to install it (see LinuxOwnedApps).
-        com.winlator.star.linux.LinuxOwnedApps.write(new File(com.winlator.star.linux.LinuxRuntime.rootDir(this), "root"));
-        final File logDir = com.winlator.star.linux.SessionLogs.begin();
-        File sessionLog = new File(logDir, "session.log");
-        guest.add("BL_LOG=" + sessionLog.getPath());
-        guest.add("BL_DEBUG_DIR=" + logDir.getPath());
-        // The entry's performance switches, and with them BL_STEAMDECK for the client's own command line.
-        // They are set in the Steam (Linux) settings.
-        // The effective set goes into the device report below, so a measurement names what produced it.
-        com.winlator.star.linux.LinuxTuning.apply(guest, shortcut);
-        linuxSessionLogDir = logDir;
-        try {
-            StringBuilder eff = new StringBuilder();
-            String[][] keys = {
-                    {"Screen size", "screenSize"}, {"Display driver (Android)", "graphicsDriverConfig"},
-                    {"Draw driver (Linux)", com.winlator.star.core.LinuxVulkanDriver.EXTRA},
-                    {"Client cores", "linuxClientCpuList"}, {"Game cores", "linuxGameCpuList"},
-                    {"Audio driver", "audioDriver"}, {"Frame generation", "frameGenEngine"},
-                    {"Env vars", "envVars"}};
-            for (String[] k : keys) {
-                String v = shortcut != null ? shortcut.getExtra(k[1], "") : "";
-                eff.append(String.format(java.util.Locale.US, "%-24s", k[0]))
-                   .append(v == null || v.isEmpty() ? "(container default)" : v).append('\n');
-            }
-            eff.append(String.format(java.util.Locale.US, "%-24s", "Settings container"))
-               .append(container != null ? container.id + " (" + container.getName() + ")" : "none").append('\n');
-            // The tuning switches too.
-            // A measurement is only worth keeping if the report beside it says what was set when it was taken.
-            eff.append("--- performance switches (entry settings) ---\n")
-               .append(com.winlator.star.linux.LinuxTuning.report(shortcut));
-            com.winlator.star.linux.SessionLogs.writeDeviceReport(this, new File(logDir, "device.txt"), eff.toString());
-            com.winlator.star.linux.SessionLogs.writeNetworkReport(this, new File(logDir, "network.txt"));
-            if (isLaunchLoggingEnabled()) com.winlator.star.linux.SessionLogs.startAppLog(new File(logDir, "app.log"));
-        } catch (Exception e) {
-            Log.w("XServerDisplayActivity", "session reports", e);
-        }
-
-        // Controllers for a Linux session.
-        // WinHandler already publishes the on-screen and physical pads into the fake-input rings (setFakeInputPath, in onCreate).
-        // What this session lacks is a reader, because there is no Wine here to preload the interposer into.
-        // Handing the rings to the glibc build of libfakeinput.so makes the Steam client enumerate a real /dev/input/eventN.
-        // The pad then works in Big Picture and in the games launched from it.
-        // Both paths below are bound into the session at their own host paths (LinuxRuntime.command), so nothing here needs translating.
-        // xbox360: SDL and Steam key their mapping database on bus+vendor+product.
-        // Only a known identity gets the standard layout without the user configuring the pad by hand.
-        // One switch for the whole controller feature, not just the preload.
-        // The first version gated LD_PRELOAD alone, which left the SDL hints in place: the client
-        // still went scanning /dev/input/js* with no interposer there to answer, which on a sandboxed
-        // device means poking at nodes it cannot open. That is not a baseline, it is a third
-        // configuration, and it made an A/B on the failing device prove nothing.
-        // With this file present the session is exactly what it was before any controller work.
-        File noFakeInput = new File(android.os.Environment.getExternalStorageDirectory(),
-                "Download/bannerlator-no-fake-input");
-        boolean fakeInputEnabled = !noFakeInput.exists();
-        if (!fakeInputEnabled) {
-            Log.w("XServerDisplayActivity", "controller support disabled by " + noFakeInput);
-        }
-
-        // The session's preload libraries, refreshed from the app's own copies at every launch.
-        // /etc/ld.so.preload in the runtime names libblsession.so, so it is loaded into every process
-        // the session runs and has to match the build that starts it; a runtime installed earlier
-        // carries an older copy, and the device has no way to replace it from outside the app.
-        // That is how a fix inside it reaches an installed runtime with no runtime re-host.
-        // libfakeinput.so is the controller reader, staged the same way.
-        // Each lands through a rename, so a library another session still has mapped keeps the file it opened.
-        // (Shape follows WinNative's syncPreloadLibraries.)
-        // asset path under linuxfs/ -> path under the runtime root; the scripts ride along with the
-        // libraries so a registrar fix reaches a runtime that is already installed.
-        String[][] sessionFiles = {
-                {"libblsession.so", "usr/local/lib/libblsession.so"},
-                {"libfakeinput.so", "usr/local/lib/libfakeinput.so"},
-                {"usr/local/bin/bannerlator-session", "usr/local/bin/bannerlator-session"},
-                {"usr/local/bin/bannerlator-steam-compat", "usr/local/bin/bannerlator-steam-compat"},
-                {"usr/local/bin/bannerlator-steam-install", "usr/local/bin/bannerlator-steam-install"},
-                {"usr/local/bin/bannerlator-steam-library", "usr/local/bin/bannerlator-steam-library"},
-                {"usr/local/bin/bannerlator-seed-redists", "usr/local/bin/bannerlator-seed-redists"},
-                {"usr/local/bin/bannerlator-proton-extra", "usr/local/bin/bannerlator-proton-extra"},
-                {"usr/local/bin/bannerlator-steam-shortcuts", "usr/local/bin/bannerlator-steam-shortcuts"},
-                {"usr/local/bin/bannerlator-netmanager", "usr/local/bin/bannerlator-netmanager"},
-                // The SteamOS helpers the client calls in Deck mode, all no-ops that answer "nothing to do".
-                // On device the client called four of them by their polkit-helpers path rather than /usr/bin, and the "Update Error" dialog was steamos-update missing there. (From The412Banner/SteamDeck.)
-                {"usr/bin/steamos-update", "usr/bin/steamos-update"},
-                {"usr/bin/steamos-select-branch", "usr/bin/steamos-select-branch"},
-                {"usr/bin/jupiter-biosupdate", "usr/bin/jupiter-biosupdate"},
-                {"usr/bin/steamos-polkit-helpers/steamos-update", "usr/bin/steamos-polkit-helpers/steamos-update"},
-                {"usr/bin/steamos-polkit-helpers/steamos-select-branch", "usr/bin/steamos-polkit-helpers/steamos-select-branch"},
-                {"usr/bin/steamos-polkit-helpers/jupiter-biosupdate", "usr/bin/steamos-polkit-helpers/jupiter-biosupdate"},
-                {"usr/bin/steamos-polkit-helpers/jupiter-dock-updater", "usr/bin/steamos-polkit-helpers/jupiter-dock-updater"},
-                {"usr/bin/steamos-polkit-helpers/steamos-priv-write", "usr/bin/steamos-polkit-helpers/steamos-priv-write"},
-                {"usr/bin/steamos-polkit-helpers/steamos-set-timezone", "usr/bin/steamos-polkit-helpers/steamos-set-timezone"},
-        };
-        // The patched gamescope (tools/gamescope): the runtime's own 3.16.29 rebuilt with the ARM64 client fixes, staged over /usr/local/bin so it comes first in the session's PATH.
-        // It is staged only when the apk carries it, which is only once a build of it has been published; otherwise the runtime's own copy is left alone.
-        if (linuxAssetPresent("usr/local/bin/gamescope")) {
-            String[][] withGamescope = java.util.Arrays.copyOf(sessionFiles, sessionFiles.length + 1);
-            withGamescope[sessionFiles.length] = new String[]{"usr/local/bin/gamescope", "usr/local/bin/gamescope"};
-            sessionFiles = withGamescope;
-        }
-        // Valve's mangoapp (tools/mangoapp), which draws Deck mode's performance overlay, with the five libraries the runtime lacks beside it and the wrapper on PATH that points it at them.
-        // Each file is staged only when the apk carries it. (From The412Banner/SteamDeck.)
-        String[] mangoapp = {
-                "usr/local/bin/mangoapp",
-                "usr/local/lib/mangoapp/mangoapp",
-                "usr/local/lib/mangoapp/libfmt.so.10",
-                "usr/local/lib/mangoapp/libspdlog.so.1.13",
-                "usr/local/lib/mangoapp/libglfw.so.3",
-                "usr/local/lib/mangoapp/libtraceevent.so.1",
-                "usr/local/lib/mangoapp/libtracefs.so.1",
-        };
-        for (String path : mangoapp) {
-            if (!linuxAssetPresent(path)) continue;
-            String[][] withFile = java.util.Arrays.copyOf(sessionFiles, sessionFiles.length + 1);
-            withFile[sessionFiles.length] = new String[]{path, path};
-            sessionFiles = withFile;
-        }
-        // Android has no /dev/shm; a directory under the cache stands in for it, and unlike the real
-        // thing it keeps whatever a session leaves. The client abandons some fifty megabytes of
-        // streams each run; one runtime reached 22 GB. Cleared before a session starts.
-        FileUtils.clear(new File(getCacheDir(), "shm"));
-        StringBuilder stagedReport = new StringBuilder();
-        for (String[] entry : sessionFiles) {
-            String asset = entry[0], name = new File(entry[1]).getName();
-            File libDir = new File(com.winlator.star.linux.LinuxRuntime.rootDir(this), entry[1]).getParentFile();
-            File target = new File(libDir, name);
-            File staged = new File(libDir, name + ".staged");
-            boolean installed = false;
-            try {
-                //noinspection ResultOfMethodCallIgnored
-                libDir.mkdirs();
-                try (java.io.InputStream in = getAssets().open("linuxfs/" + asset);
-                     java.io.OutputStream out = new java.io.FileOutputStream(staged)) {
-                    byte[] buffer = new byte[1 << 16];
-                    for (int read = in.read(buffer); read > 0; read = in.read(buffer)) out.write(buffer, 0, read);
-                }
-                installed = staged.setExecutable(true, false) && staged.renameTo(target);
-            } catch (Exception e) {
-                Log.w("XServerDisplayActivity", "could not stage " + name + " for the Linux session", e);
-            } finally {
-                //noinspection ResultOfMethodCallIgnored
-                if (!installed) staged.delete();
-            }
-            long size = target.isFile() ? target.length() : -1;
-            stagedReport.append(name).append('=').append(installed ? size : -1).append(' ');
-            if (!installed) Log.e("XServerDisplayActivity", name + " NOT staged (asset missing?)");
-        }
-        Log.i("XServerDisplayActivity", "session libraries staged: " + stagedReport.toString().trim());
-        // What every process in the session preloads. The runtime image ships this naming the
-        // session shim alone; the controller reader is added here, so an installed runtime gains it
-        // and the off switch removes it again. Written by rename like the libraries.
-        String preloadList = "/usr/local/lib/libblsession.so\n"
-                + (fakeInputEnabled ? "/usr/local/lib/libfakeinput.so\n" : "");
-        try {
-            File etc = new File(com.winlator.star.linux.LinuxRuntime.rootDir(this), "etc");
-            File stagedList = new File(etc, "ld.so.preload.staged");
-            java.nio.file.Files.write(stagedList.toPath(),
-                    preloadList.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            if (!stagedList.renameTo(new File(etc, "ld.so.preload"))) {
-                //noinspection ResultOfMethodCallIgnored
-                stagedList.delete();
-                Log.e("XServerDisplayActivity", "could not write ld.so.preload");
-            }
-        } catch (Exception e) {
-            Log.w("XServerDisplayActivity", "could not write ld.so.preload", e);
-        }
-
-        File fakeInputDir = new File(imageFs.getRootDir(), "dev/input");
-        if (fakeInputEnabled) {
-            //noinspection ResultOfMethodCallIgnored
-            fakeInputDir.mkdirs();
-            // The rings' own event nodes are what the client sees: the directory is bound in as
-            // /dev/input itself (see gameBinds below), so an unhooked opendir/readdir lists it and
-            // no js* node or classic-scan hint is needed. Verified on device with the runtime's proot.
-            com.winlator.star.inputcontrols.FakeInputWriter.prepareRingSlots(fakeInputDir, 4);
-            // The client sees one controller per event node in this directory, so a node with no device behind it is a pad that never moves.
-            // Four were always listed, one per ring, while one real pad fed ring0 and the other three rings were never written.
-            // A trip through the Quick Access Menu re-activates every listed pad for the game, and with four identical-looking pads nothing kept the real one on XInput slot 0.
-            // The game reads player one from slot 0, so it came back alive with no controller.
-            // Only the slots a device holds keep their node; with none yet, slot 0 is kept for the on-screen pad.
-            // The rings themselves all stay prepared, so a pad plugged in mid-session still has one: WinHandler creates its node when it takes the slot.
-            trimUnusedFakeInputNodes(fakeInputDir);
-            Log.i("XServerDisplayActivity", "fake evdev nodes: "
-                    + java.util.Arrays.toString(fakeInputDir.list()));
-            guest.add("FAKE_EVDEV_DIR=" + fakeInputDir.getPath());
-            String fakeInputRings =
-                    com.winlator.star.inputcontrols.FakeInputWriter.getRingEnv(fakeInputDir);
-            if (fakeInputRings != null && !fakeInputRings.isEmpty()) {
-                guest.add("FAKE_EVDEV_MEMFD_PATHS=" + fakeInputRings);
-            }
-            guest.add("FAKE_EVDEV_IDENTITY=xbox360");
-            // Rumble comes back over an abstract socket.
-            // proot makes no network namespace, so the session shares the app's abstract namespace and WinHandler's listener is reachable.
-            guest.add("FAKE_EVDEV_VIBRATION=1");
-            // Preloading is done here rather than in bannerlator-session, because that script ships inside
-            // the rootfs image and an already installed runtime would never receive the new copy.
-            // Setting it here covers every installed runtime on the next launch.
-            // The cost is that the whole session gets the interposer rather than the Steam client alone.
-            // That is the same bargain /etc/ld.so.preload already makes for libblsession.so.
-            // Everything the interposer does not recognise falls straight through to libc via RTLD_NEXT.
-                // No LD_PRELOAD here: the Steam client rebuilds LD_PRELOAD for every process it starts
-            // and appends its overlay without a separator, silently dropping whatever was there.
-            // Both shims are named in /etc/ld.so.preload instead, which the app writes below.
-            // Steam Input hides a pad it manages from the game and shows it a virtual one instead,
-            // which needs /dev/uinput; the pad carries that identity itself for everything but the client.
-            guest.add("FAKE_EVDEV_STEAM_VIRTUAL=1");
-            // No udev runs in the runtime: SDL and Steam's hidapi scan /dev/input themselves, and
-            // the netlink monitor they still open is answered by the session shim's stand-in.
-            guest.add("SDL_JOYSTICK_DISABLE_UDEV=1");
-            guest.add("SDL_HIDAPI_JOYSTICK_DISABLE_UDEV=1");
-            guest.add("SDL_JOYSTICK_HIDAPI=0");
-            File traceSwitch = new File(android.os.Environment.getExternalStorageDirectory(),
-                    "Download/bannerlator-fake-input-log");
-            if (traceSwitch.exists()) {
-                guest.add("FAKE_EVDEV_LOG=1");
-                Log.i("XServerDisplayActivity", "fake evdev tracing enabled by " + traceSwitch);
-            }
-        }
-        Log.i("XServerDisplayActivity", "Linux session log: " + sessionLog.getPath());
-        showLinuxFirstRunProgress(sessionLog);
-        guest.add(com.winlator.star.linux.LinuxRuntime.SESSION_SCRIPT);
-        guest.addAll(session);
-
-        // Controller diagnostics, written beside the session log because that folder is what gets sent
-        // back from a device we cannot reach. logcat holds the same facts and rotates them away within
-        // minutes, and on a phone there is no way to retrieve it at all.
-        // Everything needed to tell "no controller" apart from "no node", "not staged" or "not preloaded".
-        try {
-            File diag = new File(logDir, "fake-input.txt");
-            StringBuilder sb = new StringBuilder();
-            sb.append("session libraries staged (name=bytes, -1 = failed): ")
-              .append(stagedReport.toString().trim()).append('\n');
-            sb.append("nodes: ").append(java.util.Arrays.toString(fakeInputDir.list())).append('\n');
-            File rings = new File(fakeInputDir.getParentFile(), "fakeinput-rings");
-            sb.append("rings: ").append(java.util.Arrays.toString(rings.list())).append('\n');
-            // The touch profile is chosen later in the launch, so it is deliberately not reported here.
-            sb.append("physical pad connected: ").append(hasConnectedGameController()).append('\n');
-            sb.append("shortcut controlsProfile: ")
-              .append(shortcut != null ? shortcut.getExtra("controlsProfile", "(none)") : "(no shortcut)")
-              .append('\n');
-            sb.append("controller support enabled: ").append(fakeInputEnabled).append('\n');
-            sb.append("ld.so.preload: ").append(preloadList.replace("\n", " ").trim()).append('\n');
-            for (String e : guest) {
-                if (e.startsWith("FAKE_EVDEV") || e.startsWith("LD_PRELOAD")
-                        || e.startsWith("SDL_JOYSTICK") || e.startsWith("SDL_HIDAPI")
-                        || e.startsWith("SDL_LINUX")) {
-                    sb.append("env: ").append(e).append('\n');
-                }
-            }
-            java.nio.file.Files.write(diag.toPath(), sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            Log.i("XServerDisplayActivity", "controller diagnostics: " + diag.getName());
-        } catch (Exception e) {
-            Log.w("XServerDisplayActivity", "could not write controller diagnostics", e);
-        }
-
-        // Variables worked out after the session script was appended to the command. They cannot
-        // simply be added to the end; see the FEX block below.
-        List<String> lateEnv = new ArrayList<>();
-
-        EnvVars hostEnv = new EnvVars();
-        hostEnv.put("PROOT_LOADER", com.winlator.star.linux.LinuxRuntime.prootLoader(this).getPath());
-        hostEnv.put("PROOT_TMP_DIR", getCacheDir().getPath());
-        // The runtime's proot links against a libtalloc that sits beside it. Android's linker does
-        // not search a plain executable's own directory, so it has to be named here or the process
-        // dies before it starts, with the reason only in `logcat -b crash`.
-        String prootLibs = com.winlator.star.linux.LinuxRuntime.prootLibraryPath(this);
-        if (!prootLibs.isEmpty()) hostEnv.put("LD_LIBRARY_PATH", prootLibs);
-
-        // The games this app already downloaded, handed to the Steam client as a library folder so
-        // the same install serves both launchers and nothing is fetched twice.
-        // The games the client starts run under FEX, which a Wine session configures from the
-        // container's preset. Nothing did so here, so anything the client launched ran on FEX's
-        // bare defaults - no store ordering - and a multithreaded x86 title can sit at its loading
-        // screen for good waiting on a store it never sees. The user's own variables are merged
-        // over the preset, so an explicit one still wins. (WinNative ec98f03c.)
-        {
-            String fexPreset = shortcut != null
-                    ? shortcut.getExtra("fexcorePreset", container.getFEXCorePreset())
-                    : container.getFEXCorePreset();
-            EnvVars sessionEnv = com.winlator.star.fexcore.FEXCorePresetManager.getEnvVars(this, fexPreset);
-            sessionEnv.putAll(effectiveUserEnv());
-            // Not appended: the session script and its arguments are already on the end of this
-            // list, so anything added here becomes an argument to the script rather than a
-            // variable in its environment. The preset has been going in that way and reaching
-            // nothing - a Steam process carries every BL_ and FAKE_EVDEV_ name set before the
-            // script was added, and not one FEX one. These are put back in front of the script
-            // below, where /usr/bin/env can still read them.
-            for (String entry : sessionEnv.toStringArray()) lateEnv.add(entry);
-        }
-
-        List<String> gameBinds = com.winlator.star.linux.LinuxSteamLibrary.prepare(
-                this, containerManager.getContainers(), com.winlator.star.linux.LinuxRuntime.rootDir(this));
-        // A library's games can sit somewhere the folder naming the library does not: the card
-        // library's common/ is bound to the card while the folder above it belongs to the runtime
-        // image. The client measures the folder, so it would quote the phone's free space for a
-        // library full of card games - and it refuses an install it believes will not fit. The
-        // session shim answers that one question from the games' own directory instead.
-        lateEnv.add("BL_LIBRARY_SPACE=" + com.winlator.star.linux.LinuxSteamLibrary.GUEST_ROOT_SD);
-
-        // Two core lists, because a Linux session runs two things that want different cores at the
-        // same time: the client (whose interface renderer Steam pins to a subset of its own choosing
-        // - five of eight on this device, without either little core or the fastest one) and a game
-        // it launches. The session applies the first on a beat, since steamwebhelper spawns children
-        // that inherit Steam's choice rather than ours; the Proton wrapper applies the second by
-        // exec'ing the game through taskset. Sent only when they are a real restriction - a list of
-        // every core is what the kernel does anyway, and saying so would just be noise in the log.
-        // The driver the session DRAWS with: the client's UI through the runtime's Zink, and every
-        // game the client launches through Proton's DXVK/VKD3D. Unset means the runtime keeps the
-        // Turnip it was built with; an imported one is handed over as an ICD manifest path, so
-        // nothing inside the runtime is modified. This is not the driver that puts the frame on the
-        // screen - that is the Android one the app's own compositor loads, picked by the shortcut's
-        // "Display driver" row.
-        String vkIcd = com.winlator.star.core.LinuxVulkanDriver.resolveIcdPath(
-                this, shortcut != null ? shortcut.getExtra(com.winlator.star.core.LinuxVulkanDriver.EXTRA, "") : "");
-        if (vkIcd != null) lateEnv.add(com.winlator.star.core.LinuxVulkanDriver.ENV + "=" + vkIcd);
-
-        String clientCpus = cpuListOrEmpty("linuxClientCpuList");
-        String gameCpus = cpuListOrEmpty("linuxGameCpuList");
-        // The CLIENT list is always sent, every core when nothing narrower was chosen. "All cores"
-        // is not a no-op for the client the way it is for a game: Steam pins its own interface
-        // renderer to a subset of its choosing - 0x7c on this device, five of eight, without the
-        // fastest core - and the session's re-pinning beat only runs when this is set. Leaving it
-        // out left Steam's choice standing, and the client's menus at 66 fps where the same
-        // runtime with the list exported does 90+ (measured, both on the FIT).
-        if (clientCpus.isEmpty()) {
-            StringBuilder all = new StringBuilder();
-            for (int i = 0, n = Runtime.getRuntime().availableProcessors(); i < n; i++) {
-                if (i > 0) all.append(',');
-                all.append(i);
-            }
-            clientCpus = all.toString();
-        }
-        lateEnv.add("BL_CLIENT_CPUS=" + clientCpus);
-        if (!gameCpus.isEmpty()) lateEnv.add("BL_GAME_CPUS=" + gameCpus);
-        // The other direction. The client's main library is internal storage and its second is the
-        // card, so a game it installs lands where the app would have put it and is recorded in the
-        // store's database as installed there: the store shows it, the app can launch it.
-        com.winlator.star.linux.LinuxSteamLibrary.adoptClientInstalls(
-                this, com.winlator.star.linux.LinuxRuntime.rootDir(this));
-        // Apps may not list /dev/input; the fake evdev nodes the input rings back stand in for it.
-        gameBinds = new ArrayList<>(gameBinds);
-        if (fakeInputEnabled) gameBinds.add(fakeInputDir.getPath() + ":/dev/input");
-        gameBinds.add(linuxBatteryDir.getPath() + ":/sys/class/power_supply");
-        // The app's own games, for the runtime's shortcuts writer to put in the client's library before the client starts (see LinuxAppGames and bannerlator-steam-shortcuts).
-        // The list is written every session, empty or not, so games that are gone or turned off leave the client's library too.
-        try {
-            com.winlator.star.linux.LinuxAppGames.Session appGames =
-                    com.winlator.star.linux.LinuxAppGames.INSTANCE.prepare(this, containerManager, shortcut);
-            gameBinds.addAll(appGames.getBinds());
-            lateEnv.add("BL_APP_GAMES=" + appGames.getListing().getPath());
-        } catch (Throwable t) {
-            Log.w("XServerDisplayActivity", "could not list the app's games for the client", t);
-        }
-        // Back in front of the script, so `env -i` sets them instead of the script being handed
-        // them as filenames to run.
-        if (!lateEnv.isEmpty()) {
-            int scriptAt = guest.indexOf(com.winlator.star.linux.LinuxRuntime.SESSION_SCRIPT);
-            if (scriptAt >= 0) guest.addAll(scriptAt, lateEnv);
-            else guest.addAll(lateEnv);
-            Log.i("XServerDisplayActivity", "session env: " + lateEnv.size() + " late variable(s) placed before the script");
-        }
-        List<String> command = com.winlator.star.linux.LinuxRuntime.command(this, imageFs, runtimeDir,
-                android.os.Environment.getExternalStorageDirectory(), gameBinds, guest);
-        // The device's network link, for the runtime's processes: written before the session so
-        // its first process already sees it, then kept current while it runs.
-        com.winlator.star.linux.LinuxNetworkLinkComponent networkLink =
-                new com.winlator.star.linux.LinuxNetworkLinkComponent(
-                        this, com.winlator.star.linux.LinuxRuntime.rootDir(this));
-        networkLink.publish();
-        environment.addComponent(networkLink);
-        environment.addComponent(new com.winlator.star.linux.LinuxProgramLauncherComponent(
-                command, hostEnv, com.winlator.star.linux.LinuxRuntime.rootDir(this), (status) -> {
-                    Log.i("XServerDisplayActivity", "Linux session " + session + " ended: " + status);
-                    com.winlator.star.linux.SessionLogs.collect(XServerDisplayActivity.this, linuxSessionLogDir,
-                            new File(getFilesDir(), "pulseaudio/pulse.log"));
-                    // Whatever the client installed during the session is the app's now.
-                    try {
-                        com.winlator.star.linux.LinuxSteamLibrary.adoptClientInstalls(
-                                XServerDisplayActivity.this, com.winlator.star.linux.LinuxRuntime.rootDir(XServerDisplayActivity.this));
-                    } catch (Throwable t) {
-                        Log.w("XServerDisplayActivity", "could not adopt the client's installs", t);
-                    }
-                    // How many events the app pushed into slot 0 over the whole session. Zero means no
-                    // input ever left the app, which separates "the pad wrote nothing" from "the
-                    // client read nothing" - the two look identical from the outside.
-                    try {
-                        File ring0 = new File(fakeInputDir.getParentFile(), "fakeinput-rings/ring0");
-                        long writes = -1;
-                        if (ring0.isFile()) {
-                            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(ring0, "r")) {
-                                raf.seek(16);
-                                byte[] b = new byte[8];
-                                raf.readFully(b);
-                                writes = java.nio.ByteBuffer.wrap(b)
-                                        .order(java.nio.ByteOrder.LITTLE_ENDIAN).getLong();
-                            }
-                        }
-                        // Same file the start-of-session writer used; appended, so the ring
-                        // counts at the end sit under the setup lines rather than replacing them.
-                        File diag = new File(logDir, "fake-input.txt");
-                        java.nio.file.Files.write(diag.toPath(),
-                                ("session ended: " + status + "\nring0 events written by the app: "
-                                        + writes + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                                java.nio.file.StandardOpenOption.APPEND,
-                                java.nio.file.StandardOpenOption.CREATE);
-                    } catch (Exception e) {
-                        Log.w("XServerDisplayActivity", "could not record ring stats", e);
-                    }
-                    // A session that died before it ever drew would otherwise end as a flash of
-                    // black: leave its exit status and the log folder readable for a moment first.
-                    final File endedLogs = linuxSessionLogDir;
-                    if (!winStarted && status != 0 && endedLogs != null && preloaderDialog != null && preloaderDialog.isShowing()) {
-                        preloaderDialog.failOnUiThread("Linux session",
-                                "The session ended (" + status + ") before the client drew anything",
-                                "Its logs are in " + endedLogs, endedLogs.getPath(), true);
-                        new android.os.Handler(getMainLooper()).postDelayed(() -> {
-                            if (!isFinishing() && !isDestroyed()) exit();
-                        }, 4000L);
-                        return;
-                    }
-                    exit();
-                }));
-
-        preloaderDialog.step(4, "Launching Linux session…");
-        environment.startEnvironmentComponents();
-        // The loading screen: the centered status card, driven from the session log by
-        // showLinuxFirstRunProgress until the compositor presents the client's first frame (the
-        // hook in startWaylandCompositor closes it). There is no 2 s force-close here any more: on
-        // this path the client presents through the compositor, so the hook fires, and the
-        // force-close is what left a first run staring at black for the whole client download.
-        // The watcher's 10-minute deadline covers a session that never presents.
-        // (No startLaunchTimers here: its shader-compile hints are for Wine launches, and the
-        // loading screen rotates its own.)
-        com.winlator.star.core.PreloaderState.show("Steam is starting…");
-        winHandler.start();
-    }
-
-    /**
-     * The Linux DirectAudio driver, copied into the runtime beside Proton rather than into it.
-     *
-     * <p>Steam verifies and repairs its own Proton depots, so anything added under one of those is
-     * removed again on the next check; a directory of our own survives, and one location serves
-     * whichever Proton a game resolves to. Wine is pointed at it with WINEDLLPATH, which it
-     * searches with the per-architecture subdirectory appended - hence this layout.
-     *
-     * <p>These are the glibc build: the unix half links libc.so.6 and could not load in a Wine
-     * container even by accident, which is why it lives in its own asset folder away from the
-     * bionic ones. Staged every session like the session scripts, so a fix reaches an installed
-     * runtime without re-hosting it.
-     */
-    private void stageLinuxDirectAudio() {
-        String[][] files = {
-                {"aarch64-unix/winedirectaudio.so", "aarch64-unix/winedirectaudio.so"},
-                {"aarch64-windows/winedirectaudio.drv", "aarch64-windows/winedirectaudio.drv"},
-                {"i386-windows/winedirectaudio.drv", "i386-windows/winedirectaudio.drv"},
-        };
-        File base = new File(com.winlator.star.linux.LinuxRuntime.rootDir(this),
-                LINUX_DIRECTAUDIO_DIR + "/lib/wine");
-        StringBuilder report = new StringBuilder();
-        for (String[] entry : files) {
-            File target = new File(base, entry[1]);
-            File staged = new File(target.getParentFile(), target.getName() + ".staged");
-            boolean ok = false;
-            try {
-                //noinspection ResultOfMethodCallIgnored
-                target.getParentFile().mkdirs();
-                try (java.io.InputStream in = getAssets().open("directaudio/linux-wine11/" + entry[0]);
-                     java.io.OutputStream out = new java.io.FileOutputStream(staged)) {
-                    byte[] buffer = new byte[1 << 16];
-                    for (int read = in.read(buffer); read > 0; read = in.read(buffer)) out.write(buffer, 0, read);
-                }
-                // Renamed into place so a session that still has the old file mapped keeps it.
-                ok = staged.renameTo(target);
-            } catch (Exception e) {
-                Log.w("XServerDisplayActivity", "could not stage " + entry[1] + " for DirectAudio", e);
-            } finally {
-                //noinspection ResultOfMethodCallIgnored
-                if (!ok) staged.delete();
-            }
-            report.append(target.getName()).append('=').append(ok ? target.length() : -1).append(' ');
-        }
-        Log.i("XServerDisplayActivity", "DirectAudio (Linux) staged: " + report.toString().trim());
-    }
-
-    /**
-     * A shortcut's CPU list as taskset spells it, or empty when it is not a restriction.
-     *
-     * <p>The editor stores what {@code CPUListView} produces - a comma-separated list of core
-     * numbers - which is already taskset's {@code -c} syntax. Empty, absent, or naming every core
-     * on the device all mean "no preference", and are all returned as empty so nothing is set:
-     * pinning a process to all cores is what the scheduler does unaided, and passing it would only
-     * put a meaningless line in the session log.
-     */
-    private String cpuListOrEmpty(String extra) {
-        String list = shortcut != null ? shortcut.getExtra(extra, "") : "";
-        if (list == null) return "";
-        list = list.trim();
-        if (list.isEmpty()) return "";
-        int named = 0;
-        for (String part : list.split(",")) if (!part.trim().isEmpty()) named++;
-        return named >= Runtime.getRuntime().availableProcessors() ? "" : list;
-    }
-
-    /** What the session script runs: the desktop, a Linux program, or the native Steam client. */
-    private List<String> linuxSessionArgs() {
-        List<String> args = new ArrayList<>();
-        if (shortcut == null) {
-            args.add(com.winlator.star.linux.LinuxRuntime.MODE_DESKTOP);
-            return args;
-        }
-        String mode = shortcut.getExtra(com.winlator.star.linux.LinuxRuntime.EXTRA_LINUX_MODE, "");
-        if (com.winlator.star.linux.LinuxRuntime.MODE_STEAM.equals(mode)) {
-            args.add(com.winlator.star.linux.LinuxRuntime.MODE_STEAM);
-            String appId = shortcut.getExtra("app_id", "");
-            if (!appId.isEmpty()) args.add("steam://rungameid/" + appId);
-            return args;
-        }
-        String exe = shortcut.getExtra("custom_exe", "");
-        if (com.winlator.star.linux.LinuxRuntime.MODE_RUN.equals(mode) && !exe.isEmpty()) {
-            args.add(com.winlator.star.linux.LinuxRuntime.MODE_RUN);
-            args.add(exe);
-            return args;
-        }
-        args.add(com.winlator.star.linux.LinuxRuntime.MODE_DESKTOP);
-        return args;
-    }
-
     private void setupXEnvironment() throws PackageManager.NameNotFoundException {
 
         // Set environment variables
@@ -9700,13 +8713,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // write their startup logs there for the HUD API resolver (P3). No-op when logging is on
         // (wrapperLogDir then points at the user's log dir, outside tmp) or on a WineD3D container (null).
         if (wrapperLogDir != null) wrapperLogDir.mkdirs();
-
-        // A gamescope session shares nothing below this point: no prefix, no wineserver, no
-        // dxwrapper, no guest launcher. proot and the session script are the whole of it.
-        if (gamescopeMode) {
-            setupLinuxSession(rootPath);
-            return;
-        }
 
         guestProgramLauncherComponent = new GuestProgramLauncherComponent(
                 contentsManager,
@@ -10772,16 +9778,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
             boolean controllersEnabled = !new File(
                     android.os.Environment.getExternalStorageDirectory(),
                     "Download/bannerlator-no-fake-input").exists();
-            if (controllersEnabled && gamescopeMode && controlsProfile.isEmpty()
-                    && !hasConnectedGameController()) {
-                ControlsProfile linuxPad = findVirtualGamepadProfile();
-                if (linuxPad != null) {
-                    inputControlsView.setShowTouchscreenControls(true);
-                    userWantsControlsShown = true;
-                    showInputControls(linuxPad);
-                }
-            }
-
             String controllerProfile = shortcut.getExtra("controllerProfile");
             if (!controllerProfile.isEmpty()) {
                 ControlsProfile physical = inputControlsManager.getProfile(Integer.parseInt(controllerProfile));
@@ -13884,20 +12880,6 @@ return true;
                 + (removed.length() > 0 ? ", removed" + removed : ", nothing removed"));
     }
 
-    /** Whether the apk carries this file under its linuxfs assets. */
-    private boolean linuxAssetPresent(String path) {
-        int slash = path.lastIndexOf('/');
-        String dir = "linuxfs" + (slash >= 0 ? "/" + path.substring(0, slash) : "");
-        String name = slash >= 0 ? path.substring(slash + 1) : path;
-        try {
-            String[] names = getAssets().list(dir);
-            if (names == null) return false;
-            for (String n : names) if (n.equals(name)) return true;
-        } catch (java.io.IOException ignored) {
-        }
-        return false;
-    }
-
     private boolean hasConnectedGameController() {
         if (winHandler == null) return false;
         for (WinHandler.PlayerSlotInfo s : winHandler.getPlayerSlotAssignments()) {
@@ -15726,63 +14708,6 @@ return true;
     // The active container's config for the Task Manager header. Set once (it doesn't change while
     // the game runs). Uses the same resolved getters the launch path uses so it reflects per-game
     // shortcut overrides, not just the raw container.
-    /** "Linux (gamescope) - rootfs r9", from the version the runtime image itself carries. */
-    private String linuxRuntimeLabel() {
-        String version = "";
-        try {
-            File marker = new File(com.winlator.star.linux.LinuxRuntime.rootDir(this), ".version");
-            if (marker.isFile()) {
-                version = new String(java.nio.file.Files.readAllBytes(marker.toPath()),
-                        java.nio.charset.StandardCharsets.UTF_8).trim();
-            }
-        } catch (Exception e) {
-            Log.w("XServerDisplayActivity", "linux: rootfs version unavailable", e);
-        }
-        return "Linux (gamescope)" + (version.isEmpty() ? "" : " \u00b7 rootfs " + version);
-    }
-
-    /**
-     * The two drivers a Linux session really uses: the Android one the app's compositor loads to
-     * put the session on screen, and the Linux one inside the runtime that the client and every
-     * game it launches draw with. Same shape as {@link #waylandDriverSummary()}, different pair.
-     */
-    private String linuxDriverSummary() {
-        String display = "System";
-        try {
-            String gdc = (shortcut != null)
-                    ? shortcut.getExtra("graphicsDriverConfig", container.getGraphicsDriverConfig())
-                    : container.getGraphicsDriverConfig();
-            String driverId = com.winlator.star.contentdialog.GraphicsDriverConfigDialog.getVersion(gdc);
-            if (driverId != null && !driverId.isEmpty() && !driverId.equals("System")) {
-                AdrenotoolsManager atm = new AdrenotoolsManager(this);
-                String name = atm.getDriverName(driverId);
-                String ver = atm.getDriverVersion(driverId);
-                display = (name == null || name.isEmpty() ? driverId : name)
-                        + (ver == null || ver.isEmpty() ? "" : " " + ver);
-            }
-        } catch (Exception e) {
-            Log.w("XServerDisplayActivity", "linux: display driver name unavailable", e);
-        }
-        String draw = "Runtime default";
-        try {
-            String choice = shortcut != null
-                    ? shortcut.getExtra(com.winlator.star.core.LinuxVulkanDriver.EXTRA, "") : "";
-            if (choice != null && !choice.isEmpty()) {
-                com.winlator.star.contents.LinuxVulkanDriverManager m =
-                        new com.winlator.star.contents.LinuxVulkanDriverManager(this);
-                // An import that is gone falls back at launch; say that here rather than name it.
-                draw = m.isInstalled(choice)
-                        ? m.getDriverName(choice)
-                                + (m.getDriverVersion(choice).isEmpty() ? "" : " " + m.getDriverVersion(choice))
-                                + " (imported)"
-                        : "Runtime default (" + choice + " is gone)";
-            }
-        } catch (Exception e) {
-            Log.w("XServerDisplayActivity", "linux: draw driver name unavailable", e);
-        }
-        return "display: " + display + " · draw: " + draw;
-    }
-
     private XServerDialogState.TmContainerInfo buildTmContainerInfo() {
         try {
             String wine = wineInfo != null ? wineInfo.toString() : "—";
@@ -15795,23 +14720,12 @@ return true;
             }
             String device = android.os.Build.MODEL + soc + " · " + cores + " cores · Android "
                 + android.os.Build.VERSION.RELEASE;
-            // A Linux session is not a Wine container and the panel must not describe it as one:
-            // there is no Wine (the client is a native aarch64 ELF), no DX wrapper of ours (a game
-            // the client launches brings Valve's Proton with its own), and the driver pair is a
-            // different pair - the Android driver that displays the session, and the Linux driver
-            // inside the runtime that draws it.
-            boolean linuxRuntime = com.winlator.star.linux.LinuxShortcuts.isLinuxEntry(shortcut);
-            if (linuxRuntime) {
-                return new XServerDialogState.TmContainerInfo(
-                    linuxRuntimeLabel(), "", resolvedRenderer(), linuxDriverSummary(), res, device,
-                    "Wayland", hdrRowValue(), null, true);
-            }
             // The trailing flag is passed explicitly: a Kotlin default value is not visible from
             // Java, so the old nine-argument call stopped compiling when the field was added.
             return new XServerDialogState.TmContainerInfo(
                 wine, dxwrapper, resolvedRenderer(),
                 waylandMode ? waylandDriverSummary() : graphicsDriver, res, device,
-                waylandMode ? "Wayland" : "X11", hdrRowValue(), deliveredGpuSpoofName, false);
+                waylandMode ? "Wayland" : "X11", hdrRowValue(), deliveredGpuSpoofName);
         } catch (Exception e) {
             return null;
         }

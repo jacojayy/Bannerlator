@@ -347,22 +347,6 @@ public class ContainerManager {
             }
         }
 
-        // The Linux runtime's own entries - the Steam client and the games it installs - live in
-        // its settings container's desktop directory, not in any Wine container's.
-        try {
-            Container linux = getLinuxContainer();
-            File[] linuxFiles = linux.getDesktopDir().listFiles();
-            if (linuxFiles != null) {
-                for (File file : linuxFiles) {
-                    if (!file.getName().endsWith(".desktop")) continue;
-                    Shortcut shortcut = loadShortcutOrNull(linux, file);
-                    if (shortcut != null) shortcuts.add(shortcut);
-                }
-            }
-        } catch (Exception e) {
-            Log.w("ContainerManager", "could not list the Linux runtime's entries", e);
-        }
-
         shortcuts.sort(Comparator.comparing(a -> a.name));
         return shortcuts;
     }
@@ -429,24 +413,8 @@ public class ContainerManager {
     }
 
     public Container getContainerById(int id) {
-        if (com.winlator.star.linux.LinuxSettings.isLinuxContainer(id)) return getLinuxContainer();
         for (Container container : containers) if (container.id == id) return container;
         return null;
-    }
-
-    private Container linuxContainer;
-
-    /**
-     * The Linux runtime's settings container: global, container-free, never in
-     * {@link #getContainers()} - it is not a Wine container and no container screen should offer to
-     * copy, back up or delete it. Handed out by id like any other so the launch path, the editors
-     * and the Games tab work on it unchanged. See {@link com.winlator.star.linux.LinuxSettings}.
-     */
-    public synchronized Container getLinuxContainer() {
-        if (linuxContainer == null) {
-            linuxContainer = com.winlator.star.linux.LinuxSettings.container(context, this);
-        }
-        return linuxContainer;
     }
 
     private void extractCommonDlls(WineInfo wineInfo, String srcName, String dstName, File containerDir, OnExtractFileListener onExtractFileListener) throws JSONException {

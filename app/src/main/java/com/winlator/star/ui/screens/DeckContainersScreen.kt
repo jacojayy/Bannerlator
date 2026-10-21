@@ -610,11 +610,9 @@ private fun DeckConfirmDialog(
 private fun loadDeckCronos(context: Context, containers: List<Container>): List<DeckCronosItem> {
     return runCatching {
         val manager = ContainerManager(context).also { it.reloadContainers() }
-        val linuxId = runCatching { manager.getLinuxContainer().id }.getOrNull()
         val byContainer = LinkedHashMap<Int, MutableList<Shortcut>>()
         for (shortcut in manager.loadShortcuts()) {
             val container = shortcut.container ?: continue
-            if (container.id == linuxId) continue
             byContainer.getOrPut(container.id) { mutableListOf() }.add(shortcut)
         }
         val hubs = HubGamesStore.load(context).associateBy { it.shortcutPath }

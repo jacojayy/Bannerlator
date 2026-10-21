@@ -274,7 +274,7 @@ public class AdrenotoolsManager {
             return "meta.json is unreadable (" + e.getMessage() + ")";
         }
         if ("linux-vulkan-icd".equals(kind))
-            return "this is a Linux runtime driver (import it under \"Linux runtime drivers\")";
+            return "this is a Linux runtime driver (no longer supported)";
         if ("wayland-game-driver".equals(kind))
             return "this is a Wayland game driver (import it under \"Wayland game drivers\")";
         if (libraryName.isEmpty())

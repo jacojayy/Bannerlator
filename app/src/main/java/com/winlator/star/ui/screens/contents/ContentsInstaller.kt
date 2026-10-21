@@ -365,15 +365,12 @@ object ContentsInstaller {
     /**
      * A driver zip, routed to the manager that can actually use it. "GPU driver" is three different
      * things now and only one of them is an AdrenoTools package: the zip's own meta.json says which
-     * ("kind"), so a "-Linux" (glibc ICD, the Linux runtime and its Steam client) or "-Wayland"
-     * (bionic ICD, Wine on Wayland) zip is installed where it belongs instead of landing in the
-     * Android display-driver list, where it can never be loaded.
+     * ("kind"), so a "-Wayland" (bionic ICD, Wine on Wayland) zip is installed where it belongs
+     * instead of landing in the Android display-driver list, where it can never be loaded.
      */
     private suspend fun installDriverBlocking(context: Context, uri: Uri): Boolean = runCatching {
         val name = uri.lastPathSegment?.substringAfterLast('/') ?: "driver.zip"
         when (driverZipKind(context, uri)) {
-            "linux-vulkan-icd" ->
-                com.winlator.star.contents.LinuxVulkanDriverManager(context).installDriver(uri, name).isNotEmpty()
             "wayland-game-driver" ->
                 com.winlator.star.contents.WaylandGameDriverManager(context).installDriver(uri, name).isNotEmpty()
             else -> AdrenotoolsManager(context).installDriver(uri).isNotEmpty()

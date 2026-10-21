@@ -136,7 +136,6 @@ private enum class HubTab(val label: String, val railLabel: String) {
     COMPONENT("Components", "Components"),
     INSTALLED("Installed", "Installed"),
     MY_FILES("My Files", "My Files"),
-    LINUX("Linux Runtime", "Linux"),
 }
 
 private fun tabIcon(t: HubTab): ImageVector = when (t) {
@@ -144,7 +143,6 @@ private fun tabIcon(t: HubTab): ImageVector = when (t) {
     HubTab.COMPONENT -> Icons.Filled.Extension
     HubTab.MY_FILES -> Icons.Filled.Folder
     HubTab.INSTALLED -> Icons.Filled.CheckCircle
-    HubTab.LINUX -> Icons.Filled.DeveloperBoard
 }
 
 @Composable
@@ -161,7 +159,7 @@ fun ContentsHubScreen(vm: ContentsHubViewModel = viewModel()) {
             Row(modifier = Modifier.fillMaxSize()) {
                 NavigationRail(containerColor = cs.background) {
                     // LINUX is hidden from the chrome (kept in the enum so the `when` stays exhaustive).
-                    HubTab.values().filter { it != HubTab.LINUX }.forEach { t ->
+                    HubTab.values().forEach { t ->
                         NavigationRailItem(
                             selected = tab == t,
                             onClick = { tab = t },
@@ -186,7 +184,7 @@ fun ContentsHubScreen(vm: ContentsHubViewModel = viewModel()) {
                     containerColor = cs.background,
                     contentColor = cs.primary,
                 ) {
-                    HubTab.values().filter { it != HubTab.LINUX }.forEach { t ->
+                    HubTab.values().forEach { t ->
                         Tab(
                             selected = tab == t,
                             onClick = { tab = t },
@@ -253,7 +251,6 @@ private fun HubTabContent(vm: ContentsHubViewModel, tab: HubTab, wide: Boolean) 
         HubTab.COMPONENT -> ComponentTab(vm)
         HubTab.MY_FILES -> MyFilesTab(vm)
         HubTab.INSTALLED -> InstalledTab(vm)
-        HubTab.LINUX -> LinuxRuntimeTab()
     }
 }
 
@@ -973,11 +970,6 @@ private fun InstalledTab(vm: ContentsHubViewModel) {
     // load. Listed from meta.json, never probed.
     val waylandManager = remember { WaylandGameDriverManager(context) }
     var confirmRemoveWaylandDriver by remember { mutableStateOf<String?>(null) }
-    // Imported LINUX Vulkan drivers: glibc Turnip ICDs for the Linux runtime, i.e. the driver the
-    // native Steam client and the games it launches draw with. The third kind, and the only one the
-    // client can load at all - the two above are bionic. Listed from meta.json, never probed.
-    val linuxDriverManager = remember { com.winlator.star.contents.LinuxVulkanDriverManager(context) }
-    var confirmRemoveLinuxDriver by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val components = remember(refreshKey) {
         val cm = ContentsManager(context)
@@ -1022,24 +1014,6 @@ private fun InstalledTab(vm: ContentsHubViewModel) {
         }
     }
 
-    // Linux runtime driver import: same shape as the Wayland one. The reasons a zip is refused
-    // (no libvulkan_freedreno*.so, not an AArch64 ELF, links Android's libc) reach the user as a Toast.
-    val linuxDriverPicker = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            InAppFilePicker.pickedUri(result.data)?.let { uri ->
-                val name = uri.lastPathSegment?.substringAfterLast('/') ?: "linux-driver.zip"
-                scope.launch {
-                    val r = withContext(Dispatchers.IO) { runCatching { linuxDriverManager.installDriver(uri, name) } }
-                    r.onSuccess { id ->
-                        Toast.makeText(context, "Imported Linux runtime driver: ${linuxDriverManager.getDriverName(id)}", Toast.LENGTH_LONG).show()
-                        refreshKey++
-                    }.onFailure { e ->
-                        Toast.makeText(context, "Not imported: ${e.message ?: e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
-                    }
-                }
-            }
-        }
-    }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp)) {
         InstalledSectionHeader("GPU Drivers", Icons.Filled.ViewInAr)
@@ -1094,23 +1068,6 @@ private fun InstalledTab(vm: ContentsHubViewModel) {
         )
     }
 
-    // Confirm: remove an imported Linux runtime driver. A shortcut still set to it falls back to the
-    // runtime's own driver at launch (LinuxVulkanDriver logs that), so nothing else needs rewriting.
-    confirmRemoveLinuxDriver?.let { id ->
-        OutlinedAlertDialog(
-            onDismissRequest = { confirmRemoveLinuxDriver = null },
-            containerColor = cs.surfaceContainerHigh,
-            title = { Text("Remove Linux runtime driver?", color = cs.onSurface) },
-            text = { Text("Remove \"${linuxDriverManager.getDriverName(id)}\"? Linux sessions set to it go back to the " +
-                    "driver built into the runtime.", color = cs.onSurface) },
-            confirmButton = {
-                TextButton(onClick = {
-                    linuxDriverManager.removeDriver(id); confirmRemoveLinuxDriver = null; refreshKey++
-                }) { Text("Remove", color = cs.primary) }
-            },
-            dismissButton = { TextButton(onClick = { confirmRemoveLinuxDriver = null }) { Text("Cancel", color = cs.primary) } },
-        )
-    }
 
     // Confirm: remove an imported Wayland game driver. Containers/games still set to it fall back to
     // Auto at launch (WaylandGameDriver logs that), so nothing else needs rewriting.

@@ -868,15 +868,10 @@ object XServerDialogState {
     // adapter, null when the game sees the real one (a spoof that could not be delivered included).
     // Always null on X11 — there the driver wrapper renames the Vulkan device, so every readout is
     // handed the spoofed name already and has nothing to substitute. Its row exists only while it is set.
-    // linuxRuntime: this session is the Linux runtime (gamescope + the native Steam client), which
-    // has no Wine and no DX wrapper of ours. The panel reads as a Wine container otherwise, and
-    // every row it shows there would be a guess: "Proton 11.0" for a session with no Wine in it,
-    // "DXVK+VKD3D" for a client that uses neither, and a game driver picked from the Proton layer.
     data class TmContainerInfo(
         val wine: String, val dxWrapper: String, val renderer: String,
         val graphicsDriver: String, val resolution: String, val device: String,
         val displayBackend: String, val hdr: String, val gpuSpoof: String?,
-        val linuxRuntime: Boolean = false,
     )
 
     private val _tmHeader = MutableStateFlow<TmHeaderStats?>(null)

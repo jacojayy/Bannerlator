@@ -15,7 +15,6 @@ import androidx.navigation.navArgument
 
 import com.winlator.star.ui.screens.AdrenoToolsScreen
 import com.winlator.star.ui.screens.AppearanceScreen
-import com.winlator.star.ui.screens.ShortcutsScreen
 import com.winlator.star.ui.screens.ContainerDetailScreen
 import com.winlator.star.ui.screens.ContainersScreen
 import com.winlator.star.ui.screens.contents.ContentsHubScreen
@@ -78,11 +77,8 @@ fun AppNavGraph(
         }
 
         composable(Screen.Games.route) {
-            // The main library is the phone-grid ShortcutsScreen again. The landscape couch "games wall"
-            // (GamesWallScreen) is opt-in behind enable_big_picture_mode and renders on the BigPicture route.
-            ShortcutsScreen(onNavigate = { dest ->
-                if (dest != Screen.Games) navController.navigate(dest.route)
-            })
+            // The legacy phone-grid library is gone. Anything that still navigates here lands on Deck.
+            DeckModeScreen(onExit = { activity.finish() })
         }
 
         composable(Screen.Contents.route) {

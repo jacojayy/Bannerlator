@@ -488,29 +488,6 @@ public class Container {
         return DISPLAY_BACKEND_WAYLAND.equals(getDisplayBackend());
     }
 
-    // --- Runtime (per-container, overridable per shortcut) ---
-    // Which world a session runs in. RUNTIME_WINE is everything the app has ever done: a Wine
-    // prefix on the bionic imagefs. RUNTIME_GAMESCOPE is the Linux runtime instead — a glibc
-    // rootfs under proot with gamescope as the session compositor and, for Steam, Valve's native
-    // arm64 Linux client. There is no Wine, no box64 and no FEX behind it, so none of the Wine
-    // settings apply. gamescope is a client of our compositor and has nothing to draw on
-    // otherwise, so choosing it pins the display backend to Wayland.
-    public static final String RUNTIME_WINE = "wine";
-    public static final String RUNTIME_GAMESCOPE = "gamescope";
-    public static final String EXTRA_RUNTIME = "runtime";
-
-    public String getRuntime() {
-        return RUNTIME_WINE;
-    }
-
-    public void setRuntime(String value) {
-        // Linux/gamescope runtime retired: Wine is the only runtime.
-    }
-
-    public boolean isGamescopeRuntime() {
-        return false;
-    }
-
     // --- OpenGL safe mode (per-container), stored in extraData. Wayland sessions only. ---
     // Native OpenGL games on the Wayland backend render through Mesa (Zink on Turnip). Mesa's
     // u_threaded_context helper thread ("gdrv0") can fault inside libgallium, and because that is a

@@ -1612,6 +1612,7 @@ fun FileManagerScreen(
             Box(modifier = Modifier.weight(1f).fillMaxSize()) {
         // ── Favorites list OR file list ──
         if (showFavorites) {
+            DeckDragFrame(modifier = Modifier.fillMaxSize()) {
             FavoritesList(
                 containers = containers,
                 imagefsDir = imagefsDir,
@@ -1633,6 +1634,7 @@ fun FileManagerScreen(
                 },
                 modifier = Modifier.fillMaxSize(),
             )
+            }
         } else {
         // ── File list (pull down to refresh) ──
         Box(
@@ -1644,6 +1646,7 @@ fun FileManagerScreen(
             else entries.filter { it.name.contains(searchQuery, ignoreCase = true) }
 
             if (showGrid && entries.isNotEmpty()) {
+                DeckDragFrame(modifier = Modifier.fillMaxSize()) {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 104.dp),
                     modifier = Modifier.fillMaxSize(),
@@ -1719,7 +1722,9 @@ fun FileManagerScreen(
                         )
                     }
                 }
+                }
             } else
+            DeckDragFrame(modifier = Modifier.fillMaxSize()) {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 // ".." as the first row of every listing below the floor — the Android file-manager
                 // convention (issue #476); hidden at the root and while a search filter is active.
@@ -1807,6 +1812,7 @@ fun FileManagerScreen(
                         )
                     }
                 }
+            }
             }
             // material3 1.2.0's PullToRefreshContainer draws its indicator even at rest;
             // only show it while the user is actively pulling or a refresh is running.
@@ -1997,6 +2003,7 @@ private fun FileItemRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 3.dp)
+            .deckDragItem("fm-row-${file.absolutePath}")
             .combinedClickable(
                 // In selection mode a tap toggles instead of opening, so you can rattle through a
                 // folder without long-pressing every single row.
@@ -2208,6 +2215,7 @@ private fun FavoriteCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 3.dp)
+            .deckDragItem("fm-fav-${file.absolutePath}")
             .clickable(onClick = onJump),
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
@@ -2344,6 +2352,7 @@ private fun FileGridTile(
         Card(
             modifier = Modifier
                 .padding(4.dp)
+                .deckDragItem("fm-grid-${file.absolutePath}")
                 .combinedClickable(
                     onClick = { if (selectionMode) onToggleSelect() else onTap() },
                     onLongClick = onLongPress,
@@ -2603,6 +2612,7 @@ private fun ParentFolderRow(compact: Boolean, onTap: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .deckDragItem("fm-parent-row")
             .clickable(onClick = onTap)
             .padding(horizontal = 16.dp, vertical = if (compact) 6.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -2627,6 +2637,7 @@ private fun ParentFolderTile(onTap: () -> Unit) {
     Column(
         modifier = Modifier
             .padding(4.dp)
+            .deckDragItem("fm-parent-tile")
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onTap)
             .padding(8.dp),

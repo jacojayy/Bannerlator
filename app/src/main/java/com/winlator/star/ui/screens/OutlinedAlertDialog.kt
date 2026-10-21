@@ -93,10 +93,13 @@ internal fun OutlinedAlertDialog(
         }
         return
     }
+    // Deck Mode: dialogs open in their own window, so the shell never sees their keys. Park focus on
+    // the dialog and let B close it; the D-pad then walks the buttons as usual.
+    val dialogModifier = if (LocalDeckMode.current) modifier.deckDialogNav(onDismissRequest) else modifier
     AlertDialog(
         onDismissRequest = onDismissRequest,
         confirmButton = confirmButton,
-        modifier = modifier.border(1.dp, MaterialTheme.colorScheme.outline, shape),
+        modifier = dialogModifier.border(1.dp, MaterialTheme.colorScheme.outline, shape),
         dismissButton = dismissButton,
         icon = icon,
         title = title,

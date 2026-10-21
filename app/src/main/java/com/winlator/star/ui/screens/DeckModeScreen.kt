@@ -274,6 +274,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
             LocalDeckTabs provides tabs,
             LocalDeckBack provides backLayer,
             LocalDeckEditTracker provides editTracker,
+            LocalDeckMode provides true,
         ) {
     Row(
         modifier = Modifier

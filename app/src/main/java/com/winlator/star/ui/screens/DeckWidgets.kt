@@ -321,6 +321,7 @@ internal fun Modifier.deckSelfFocusStroke(
  * already scrolled out of a lazy list or a horizontal rail, which on a TV/controller UI reads as
  * "the highlight vanished". Attach this to anything that can take D-pad focus inside a scrollable.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun Modifier.deckBringIntoView(): Modifier {
     val requester = remember { BringIntoViewRequester() }

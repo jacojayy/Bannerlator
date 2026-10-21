@@ -434,6 +434,15 @@ internal fun DeckContainerDetailScreen(
 
                     4 -> DeckGroup("Input") {
                         DeckRow(
+                            label = "Exclusive Input",
+                            hint = "One controller API at a time (XInput or DInput). Off lets Wine expose both.",
+                            control = {
+                                DeckToggle(viewModel.exclusiveXInput) {
+                                    viewModel.onExclusiveXInputChanged(it)
+                                }
+                            },
+                        )
+                        DeckRow(
                             label = "XInput",
                             control = { DeckToggle(viewModel.enableXInput) { viewModel.enableXInput = it } },
                         )

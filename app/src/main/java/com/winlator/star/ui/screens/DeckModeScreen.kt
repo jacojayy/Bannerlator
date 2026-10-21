@@ -608,13 +608,14 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                     continuePlaying.mapNotNull { it.game?.shortcutPath }.toSet()
                 }
                 val installed = remember(list, continuePaths) {
-                    list.filterNot { it.game?.shortcutPath in continuePaths }
+                    list.filterNot { entry -> entry.game?.shortcutPath?.let { it in continuePaths } == true }
                 }
                 val recentlyAdded = remember(list, continuePaths) {
                     val weekAgo = System.currentTimeMillis() - 7L * 24L * 60L * 60L * 1000L
                     list.filter { entry ->
                         val stamp = entry.game?.addedAt ?: 0L
-                        entry.game?.shortcutPath !in continuePaths && stamp > 0L && stamp >= weekAgo
+                        entry.game?.shortcutPath?.let { it in continuePaths } != true &&
+                            stamp > 0L && stamp >= weekAgo
                     }.sortedByDescending { it.game?.addedAt ?: 0L }.take(8)
                 }
                 val hero = list.getOrNull(selected) ?: continuePlaying.firstOrNull()

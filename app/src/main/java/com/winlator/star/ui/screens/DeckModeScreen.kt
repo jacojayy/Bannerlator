@@ -593,7 +593,25 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                     modifier = Modifier.align(Alignment.Center),
                 )
             } else {
-                val continuePlaying = remember(list) { orderedForHome(list, context) }
+                // Continue playing is only what has actually been played (or the last launched
+                // shortcut); a freshly added game must not appear here.
+                val continuePlaying = remember(list) {
+                    val last = context.getSharedPreferences("hub_prefs", Context.MODE_PRIVATE)
+                        .getString("last_played", null)
+                    orderedForHome(list, context).filter { entry ->
+                        hubHasPlaytime(context, entry.title) ||
+                            (last != null && entry.game?.shortcutPath == last)
+                    }
+                }
+                // Recently added only means the last week of additions; legacy entries (no stamp)
+                // stay out so this shelf never becomes a copy of Installed.
+                val recentlyAdded = remember(list) {
+                    val weekAgo = System.currentTimeMillis() - 7L * 24L * 60L * 60L * 1000L
+                    list.filter { entry ->
+                        val stamp = entry.game?.addedAt ?: 0L
+                        stamp > 0L && stamp >= weekAgo
+                    }.sortedByDescending { it.game?.addedAt ?: 0L }.take(8)
+                }
                 val hero = list.getOrNull(selected) ?: continuePlaying.firstOrNull()
                 LazyColumn(
                     contentPadding = PaddingValues(
@@ -614,16 +632,18 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                             )
                         }
                     }
-                    item(key = "shelf-continue") {
-                        DeckHomeShelf(
-                            title = "Continue playing",
-                            entries = continuePlaying.take(8),
-                            wide = true,
-                            context = context,
-                            onOpen = { pageFor = it },
-                            onMenu = { gameMenuFor = it },
-                            onFocus = { selected = list.indexOf(it) },
-                        )
+                    if (continuePlaying.isNotEmpty()) {
+                        item(key = "shelf-continue") {
+                            DeckHomeShelf(
+                                title = "Continue playing",
+                                entries = continuePlaying.take(8),
+                                wide = true,
+                                context = context,
+                                onOpen = { pageFor = it },
+                                onMenu = { gameMenuFor = it },
+                                onFocus = { selected = list.indexOf(it) },
+                            )
+                        }
                     }
                     item(key = "shelf-installed") {
                         DeckHomeShelf(
@@ -636,15 +656,16 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                             onFocus = { selected = list.indexOf(it) },
                         )
                     }
-                    if (list.size > 1) {
+                    if (recentlyAdded.isNotEmpty()) {
                         item(key = "shelf-recent") {
                             DeckHomeShelf(
                                 title = "Recently added",
-                                entries = list.takeLast(8).reversed(),
+                                entries = recentlyAdded,
                                 wide = false,
                                 context = context,
                                 onOpen = { pageFor = it },
                                 onMenu = { gameMenuFor = it },
+                                onFocus = { selected = list.indexOf(it) },
                             )
                         }
                     }

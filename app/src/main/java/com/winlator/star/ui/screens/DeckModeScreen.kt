@@ -675,6 +675,7 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                 .clip(CircleShape)
                 .background(Deck.surface)
                 .deckFocusBorder(addInteraction, CircleShape)
+                .deckBringIntoView()
                 .clickable(
                     interactionSource = addInteraction,
                     indication = null,
@@ -1064,6 +1065,7 @@ private fun DeckRailItem(
                 color = line,
                 shape = RoundedCornerShape(14.dp),
             )
+            .deckBringIntoView()
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {
         Column(
@@ -1321,6 +1323,7 @@ private fun DeckHomeHero(
             .clip(shape)
             .background(Deck.surface)
             .deckOuterFocusStroke(interaction, shape)
+            .deckBringIntoView()
             .combinedClickable(
                 interactionSource = interaction,
                 indication = null,
@@ -1524,6 +1527,7 @@ private fun DeckHomeShelf(
                                 if (focused == index) Color.Transparent else Deck.line,
                                 cardShape,
                             )
+                            .deckBringIntoView()
                             .onFocusChanged {
                                 if (it.isFocused) {
                                     focused = index

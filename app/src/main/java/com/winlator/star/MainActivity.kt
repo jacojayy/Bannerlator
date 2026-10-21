@@ -450,7 +450,75 @@ class MainActivity : AppCompatActivity() {
             controllerTestFeedMotionEvent(event)
             return true
         }
+        // A pad's D-pad is very often an AXIS_HAT_* MOTION event, and the analog stick is always
+        // motion — neither ever becomes a key event on its own. Without this bridge the whole
+        // launcher is touch-only for a controller (arrows did nothing at all). Turn stick/hat
+        // motion into synthetic D-pad presses so Compose's focus walker can move.
+        if (handlePadAxisNavigation(event)) return true
         return super.dispatchGenericMotionEvent(event)
+    }
+
+    private val padAxisHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var padAxisHeldKey = 0
+    private var padAxisLastEventMs = 0L
+    private val padAxisRepeater = object : Runnable {
+        override fun run() {
+            val stale = android.os.SystemClock.uptimeMillis() - padAxisLastEventMs > 400L
+            if (padAxisHeldKey == 0 || stale) {
+                padAxisHeldKey = 0
+                return
+            }
+            dispatchSyntheticKey(padAxisHeldKey)
+            padAxisHandler.postDelayed(this, 110L)
+        }
+    }
+
+    /** Fire one D-pad press straight at the window (bypasses the A/B rewrite in dispatchKeyEvent). */
+    private fun dispatchSyntheticKey(keyCode: Int) {
+        val now = android.os.SystemClock.uptimeMillis()
+        super.dispatchKeyEvent(
+            android.view.KeyEvent(now, now, android.view.KeyEvent.ACTION_DOWN, keyCode, 0)
+        )
+        super.dispatchKeyEvent(
+            android.view.KeyEvent(now, now, android.view.KeyEvent.ACTION_UP, keyCode, 0)
+        )
+    }
+
+    /**
+     * Edge-triggered stick/hat navigation: one press when a direction is entered, then auto-repeat
+     * while it is held. Deadzone is generous so a drifting stick never walks the UI on its own.
+     */
+    private fun handlePadAxisNavigation(event: android.view.MotionEvent): Boolean {
+        val device = event.device ?: return false
+        if (!com.winlator.star.inputcontrols.ExternalController.isGameController(device)) return false
+        val src = event.source
+        val joystick = (src and android.view.InputDevice.SOURCE_JOYSTICK) == android.view.InputDevice.SOURCE_JOYSTICK ||
+            (src and android.view.InputDevice.SOURCE_GAMEPAD) == android.view.InputDevice.SOURCE_GAMEPAD
+        if (!joystick) return false
+
+        var x = event.getAxisValue(android.view.MotionEvent.AXIS_HAT_X)
+        var y = event.getAxisValue(android.view.MotionEvent.AXIS_HAT_Y)
+        if (x == 0f && y == 0f) {
+            x = event.getAxisValue(android.view.MotionEvent.AXIS_X)
+            y = event.getAxisValue(android.view.MotionEvent.AXIS_Y)
+        }
+        val dz = 0.6f
+        val key = when {
+            x <= -dz && kotlin.math.abs(x) >= kotlin.math.abs(y) -> android.view.KeyEvent.KEYCODE_DPAD_LEFT
+            x >= dz && kotlin.math.abs(x) >= kotlin.math.abs(y) -> android.view.KeyEvent.KEYCODE_DPAD_RIGHT
+            y <= -dz -> android.view.KeyEvent.KEYCODE_DPAD_UP
+            y >= dz -> android.view.KeyEvent.KEYCODE_DPAD_DOWN
+            else -> 0
+        }
+        padAxisLastEventMs = android.os.SystemClock.uptimeMillis()
+        if (key == padAxisHeldKey) return true
+        padAxisHeldKey = key
+        padAxisHandler.removeCallbacks(padAxisRepeater)
+        if (key != 0) {
+            dispatchSyntheticKey(key)
+            padAxisHandler.postDelayed(padAxisRepeater, 380L)
+        }
+        return true
     }
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {

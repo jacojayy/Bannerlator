@@ -2028,6 +2028,7 @@ private fun FileItemRow(
             .padding(horizontal = 12.dp, vertical = 3.dp)
             .deckDragItem("fm-row-${file.absolutePath}")
             .then(if (deck) Modifier.deckOuterFocusStroke(rowInteraction, rowShape) else Modifier)
+            .deckBringIntoView()
             .combinedClickable(
                 interactionSource = rowInteraction,
                 indication = if (deck) null else rowIndication,
@@ -2252,6 +2253,7 @@ private fun FavoriteCard(
             .padding(horizontal = 12.dp, vertical = 3.dp)
             .deckDragItem("fm-fav-${file.absolutePath}")
             .then(if (deck) Modifier.deckOuterFocusStroke(favInteraction, favShape) else Modifier)
+            .deckBringIntoView()
             .clickable(
                 interactionSource = favInteraction,
                 indication = if (deck) null else favIndication,
@@ -2404,6 +2406,7 @@ private fun FileGridTile(
                 .padding(4.dp)
                 .deckDragItem("fm-grid-${file.absolutePath}")
                 .then(if (deck) Modifier.deckOuterFocusStroke(tileInteraction, tileShape) else Modifier)
+                .deckBringIntoView()
                 .combinedClickable(
                     interactionSource = tileInteraction,
                     indication = if (deck) null else tileIndication,

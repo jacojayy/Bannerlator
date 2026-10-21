@@ -34,6 +34,10 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -261,7 +265,7 @@ internal fun DeckDragFrame(
 internal fun Modifier.deckOuterFocusStroke(
     interaction: InteractionSource,
     shape: RoundedCornerShape,
-    strokeWidth: Dp = 2.5.dp,
+    strokeWidth: Dp = 3.dp,
     gap: Dp = 3.dp,
     focusColor: Color = DeckPalette.primary,
 ): Modifier {
@@ -290,7 +294,7 @@ internal fun Modifier.deckOuterFocusStroke(
 @Composable
 internal fun Modifier.deckSelfFocusStroke(
     shape: RoundedCornerShape,
-    strokeWidth: Dp = 2.5.dp,
+    strokeWidth: Dp = 3.dp,
     gap: Dp = 3.dp,
     focusColor: Color = DeckPalette.primary,
 ): Modifier {
@@ -309,6 +313,22 @@ internal fun Modifier.deckSelfFocusStroke(
                 cornerRadius = CornerRadius(radius, radius),
                 style = Stroke(width = strokeWidth.toPx()),
             )
+        }
+}
+
+/**
+ * Scrolls the focused control into view. Compose's focus walker happily targets items that are
+ * already scrolled out of a lazy list or a horizontal rail, which on a TV/controller UI reads as
+ * "the highlight vanished". Attach this to anything that can take D-pad focus inside a scrollable.
+ */
+@Composable
+internal fun Modifier.deckBringIntoView(): Modifier {
+    val requester = remember { BringIntoViewRequester() }
+    val scope = rememberCoroutineScope()
+    return this
+        .bringIntoViewRequester(requester)
+        .onFocusChanged {
+            if (it.isFocused) scope.launch { runCatching { requester.bringIntoView() } }
         }
 }
 
@@ -982,6 +1002,7 @@ private fun DeckStretchyTab(
             .then(if (focusable) Modifier else Modifier.focusProperties { canFocus = false })
             .clip(RoundedCornerShape(10.dp))
             .deckFocusBorder(interaction, RoundedCornerShape(10.dp), Color.Transparent)
+            .deckBringIntoView()
             .onFocusChanged { if (focusable && it.isFocused && !active) onClick() }
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .onGloballyPositioned { coords ->

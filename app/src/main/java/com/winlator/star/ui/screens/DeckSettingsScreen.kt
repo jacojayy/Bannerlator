@@ -39,8 +39,6 @@ import com.winlator.star.R
 import com.winlator.star.contents.ContentsManager
 import com.winlator.star.core.AppOrientation
 import com.winlator.star.core.UpdateManager
-import com.winlator.star.core.WinFgCapture
-import com.winlator.star.core.WinFgDiag
 import com.winlator.star.box64.Box64Preset
 import com.winlator.star.box64.Box64PresetManager
 import com.winlator.star.fexcore.FEXCorePreset
@@ -120,9 +118,6 @@ internal fun DeckSettingsScreen() {
     var orientation by remember { mutableStateOf(AppOrientation.mode(context)) }
     var uiScale by remember { mutableStateOf(AppThemeState.uiScale.value) }
     var fontScale by remember { mutableStateOf(AppThemeState.fontScale.value) }
-    var captureEnabled by remember { mutableStateOf(WinFgCapture.isEnabled(context)) }
-    var captureRes by remember { mutableStateOf(WinFgCapture.captureRes(context)) }
-    var captureLogging by remember { mutableStateOf(WinFgDiag.isExtraLoggingEnabled(context)) }
 
     // ── Sound (MIDI Sound Font) — same as SettingsScreen's Sound section. ──
     var sfNames by remember { mutableStateOf(listOf<String>()) }
@@ -266,7 +261,6 @@ internal fun DeckSettingsScreen() {
     // ── Overlay dialogs. ──
     var showLogManager by remember { mutableStateOf(false) }
     var showPerformance by remember { mutableStateOf(false) }
-    var showCaptureConsent by remember { mutableStateOf(false) }
     var checkingUpdate by remember { mutableStateOf(false) }
     var updateNote by remember { mutableStateOf<String?>(null) }
 
@@ -658,39 +652,6 @@ internal fun DeckSettingsScreen() {
             }
         }
 
-        // ── Developer — Frame-gen training capture ──
-        DeckGroup(title = "Developer — Frame-gen training capture") {
-            DeckRow(label = "Contribute frame-gen training capture") {
-                DeckToggle(captureEnabled) { enable ->
-                    if (enable) {
-                        showCaptureConsent = true
-                    } else {
-                        WinFgCapture.disable(context)
-                        captureEnabled = false
-                    }
-                }
-            }
-            DeckChoiceRow(
-                label = "Capture resolution",
-                options = listOf(
-                    WinFgCapture.RES_MATCH to "Match game (native)",
-                    WinFgCapture.RES_720P to "720p (1280×720)",
-                    WinFgCapture.RES_1080P to "1080p (1920×1080)",
-                ),
-                selected = captureRes,
-                onPick = {
-                    captureRes = it
-                    WinFgCapture.setCaptureRes(context, it)
-                },
-            )
-            DeckRow(label = "Extra win-fg logging (verbose)") {
-                DeckToggle(captureLogging) {
-                    captureLogging = it
-                    WinFgDiag.setExtraLoggingEnabled(context, it)
-                }
-            }
-        }
-
         // ── Performance ──
         DeckGroup(title = "Performance") {
             DeckRow(label = "Open Performance settings") {
@@ -753,38 +714,6 @@ internal fun DeckSettingsScreen() {
             text = { PerformanceSettingsScreen(onClose = { showPerformance = false }) },
         )
     }
-    if (showCaptureConsent) {
-        var consentChecked by remember { mutableStateOf(false) }
-        val consentText = remember { context.getString(R.string.winfg_capture_consent_v1) }
-        AlertDialog(
-            onDismissRequest = { showCaptureConsent = false },
-            title = { Text(context.getString(R.string.winfg_capture_consent_title)) },
-            text = {
-                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    Text(consentText, color = DeckPalette.onBackground, fontSize = 13.sp)
-                    Spacer(Modifier.height(12.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = consentChecked, onCheckedChange = { consentChecked = it })
-                        Text("I understand", color = DeckPalette.onBackground, fontSize = 14.sp)
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = consentChecked,
-                    onClick = {
-                        WinFgCapture.recordConsentAndEnable(context)
-                        captureEnabled = true
-                        showCaptureConsent = false
-                    },
-                ) { Text("Enable") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCaptureConsent = false }) { Text("Cancel") }
-            },
-        )
-    }
-
     // ── ImageFS backup/restore dialogs (same as SettingsScreen). ──
     if (isBackingUp) {
         Box(

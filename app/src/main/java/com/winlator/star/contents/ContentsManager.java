@@ -271,8 +271,6 @@ public class ContentsManager {
                     // but the files never landed -> "downloaded but not usable")
         }
 
-        // A newly installed layer may be Wayland-capable (or replace one that was): drop cached verdicts.
-        com.winlator.star.core.WineWaylandSupport.invalidate();
         callback.onSucceed(profile);
     }
 
@@ -433,7 +431,6 @@ public class ContentsManager {
         FileUtils.delete(getInstallDir(context, match));
         list.remove(match);
         syncContents();
-        com.winlator.star.core.WineWaylandSupport.invalidate();
     }
 
     public static String getEntryName(ContentProfile profile) {

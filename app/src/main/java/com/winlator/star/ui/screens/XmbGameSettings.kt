@@ -55,7 +55,6 @@ import com.winlator.star.core.DirectAudioSupport
 import com.winlator.star.core.StringUtils
 import com.winlator.star.core.WineInfo
 import com.winlator.star.core.WinePath
-import com.winlator.star.display.WaylandHdr
 import com.winlator.star.midi.MidiManager
 import com.winlator.star.store.SteamStoreSearch
 import com.winlator.star.ui.components.AUDIO_PRESETS
@@ -101,8 +100,6 @@ internal class XmbPrefs(val context: Context, val shortcut: Shortcut) {
     var arm64ec by mutableStateOf<Boolean?>(null)
     var midiList by mutableStateOf<List<String>>(emptyList())
 
-    /** Why the device's screen can't show HDR10 (the HDR row is greyed with it), null when it can. Read once. */
-    val hdrUnavailableReason: String? by lazy { WaylandHdr.unavailableReason(context) }
 }
 
 private fun XmbPrefs.loadAsync(xmb: XmbScope) {
@@ -147,15 +144,6 @@ internal fun xmbSettingsMenu(xmb: XmbScope, shortcut: Shortcut, host: XmbGameHos
 internal fun xmbGeneralMenu(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): XmbMenu =
     XmbMenu("General", Icons.Filled.Settings) { generalRows(this, p, host) }
 
-// Supported bundled driver ids for the Wayland "Compositor driver" row. The probe behind it is
-// native + serialized, and XMB rebuilds its rows on every set/refresh, so it runs once per process:
-// the first build launches it and refreshes when done; imported ids are re-read on every build.
-private var xmbBundledDriverVersions: List<String>? = null
-private var xmbBundledDriverVersionsLoading = false
-// Same once-per-process pattern for the variant "Auto" resolves to (native renderer probe) — the
-// "Auto (by GPU: …)" label of the Wayland game driver row; WaylandGameDriver caches the answer.
-private var xmbWaylandAutoLoading = false
-
 private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<XmbRow> {
     val s = p.shortcut
     val c = p.c
@@ -191,15 +179,6 @@ private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<Xmb
 
     // Display
     rows += XmbRow.Header("hDisplay", "Display")
-    // Display backend: the picker and its Wayland explainer are deliberately NOT offered here —
-    // hidden by request. The container's stored backend and any per-game override are left exactly
-    // as they are; only the row is gone. The EFFECTIVE backend still gates everything below
-    // (Renderer, compositor driver, render scale, …), so it is still resolved here.
-    val waylandCapable = com.winlator.star.core.WineWaylandSupport.isWaylandCapable(p.context, c.wineVersion)
-    val containerWaylandDefault = c.isWaylandBackend && waylandCapable
-    val dbOverride = p.ex("displayBackend", "")
-    val waylandGame = if (dbOverride.isEmpty()) containerWaylandDefault
-                      else dbOverride == Container.DISPLAY_BACKEND_WAYLAND && waylandCapable
     val sizes = p.arr(R.array.screen_size_entries)
     val rawSize = p.ex("screenSize", c.getScreenSize())
     val sizeLabel = sizes.firstOrNull { StringUtils.parseIdentifier(it).equals(rawSize, ignoreCase = true) } ?: "Custom"
@@ -224,8 +203,6 @@ private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<Xmb
     val saValues = listOf("", "0", "1", "2")
     val saLabels = listOf(p.str(R.string.use_container_default), p.str(R.string.screen_alignment_center), p.str(R.string.screen_alignment_top), p.str(R.string.screen_alignment_bottom))
     val sa = p.ex("screenAlignment", "")
-    // Alignment and fullscreen mode apply on X11 and Wayland alike (the compositor fits the desktop
-    // with the same modes), so neither row is gated on the backend.
     rows += XmbRow.Choice("screenAlignment", "Screen alignment", Icons.Filled.DesktopWindows, saLabels, saLabels[saValues.indexOf(sa).coerceAtLeast(0)]) { v ->
         xmb.set(p, "screenAlignment", saValues[saLabels.indexOf(v)].ifEmpty { null })
     }
@@ -246,11 +223,8 @@ private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<Xmb
     val rsValues = listOf("1.0", "1.25", "1.5", "2.0")
     val rsLabels = listOf("Off", "1.25x", "1.5x", "2x")
     val rs = p.ex("renderScale", c.getExtra("renderScale", "1.0") ?: "1.0")
-    // Greyed on Wayland (the downscale lives in the X11 Vulkan renderer only) and then DISPLAYS
-    // "Not used on Wayland"; the stored value is left untouched.
-    val rsShown = if (waylandGame) "Not used on Wayland" else rsLabels[rsValues.indexOf(rs).coerceAtLeast(0)]
-    rows += XmbRow.Choice("renderScale", "Render scale", Icons.Filled.AspectRatio, if (waylandGame) listOf(rsShown) else rsLabels, rsShown, subtitle = "Supersampling",
-        disabledReason = if (waylandGame) "Not used on Wayland: the compositor has no supersampling downscale" else null) { v ->
+    val rsShown = rsLabels[rsValues.indexOf(rs).coerceAtLeast(0)]
+    rows += XmbRow.Choice("renderScale", "Render scale", Icons.Filled.AspectRatio, rsLabels, rsShown, subtitle = "Supersampling") { v ->
         val nv = rsValues[rsLabels.indexOf(v)]
         xmb.set(p, "renderScale", if (nv == "1.0") null else nv)
     }
@@ -335,91 +309,12 @@ private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<Xmb
     rows += XmbRow.Header("hGfx", "Graphics")
     val gfxEntries = WrapperManager.driverEntries(p.context, p.res.getStringArray(R.array.graphics_driver_entries))
     val gfxId = p.ex("graphicsDriver", c.graphicsDriver)
-    // Under Wayland the wrapper flavour is irrelevant: the compositor loads the installed Turnip named
-    // by the "version" key of graphicsDriverConfig (XServerDisplayActivity's Wayland resolve), and the
-    // game renders on the Proton's bundled Wayland Turnip. So the flavour picker is swapped for a
-    // "Compositor driver" choice over the installed Turnip ids that writes ONLY the version key back
-    // (withGraphicsDriverVersion); the config link stays live for the same key.
-    if (waylandGame) {
-        val gdc = p.ex("graphicsDriverConfig", c.getGraphicsDriverConfig())
-        val compositorVersion = com.winlator.star.contentdialog.GraphicsDriverConfigDialog.getVersion(gdc) ?: ""
-        // Same source as the config dialog's "Graphics Driver Version" (minus "System").
-        if (xmbBundledDriverVersions == null && !xmbBundledDriverVersionsLoading) {
-            xmbBundledDriverVersionsLoading = true
-            xmb.scope.launch {
-                xmbBundledDriverVersions = supportedBundledDriverVersions(p.context)
-                xmbBundledDriverVersionsLoading = false
-                xmb.refresh()
-            }
-        }
-        val turnips = ((xmbBundledDriverVersions ?: emptyList()) + importedDriverVersions(p.context)).distinct()
-        val turnipsLoaded = xmbBundledDriverVersions != null
-        rows += XmbRow.Choice("gfxDriver", "Compositor driver", Icons.Filled.Memory, turnips,
-            compositorDriverLabel(compositorVersion, turnips, turnipsLoaded),
-            subtitle = "Used by the Wayland compositor to put frames on screen; the game renders on the Wayland game driver below.") { v ->
-            xmb.set(p, "graphicsDriverConfig", withGraphicsDriverVersion(gdc, v))
-        }
-        // "System"/empty falls back to the system libvulkan, which can't import the game's dmabufs
-        // (black screen) — mirrors XServerDisplayActivity's Wayland driver resolve; so does an id
-        // that is no longer installed. Warn only.
-        if (compositorDriverUnusable(compositorVersion, turnips, turnipsLoaded)) {
-            val isSystem = compositorVersion.isEmpty() || compositorVersion == "System"
-            rows += XmbRow.Info("gfxSystemWarn",
-                if (isSystem) "Compositor driver is \"System\"" else "Compositor driver is not available", Icons.Filled.Info,
-                subtitle = """Wayland needs a Turnip driver here. "System" or a missing driver cannot import the game's frames and shows a black screen.""")
-        }
-        // Wayland game driver (per-game override of the container's waylandGameDriver; "" = container
-        // default): Auto / the bundled Turnip variants / imported Linux ICDs — same options and labels
-        // as the pop-up editors (WaylandGameDriver). A stored imported:<id> whose import is gone stays
-        // listed (labelled missing); launch uses Auto for it.
-        val wgdAuto = com.winlator.star.core.WaylandGameDriver.autoVariantIfKnown()
-        if (wgdAuto == null && !xmbWaylandAutoLoading) {
-            xmbWaylandAutoLoading = true
-            xmb.scope.launch {
-                waylandAutoVariant(p.context)
-                xmbWaylandAutoLoading = false
-                xmb.refresh()
-            }
-        }
-        val wgdOverride = p.ex("waylandGameDriver", "")
-        val wgdInstalled = com.winlator.star.core.WaylandGameDriver.optionValues(p.context)
-        val wgdValues = listOf("") + (if (wgdOverride.isEmpty() || wgdOverride in wgdInstalled) wgdInstalled else wgdInstalled + wgdOverride)
-        val wgdLabels = wgdValues.map {
-            if (it.isEmpty()) "Container default (" + com.winlator.star.core.WaylandGameDriver.optionLabel(p.context, c.waylandGameDriver, wgdAuto) + ")"
-            else com.winlator.star.core.WaylandGameDriver.optionLabel(p.context, it, wgdAuto)
-        }
-        rows += XmbRow.Choice("waylandGameDriver", "Wayland game driver", Icons.Filled.Memory, wgdLabels,
-            wgdLabels[wgdValues.indexOf(wgdOverride).coerceAtLeast(0)],
-            subtitle = com.winlator.star.core.WaylandGameDriver.HELP_TEXT) { v ->
-            xmb.set(p, "waylandGameDriver", wgdValues[wgdLabels.indexOf(v)].ifEmpty { null })
-        }
-        // The pop-up editors' gear next to the Wayland game driver: GPU name spoof, memory cap, present
-        // mode, UBWC hint, in the same graphicsDriverConfig keys as X11's driver configuration.
-        val spoof = com.winlator.star.core.GpuSpoof.gpuNameOf(gdc)
-        rows += XmbRow.Link("waylandDriverCfg", "Wayland driver settings", Icons.Filled.Tune,
-            value = spoof.takeIf { com.winlator.star.core.GpuSpoof.isSpoofing(it) },
-            subtitle = "GPU name spoof, memory cap, present mode…") { xmbWaylandDriverConfigMenu(xmb, s) }
-        // HDR output (per-game override of the container's waylandHdr; "" = container default, "1" on,
-        // "0" off) — same options as the pop-up editor (WaylandHdr). Greyed with the reason on a screen
-        // that doesn't report HDR10, still showing what is stored.
-        val hdrValues = listOf("", "1", "0")
-        val hdrLabels = listOf("Container default (" + (if (c.isWaylandHdr()) "On" else "Off") + ")", "On", "Off")
-        rows += XmbRow.Choice(WaylandHdr.EXTRA, WaylandHdr.TITLE, Icons.Filled.HdrOn, hdrLabels,
-            hdrLabels[hdrValues.indexOf(WaylandHdr.shortcutChoice(s)).coerceAtLeast(0)],
-            subtitle = WaylandHdr.HELP_SHORT, disabledReason = p.hdrUnavailableReason) { v ->
-            xmb.set(p, WaylandHdr.EXTRA, hdrValues[hdrLabels.indexOf(v)].ifEmpty { null })
-        }
-    } else {
-        rows += XmbRow.Choice("gfxDriver", p.str(R.string.graphics_driver), Icons.Filled.Memory, gfxEntries, p.labelFor(gfxEntries, gfxId)) { v ->
-            xmb.set(p, "graphicsDriver", StringUtils.parseIdentifier(v))
-        }
+    rows += XmbRow.Choice("gfxDriver", p.str(R.string.graphics_driver), Icons.Filled.Memory, gfxEntries, p.labelFor(gfxEntries, gfxId)) { v ->
+        xmb.set(p, "graphicsDriver", StringUtils.parseIdentifier(v))
     }
-    // Driver configuration is X11 tuning; on Wayland its only live field (the Turnip version) is
-    // covered by the Compositor driver row above, so the link is left out of the Wayland layout.
-    if (!waylandGame) rows += XmbRow.Link("gfxConfig", "Driver configuration", Icons.Filled.Tune,
+    rows += XmbRow.Link("gfxConfig", "Driver configuration", Icons.Filled.Tune,
         subtitle = "Vulkan version, BCn, present modes…") { xmbDriverConfigMenu(xmb, s) }
-    // Wrappers are X11 game-driver shims; nothing on the Wayland path uses them.
-    if (!waylandGame) rows += XmbRow.External("wrappers", "Manage wrappers", Icons.Filled.Cloud, subtitle = "Import or remove wrapper drivers") { host.openWrapperManager() }
+    rows += XmbRow.External("wrappers", "Manage wrappers", Icons.Filled.Cloud, subtitle = "Import or remove wrapper drivers") { host.openWrapperManager() }
     // Unreal Engine HDR (per-game override of the container's unrealHdr; "" = container default), both
     // backends — same options as the pop-up editors (core.UnrealHdr). DirectX 11 while no NVIDIA GPU
     // name spoof is set gets the optional hint row.
@@ -440,7 +335,7 @@ private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<Xmb
         if (uOverride.ifEmpty { cMode } == com.winlator.star.core.UnrealHdr.DX11 &&
             !com.winlator.star.core.GpuSpoof.isNvidia(p.context, spoof)) {
             rows += XmbRow.Info("unrealHdrNvidia", "No NVIDIA GPU is reported", Icons.Filled.Info,
-                subtitle = com.winlator.star.core.UnrealHdr.nvidiaHint(waylandGame))
+                subtitle = com.winlator.star.core.UnrealHdr.nvidiaHint(false))
         }
     }
     val dxEntries = p.arr(R.array.dxwrapper_entries)
@@ -459,22 +354,16 @@ private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<Xmb
 
     val rendId = p.ex("renderer", c.renderer).lowercase()
     val rend = when (rendId) { "vulkan" -> "Vulkan"; "surfaceflinger" -> "SurfaceFlinger"; else -> "OpenGL" }
-    // Display only while disabled on Wayland: the compositor is always Vulkan; `rend` (the stored
-    // X11 choice) is untouched and still drives the Vulkan/SurfaceFlinger sub-rows below.
-    val rendShown = if (waylandGame) "Vulkan (Wayland compositor)" else rend
-    rows += XmbRow.Choice("renderer", "Renderer", Icons.Filled.DesktopWindows, if (waylandGame) listOf(rendShown) else listOf("OpenGL", "Vulkan", "SurfaceFlinger"), rendShown,
-        disabledReason = if (waylandGame) "Wayland draws through its own compositor" else null,
+    rows += XmbRow.Choice("renderer", "Renderer", Icons.Filled.DesktopWindows, listOf("OpenGL", "Vulkan", "SurfaceFlinger"), rend,
         confirm = { v -> if (v == "SurfaceFlinger") XmbConfirm("SurfaceFlinger renderer", "SurfaceFlinger renderer — experimental. Use it for this game?", "Use SurfaceFlinger") else null }) { v ->
         xmb.set(p, "renderer", v.lowercase())
     }
-    // Renderer sub-options are X11-only; hidden on Wayland like the container/shortcut editors do
-    // (their stored values are untouched and come back with the X11 backend).
-    if (!waylandGame && rend == "SurfaceFlinger") {
+    if (rend == "SurfaceFlinger") {
         rows += XmbRow.Toggle("sfCompat", "Correct SurfaceFlinger colours", Icons.Filled.Image,
             p.ex("sfCompatMode", if (c.getRendererSfCompatMode()) "1" else "0") == "1",
             subtitle = "Fixes swapped red/blue (BGRA→RGBA)") { xmb.set(p, "sfCompatMode", if (it) "1" else "0") }
     }
-    if (!waylandGame && rend == "Vulkan") {
+    if (rend == "Vulkan") {
         val native = p.ex("native", if (c.isRendererNative()) "true" else "false") == "true"
         rows += XmbRow.Toggle("vkNative", "Native renderer", Icons.Filled.DesktopWindows, native) { xmb.set(p, "native", if (it) "true" else "false") }
         val swap = p.ex("swapRB", if (c.getRendererSwapRB()) "true" else "false") == "true"
@@ -503,13 +392,11 @@ private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<Xmb
     val fgLabels = listOf(p.str(R.string.frame_generation_off), p.str(R.string.frame_generation_lsfg_native))
     val fg = p.ex("frameGenEngine", c.frameGenEngine).let { if (it == "bionic" || it == "lsfg") "lsfg-native" else it }
     val lsfgDll = File(p.context.filesDir, "lsfg-vk/Lossless.dll").isFile
-    // On Wayland the X11 renderer gate does not apply: FG runs inside the compositor (always Vulkan)
-    // and the in-game drawer arms the engine picked here.
     val fgShown = fgLabels[fgEngines.indexOf(fg).coerceAtLeast(0)]
     rows += XmbRow.Choice("frameGen", "Frame generation", Icons.Filled.Speed, fgLabels, fgShown,
         subtitle = if (!lsfgDll) "Import a Lossless.dll in Settings to enable LSFG" else null,
         disabledReason = when {
-            !waylandGame && rend != "Vulkan" -> "Frame generation requires the Vulkan renderer"
+            rend != "Vulkan" -> "Frame generation requires the Vulkan renderer"
             else -> null
         },
         disabledOptions = if (lsfgDll) emptySet() else setOf(fgLabels[1])) { v -> xmb.set(p, "frameGenEngine", fgEngines[fgLabels.indexOf(v)]) }

@@ -74,6 +74,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.winlator.star.ui.screens.DeckPalette
+import com.winlator.star.ui.screens.DeckStretchyTabs
+import com.winlator.star.ui.screens.LocalDeckTabs
 import com.winlator.star.container.Container
 import com.winlator.star.container.ContainerManager
 import com.winlator.star.core.CustomSaveVault
@@ -151,6 +154,8 @@ class SteamSaveManagerActivity : ComponentActivity() {
 internal fun SaveManagerScreen(
     focusAppId: Int = 0,
     onBack: (() -> Unit)? = null,
+    /** Hosted inside Deck Mode: no header/rail, the sections become a Deck pill strip. */
+    deckMode: Boolean = false,
 ) {
     val context = LocalContext.current
     // Signed-in gate (a saved Steam account). Read once; SteamPrefs.init is idempotent + cheap.
@@ -336,6 +341,24 @@ internal fun SaveManagerScreen(
         scope.launch { syncOne(appId, syncFrom) }
     }
 
+    // Deck tab strip ⇄ shell shoulders: L1/R1 on the Deck are bound to the tab host.
+    val deckTabs = listOf(0, 1, 3, 4, 2)
+    if (deckMode) {
+        val deckHost = LocalDeckTabs.current
+        DisposableEffect(Unit) {
+            deckHost.bind(deckTabs.size)
+            deckHost.select(deckTabs.indexOf(selectedTab).coerceAtLeast(0))
+            onDispose { deckHost.bind(0) }
+        }
+        LaunchedEffect(deckHost.index) {
+            selectedTab = deckTabs[deckHost.index.coerceIn(0, deckTabs.lastIndex)]
+        }
+        LaunchedEffect(selectedTab) {
+            val i = deckTabs.indexOf(selectedTab).coerceAtLeast(0)
+            if (deckHost.index != i) deckHost.select(i)
+        }
+    }
+
     // Steam-list needs-sync count. Drives BOTH the Steam tab's rail badge and the content-pane
     // warning strip below. (Custom rows load inside their own tab, so this is Steam scope only.)
     val needSync = statuses.count { it.state.needsAttention() }
@@ -390,8 +413,9 @@ internal fun SaveManagerScreen(
     // the store screens place UninstallResultBar at their outermost container).
     Box(modifier = Modifier.fillMaxSize()) {
     Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        // Header bar — mirrors the Steam Library header idiom (back + title).
-        Row(
+        // Header bar — mirrors the Steam Library header idiom (back + title). Deck Mode already
+        // sits inside the shell's rail, so it skips this header and uses the pill strip below.
+        if (!deckMode) Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -441,8 +465,28 @@ internal fun SaveManagerScreen(
             else -> "Settings"
         }
 
+        if (deckMode) {
+            // Deck sections, same language as the Stores strip: landing on a pill selects its tab.
+            DeckStretchyTabs(
+                labels = listOf("Steam", "Custom", "Epic", "GOG", "Settings"),
+                dots = listOf(
+                    Color(0xFF1A9FFF),
+                    DeckPalette.onSurfaceVariant,
+                    Color.White,
+                    Color(0xFFA855F7),
+                    DeckPalette.onSurfaceVariant,
+                ),
+                badges = listOf(needSync, 0, 0, 0, 0),
+                selected = deckTabs.indexOf(selectedTab).coerceAtLeast(0),
+                onSelect = { selectedTab = deckTabs[it] },
+                focusable = true,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Spacer(Modifier.height(10.dp))
+        }
+
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            CollapsibleRail(
+            if (!deckMode) CollapsibleRail(
                 state = railState,
                 title = "Save Manager",
                 sections = listOf(
@@ -463,7 +507,7 @@ internal fun SaveManagerScreen(
             Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
                 // Collapsed rail hides the section labels, so surface the active one over the content
                 // (matches ContainerDetailScreen) — the user never loses their place.
-                if (railState.collapsed) {
+                if (!deckMode && railState.collapsed) {
                     Text(
                         activeSection,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

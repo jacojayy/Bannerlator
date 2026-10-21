@@ -105,6 +105,7 @@ import com.winlator.star.contents.ContentsManager
 import com.winlator.star.container.ContainerManager
 import com.winlator.star.container.Shortcut
 import com.winlator.star.core.GameIdentifier
+import com.winlator.star.store.SaveManagerScreen
 import com.winlator.star.store.deckTileFocus
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -379,7 +380,8 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                     )
                     "input_controls" -> InputControlsScreen()
                     "contents" -> DeckContentsScreen()
-                    "saves" -> SavesScreen()
+                    // The full Save Manager (Steam / Custom / Epic / GOG / Settings), in Deck chrome.
+                    "saves" -> SaveManagerScreen(deckMode = true)
                     "social_hub" -> SocialContent()
                     "settings" -> DeckSettingsScreen()
                     else -> DeckHome(onEditContainer = { id -> section = "containers"; deckDetail = id })

@@ -1509,29 +1509,45 @@ private fun RuntimeBackendChip(state: XServerDrawerState) {
     val backend by state.runtimeBackend.collectAsState()
     if (!backend.isValid) return
 
-    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val shape = RoundedCornerShape(8.dp)
     Row(
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
             .padding(top = 2.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-            .padding(horizontal = 8.dp, vertical = 3.dp)
+            .clip(shape)
+            .background(DeckPalette.surfaceVariant.copy(alpha = 0.35f))
+            .border(1.dp, DeckPalette.line, shape)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
+        // The eyebrow names the readout; the value stays in plain case so arch names read literally.
+        Text(
+            "RUNTIME",
+            color = DeckPalette.onSurfaceVariant,
+            fontSize = 8.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.4.sp
+        )
         Text(
             "${backend.arch} · ${backend.translator}",
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+            color = DeckPalette.onBackground,
             fontSize = 10.sp,
-            fontWeight = FontWeight.Medium
+            fontWeight = FontWeight.SemiBold
         )
         if (backend.showsFexMode) {
             val (label, color) = when (backend.fexMode) {
-                FexMode.UNIXLIB -> "unixlib" to Color(0xFF4CAF50) // native .so loaded
-                FexMode.DLL     -> "DLL"     to muted             // self-contained DLL path
-                FexMode.NA      -> "N/A"     to muted             // maps not resolved yet
+                FexMode.UNIXLIB -> "unixlib" to DeckPalette.good // native .so loaded
+                FexMode.DLL     -> "DLL"     to DeckPalette.onSurfaceVariant // self-contained DLL path
+                FexMode.NA      -> "N/A"     to DeckPalette.onSurfaceVariant // maps not resolved yet
             }
-            Text(" · ", color = muted, fontSize = 10.sp)
-            Text(label, color = color, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                label,
+                color = color,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.6.sp,
+                modifier = Modifier.padding(start = 2.dp)
+            )
         }
     }
 }

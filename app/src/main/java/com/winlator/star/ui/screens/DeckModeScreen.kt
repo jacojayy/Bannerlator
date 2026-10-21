@@ -549,7 +549,9 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                     val sel = list.getOrNull(selected)
                     if (sel != null) {
                         Text(
-                            text = hubOriginLabel(sel).uppercase(),
+                            text = hubPlaytimeLabel(context, sel.title).let {
+                                if (it == "not played yet") "NOT PLAYED YET" else "$it played".uppercase()
+                            },
                             color = Color(0xFF8FD4FF),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -564,48 +566,8 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                             fontWeight = FontWeight.Black,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(bottom = 8.dp),
                         )
-                        Spacer(Modifier.height(8.dp))
-                        // The last played game's own cover, cropped horizontal — the home banner.
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(140.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(Deck.surface)
-                                .border(1.dp, Deck.line, RoundedCornerShape(16.dp)),
-                        ) {
-                            val art: Any? = sel.bitmap
-                            if (art is android.graphics.Bitmap) {
-                                Image(
-                                    bitmap = art.asImageBitmap(),
-                                    contentDescription = sel.title,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.matchParentSize(),
-                                )
-                            } else {
-                                Box(
-                                    Modifier
-                                        .matchParentSize()
-                                        .background(
-                                            Brush.linearGradient(
-                                                listOf(Deck.surfaceVariant, Deck.surface),
-                                            ),
-                                        ),
-                                )
-                            }
-                            Box(
-                                Modifier
-                                    .matchParentSize()
-                                    .background(
-                                        Brush.horizontalGradient(
-                                            0f to Color.Black.copy(alpha = 0.55f),
-                                            0.7f to Color.Transparent,
-                                        ),
-                                    ),
-                            )
-                        }
-                        Spacer(Modifier.height(10.dp))
                     }
                     HubCarousel(
                         entries = list,

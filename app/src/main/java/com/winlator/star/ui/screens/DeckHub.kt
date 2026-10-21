@@ -623,10 +623,10 @@ private fun DeckHubStat(label: String, value: String) {
 }
 
 /** Local session clock written by XServerDisplayActivity into playtime_stats (ms). */
-private fun hubPlaytimeLabel(context: Context, name: String): String {
+internal fun hubPlaytimeLabel(context: Context, name: String): String {
     val ms = context.getSharedPreferences("playtime_stats", Context.MODE_PRIVATE)
         .getLong("${name}_playtime", 0L)
-    if (ms < 60_000L) return "—"
+    if (ms < 60_000L) return "not played yet"
     val hours = ms / 3_600_000f
     return if (hours < 10f) String.format("%.1f h", hours) else "${hours.toInt()} h"
 }
@@ -1298,10 +1298,19 @@ internal fun DeckGameMenu(
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val menuScale by animateFloatAsState(if (shown) 1f else 0.88f, label = "gameMenuScale")
+    val menuAlpha by animateFloatAsState(if (shown) 1f else 0f, label = "gameMenuAlpha")
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             Modifier
                 .fillMaxWidth(0.78f)
+                .graphicsLayer {
+                    scaleX = menuScale
+                    scaleY = menuScale
+                    alpha = menuAlpha
+                }
                 .clip(DeckPalette.groupShape)
                 .background(DeckPalette.surface)
                 .border(1.dp, DeckPalette.line, DeckPalette.groupShape)

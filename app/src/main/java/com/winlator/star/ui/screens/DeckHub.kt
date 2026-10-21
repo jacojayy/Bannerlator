@@ -141,6 +141,8 @@ internal data class HubGame(
     val coverPath: String?,
     /** Store this came from ("Steam", "Epic", "GOG", "Amazon"); null when added by hand. */
     val store: String? = null,
+    /** Epoch ms when the game was added to the hub; 0 for entries from before this was recorded. */
+    val addedAt: Long = 0L,
 )
 
 /** filesDir/hub_games.json — the user's Add Games picks, persisted across launches. */
@@ -164,6 +166,7 @@ internal object HubGamesStore {
                 appId = if (o.isNull("appId")) null else o.optInt("appId"),
                 coverPath = o.optString("coverPath").takeIf { it.isNotEmpty() },
                 store = o.optString("store").takeIf { it.isNotBlank() && !it.equals("null", true) },
+                addedAt = o.optLong("addedAt", 0L),
             )
         }
         }.getOrDefault(emptyList())
@@ -186,6 +189,7 @@ internal object HubGamesStore {
     fun add(context: Context, game: HubGame) {
         runCatching {
             val arr = JSONArray()
+            val stamp = System.currentTimeMillis()
             (load(context) + game).forEach { g ->
                 arr.put(JSONObject().apply {
                     put("name", g.name)
@@ -194,6 +198,15 @@ internal object HubGamesStore {
                     put("appId", g.appId ?: JSONObject.NULL)
                     put("coverPath", g.coverPath ?: JSONObject.NULL)
                     put("store", g.store ?: JSONObject.NULL)
+                    // Legacy entries have no timestamp; only the game being added now gets one.
+                    put(
+                        "addedAt",
+                        when {
+                            g.addedAt > 0L -> g.addedAt
+                            g.shortcutPath == game.shortcutPath -> stamp
+                            else -> 0L
+                        },
+                    )
                 })
             }
             FileUtils.writeString(File(context.filesDir, FILE_NAME), arr.toString())
@@ -678,6 +691,11 @@ internal fun hubPlaytimeLabel(context: Context, name: String): String {
     val hours = ms / 3_600_000f
     return if (hours < 10f) String.format("%.1f h", hours) else "${hours.toInt()} h"
 }
+
+/** True once a game has at least a minute of tracked playtime. */
+internal fun hubHasPlaytime(context: Context, name: String): Boolean =
+    context.getSharedPreferences("playtime_stats", Context.MODE_PRIVATE)
+        .getLong("${name}_playtime", 0L) >= 60_000L
 
 /** "Steam" / "Epic" / "GOG" / "Amazon" for store-added games, "Custom" for hand-added ones. */
 internal fun hubOriginLabel(entry: HubEntry): String =

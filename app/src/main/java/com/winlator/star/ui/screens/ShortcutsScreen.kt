@@ -6538,13 +6538,12 @@ internal fun ShortcutSettingsDialogScreen(
         mutableStateOf(shortcut.getExtra("unlockGameRefreshRate", ""))
     }
 
-    // Frame Generation engine (off / bionic / lsfg) — per-game override.
-    // lsfg-vk retired from the list (see ContainerDetailScreen); a legacy "lsfg" override
-    // shows and saves as LSFG Native.
-    val fgEngines = remember { listOf("off", "bionic", "lsfg-native") }
+    // Frame Generation engine (off / LSFG Native) — per-game override. Legacy "bionic" and
+    // "lsfg" overrides show and save as LSFG Native.
+    val fgEngines = remember { listOf("off", "lsfg-native") }
     var frameGenEngine by remember {
         mutableStateOf(shortcut.getExtra("frameGenEngine", shortcut.container.frameGenEngine)
-            .let { if (it == "lsfg") "lsfg-native" else it })
+            .let { if (it == "bionic" || it == "lsfg") "lsfg-native" else it })
     }
     val lsfgDllAvailable = remember { File(context.filesDir, "lsfg-vk/Lossless.dll").isFile }
 
@@ -8128,7 +8127,6 @@ internal fun ShortcutSettingsDialogScreen(
                     run {
                         val fgLabels = listOf(
                             stringResource(R.string.frame_generation_off),
-                            stringResource(R.string.frame_generation_bionic),
                             stringResource(R.string.frame_generation_lsfg_native)
                         )
                         val fgIdx = fgEngines.indexOf(frameGenEngine).coerceAtLeast(0)
@@ -8150,8 +8148,7 @@ internal fun ShortcutSettingsDialogScreen(
                                 onSelect = { frameGenEngine = fgEngines[fgLabels.indexOf(it)] },
                                 enabled = fgVulkan,
                                 disabledOptions = buildSet {
-                                    // bionic-fg re-enabled (2.9.4+) — see ContainerDetailScreen note.
-                                    if (!lsfgDllAvailable) add(fgLabels[2])   // LSFG Native — needs an imported Lossless.dll
+                                    if (!lsfgDllAvailable) add(fgLabels[1])   // LSFG Native — needs an imported Lossless.dll
                                 },
                                 modifier = (if (!fgVulkan) Modifier.alpha(0.5f) else Modifier).weight(1f)
                             )

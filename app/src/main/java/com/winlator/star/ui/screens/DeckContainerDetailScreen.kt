@@ -48,8 +48,8 @@ import java.util.Locale
  * on the first tab pill (never the name text field, which swallowed D-pad input), so the whole
  * screen is D-pad navigable — tabs, rows, Cancel / Save.
  *
- * It binds to the SAME [ContainerDetailViewModel] the classic editor uses — so all load/save,
- * preset, and Wayland-compositor logic is shared verbatim. The seven `resolved*` params that the
+ * It binds to the SAME [ContainerDetailViewModel] the classic editor uses — so all load/save
+ * and preset logic is shared verbatim. The seven `resolved*` params that the
  * classic screen pulls from AndroidView-backed refs (CPUListView, ColorPickerView, KeyValueSet tags)
  * are synthesized straight from the view-model's own state, which is exactly the fallback the
  * classic screen already uses when those refs are absent (`?: viewModel.cpuList`, `?: "#0277bd"`).
@@ -326,16 +326,6 @@ internal fun DeckContainerDetailScreen(
                             )
                         }
                         DeckChoiceRow(
-                            label = "Display Backend",
-                            hint = "Wayland routes launches through the embedded compositor",
-                            options = listOf(
-                                "X11" to Container.DISPLAY_BACKEND_X11,
-                                "Wayland" to Container.DISPLAY_BACKEND_WAYLAND,
-                            ),
-                            selected = viewModel.displayBackend,
-                            onPick = { viewModel.displayBackend = it },
-                        )
-                        DeckChoiceRow(
                             label = "Fullscreen",
                             options = listOf(
                                 "Windowed" to Container.FULLSCREEN_OFF.toString(),
@@ -366,11 +356,10 @@ internal fun DeckContainerDetailScreen(
                     2 -> DeckGroup("Performance") {
                         DeckChoiceRow(
                             label = "Frame Generation",
-                            hint = "Bionic-FG or LSFG frame interpolation",
+                            hint = "LSFG Native frame interpolation",
                             options = listOf(
                                 "Off" to "off",
-                                "Bionic-FG" to "bionic",
-                                "LSFG" to "lsfg",
+                                "LSFG" to "lsfg-native",
                             ),
                             selected = viewModel.frameGenEngine,
                             onPick = { viewModel.frameGenEngine = it },

@@ -611,28 +611,25 @@ public class Container {
         putExtra("frameGenEnabled", enabled ? "1" : "0");
     }
 
-    // Frame-gen engine selection: "off" | "bionic" | "lsfg". bionic-fg and lsfg-vk are mutually
-    // exclusive. Default migrates the legacy boolean (frameGenEnabled=1 -> bionic).
+    // Frame-gen engine selection: "off" | "lsfg-native". LSFG Native is the only engine this
+    // build ships. Legacy values ("bionic", the retired in-container "lsfg") resolve to it so an
+    // old container keeps generating frames instead of silently turning off.
     public String getFrameGenEngine() {
         String e = getExtra("frameGenEngine", "");
-        if (e.isEmpty()) return isFrameGenEnabled() ? "bionic" : "off";
-        // lsfg-vk retired 2026-09-05: a container still set to it runs LSFG Native,
-        // which uses the same imported DLL and is the engine whose frames reach
-        // the panel. The lsfg-vk code paths are parked, not deleted.
-        if (e.equals("lsfg")) return "lsfg-native";
-        return e;
+        if (e.isEmpty()) return isFrameGenEnabled() ? "lsfg-native" : "off";
+        if (e.equals("bionic") || e.equals("lsfg") || e.equals("lsfg-native")) return "lsfg-native";
+        return "off";
     }
 
     public void setFrameGenEngine(String engine) {
-        if (engine == null || engine.isEmpty()) engine = "off";
-        putExtra("frameGenEngine", engine);
-        // Keep the legacy bionic flag in sync so the existing bionic-fg launch/drawer paths stay
-        // correct (bionic loads only when the bionic engine is chosen; lsfg uses its own gate).
-        setFrameGenEnabled(engine.equals("bionic"));
+        boolean lsfg = "lsfg-native".equals(engine) || "lsfg".equals(engine) || "bionic".equals(engine);
+        putExtra("frameGenEngine", lsfg ? "lsfg-native" : "off");
+        // The legacy bionic flag no longer selects an engine; keep it off so no stale path arms it.
+        setFrameGenEnabled(false);
     }
 
     public boolean isLsfgEngine() {
-        return getFrameGenEngine().equals("lsfg");
+        return getFrameGenEngine().equals("lsfg-native");
     }
 
     // Allowed values: 0 (Off, set live from the in-game menu) or 2-4. Anything else -> default.
@@ -654,7 +651,7 @@ public class Container {
     public float getFrameGenFlowScale() {
         // Engine-dependent UNSET default: lsfg-vk defaults to 0.80, bionic-fg stays at 0.60. An explicit
         // frameGenFlowScale extra (whatever the engine) is always honored — only the fallback differs.
-        float dflt = getFrameGenEngine().equals("lsfg") ? LSFG_DEFAULT_FLOW_SCALE : FRAMEGEN_DEFAULT_FLOW_SCALE;
+        float dflt = isLsfgEngine() ? LSFG_DEFAULT_FLOW_SCALE : FRAMEGEN_DEFAULT_FLOW_SCALE;
         if (!hasExtra("frameGenFlowScale")) return dflt;
         try {
             float f = Float.parseFloat(getExtra("frameGenFlowScale"));

@@ -631,7 +631,8 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
         rendererFilterMode       = seed?.getRendererFilterMode() ?: 0
         rendererSwapRB           = seed?.getRendererSwapRB() ?: false
         rendererSfCompatMode     = seed?.getRendererSfCompatMode() ?: true
-        displayBackend           = seed?.getDisplayBackend() ?: Container.DISPLAY_BACKEND_X11
+        // Wayland is retired: every container edited here is (and stays) X11.
+        displayBackend           = Container.DISPLAY_BACKEND_X11
         waylandGameDriver        = seed?.getWaylandGameDriver() ?: Container.WAYLAND_GAME_DRIVER_AUTO
         waylandHdr               = seed?.isWaylandHdr() ?: false
         unrealHdr                = seed?.getUnrealHdr() ?: com.winlator.star.core.UnrealHdr.OFF
@@ -1282,10 +1283,9 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
         c.setRendererFilterMode(rendererFilterMode)
         c.setRendererSwapRB(rendererSwapRB)
         c.setRendererSfCompatMode(rendererSfCompatMode)
-        // Persist the EFFECTIVE backend: a stored "wayland" on a layer that can no longer drive it
-        // displayed as X11 in the editor, so X11 is what gets saved. Because create goes through
-        // here too, a container can never be BORN claiming a Wayland its layer cannot do either.
-        c.setDisplayBackend(if (isWaylandBackend) Container.DISPLAY_BACKEND_WAYLAND else Container.DISPLAY_BACKEND_X11)
+        // Wayland is retired: saving an edited container pins it to X11 (Linux/gamescope sessions
+        // are configured by their own runtime screens, not this editor).
+        c.setDisplayBackend(Container.DISPLAY_BACKEND_X11)
         c.setWaylandGameDriver(waylandGameDriver)   // "auto" clears the extra
         c.setWaylandHdr(waylandHdr)                 // off clears the extra
         c.setUnrealHdr(unrealHdr)                   // off clears the extra

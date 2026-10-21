@@ -1444,30 +1444,25 @@ private fun TopLevelFields(
         )
         Spacer(Modifier.height(8.dp))
 
-        // Frame Generation engine: Off / bionic-fg / lsfg-vk (mutually exclusive). lsfg-vk is grayed
-        // out until a Lossless.dll is imported (Settings). This is the ONLY per-container FG control;
-        // the multiplier & flow scale for BOTH engines are tuned live from the in-game side menu.
-        // lsfg-vk (the in-container layer) retired from the list 2026-09-05: LSFG Native
-        // runs the same shaders from the same DLL inside our compositor and is the one that
-        // measurably reaches the panel. Its code paths remain (parked on feat/lsfg-vk-plumbing);
-        // a container still set to "lsfg" resolves to "lsfg-native" (Container.getFrameGenEngine).
-        val fgEngines = listOf("off", "bionic", "lsfg-native")
+        // Frame Generation engine: Off / LSFG Native. LSFG is grayed out until a Lossless.dll is
+        // imported (Settings). This is the ONLY per-container FG control; the multiplier & flow
+        // scale are tuned live from the in-game side menu.
+        val fgEngines = listOf("off", "lsfg-native")
         val fgEngineLabels = listOf(
             stringResource(R.string.frame_generation_off),
-            stringResource(R.string.frame_generation_bionic),
             stringResource(R.string.frame_generation_lsfg_native)
         )
         val lsfgDllAvailable = remember { java.io.File(context.filesDir, "lsfg-vk/Lossless.dll").isFile }
         val fgDisabledOpts = buildSet {
-            // bionic-fg re-enabled (2.9.4+): the FIFO-backpressure present-mode fix is the likely
-            // root of its old "doesn't reliably work" reports; still experimental — see the note below.
-            // LSFG Native needs an imported Lossless.dll. Whether the DEVICE can run
-            // the chain (Vulkan 1.3 + the three shader features + a storage-capable
-            // swapchain format) is only knowable once a renderer is up, so it is
-            // reported in-game rather than guessed at here.
-            if (!lsfgDllAvailable) add(fgEngineLabels[2])
+            // LSFG Native needs an imported Lossless.dll. Whether the DEVICE can run the chain
+            // (Vulkan 1.3 + the three shader features + a storage-capable swapchain format) is
+            // only knowable once a renderer is up, so it is reported in-game rather than guessed here.
+            if (!lsfgDllAvailable) add(fgEngineLabels[1])
         }
-        val fgSelIdx = fgEngines.indexOf(viewModel.frameGenEngine).coerceAtLeast(0)
+        val fgSelectedEngine =
+            if (viewModel.frameGenEngine == "bionic" || viewModel.frameGenEngine == "lsfg") "lsfg-native"
+            else viewModel.frameGenEngine
+        val fgSelIdx = fgEngines.indexOf(fgSelectedEngine).coerceAtLeast(0)
         // FG's present-mode/mailbox delivery only exists on the Vulkan host renderer; OpenGL (GLRenderer)
         // and SurfaceFlinger (ASR) have no present-mode control, so FG is unsupported there — gate the
         // whole dropdown on Vulkan and grey it out otherwise (combined with the lsfg-DLL option gate).
@@ -1479,16 +1474,12 @@ private fun TopLevelFields(
         val fgShown = fgEngineLabels[fgSelIdx]
         // Per-engine paragraphs used to print inline under this row (and under the model picker);
         // they now join the generic help behind the row's "?".
-        val fgEngineHint = when (viewModel.frameGenEngine) {
-            "bionic" -> stringResource(R.string.frame_generation_ingame_hint)
-            "lsfg" -> stringResource(R.string.frame_generation_lsfg_hint)
+        val fgEngineHint = when (fgSelectedEngine) {
             "lsfg-native" -> stringResource(R.string.frame_generation_lsfg_native_hint)
             else -> null
         }
-        val fgModelHint = if (viewModel.frameGenEngine == "bionic" && viewModel.frameGenModel != 0)
-            stringResource(R.string.frame_generation_model_experimental_hint) else null
         val fgHelp = listOfNotNull(
-            stringResource(R.string.help_frame_generation), fgEngineHint, fgModelHint
+            stringResource(R.string.help_frame_generation), fgEngineHint
         ).joinToString("\n\n")
         Row(verticalAlignment = Alignment.CenterVertically) {
             LabeledDropdown(
@@ -1518,23 +1509,6 @@ private fun TopLevelFields(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 52.dp, top = 2.dp, bottom = 4.dp)
-            )
-        }
-        if (viewModel.frameGenEngine == "bionic") {
-            // Interpolation model. Default (0) is the long-standing chain; 1-3 are newer engines
-            // that are not yet device-proven, hence the explicit "experimental" labelling.
-            val fgModelLabels = listOf(
-                stringResource(R.string.frame_generation_model_default),
-                stringResource(R.string.frame_generation_model_traced),
-                stringResource(R.string.frame_generation_model_v2),
-                stringResource(R.string.frame_generation_model_fsr3),
-                stringResource(R.string.frame_generation_model_fsr3_v2)
-            )
-            LabeledDropdown(
-                label = stringResource(R.string.frame_generation_model),
-                options = fgModelLabels,
-                selectedOption = fgModelLabels[viewModel.frameGenModel.coerceIn(0, 4)],
-                onSelect = { viewModel.frameGenModel = fgModelLabels.indexOf(it) }
             )
         }
         if (viewModel.frameGenEngine == "lsfg-native") {

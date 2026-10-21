@@ -2564,14 +2564,9 @@ public class XServerDisplayActivity extends AppCompatActivity {
             shortcut = new Shortcut(container, new File(shortcutPath));
         }
 
-        // Display backend: the game's override, else the container's. Resolved here so every launch
-        // path (shortcut list, Games tab, Big Picture, pinned shortcuts, container Run) honours it,
-        // not only the ones that pass wayland_mode.
-        if (!waylandMode) {
-            String backend = shortcut != null ? shortcut.getExtra("displayBackend", "") : "";
-            if (backend.isEmpty()) backend = container.getDisplayBackend();
-            waylandMode = Container.DISPLAY_BACKEND_WAYLAND.equals(backend);
-        }
+        // Wayland is retired for Wine sessions: stored/overridden display backends are ignored and
+        // every Wine container runs the X11 path. The Linux (gamescope) runtime below still pins
+        // Wayland on its own, which is the one remaining consumer of the compositor.
 
         // Runtime: the game's override, else the container's. gamescope is a Wayland client of our
         // compositor and has nothing to draw on otherwise, so it pins the backend to Wayland.

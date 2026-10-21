@@ -120,7 +120,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.draw.drawWithContent
@@ -220,9 +219,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     // The pump sits on the current rail item the moment the New UI opens, so the controller starts
     // on the side bar — then Right/A drops into the pane and the tab drags in behind it.
     val railFocus = remember { FocusRequester() }
-    val paneFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
-    var paneFocused by remember { mutableStateOf(false) }
     val tabs = remember { DeckTabHost() }
     val backLayer = remember { DeckBackLayer() }
     val editTracker = remember { DeckEditTracker() }
@@ -230,10 +227,10 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     LaunchedEffect(introDone, section) {
         if (introDone) runCatching { railFocus.requestFocus() }
     }
-    // A detail opens from a card that is about to vanish: hand focus to the pane, never a tab pill.
+    // Back from a detail re-parks focus on the rail item we came from. Opening a detail parks
+    // focus on its own Back button (see DeckContainerDetailScreen), never on an invisible node.
     LaunchedEffect(deckDetail) {
-        if (deckDetail != null) runCatching { paneFocus.requestFocus() }
-        else if (introDone) runCatching { railFocus.requestFocus() }
+        if (deckDetail == null && introDone) runCatching { railFocus.requestFocus() }
     }
 
     // Truly full screen: the system status/nav bars go with the top bar, restored on leaving.
@@ -311,21 +308,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .clipToBounds()
-                .focusRequester(paneFocus)
-                .onFocusChanged { paneFocused = it.isFocused }
-                .focusable()
-                .onKeyEvent { e ->
-                    if (e.type != KeyEventType.KeyDown || !paneFocused) return@onKeyEvent false
-                    val dir = when (e.key) {
-                        Key.DirectionUp -> FocusDirection.Up
-                        Key.DirectionDown -> FocusDirection.Down
-                        Key.DirectionLeft -> FocusDirection.Left
-                        Key.DirectionRight -> FocusDirection.Right
-                        else -> null
-                    } ?: return@onKeyEvent false
-                    focusManager.moveFocus(dir)
-                },
+                .clipToBounds(),
         ) {
             // Every tab switch slides the incoming pane up from the bottom while the outgoing one
             // drops away — one motion for the whole shell.
@@ -1437,7 +1420,6 @@ private fun DeckHomeShelf(
     val lefts = remember(entries) { mutableStateListOf<Float>() }
     val rights = remember(entries) { mutableStateListOf<Float>() }
     var focused by remember(entries) { mutableIntStateOf(-1) }
-    var hasFocus by remember { mutableStateOf(false) }
     val start = remember { Animatable(0f) }
     val end = remember { Animatable(0f) }
     var lastFocused by remember { mutableIntStateOf(-1) }
@@ -1495,10 +1477,9 @@ private fun DeckHomeShelf(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(cardHeight)
-                .onFocusChanged { hasFocus = it.hasFocus }
                 .drawWithContent {
                     drawContent()
-                    if (hasFocus && end.value > start.value) {
+                    if (focused >= 0 && end.value > start.value) {
                         val gap = 3.dp.toPx()
                         val x = start.value - scroll.value - gap
                         drawRoundRect(

@@ -32,6 +32,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -61,6 +63,11 @@ internal fun DeckContainerDetailScreen(
     viewModel: ContainerDetailViewModel = viewModel(),
 ) {
     LaunchedEffect(containerId) { viewModel.init(containerId) }
+
+    // The card that opened this screen disappears, taking its focus node with it. Park focus on the
+    // Back button so the D-pad keeps a visible target from the first frame.
+    val backFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { backFocus.requestFocus() } }
 
     val title = when {
         viewModel.defaultsMode -> "New Container Defaults"
@@ -104,7 +111,10 @@ internal fun DeckContainerDetailScreen(
                 .padding(start = 16.dp, end = 24.dp, top = 12.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onNavigateBack) {
+            IconButton(
+                onClick = onNavigateBack,
+                modifier = Modifier.focusRequester(backFocus),
+            ) {
                 Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Deck.onBackground)
             }
             Spacer(Modifier.width(4.dp))

@@ -93,7 +93,8 @@ import kotlinx.coroutines.launch
 
 /**
  * One page row at a time (Storage sub-tabs, container editor tabs) binds itself here, so the Deck
- * shell can drive L1/R1 even when focus sits on the side rail. Pills stay touch-only, never D-pad.
+ * shell can drive L1/R1 even when focus sits on the side rail. Pills are D-pad focusable too: landing
+ * on one selects it, so a store/tab can be picked without touching the screen.
  */
 internal class DeckTabHost {
     var count by mutableIntStateOf(0)

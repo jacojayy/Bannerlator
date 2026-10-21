@@ -274,7 +274,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         else if (tabs.onBack?.invoke() == true) true
                         else { goBack(); true }
                     }
-                    // DroidDeck steps pages with the shoulders; the tabs themselves are touch-only.
+                    // L1/R1 step pages from anywhere; the pills are also D-pad reachable (focus selects).
                     Key.ButtonL1 -> if (tabs.count > 0) {
                         tabs.step(-1)
                         runCatching { paneFocus.requestFocus() }

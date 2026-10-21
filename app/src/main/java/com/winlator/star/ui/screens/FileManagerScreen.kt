@@ -1594,7 +1594,6 @@ fun FileManagerScreen(
                     onSelect = { deckLocations.getOrNull(it)?.onClick?.invoke() },
                     focusable = true,
                     scroll = true,
-                    fillWidth = false,
                     height = 34.dp,
                     modifier = Modifier
                         .fillMaxWidth()

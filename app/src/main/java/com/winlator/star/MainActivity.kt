@@ -72,7 +72,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import androidx.preference.PreferenceManager
 import com.winlator.star.BuildConfig
 import com.winlator.star.core.ImageUtils
 import com.winlator.star.core.PreloaderDialog
@@ -179,8 +178,6 @@ class MainActivity : AppCompatActivity() {
         // Apply the user's App-orientation preference to THIS app-UI activity only (the game's
         // XServerDisplayActivity manages its own orientation and is unaffected).
         com.winlator.star.core.AppOrientation.apply(this)
-
-        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
 
         val winlatorDir = File(SettingsFragment.DEFAULT_WINLATOR_PATH)
         if (!winlatorDir.exists()) winlatorDir.mkdirs()

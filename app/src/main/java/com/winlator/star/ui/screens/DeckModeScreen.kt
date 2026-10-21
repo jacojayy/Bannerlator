@@ -602,11 +602,19 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                 }
                 // Recently added only means the last week of additions; legacy entries (no stamp)
                 // stay out so this shelf never becomes a copy of Installed.
-                val recentlyAdded = remember(list) {
+                // A game already shown above must not reappear in the shelf below it: no card is
+                // ever on screen twice (Continue playing wins, then Installed, then Recently added).
+                val continuePaths = remember(continuePlaying) {
+                    continuePlaying.mapNotNull { it.game?.shortcutPath }.toSet()
+                }
+                val installed = remember(list, continuePaths) {
+                    list.filterNot { it.game?.shortcutPath in continuePaths }
+                }
+                val recentlyAdded = remember(list, continuePaths) {
                     val weekAgo = System.currentTimeMillis() - 7L * 24L * 60L * 60L * 1000L
                     list.filter { entry ->
                         val stamp = entry.game?.addedAt ?: 0L
-                        stamp > 0L && stamp >= weekAgo
+                        entry.game?.shortcutPath !in continuePaths && stamp > 0L && stamp >= weekAgo
                     }.sortedByDescending { it.game?.addedAt ?: 0L }.take(8)
                 }
                 val hero = list.getOrNull(selected) ?: continuePlaying.firstOrNull()
@@ -642,16 +650,18 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                             )
                         }
                     }
-                    item(key = "shelf-installed") {
-                        DeckHomeShelf(
-                            title = "Installed",
-                            entries = list,
-                            wide = false,
-                            context = context,
-                            onOpen = { pageFor = it },
-                            onMenu = { gameMenuFor = it },
-                            onFocus = { selected = list.indexOf(it) },
-                        )
+                    if (installed.isNotEmpty()) {
+                        item(key = "shelf-installed") {
+                            DeckHomeShelf(
+                                title = "Installed",
+                                entries = installed,
+                                wide = false,
+                                context = context,
+                                onOpen = { pageFor = it },
+                                onMenu = { gameMenuFor = it },
+                                onFocus = { selected = list.indexOf(it) },
+                            )
+                        }
                     }
                     if (recentlyAdded.isNotEmpty()) {
                         item(key = "shelf-recent") {

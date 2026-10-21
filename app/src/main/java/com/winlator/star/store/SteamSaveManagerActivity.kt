@@ -75,6 +75,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.winlator.star.ui.screens.DeckPalette
+import com.winlator.star.ui.screens.LocalDeckMode
+import com.winlator.star.ui.screens.deckSelfFocusStroke
 import com.winlator.star.ui.screens.DeckStretchyTabs
 import com.winlator.star.ui.screens.LocalDeckTabs
 import com.winlator.star.container.Container
@@ -1758,6 +1760,10 @@ private fun SaveStatusRow(
                 color = if (highlighted) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.outline,
                 shape = RoundedCornerShape(12.dp),
+            )
+            .then(
+                if (LocalDeckMode.current) Modifier.deckSelfFocusStroke(RoundedCornerShape(12.dp))
+                else Modifier,
             )
             .clickable(onClick = onOpen)
             .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),

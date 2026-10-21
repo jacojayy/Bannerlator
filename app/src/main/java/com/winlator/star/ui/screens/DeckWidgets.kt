@@ -870,6 +870,9 @@ internal fun DeckStretchyTabs(
     badges: List<Int>? = null,
     dots: List<Color?>? = null,
     focusable: Boolean = false,
+    // True only where merely passing over a tab should switch content (none of the multi-strip
+    // screens: focus-select made Stores hop stores while you were just walking to the next control).
+    selectOnFocus: Boolean = true,
     scroll: Boolean = false,
     fillWidth: Boolean = true,
     height: Dp = 40.dp,
@@ -956,6 +959,7 @@ internal fun DeckStretchyTabs(
                             dot = dots?.getOrNull(index),
                             active = index == selected,
                             focusable = focusable,
+                            selectOnFocus = selectOnFocus,
                             padding = if (spread) 6.dp else 14.dp,
                             modifier = if (spread) Modifier.weight(1f) else Modifier,
                             onClick = { onSelect(index) },
@@ -984,6 +988,7 @@ private fun DeckStretchyTab(
     dot: Color?,
     active: Boolean,
     focusable: Boolean,
+    selectOnFocus: Boolean,
     padding: Dp,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
@@ -1003,7 +1008,7 @@ private fun DeckStretchyTab(
             .clip(RoundedCornerShape(10.dp))
             .deckFocusBorder(interaction, RoundedCornerShape(10.dp), Color.Transparent)
             .deckBringIntoView()
-            .onFocusChanged { if (focusable && it.isFocused && !active) onClick() }
+            .onFocusChanged { if (focusable && selectOnFocus && it.isFocused && !active) onClick() }
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .onGloballyPositioned { coords ->
                 val left = coords.positionInParent().x

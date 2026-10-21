@@ -115,7 +115,6 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -134,7 +133,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
@@ -219,7 +217,14 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     // The pump sits on the current rail item the moment the New UI opens, so the controller starts
     // on the side bar — then Right/A drops into the pane and the tab drags in behind it.
     val railFocus = remember { FocusRequester() }
-    val focusManager = LocalFocusManager.current
+    // L1/R1 walk the rail itself — one visible, predictable result per press (a section change),
+    // instead of nudging focus sideways through whatever happened to be next.
+    val sectionOrder = remember { deckSections().map { it.key } }
+    val stepSection: (Int) -> Unit = { step ->
+        val i = sectionOrder.indexOf(section).coerceAtLeast(0)
+        section = sectionOrder[((i + step) % sectionOrder.size + sectionOrder.size) % sectionOrder.size]
+        deckDetail = null
+    }
     val tabs = remember { DeckTabHost() }
     val backLayer = remember { DeckBackLayer() }
     val editTracker = remember { DeckEditTracker() }
@@ -287,10 +292,8 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         else if (tabs.onBack?.invoke() == true) true
                         else { goBack(); true }
                     }
-                    // L1/R1 scroll horizontally: they walk focus left/right, so shelves, rails and
-                    // the File Manager location pills scroll (and pills switch pages on focus).
-                    Key.ButtonL1 -> { focusManager.moveFocus(FocusDirection.Left); true }
-                    Key.ButtonR1 -> { focusManager.moveFocus(FocusDirection.Right); true }
+                    Key.ButtonL1 -> { if (!editTracker.editing) stepSection(-1); true }
+                    Key.ButtonR1 -> { if (!editTracker.editing) stepSection(1); true }
                     else -> false
                 }
             },
@@ -364,6 +367,19 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                     else -> DeckHome(onEditContainer = { id -> section = "containers"; deckDetail = id })
                 }
             }
+
+            // Controller legend: the one place a player can look to know what L1/R1 do here.
+            // Draw-only text, so it never becomes a focus stop.
+            Text(
+                text = "A Select   B Back   L1/R1 Section   Stick / D-pad Move",
+                color = Deck.onSurfaceVariant.copy(alpha = 0.75f),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.6.sp,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 14.dp, bottom = 8.dp),
+            )
 
             // DroidDeck's corner light — one circular blue glow just inside the top right of every
             // pane. Draw-only, so it never intercepts touches meant for the screen underneath, and

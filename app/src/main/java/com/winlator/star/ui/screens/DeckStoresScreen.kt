@@ -836,6 +836,7 @@ internal fun DeckStoresScreen() {
                 selected = deckStores.indexOfFirst { it.screen == selected }.coerceAtLeast(0),
                 onSelect = { selected = deckStores[it].screen },
                 focusable = true,
+                selectOnFocus = false,
                 height = 38.dp,
             )
 
@@ -863,6 +864,8 @@ internal fun DeckStoresScreen() {
                 DeckTabBar(
                     tabs = tabs,
                     selected = storeTab,
+                    // A selects. Walking the strip must never yank the pane out from under you.
+                    selectOnFocus = false,
                     onSelect = { storeTab = it },
                 )
                 Spacer(Modifier.size(12.dp))

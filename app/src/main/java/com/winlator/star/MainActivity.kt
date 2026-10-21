@@ -693,7 +693,11 @@ private fun AppShell(
         drawerState = drawerState,
         gesturesEnabled = !currentRoute.startsWith("container_detail") && !isFullBleed,
         drawerContent = {
-            AppDrawerContent(
+            // Only compose the drawer while it is actually open. A closed ModalNavigationDrawer
+            // keeps its content laid out off-screen, where the D-pad focus search still finds it
+            // (Deck rail -> Left x2 -> A used to land on a legacy route). With no drawer content
+            // there is nothing off-screen to focus, so the old Fit-UI entry points are unreachable.
+            if (drawerState.isOpen) AppDrawerContent(
                 currentRoute = currentRoute,
                 account = account,
                 onNavigate = { screen ->

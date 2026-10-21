@@ -1517,7 +1517,13 @@ private fun DeckHomeShelf(
                             }
                                             .clip(cardShape)
                             .background(Deck.surface)
-                            .border(1.dp, Deck.line, cardShape)
+                            // One stroke: the shelf ring sits outside the card, so the hairline
+                            // border steps aside while this card is the focused one.
+                            .border(
+                                1.dp,
+                                if (focused == index) Color.Transparent else Deck.line,
+                                cardShape,
+                            )
                             .onFocusChanged {
                                 if (it.isFocused) {
                                     focused = index

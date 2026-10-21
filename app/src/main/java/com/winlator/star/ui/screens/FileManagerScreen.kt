@@ -10,6 +10,9 @@ import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
@@ -2003,6 +2006,12 @@ private fun FileItemRow(
     // wallpaper/icon). Coil sizes the decode to the 36dp slot and caches it, so scrolling stays smooth.
     val isImage = !isDir && file.extension.lowercase() in IMAGE_THUMB_EXTS
     val deck = LocalDeckMode.current
+    val rowShape = RoundedCornerShape(if (deck) 14.dp else 10.dp)
+    // One focus stroke, not two: the Deck ring is drawn outside the card, so the card's own
+    // hairline border hides while focused and the generic focus indication is suppressed.
+    val rowInteraction = remember { MutableInteractionSource() }
+    val rowFocused by rowInteraction.collectIsFocusedAsState()
+    val rowIndication = LocalIndication.current
 
     // For real PE executables, try to pull out the embedded application icon (async, off the main thread).
     var exeIcon by remember(file.absolutePath) { mutableStateOf<ImageBitmap?>(null) }
@@ -2018,13 +2027,16 @@ private fun FileItemRow(
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 3.dp)
             .deckDragItem("fm-row-${file.absolutePath}")
+            .then(if (deck) Modifier.deckOuterFocusStroke(rowInteraction, rowShape) else Modifier)
             .combinedClickable(
+                interactionSource = rowInteraction,
+                indication = if (deck) null else rowIndication,
                 // In selection mode a tap toggles instead of opening, so you can rattle through a
                 // folder without long-pressing every single row.
                 onClick = { if (selectionMode) onToggleSelect() else onTap() },
                 onLongClick = onLongPress,
             ),
-        shape = RoundedCornerShape(if (deck) 14.dp else 10.dp),
+        shape = rowShape,
         colors = CardDefaults.cardColors(
             containerColor = when {
                 selected -> DeckPalette.primary.copy(alpha = 0.18f)
@@ -2034,8 +2046,12 @@ private fun FileItemRow(
         ),
         border = BorderStroke(
             1.dp,
-            if (selected) DeckPalette.primary
-            else if (deck) DeckPalette.line else MaterialTheme.colorScheme.outline,
+            when {
+                deck && rowFocused -> Color.Transparent
+                selected -> DeckPalette.primary
+                deck -> DeckPalette.line
+                else -> MaterialTheme.colorScheme.outline
+            },
         ),
     ) {
         Row(
@@ -2225,15 +2241,31 @@ private fun FavoriteCard(
     onUnpin: () -> Unit,
 ) {
     val (badgeBg, badgeFg) = badgeColors(loc)
+    val deck = LocalDeckMode.current
+    val favShape = RoundedCornerShape(if (deck) 14.dp else 10.dp)
+    val favInteraction = remember { MutableInteractionSource() }
+    val favFocused by favInteraction.collectIsFocusedAsState()
+    val favIndication = LocalIndication.current
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 3.dp)
             .deckDragItem("fm-fav-${file.absolutePath}")
-            .clickable(onClick = onJump),
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            .then(if (deck) Modifier.deckOuterFocusStroke(favInteraction, favShape) else Modifier)
+            .clickable(
+                interactionSource = favInteraction,
+                indication = if (deck) null else favIndication,
+                onClick = onJump,
+            ),
+        shape = favShape,
+        colors = CardDefaults.cardColors(
+            containerColor = if (deck) DeckPalette.surface else MaterialTheme.colorScheme.surfaceContainer,
+        ),
+        border = BorderStroke(
+            1.dp,
+            if (deck) (if (favFocused) Color.Transparent else DeckPalette.line)
+            else MaterialTheme.colorScheme.outline,
+        ),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -2354,6 +2386,10 @@ private fun FileGridTile(
     val isDir = file.isDirectory
     val isImage = !isDir && file.extension.lowercase() in IMAGE_THUMB_EXTS
     val deck = LocalDeckMode.current
+    val tileShape = RoundedCornerShape(if (deck) 14.dp else 10.dp)
+    val tileInteraction = remember { MutableInteractionSource() }
+    val tileFocused by tileInteraction.collectIsFocusedAsState()
+    val tileIndication = LocalIndication.current
     var exeIcon by remember(file.absolutePath) { mutableStateOf<ImageBitmap?>(null) }
     if (!isDir && file.name.lowercase().endsWith(".exe")) {
         LaunchedEffect(file.absolutePath) {
@@ -2367,11 +2403,14 @@ private fun FileGridTile(
             modifier = Modifier
                 .padding(4.dp)
                 .deckDragItem("fm-grid-${file.absolutePath}")
+                .then(if (deck) Modifier.deckOuterFocusStroke(tileInteraction, tileShape) else Modifier)
                 .combinedClickable(
+                    interactionSource = tileInteraction,
+                    indication = if (deck) null else tileIndication,
                     onClick = { if (selectionMode) onToggleSelect() else onTap() },
                     onLongClick = onLongPress,
                 ),
-            shape = RoundedCornerShape(if (deck) 14.dp else 10.dp),
+            shape = tileShape,
             colors = CardDefaults.cardColors(
                 containerColor = when {
                     selected -> DeckPalette.primary.copy(alpha = 0.18f)
@@ -2381,8 +2420,12 @@ private fun FileGridTile(
             ),
             border = BorderStroke(
                 1.dp,
-                if (selected) DeckPalette.primary
-                else if (deck) DeckPalette.line else MaterialTheme.colorScheme.outline,
+                when {
+                    deck && tileFocused -> Color.Transparent
+                    selected -> DeckPalette.primary
+                    deck -> DeckPalette.line
+                    else -> MaterialTheme.colorScheme.outline
+                },
             ),
         ) {
             Column(

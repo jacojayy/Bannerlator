@@ -1150,7 +1150,11 @@ fun FileManagerScreen(
                 )
                 .padding(horizontal = 8.dp, vertical = 6.dp),
         ) {
-            IconButton(onClick = { goUp() }, enabled = currentDir != currentRoot) {
+            IconButton(
+                onClick = { goUp() },
+                enabled = currentDir != currentRoot,
+                modifier = Modifier.deckSelfFocusStroke(RoundedCornerShape(12.dp)),
+            ) {
                 Icon(Icons.Filled.ArrowBack, "Parent folder", tint = MaterialTheme.colorScheme.primary)
             }
 
@@ -1176,6 +1180,7 @@ fun FileManagerScreen(
                         .background(MaterialTheme.colorScheme.surfaceContainer)
                         .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f), driveChipShape)
                         .clickable { showDriveMenu = true }
+                        .deckSelfFocusStroke(driveChipShape)
                         .padding(horizontal = 10.dp, vertical = 5.dp),
                 )
                 DropdownMenu(
@@ -1282,14 +1287,14 @@ fun FileManagerScreen(
                         onClick = { showNewFolderDialog = true },
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                        modifier = Modifier.height(32.dp),
+                        modifier = Modifier.height(32.dp).deckSelfFocusStroke(RoundedCornerShape(10.dp)),
                     ) {
                         Icon(Icons.Filled.CreateNewFolder, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(5.dp))
                         Text("New Folder", color = MaterialTheme.colorScheme.onBackground, fontSize = 12.sp)
                     }
                 }
-                IconButton(onClick = {
+                IconButton(modifier = Modifier.deckSelfFocusStroke(RoundedCornerShape(12.dp)), onClick = {
                     gridView = !gridView
                     browsePrefs.edit().putBoolean("fmGridView", gridView).apply()
                 }) {
@@ -1299,11 +1304,17 @@ fun FileManagerScreen(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                IconButton(onClick = { showSearch = !showSearch; if (!showSearch) searchQuery = "" }) {
+                IconButton(
+                    onClick = { showSearch = !showSearch; if (!showSearch) searchQuery = "" },
+                    modifier = Modifier.deckSelfFocusStroke(RoundedCornerShape(12.dp)),
+                ) {
                     Icon(Icons.Filled.Search, "Search", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Box {
-                    IconButton(onClick = { showSortMenu = true }) {
+                    IconButton(
+                        onClick = { showSortMenu = true },
+                        modifier = Modifier.deckSelfFocusStroke(RoundedCornerShape(12.dp)),
+                    ) {
                         Icon(Icons.Filled.Sort, "Sort", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     DropdownMenu(expanded = showSortMenu, onDismissRequest = { showSortMenu = false }) {
@@ -1347,7 +1358,10 @@ fun FileManagerScreen(
             }
 
             // Star toggle: open/close the dedicated Favorites list.
-            IconButton(onClick = { showFavorites = !showFavorites }) {
+            IconButton(
+                onClick = { showFavorites = !showFavorites },
+                modifier = Modifier.deckSelfFocusStroke(RoundedCornerShape(12.dp)),
+            ) {
                 if (showFavorites) {
                     Icon(Icons.Filled.Star, "Hide favorites", tint = MaterialTheme.colorScheme.primary)
                 } else {

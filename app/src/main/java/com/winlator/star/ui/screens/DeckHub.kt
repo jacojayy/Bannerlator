@@ -190,7 +190,12 @@ internal object HubGamesStore {
         runCatching {
             val arr = JSONArray()
             val stamp = System.currentTimeMillis()
-            (load(context) + game).forEach { g ->
+            // Re-adding the same shortcut must refresh, not duplicate, its Home card.
+            val existing = load(context).filterNot { g ->
+                if (game.shortcutPath.isNotBlank()) g.shortcutPath == game.shortcutPath
+                else g.name == game.name
+            }
+            (existing + game).forEach { g ->
                 arr.put(JSONObject().apply {
                     put("name", g.name)
                     put("containerId", g.containerId)

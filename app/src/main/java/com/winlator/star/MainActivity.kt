@@ -187,14 +187,9 @@ class MainActivity : AppCompatActivity() {
 
         containerManager = ContainerManager(this)
 
-        val selectedMenuItemId = intent.getIntExtra("selected_menu_item_id", 0)
-        val startRoute = validRouteOrNull(intent.getStringExtra(EXTRA_OPEN_SCREEN))
-            ?: menuItemIdToRoute(selectedMenuItemId)
-            ?: when {
-                prefs.getBoolean("enable_big_picture_mode", false) -> Screen.BigPicture.route
-                prefs.getString("default_landing_screen", "games") == "containers" -> Screen.Containers.route
-                else -> Screen.Games.route
-            }
+        // Deck-only build: the legacy phone UI is retired. Every launch lands in Deck Mode, and
+        // relaunch intents aimed at the old screens are ignored so two shells never stack up.
+        val startRoute = Screen.Deck.route
 
         val willInstall = splashViewModel.installIfNeeded(this)
         if (!willInstall) {
@@ -265,7 +260,7 @@ class MainActivity : AppCompatActivity() {
                     // On completion/discard it routes back to Games (via pendingRoute, same one-shot
                     // channel the store deep-link uses) so the user isn't stranded on the resume dialog.
                     com.winlator.star.ui.screens.ComponentInstallResume(
-                        onNavigateToGames = { pendingRoute.value = Screen.Games.route },
+                        onNavigateToGames = { pendingRoute.value = Screen.Deck.route },
                     )
 
                     if (isInstalling) {

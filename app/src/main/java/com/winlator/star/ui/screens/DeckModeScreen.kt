@@ -290,17 +290,10 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         else if (tabs.onBack?.invoke() == true) true
                         else { goBack(); true }
                     }
-                    // L1/R1 step pages from anywhere; the pills are also D-pad reachable (focus selects).
-                    Key.ButtonL1 -> if (tabs.count > 0) {
-                        tabs.step(-1)
-                        runCatching { paneFocus.requestFocus() }
-                        true
-                    } else false
-                    Key.ButtonR1 -> if (tabs.count > 0) {
-                        tabs.step(1)
-                        runCatching { paneFocus.requestFocus() }
-                        true
-                    } else false
+                    // L1/R1 scroll horizontally: they walk focus left/right, so shelves, rails and
+                    // the File Manager location pills scroll (and pills switch pages on focus).
+                    Key.ButtonL1 -> { focusManager.moveFocus(FocusDirection.Left); true }
+                    Key.ButtonR1 -> { focusManager.moveFocus(FocusDirection.Right); true }
                     else -> false
                 }
             },

@@ -160,7 +160,7 @@ fun AddResultDialog(
 fun openShortcutsScreen(activity: Activity) {
     activity.startActivity(
         Intent(activity, MainActivity::class.java)
-            .putExtra(MainActivity.EXTRA_OPEN_SCREEN, Screen.Games.route)
+            .putExtra(MainActivity.EXTRA_OPEN_SCREEN, Screen.Deck.route)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
     )
 }

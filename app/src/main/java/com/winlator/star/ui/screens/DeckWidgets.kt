@@ -283,6 +283,36 @@ internal fun Modifier.deckOuterFocusStroke(
 }
 
 /**
+ * Outer focus stroke for plain Material controls (IconButton, OutlinedButton, Text chips) that
+ * don't expose an InteractionSource. Same geometry as [deckOuterFocusStroke] — the ring sits
+ * outside the bounds so it never eats into the control's own border.
+ */
+@Composable
+internal fun Modifier.deckSelfFocusStroke(
+    shape: RoundedCornerShape,
+    strokeWidth: Dp = 2.5.dp,
+    gap: Dp = 3.dp,
+    focusColor: Color = DeckPalette.primary,
+): Modifier {
+    var focused by remember { mutableStateOf(false) }
+    return this
+        .onFocusChanged { focused = it.isFocused }
+        .drawWithContent {
+            drawContent()
+            if (!focused) return@drawWithContent
+            val g = gap.toPx()
+            val radius = shape.topStart.toPx(size, this) + g
+            drawRoundRect(
+                color = focusColor,
+                topLeft = Offset(-g, -g),
+                size = Size(size.width + g * 2f, size.height + g * 2f),
+                cornerRadius = CornerRadius(radius, radius),
+                style = Stroke(width = strokeWidth.toPx()),
+            )
+        }
+}
+
+/**
  * Dialogs live in their own window, so the Deck shell's root key handler never sees their keys.
  * This makes the dialog body the focus owner: opening it parks focus there, the D-pad walks into
  * the rows/buttons, and B closes the dialog. Apply it to the dialog's root Column/Box.

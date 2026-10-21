@@ -97,7 +97,8 @@ fun AppNavGraph(
 
         composable(Screen.Deck.route) {
             // DroidDeck front end — full-bleed (MainActivity drops the bar on this route).
-            DeckModeScreen(onExit = { navController.popBackStack() })
+            // Deck is the only UI: leaving it closes the app instead of dropping into a legacy screen.
+            DeckModeScreen(onExit = { activity.finish() })
         }
 
         composable(Screen.InputControls.route) {

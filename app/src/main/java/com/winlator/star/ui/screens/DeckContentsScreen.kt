@@ -420,16 +420,20 @@ private fun DeckContentsBrowseTab(vm: ContentsHubViewModel) {
                 Spacer(Modifier.height(8.dp))
                 if (searching) DeckLoading()
                 else if (results.isEmpty()) DeckEmpty("No component matches \"$query\".")
-                else LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    itemsIndexed(
-                        results,
-                        key = { index, item -> "$index-${item.sourceName}-${item.type}-${item.downloadUrl}" },
-                    ) { index, item ->
-                        DeckRise(index = index % 10) {
-                            DeckCatalogCard(vm, item, showSource = true)
+                else DeckDragFrame(modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        itemsIndexed(
+                            results,
+                            key = { index, item -> "$index-${item.sourceName}-${item.type}-${item.downloadUrl}" },
+                        ) { index, item ->
+                            DeckRise(index = index % 10) {
+                                Box(Modifier.deckDragItem("search-$index-${item.sourceName}-${item.downloadUrl}")) {
+                                    DeckCatalogCard(vm, item, showSource = true)
+                                }
+                            }
                         }
                     }
                 }
@@ -460,34 +464,42 @@ private fun DeckContentsBrowseTab(vm: ContentsHubViewModel) {
                 when {
                     loading -> DeckLoading()
                     items.isEmpty() -> DeckEmpty("No releases found for $title.")
-                    else -> LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        itemsIndexed(
-                            items,
-                            key = { index, item -> "$index-${item.sourceName}-${item.downloadUrl}" },
-                        ) { index, item ->
-                            DeckRise(index = index % 10) {
-                                DeckCatalogCard(vm, item, showSource = true)
+                    else -> DeckDragFrame(modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            itemsIndexed(
+                                items,
+                                key = { index, item -> "$index-${item.sourceName}-${item.downloadUrl}" },
+                            ) { index, item ->
+                                DeckRise(index = index % 10) {
+                                    Box(Modifier.deckDragItem("cat-$index-${item.sourceName}-${item.downloadUrl}")) {
+                                        DeckCatalogCard(vm, item, showSource = true)
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
             else -> {
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(190.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    gridItemsIndexed(
-                        deckContentCategories,
-                        key = { index, category -> "$index-${category.type}" },
-                    ) { index, entry ->
-                        DeckRise(index = index % 10) {
-                            DeckCategoryCard(entry) { vm.selectCategory(entry.type) }
+                DeckDragFrame(modifier = Modifier.fillMaxSize()) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(190.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        gridItemsIndexed(
+                            deckContentCategories,
+                            key = { index, category -> "$index-${category.type}" },
+                        ) { index, entry ->
+                            DeckRise(index = index % 10) {
+                                Box(Modifier.deckDragItem("category-$index-${entry.type}")) {
+                                    DeckCategoryCard(entry) { vm.selectCategory(entry.type) }
+                                }
+                            }
                         }
                     }
                 }
@@ -837,20 +849,24 @@ private fun DeckContentsSourcesTab(vm: ContentsHubViewModel) {
                 DeckIconAction(Icons.Filled.Settings, "Contents settings") { showSettings = true }
             }
             Spacer(Modifier.height(10.dp))
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                itemsIndexed(
-                    sources,
-                    key = { index, source -> "$index-${source.name}-${source.driverOnly}" },
-                ) { index, source ->
-                    DeckRise(index = index % 10) {
-                        DeckSourceCard(
-                            source = source,
-                            onOpen = { vm.selectSource(source) },
-                            onMenu = { menuFor = source },
-                        )
+            DeckDragFrame(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    itemsIndexed(
+                        sources,
+                        key = { index, source -> "$index-${source.name}-${source.driverOnly}" },
+                    ) { index, source ->
+                        DeckRise(index = index % 10) {
+                            Box(Modifier.deckDragItem("source-$index-${source.name}")) {
+                                DeckSourceCard(
+                                    source = source,
+                                    onOpen = { vm.selectSource(source) },
+                                    onMenu = { menuFor = source },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -994,16 +1010,20 @@ private fun DeckSourceDetail(vm: ContentsHubViewModel, source: HubSource) {
             else -> {
                 val shown = if (filter == "All") items else items.filter { it.type == filter }
                 if (shown.isEmpty()) DeckEmpty("No ${filter} releases in this repository.")
-                else LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    itemsIndexed(
-                        shown,
-                        key = { index, item -> "$index-${item.type}-${item.downloadUrl}" },
-                    ) { index, item ->
-                        DeckRise(index = index % 10) {
-                            DeckCatalogCard(vm, item, showSource = false)
+                else DeckDragFrame(modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        itemsIndexed(
+                            shown,
+                            key = { index, item -> "$index-${item.type}-${item.downloadUrl}" },
+                        ) { index, item ->
+                            DeckRise(index = index % 10) {
+                                Box(Modifier.deckDragItem("repo-$index-${item.type}-${item.downloadUrl}")) {
+                                    DeckCatalogCard(vm, item, showSource = false)
+                                }
+                            }
                         }
                     }
                 }
@@ -1060,6 +1080,7 @@ private fun DeckContentsFilesTab(vm: ContentsHubViewModel) {
         if (folders.isEmpty()) {
             DeckEmpty("No saved archives yet. Use Save on a component, or turn on Keep raw archive.")
         } else {
+            DeckDragFrame(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1069,6 +1090,7 @@ private fun DeckContentsFilesTab(vm: ContentsHubViewModel) {
                     key = { index, type -> "$index-$type" },
                 ) { index, type ->
                     DeckRise(index = index % 10) {
+                        Box(Modifier.deckDragItem("saved-$index-$type")) {
                         DeckSavedFolder(
                             type = type,
                             files = folders[type].orEmpty(),
@@ -1089,8 +1111,10 @@ private fun DeckContentsFilesTab(vm: ContentsHubViewModel) {
                             onShare = { file -> shareDeckArchive(context, file) },
                             onDelete = { file -> pendingDelete = file },
                         )
+                        }
                     }
                 }
+            }
             }
         }
     }

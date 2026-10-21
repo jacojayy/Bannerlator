@@ -67,6 +67,10 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -135,6 +139,117 @@ internal class DeckBackLayer {
 }
 
 internal val LocalDeckBack = compositionLocalOf { DeckBackLayer() }
+
+/**
+ * A focus group with one dragging selection ring: items report their bounds through
+ * [deckDragItem], and the ring stretches to the focused one exactly like the store pills.
+ * Used by shelves, grids and lists so every D-pad surface shares the same motion.
+ */
+internal class DeckDragRegistry {
+    val bounds = mutableStateMapOf<Any, Rect>()
+    var focusedKey: Any? by mutableStateOf(null)
+    var rootTopLeft: Offset by mutableStateOf(Offset.Zero)
+}
+
+internal val LocalDeckDrag = compositionLocalOf<DeckDragRegistry?> { null }
+
+/** Marks a focusable item as a member of the surrounding [DeckDragFrame]. */
+@Composable
+internal fun Modifier.deckDragItem(key: Any): Modifier {
+    val registry = LocalDeckDrag.current
+    DisposableEffect(registry, key) {
+        onDispose { registry?.bounds?.remove(key) }
+    }
+    if (registry == null) return this
+    return this
+        .onGloballyPositioned { coords ->
+            val local = coords.boundsInRoot().translate(-registry.rootTopLeft.x, -registry.rootTopLeft.y)
+            if (registry.bounds[key] != local) registry.bounds[key] = local
+        }
+        .onFocusChanged { if (it.isFocused) registry.focusedKey = key }
+}
+
+private fun Rect.translate(dx: Float, dy: Float): Rect =
+    Rect(left + dx, top + dy, right + dx, bottom + dy)
+
+/**
+ * Hosts a [LocalDeckDrag] registry and draws the animated ring around the focused item.
+ * Place it around a lazy grid/list/row; the ring lives in the frame's coordinate space, so it
+ * follows scrolling and stretches between items.
+ */
+@Composable
+internal fun DeckDragFrame(
+    modifier: Modifier = Modifier,
+    shape: RoundedCornerShape = RoundedCornerShape(16.dp),
+    strokeWidth: Dp = 2.5.dp,
+    gap: Dp = 3.dp,
+    color: Color = DeckPalette.primary,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val registry = remember { DeckDragRegistry() }
+    var hasFocus by remember { mutableStateOf(false) }
+    val left = remember { Animatable(0f) }
+    val top = remember { Animatable(0f) }
+    val right = remember { Animatable(0f) }
+    val bottom = remember { Animatable(0f) }
+    var armed by remember { mutableStateOf(false) }
+
+    val target = registry.focusedKey?.let { registry.bounds[it] }
+    LaunchedEffect(target, registry.focusedKey) {
+        val t = target ?: return@LaunchedEffect
+        if (!armed) {
+            left.snapTo(t.left); top.snapTo(t.top); right.snapTo(t.right); bottom.snapTo(t.bottom)
+            armed = true
+            return@LaunchedEffect
+        }
+        val movingRight = t.left >= left.value
+        val movingDown = t.top >= top.value
+        coroutineScope {
+            if (movingRight) {
+                launch { right.animateTo(t.right, tween(280, easing = DeckEase)) }
+                launch { left.animateTo(t.left, tween(240, delayMillis = 100, easing = DeckEase)) }
+            } else {
+                launch { left.animateTo(t.left, tween(280, easing = DeckEase)) }
+                launch { right.animateTo(t.right, tween(240, delayMillis = 100, easing = DeckEase)) }
+            }
+            if (movingDown) {
+                launch { bottom.animateTo(t.bottom, tween(280, easing = DeckEase)) }
+                launch { top.animateTo(t.top, tween(240, delayMillis = 100, easing = DeckEase)) }
+            } else {
+                launch { top.animateTo(t.top, tween(280, easing = DeckEase)) }
+                launch { bottom.animateTo(t.bottom, tween(240, delayMillis = 100, easing = DeckEase)) }
+            }
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .onGloballyPositioned { registry.rootTopLeft = it.positionInRoot() }
+            .onFocusChanged { hasFocus = it.hasFocus }
+            .drawWithContent {
+                drawContent()
+                if (hasFocus && armed && right.value > left.value) {
+                    val g = gap.toPx()
+                    val radius = shape.topStart.toPx(
+                        Size(right.value - left.value, bottom.value - top.value),
+                        this,
+                    ) + g
+                    drawRoundRect(
+                        color = color,
+                        topLeft = Offset(left.value - g, top.value - g),
+                        size = Size(
+                            right.value - left.value + g * 2f,
+                            bottom.value - top.value + g * 2f,
+                        ),
+                        cornerRadius = CornerRadius(radius, radius),
+                        style = Stroke(width = strokeWidth.toPx()),
+                    )
+                }
+            },
+    ) {
+        CompositionLocalProvider(LocalDeckDrag provides registry) { content() }
+    }
+}
 
 /**
  * The Deck selection stroke: drawn *outside* the tile with the tile's radius grown by [gap], so it

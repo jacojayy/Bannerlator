@@ -316,17 +316,21 @@ private fun DeckCronosTab(
             color = DeckPalette.onSurfaceVariant,
             modifier = Modifier.padding(top = 12.dp),
         )
-        else -> LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(bottom = 24.dp),
-        ) {
-            items(games, key = { it.shortcut.file.absolutePath }) { item ->
-                DeckCronosCard(
-                    item = item,
-                    onRemoveGame = { onRemoveGame(item) },
-                    onRemoveContainer = { onRemoveContainer(item) },
-                )
+        else -> DeckDragFrame(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
+            ) {
+                items(games, key = { it.shortcut.file.absolutePath }) { item ->
+                    Box(Modifier.deckDragItem(item.shortcut.file.absolutePath)) {
+                        DeckCronosCard(
+                            item = item,
+                            onRemoveGame = { onRemoveGame(item) },
+                            onRemoveContainer = { onRemoveContainer(item) },
+                        )
+                    }
+                }
             }
         }
     }
@@ -403,27 +407,33 @@ private fun DeckStorageContainersTab(
                 modifier = Modifier.padding(top = 24.dp),
             )
         } else {
-            LazyColumn(
+            DeckDragFrame(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(bottom = 24.dp),
             ) {
-                items(containers, key = { it.id }) { container ->
-                    DeckContainerCard(
-                        name = container.name,
-                        subtitle = listOf(container.wineVersion, container.screenSize)
-                            .filter { it.isNotEmpty() }
-                            .joinToString(" · "),
-                        onRun = { onRun(container) },
-                        onEdit = { onEdit(container.id) },
-                        onDuplicate = { onDuplicate(container) },
-                        onRemove = { onRemove(container) },
-                        onExport = { onExport(container) },
-                        onInfo = { onInfo(container) },
-                        onBackupRestore = { /* Backup/Restore opens a fork flow in the normal tab */ },
-                    )
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(bottom = 24.dp),
+                ) {
+                    items(containers, key = { it.id }) { container ->
+                        Box(Modifier.deckDragItem("container-${container.id}")) {
+                            DeckContainerCard(
+                                name = container.name,
+                                subtitle = listOf(container.wineVersion, container.screenSize)
+                                    .filter { it.isNotEmpty() }
+                                    .joinToString(" · "),
+                                onRun = { onRun(container) },
+                                onEdit = { onEdit(container.id) },
+                                onDuplicate = { onDuplicate(container) },
+                                onRemove = { onRemove(container) },
+                                onExport = { onExport(container) },
+                                onInfo = { onInfo(container) },
+                                onBackupRestore = { /* Backup/Restore opens a fork flow in the normal tab */ },
+                            )
+                        }
+                    }
                 }
             }
         }

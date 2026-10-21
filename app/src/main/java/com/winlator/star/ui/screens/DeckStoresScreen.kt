@@ -296,15 +296,19 @@ private fun DeckLibraryPane(screen: Screen, context: Context, onGameClick: (Deck
                     modifier = Modifier.padding(horizontal = 24.dp),
                 )
             }
-            else -> LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 108.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                itemsIndexed(list, key = { index, game -> "$index-${game.title}" }) { index, game ->
-                    DeckRise(index = index % 10) {
-                        DeckGameCard(game) { onGameClick(game) }
+            else -> DeckDragFrame(modifier = Modifier.fillMaxSize()) {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 108.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    itemsIndexed(list, key = { index, game -> "$index-${game.title}" }) { index, game ->
+                        DeckRise(index = index % 10) {
+                            Box(Modifier.deckDragItem("$index-${game.title}")) {
+                                DeckGameCard(game) { onGameClick(game) }
+                            }
+                        }
                     }
                 }
             }
@@ -493,9 +497,15 @@ private fun DeckStoreFront(
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Black,
                 )
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    itemsIndexed(section.items, key = { i, it -> "$i-${it.title}" }) { index, item ->
-                        DeckRise(index = index % 8) { DeckBrowseCard(item) { onCard(item) } }
+                DeckDragFrame(modifier = Modifier.fillMaxWidth()) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        itemsIndexed(section.items, key = { i, it -> "$i-${it.title}" }) { index, item ->
+                            DeckRise(index = index % 8) {
+                                Box(Modifier.deckDragItem("${section.title}-$index-${item.title}")) {
+                                    DeckBrowseCard(item) { onCard(item) }
+                                }
+                            }
+                        }
                     }
                 }
             }

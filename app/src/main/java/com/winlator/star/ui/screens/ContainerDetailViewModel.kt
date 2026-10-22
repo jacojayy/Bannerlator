@@ -443,7 +443,6 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
 
     // ─────────────────────────────────────────────────────────────────────────
     fun init(containerId: Int) {
-        if (initialized && initializedFor == containerId) return
         val firstInit = !initialized
         initialized = true
         initializedFor = containerId
@@ -454,9 +453,12 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
             contentsManager.syncContents()
         }
 
-        // Re-read the home dir on every entry: a container created, imported or deleted since
-        // this (first) init must resolve by id. A stale list made a real id look like a NEW
-        // container, so Save created a duplicate and the original kept its old settings.
+        // Reload on EVERY entry - never return early just because this instance last edited the
+        // same id. Two things made that wrong: a container created/imported/deleted since the
+        // manager was built did not resolve (a real id looked NEW, so Save wrote a duplicate and
+        // the original kept its old frame-gen engine), and a reopen after saving elsewhere (the
+        // in-game drawer, a shortcut editor, or the launch path's own container object) showed
+        // the stale cached value - the editor said LSFG was off right after it had been saved.
         manager.reloadContainers()
         container = if (containerId > 0) manager.getContainerById(containerId) else null
         isEditMode = container != null

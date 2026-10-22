@@ -553,7 +553,13 @@ private fun DeckHome(
         launchSteam = game.appId != null || game.store == "Steam"
         scope.launch(Dispatchers.IO) {
             val shortcut = runCatching {
-                val container = containers.find { it.id == game.containerId } ?: return@runCatching null
+                // Read the container fresh from disk for THIS launch. `containers` is the list the
+                // Home screen loaded when it opened; using it here launched with a stale config -
+                // enabling LSFG in Settings and hitting Play still started the game with the old
+                // "off" engine and the drawer said frame gen was off. ContainerManager's fresh
+                // load also picks up a container created after Home was built.
+                val container = ContainerManager(context).getContainerById(game.containerId)
+                    ?: return@runCatching null
                 val desktop = File(game.shortcutPath)
                 if (!desktop.isFile) return@runCatching null
                 Shortcut(container, desktop)

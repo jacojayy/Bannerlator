@@ -10659,12 +10659,22 @@ return true;
     }
 
     private String resolvedFrameGenEngine() {
-        final String e = shortcut != null
-            ? shortcut.getExtra("frameGenEngine", container.getFrameGenEngine())
-            : container.getFrameGenEngine();
+        final String containerEngine = container.getFrameGenEngine();
+        if (shortcut != null) {
+            final String e = shortcut.getExtra("frameGenEngine", "");
+            // The old per-game editor stamped the inherited engine onto EVERY save, so an
+            // unmarked per-game "off" may simply predate the container being switched to LSFG.
+            // Such a stamp silently suppressed frame gen and made the drawer say "enable it in
+            // the container", which was already on. Respect an Off only when it was an explicit
+            // choice (frameGenEngineExplicit=1, written by the current editors).
+            final boolean legacyOff = "off".equals(e)
+                && !shortcut.hasExtra("frameGenEngineExplicit");
+            if (!e.isEmpty() && !legacyOff)
+                return "lsfg".equals(e) ? "lsfg-native" : e;
+        }
         // lsfg-vk retired 2026-09-05 (parked on feat/lsfg-vk-plumbing): a legacy
         // per-game override still saying "lsfg" runs LSFG Native.
-        return "lsfg".equals(e) ? "lsfg-native" : e;
+        return "lsfg".equals(containerEngine) ? "lsfg-native" : containerEngine;
     }
 
     // True for the session when the "bionic" (win-fg) engine runs inside our compositor

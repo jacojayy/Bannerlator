@@ -6844,7 +6844,15 @@ internal fun ShortcutSettingsDialogScreen(
             // container (store null so the extra is cleared, not left empty → keeps the shortcut default).
             putExtra("maxGameRefreshRate", maxGameRefreshRate.ifEmpty { null })
             putExtra("unlockGameRefreshRate", unlockGameRefreshRate.ifEmpty { null })
-            putExtra("frameGenEngine", frameGenEngine)
+            // Override-when-different, like the rows below: stamping the inherited value here
+            // turned the container's then-current engine into a permanent per-game override.
+            if (frameGenEngine != shortcut.container.frameGenEngine) {
+                putExtra("frameGenEngine", frameGenEngine)
+                putExtra("frameGenEngineExplicit", "1")
+            } else {
+                putExtra("frameGenEngine", null)
+                putExtra("frameGenEngineExplicit", null)
+            }
             putExtra("fpsLimiterEnabled", if (fpsLimiterEnabled) "1" else "0")
             // Override-when-different: write the per-game key only when it differs from the global
             // default; otherwise null clears the extra so the game re-inherits (hasExtra=false).

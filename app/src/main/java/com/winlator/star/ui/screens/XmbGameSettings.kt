@@ -399,7 +399,18 @@ private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<Xmb
             rend != "Vulkan" -> "Frame generation requires the Vulkan renderer"
             else -> null
         },
-        disabledOptions = if (lsfgDll) emptySet() else setOf(fgLabels[1])) { v -> xmb.set(p, "frameGenEngine", fgEngines[fgLabels.indexOf(v)]) }
+        disabledOptions = if (lsfgDll) emptySet() else setOf(fgLabels[1])) { v ->
+            val picked = fgEngines[fgLabels.indexOf(v)]
+            // Same override-when-different rule as the pop-up editor: only a real deviation from
+            // the container is an override; matching it clears the extra instead of cementing it.
+            if (picked != c.frameGenEngine) {
+                xmb.set(p, "frameGenEngine", picked)
+                xmb.set(p, "frameGenEngineExplicit", "1")
+            } else {
+                xmb.set(p, "frameGenEngine", null)
+                xmb.set(p, "frameGenEngineExplicit", null)
+            }
+        }
     rows += XmbRow.Toggle("fpsLimiter", "FPS limiter", Icons.Filled.Speed,
         p.ex("fpsLimiterEnabled", if (c.isFpsLimiterEnabled) "1" else "0") == "1") { xmb.set(p, "fpsLimiterEnabled", if (it) "1" else "0") }
     rows += XmbRow.Link("perf", "Performance", Icons.Filled.Speed, subtitle = "Sustained performance, priority, big cores") { xmbPerformanceMenu(xmb, s) }

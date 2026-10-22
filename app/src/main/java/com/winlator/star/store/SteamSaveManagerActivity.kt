@@ -482,6 +482,7 @@ internal fun SaveManagerScreen(
                 selected = deckTabs.indexOf(selectedTab).coerceAtLeast(0),
                 onSelect = { selectedTab = deckTabs[it] },
                 focusable = true,
+                selectOnFocus = true,
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
             Spacer(Modifier.height(10.dp))

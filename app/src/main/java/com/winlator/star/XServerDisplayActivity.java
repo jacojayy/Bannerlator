@@ -2295,12 +2295,15 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // the drawer/badge show ON. Both LSFG engines honour it; native also needs the imported
         // DLL, or prepareLsfgNative publishes the reason instead of arming. The seeded multiplier
         // is what the drawer, HUD and present-mode/VRR logic read, so they all agree at launch.
+        // A multiplier of 0 only ever means "off for this session" (the editor only offers 2-4).
+        // With Auto Enable ON it contradicts the container's intent, so heal it to the default
+        // instead of silently launching with frame gen off after an older in-game save.
+        int savedFgMult = Math.max(2, container.getFrameGenMultiplier());
         boolean lsfgAutoArm = container.isLsfgAutoEnable()
-                && container.getFrameGenMultiplier() >= 2
                 && (fgEngine.equals("lsfg")
                     || (fgEngine.equals("lsfg-native")
                         && com.winlator.star.core.LsfgNative.isDllAvailable(this)));
-        int lsfgSeedMult = lsfgAutoArm ? container.getFrameGenMultiplier() : 0;
+        int lsfgSeedMult = lsfgAutoArm ? savedFgMult : 0;
         XServerDrawerState.INSTANCE.setFrameGenMultiplier(lsfgSeedMult);
         XServerDrawerState.INSTANCE.setFrameGenFlowScale(container.getFrameGenFlowScale());
         XServerDrawerState.INSTANCE.setFrameGenModel(resolvedFrameGenModel());
@@ -3300,8 +3303,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // saved multiplier from frame one, OFF keeps the safe default (chain loaded, generating only
         // when the player turns it on in the drawer). This used to be hardcoded to 0, which is why
         // selecting LSFG + Auto Enable and pressing Save never applied at launch.
-        final int launchMult = (container.isLsfgAutoEnable() && container.getFrameGenMultiplier() >= 2)
-            ? container.getFrameGenMultiplier() : 0;
+        final int launchMult = container.isLsfgAutoEnable()
+            ? Math.max(2, container.getFrameGenMultiplier()) : 0;
         final float flow = container.getFrameGenFlowScale();
 
         new Thread(() -> {

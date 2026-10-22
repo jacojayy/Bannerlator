@@ -178,6 +178,8 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
                 labels = listOf("Cronos", "Containers"),
                 selected = subtab,
                 onSelect = { tabs.select(it) },
+                focusable = true,
+                selectOnFocus = true,
             )
             Spacer(Modifier.height(12.dp))
 
@@ -206,6 +208,7 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
                     DeckCronosTab(
                         games = cronos,
                         loading = cronosLoading,
+                        onOpen = { onEditContainer(it.container.id) },
                         onRemoveGame = { removeGameFor = it },
                         onRemoveContainer = { removeContainerFor = it },
                     )
@@ -300,6 +303,7 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
 private fun DeckCronosTab(
     games: List<DeckCronosItem>,
     loading: Boolean,
+    onOpen: (DeckCronosItem) -> Unit,
     onRemoveGame: (DeckCronosItem) -> Unit,
     onRemoveContainer: (DeckCronosItem) -> Unit,
 ) {
@@ -323,6 +327,7 @@ private fun DeckCronosTab(
                     Box(Modifier.deckDragItem(item.shortcut.file.absolutePath)) {
                         DeckCronosCard(
                             item = item,
+                            onOpen = { onOpen(item) },
                             onRemoveGame = { onRemoveGame(item) },
                             onRemoveContainer = { onRemoveContainer(item) },
                         )
@@ -441,6 +446,7 @@ private fun DeckStorageContainersTab(
 @Composable
 private fun DeckCronosCard(
     item: DeckCronosItem,
+    onOpen: () -> Unit,
     onRemoveGame: () -> Unit,
     onRemoveContainer: () -> Unit,
 ) {
@@ -448,6 +454,7 @@ private fun DeckCronosCard(
     val containerSize = rememberDeckDirSize(item.container.rootDir)
     val gameSize = rememberDeckDirSize(item.gameDir)
     val store = item.store.isNotEmpty()
+    val interaction = remember { MutableInteractionSource() }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -456,6 +463,7 @@ private fun DeckCronosCard(
             .clip(DeckPalette.groupShape)
             .background(DeckPalette.surface)
             .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+            .clickable(interactionSource = interaction, indication = null, onClick = onOpen)
             .padding(12.dp),
     ) {
         Box(

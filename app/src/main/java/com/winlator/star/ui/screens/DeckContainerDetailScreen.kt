@@ -155,6 +155,8 @@ internal fun DeckContainerDetailScreen(
             labels = tabTitles,
             selected = tab,
             onSelect = { tabs.select(it) },
+            focusable = true,
+            selectOnFocus = true,
             scroll = true,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
         )
@@ -367,13 +369,23 @@ internal fun DeckContainerDetailScreen(
                     2 -> DeckGroup("Performance") {
                         DeckChoiceRow(
                             label = "Frame Generation",
-                            hint = "LSFG Native frame interpolation",
+                            hint = if (viewModel.frameGenEngine != "off" &&
+                                viewModel.selectedRenderer != "Vulkan")
+                                "LSFG Native needs Vulkan — the Renderer switches on pick"
+                            else "LSFG Native frame interpolation",
                             options = listOf(
                                 "Off" to "off",
                                 "LSFG" to "lsfg-native",
                             ),
                             selected = viewModel.frameGenEngine,
-                            onPick = { viewModel.frameGenEngine = it },
+                            onPick = {
+                                viewModel.frameGenEngine = it
+                                // LSFG Native runs in our Vulkan compositor; arming it on OpenGL or
+                                // SurfaceFlinger silently did nothing. The classic editor forbids
+                                // the combo, so switching the renderer is the only workable pick.
+                                if (it != "off" && viewModel.selectedRenderer != "Vulkan")
+                                    viewModel.selectedRenderer = "Vulkan"
+                            },
                         )
                         DeckRow(
                             label = "FPS Limiter",

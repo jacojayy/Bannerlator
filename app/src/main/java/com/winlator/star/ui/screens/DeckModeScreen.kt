@@ -122,7 +122,11 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
@@ -201,6 +205,13 @@ private fun deckSections() = listOf(
 @Composable
 internal fun DeckModeScreen(onExit: () -> Unit) {
     val context = LocalContext.current
+    // Android flips the whole app to touch mode on every screen tap. Compose's `clickable` is
+    // non-touch focusable, so that silently drops every shelf card / list row out of the D-pad
+    // focus tree until the next hardware key — the hero survives only because it forces
+    // canFocus. Deck Mode is controller-first, so pin Compose's input mode to Keyboard: touch
+    // still works as before, focus never disappears.
+    val platformInputMode = LocalInputModeManager.current
+    val deckInputMode = remember(platformInputMode) { DeckInputModeManager(platformInputMode) }
     var introDone by remember { mutableStateOf(false) }
     var section by remember { mutableStateOf("home") }
     var graphicPane by remember { mutableStateOf("gpu") }
@@ -271,6 +282,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
         ),
     ) {
         CompositionLocalProvider(
+            LocalInputModeManager provides deckInputMode,
             LocalIndication provides remember { ControllerFocusIndication(Deck.primary) },
             LocalDeckTabs provides tabs,
             LocalDeckBack provides backLayer,
@@ -982,6 +994,7 @@ private fun DeckGraphicsPane(pane: String, onSelect: (String) -> Unit) {
             selected = if (pane == "wrappers") 1 else 0,
             onSelect = { onSelect(if (it == 1) "wrappers" else "gpu") },
             focusable = true,
+            selectOnFocus = true,
             fillWidth = false,
             height = 38.dp,
             modifier = Modifier
@@ -1639,4 +1652,20 @@ private fun DeckHomeShelf(
             }
         }
     }
+}
+
+/**
+ * Deck Mode reports [InputMode.Keyboard] no matter what Android's touch mode says, so Compose's
+ * non-touch-focusable modifiers (`clickable`, `combinedClickable`, …) stay reachable with the
+ * controller after the user touches the screen. Input-mode requests are still forwarded to the
+ * real manager so keyboard/IME side effects behave normally.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
+private class DeckInputModeManager(
+    private val delegate: InputModeManager,
+) : InputModeManager {
+    override val inputMode: InputMode get() = InputMode.Keyboard
+
+    override fun requestInputMode(inputMode: InputMode): Boolean =
+        delegate.requestInputMode(inputMode)
 }

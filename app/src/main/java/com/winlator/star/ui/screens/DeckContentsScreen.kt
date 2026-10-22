@@ -212,6 +212,8 @@ internal fun DeckContentsScreen(vm: ContentsHubViewModel = viewModel()) {
                 labels = DeckContentsTab.values().map { it.label },
                 selected = tab,
                 onSelect = { tabs.select(it) },
+                focusable = true,
+                selectOnFocus = true,
             )
             Spacer(Modifier.height(12.dp))
             AnimatedContent(
@@ -995,6 +997,7 @@ private fun DeckSourceDetail(vm: ContentsHubViewModel, source: HubSource) {
             selected = filterLabels.indexOf(filter).let { if (it < 0) 0 else it },
             onSelect = { filter = filterLabels[it] },
             focusable = true,
+            selectOnFocus = true,
             scroll = true,
             height = 34.dp,
         )

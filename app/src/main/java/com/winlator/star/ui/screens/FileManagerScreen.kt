@@ -1610,6 +1610,7 @@ fun FileManagerScreen(
                     selected = deckSelected,
                     onSelect = { deckLocations.getOrNull(it)?.onClick?.invoke() },
                     focusable = true,
+                    selectOnFocus = true,
                     scroll = true,
                     height = 34.dp,
                     modifier = Modifier

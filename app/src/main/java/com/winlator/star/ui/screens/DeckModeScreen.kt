@@ -92,6 +92,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -357,10 +358,14 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         label = "deckDetail",
                     ) { detailId ->
                         if (detailId != null) {
-                            DeckContainerDetailScreen(
-                                containerId = detailId,
-                                onNavigateBack = { deckDetail = null },
-                            )
+                            // Per-id key: the screen's remembered sections/focus must not survive a
+                            // switch from one container (or New / Defaults) to another.
+                            key(detailId) {
+                                DeckContainerDetailScreen(
+                                    containerId = detailId,
+                                    onNavigateBack = { deckDetail = null },
+                                )
+                            }
                         } else {
                             DeckContainersScreen(onEditContainer = { id -> deckDetail = id })
                         }

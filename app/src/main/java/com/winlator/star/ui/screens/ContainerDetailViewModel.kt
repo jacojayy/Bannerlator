@@ -59,6 +59,11 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
     var isEditMode by mutableStateOf(false); private set
     var isSaving by mutableStateOf(false); private set
     private var initialized = false
+    // Deck Mode hosts this editor inside the shell, so its activity-scoped ViewModel is reused for
+    // every container id. Remember which id the form was loaded from: opening "+", "Defaults" or a
+    // different container must reload, otherwise the previous container/defaults state leaks in
+    // (Defaults silently creates a container, "+" edits the last-opened one).
+    private var initializedFor: Int? = null
 
     // "New Container Defaults" mode: the SAME container form, but ✓ saves the field state as the
     // user's new-container defaults profile (NewContainerDefaults) instead of creating a container.
@@ -438,16 +443,21 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
 
     // ─────────────────────────────────────────────────────────────────────────
     fun init(containerId: Int) {
-        if (initialized) return
+        if (initialized && initializedFor == containerId) return
+        val firstInit = !initialized
         initialized = true
+        initializedFor = containerId
 
-        manager = ContainerManager(context)
-        contentsManager = ContentsManager(context)
-        contentsManager.syncContents()
+        if (firstInit) {
+            manager = ContainerManager(context)
+            contentsManager = ContentsManager(context)
+            contentsManager.syncContents()
+        }
 
         container = if (containerId > 0) manager.getContainerById(containerId) else null
         isEditMode = container != null
         defaultsMode = containerId == EDIT_DEFAULTS_ID
+        isSaving = false
 
         loadStaticResources()
         loadContainerData()

@@ -75,7 +75,9 @@ import com.winlator.star.store.SocialHubFormat
 import com.winlator.star.store.SocialHubStore
 import com.winlator.star.store.SocialHubStore.Comment
 import com.winlator.star.store.SocialHubStore.Post
+import com.winlator.star.ui.screens.DeckDragFrame
 import com.winlator.star.ui.screens.XmbWaves
+import com.winlator.star.ui.screens.deckDragItem
 import com.winlator.star.util.InAppFilePicker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -451,12 +453,18 @@ private fun SocialFeed(
                     }
                 }
             } else {
+                DeckDragFrame(modifier = Modifier.fillMaxSize()) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    items(visible, key = { it.number }) { post -> SocialPostRow(post) { onOpen(post) } }
+                    items(visible, key = { it.number }) { post ->
+                        Box(Modifier.deckDragItem("social-post-${post.number}")) {
+                            SocialPostRow(post) { onOpen(post) }
+                        }
+                    }
+                }
                 }
             }
 

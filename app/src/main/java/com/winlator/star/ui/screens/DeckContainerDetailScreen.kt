@@ -181,6 +181,7 @@ internal fun DeckContainerDetailScreen(
                 .focusGroup(),
             label = "deckContainerTab",
         ) { currentTab ->
+            DeckDragFrame(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -513,6 +514,7 @@ internal fun DeckContainerDetailScreen(
                 }
 
                 Spacer(Modifier.height(16.dp))
+            }
             }
         }
 

@@ -312,6 +312,7 @@ internal fun DeckSettingsScreen() {
         saved = true
     }
 
+    DeckDragFrame(modifier = Modifier.fillMaxSize(), shape = RoundedCornerShape(12.dp)) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -671,6 +672,7 @@ internal fun DeckSettingsScreen() {
                     .height(48.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(DeckPalette.primary)
+                    .deckDragItem("settings-save")
                     .clickable { save() }
                     .padding(horizontal = 28.dp),
             ) {
@@ -691,6 +693,7 @@ internal fun DeckSettingsScreen() {
             }
         }
         Spacer(Modifier.height(24.dp))
+    }
     }
 
     // ── Overlay dialogs (same as SettingsScreen). ──

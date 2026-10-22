@@ -75,8 +75,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.winlator.star.ui.screens.DeckPalette
-import com.winlator.star.ui.screens.LocalDeckMode
-import com.winlator.star.ui.screens.deckSelfFocusStroke
+import com.winlator.star.ui.screens.DeckDragFrame
+import com.winlator.star.ui.screens.deckDragItem
 import com.winlator.star.ui.screens.DeckStretchyTabs
 import com.winlator.star.ui.screens.LocalDeckTabs
 import com.winlator.star.container.Container
@@ -597,6 +597,7 @@ internal fun SaveManagerScreen(
                         }
                         else -> {
                             // Multi-column in landscape (2-up), single column in portrait.
+                            DeckDragFrame(modifier = Modifier.fillMaxSize(), shape = RoundedCornerShape(12.dp)) {
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(cols),
                                 state = gridState,
@@ -613,6 +614,7 @@ internal fun SaveManagerScreen(
                                         onSyncTo = { runQuickMove(s.appId, syncFrom = false) },
                                     )
                                 }
+                            }
                             }
                         }
                     }
@@ -999,17 +1001,19 @@ private fun CustomSaveTab(modifier: Modifier = Modifier, columns: Int = 1, onMes
                 )
             }
             // Multi-column in landscape (2-up), single column in portrait — matches the Steam grid.
-            else -> LazyVerticalGrid(
-                columns = GridCells.Fixed(columns),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                items(rows, key = { it.shortcut.file.path }) { s ->
-                    CustomSaveRow(
-                        status = s,
-                        busy = s.shortcut.file.path in busyKeys,
-                        onBackup = { backupFor = s },
-                        onRestore = { restoreChooser = s },
-                    )
+            else -> DeckDragFrame(modifier = Modifier.fillMaxSize(), shape = RoundedCornerShape(12.dp)) {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(columns),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(rows, key = { it.shortcut.file.path }) { s ->
+                        CustomSaveRow(
+                            status = s,
+                            busy = s.shortcut.file.path in busyKeys,
+                            onBackup = { backupFor = s },
+                            onRestore = { restoreChooser = s },
+                        )
+                    }
                 }
             }
         }
@@ -1142,6 +1146,7 @@ private fun CustomSaveRow(
     onBackup: () -> Unit,
     onRestore: () -> Unit,
 ) {
+    val dragKey = remember { Any() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -1150,6 +1155,7 @@ private fun CustomSaveRow(
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+            .deckDragItem(dragKey)
             .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
     ) {
         // Thumbnail = the shortcut's own art (cover → icon); custom games have no Steam appId cover.
@@ -1300,18 +1306,20 @@ private fun EpicSaveTab(modifier: Modifier = Modifier, columns: Int = 1, onMessa
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            else -> LazyVerticalGrid(
-                columns = GridCells.Fixed(columns),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                items(rows, key = { it.appName }) { s ->
-                    EpicSaveRow(
-                        status = s,
-                        busy = s.appName in busyKeys,
-                        onOpen = { onOpen(s.appName) },
-                        onUpload = { runSync(s, up = true) },
-                        onDownload = { runSync(s, up = false) },
-                    )
+            else -> DeckDragFrame(modifier = Modifier.fillMaxSize(), shape = RoundedCornerShape(12.dp)) {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(columns),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(rows, key = { it.appName }) { s ->
+                        EpicSaveRow(
+                            status = s,
+                            busy = s.appName in busyKeys,
+                            onOpen = { onOpen(s.appName) },
+                            onUpload = { runSync(s, up = true) },
+                            onDownload = { runSync(s, up = false) },
+                        )
+                    }
                 }
             }
         }
@@ -1328,6 +1336,7 @@ private fun EpicSaveRow(
 ) {
     val setUp = status.containerLabel != null
     val actionsEnabled = !busy && setUp && status.cloudSaveEnabled
+    val dragKey = remember { Any() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -1338,6 +1347,7 @@ private fun EpicSaveRow(
             .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
             // Tapping the card opens the Epic store detail page. The Up/Down IconButtons keep their own
             // click handlers so they stay independently tappable (not swallowed by the card click).
+            .deckDragItem(dragKey)
             .clickable(onClick = onOpen)
             .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
     ) {
@@ -1588,19 +1598,21 @@ private fun GogSaveTab(modifier: Modifier = Modifier, columns: Int = 1, onMessag
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            else -> LazyVerticalGrid(
-                columns = GridCells.Fixed(columns),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                items(rows, key = { it.gameId }) { s ->
-                    GogSaveRow(
-                        status = s,
-                        autoTail = autoTails[s.gameId],
-                        busy = s.gameId in busyKeys,
-                        onOpen = { onOpen(s.gameId) },
-                        onUpload = { runSync(s, up = true) },
-                        onDownload = { runSync(s, up = false) },
-                    )
+            else -> DeckDragFrame(modifier = Modifier.fillMaxSize(), shape = RoundedCornerShape(12.dp)) {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(columns),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(rows, key = { it.gameId }) { s ->
+                        GogSaveRow(
+                            status = s,
+                            autoTail = autoTails[s.gameId],
+                            busy = s.gameId in busyKeys,
+                            onOpen = { onOpen(s.gameId) },
+                            onUpload = { runSync(s, up = true) },
+                            onDownload = { runSync(s, up = false) },
+                        )
+                    }
                 }
             }
         }
@@ -1619,6 +1631,7 @@ private fun GogSaveRow(
     val hasManualFolder = status.saveDir != null
     // Up/Down light up when EITHER a manual folder is set OR the game can auto-resolve.
     val actionsEnabled = !busy && (hasManualFolder || status.autoResolvable)
+    val dragKey = remember { Any() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -1629,6 +1642,7 @@ private fun GogSaveRow(
             .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
             // Tapping the card opens the GOG store detail page. The Up/Down IconButtons keep their own
             // click handlers so they stay independently tappable (not swallowed by the card click).
+            .deckDragItem(dragKey)
             .clickable(onClick = onOpen)
             .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
     ) {
@@ -1748,6 +1762,7 @@ private fun SaveStatusRow(
     // Sync-from-Cloud is pointless with nothing in the cloud (e.g. a Not-backed-up game) — gate it so
     // the meaningful action (Sync to Cloud = back it up) stands out.
     val syncFromEnabled = actionsEnabled && status.cloudFileCount > 0
+    val dragKey = remember { Any() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -1761,10 +1776,7 @@ private fun SaveStatusRow(
                         else MaterialTheme.colorScheme.outline,
                 shape = RoundedCornerShape(12.dp),
             )
-            .then(
-                if (LocalDeckMode.current) Modifier.deckSelfFocusStroke(RoundedCornerShape(12.dp))
-                else Modifier,
-            )
+            .deckDragItem(dragKey)
             .clickable(onClick = onOpen)
             .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
     ) {

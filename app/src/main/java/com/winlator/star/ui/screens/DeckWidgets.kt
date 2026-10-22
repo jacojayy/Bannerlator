@@ -172,7 +172,7 @@ internal fun Modifier.deckDragItem(key: Any): Modifier {
             val local = coords.boundsInRoot().translate(-registry.rootTopLeft.x, -registry.rootTopLeft.y)
             if (registry.bounds[key] != local) registry.bounds[key] = local
         }
-        .onFocusChanged { if (it.isFocused) registry.focusedKey = key }
+        .onFocusChanged { if (it.isFocused || it.hasFocus) registry.focusedKey = key }
 }
 
 private fun Rect.translate(dx: Float, dy: Float): Rect =
@@ -231,7 +231,7 @@ internal fun DeckDragFrame(
     Box(
         modifier = modifier
             .onGloballyPositioned { registry.rootTopLeft = it.positionInRoot() }
-            .onFocusChanged { hasFocus = it.hasFocus }
+            .onFocusChanged { hasFocus = it.isFocused || it.hasFocus }
             .drawWithContent {
                 drawContent()
                 if (hasFocus && armed && right.value > left.value) {
@@ -467,10 +467,12 @@ internal fun DeckRow(
     onConfigClick: (() -> Unit)? = null,
     control: @Composable () -> Unit,
 ) {
+    val dragKey = remember { Any() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
+            .deckDragItem(dragKey)
             .then(if (onConfigClick != null) Modifier.clickable(onClick = onConfigClick) else Modifier)
             .padding(horizontal = 14.dp, vertical = 11.dp),
     ) {
@@ -531,11 +533,13 @@ internal fun DeckExpandableRow(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val rotation by animateFloatAsState(if (expanded) 90f else 0f, label = "deckExpandChevron")
+    val dragKey = remember { Any() }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
+                .deckDragItem(dragKey)
                 .clickable(onClick = onToggle)
                 .padding(horizontal = 14.dp, vertical = 11.dp),
         ) {
@@ -723,7 +727,8 @@ internal fun DeckSliderRow(
     format: (Float) -> String,
     onChange: (Float) -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    val dragKey = remember { Any() }
+    Column(modifier = Modifier.fillMaxWidth().deckDragItem(dragKey)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier

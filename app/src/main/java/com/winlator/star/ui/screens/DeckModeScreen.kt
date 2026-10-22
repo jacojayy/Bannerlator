@@ -117,6 +117,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -1018,23 +1019,32 @@ private fun DeckWordmark() {
  */
 @Composable
 private fun DeckSideRail(selected: String, focusRequester: FocusRequester, onSelect: (String) -> Unit) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
+    DeckDragFrame(
         modifier = Modifier
             .width(92.dp)
             .fillMaxHeight()
-            .verticalScroll(rememberScrollState())
-            .background(Deck.surface)
-            .padding(vertical = 12.dp),
+            .background(Deck.surface),
+        shape = RoundedCornerShape(14.dp),
+        strokeWidth = 2.5.dp,
+        gap = 2.dp,
     ) {
-        deckSections().forEach { item ->
-            DeckRailItem(
-                label = item.label,
-                icon = item.icon,
-                current = selected == item.key,
-                modifier = if (selected == item.key) Modifier.focusRequester(focusRequester) else Modifier,
-                onClick = { onSelect(item.key) },
-            )
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 12.dp),
+        ) {
+            deckSections().forEach { item ->
+                DeckRailItem(
+                    label = item.label,
+                    icon = item.icon,
+                    current = selected == item.key,
+                    modifier = if (selected == item.key) Modifier.focusRequester(focusRequester) else Modifier,
+                    onFocus = { if (selected != item.key) onSelect(item.key) },
+                    onClick = { onSelect(item.key) },
+                )
+            }
         }
     }
 }
@@ -1045,6 +1055,7 @@ private fun DeckRailItem(
     icon: ImageVector,
     current: Boolean,
     modifier: Modifier = Modifier,
+    onFocus: () -> Unit,
     onClick: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
@@ -1074,10 +1085,12 @@ private fun DeckRailItem(
             .background(tint)
             .border(
                 width = 1.dp,
-                color = line,
+                color = if (focused) Color.Transparent else line,
                 shape = RoundedCornerShape(14.dp),
             )
             .deckBringIntoView()
+            .deckDragItem("rail:$label")
+            .onFocusChanged { if (it.isFocused) onFocus() }
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {
         Column(
@@ -1339,7 +1352,7 @@ private fun DeckHomeHero(
             .combinedClickable(
                 interactionSource = interaction,
                 indication = null,
-                onClick = onOpen,
+                onClick = onPlay,
                 onLongClick = onMenu,
             ),
     ) {
@@ -1402,7 +1415,14 @@ private fun DeckHomeHero(
                 letterSpacing = 1.2.sp,
             )
             Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            // The banner is the single D-pad stop for this hero: A continues the game, and the
+            // Details page is still reachable from the same title on the shelf below. Letting the
+            // two inner buttons take focus as well made the banner itself unreachable — a focused
+            // parent skips its focusable children when the D-pad searches.
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.focusProperties { canFocus = false },
+            ) {
                 DeckButton("Play", primary = true, onClick = onPlay)
                 DeckButton("Details", primary = false, onClick = onOpen)
             }
@@ -1435,6 +1455,7 @@ private fun DeckHomeShelf(
     val lefts = remember(entries) { mutableStateListOf<Float>() }
     val rights = remember(entries) { mutableStateListOf<Float>() }
     var focused by remember(entries) { mutableIntStateOf(-1) }
+    var hasFocus by remember { mutableStateOf(false) }
     val start = remember { Animatable(0f) }
     val end = remember { Animatable(0f) }
     var lastFocused by remember { mutableIntStateOf(-1) }
@@ -1492,9 +1513,13 @@ private fun DeckHomeShelf(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(cardHeight)
+                // The ring belongs to the shelf that currently owns focus. Without this, the last
+                // shelf visited keeps its stroke painted while the D-pad is somewhere else — which
+                // makes the next shelf look like it cannot be selected at all.
+                .onFocusChanged { hasFocus = it.isFocused || it.hasFocus }
                 .drawWithContent {
                     drawContent()
-                    if (focused >= 0 && end.value > start.value) {
+                    if (hasFocus && focused >= 0 && end.value > start.value) {
                         val gap = 3.dp.toPx()
                         val x = start.value - scroll.value - gap
                         drawRoundRect(

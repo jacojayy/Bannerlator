@@ -132,7 +132,9 @@ internal val graphicsProbeMutex = Mutex()
 fun ContainerDetailScreen(
     containerId: Int,
     onNavigateBack: () -> Unit,
-    viewModel: ContainerDetailViewModel = viewModel()
+    // One instance per id: this screen is also composed inline (ShortcutsXmbView), where the
+    // activity owner is shared across ids and a stale init() would edit the wrong container.
+    viewModel: ContainerDetailViewModel = viewModel(key = "containerDetail/$containerId")
 ) {
     val context = LocalContext.current
 

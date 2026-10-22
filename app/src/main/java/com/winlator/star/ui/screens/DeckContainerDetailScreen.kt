@@ -60,7 +60,13 @@ import java.util.Locale
 internal fun DeckContainerDetailScreen(
     containerId: Int,
     onNavigateBack: () -> Unit,
-    viewModel: ContainerDetailViewModel = viewModel(),
+    // ONE view-model per edited id. The screen is activity-scoped and the Deck keeps the
+    // outgoing editor composed for a frame during AnimatedContent transitions; with a single
+    // shared instance that outgoing effect could re-run init() for the PREVIOUS id (Defaults,
+    // New, another container) and clobber the form being edited - so Save wrote the defaults
+    // profile / another container while the real one kept its old frame-gen engine. Keying by
+    // id isolates each editor; init() then only ever re-loads on a real id change.
+    viewModel: ContainerDetailViewModel = viewModel(key = "deckContainerDetail/$containerId"),
 ) {
     LaunchedEffect(containerId) { viewModel.init(containerId) }
 

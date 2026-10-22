@@ -18,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -84,6 +85,16 @@ private class ControllerFocusInstance(private val color: Color) : IndicationInst
 }
 
 /**
+ * Move focus without letting Compose 1.6.2's empty-focus crash escape. For a frame after a screen
+ * transition swaps the focused node (the + button, a card, the tab host) the owner has no active
+ * focus target, and [FocusManager.moveFocus] then throws "FocusRequester is not initialized" from
+ * inside the focus owner — an app-killing IllegalStateException on the next joystick nudge.
+ * Callers treat a failed move as "nothing to move to".
+ */
+internal fun FocusManager.moveFocusSafely(direction: FocusDirection): Boolean =
+    runCatching { moveFocus(direction) }.getOrDefault(false)
+
+/**
  * Walks the window with the D-pad. Compose never maps direction keys onto focus movement, and a
  * key is only dispatched to modifiers when some node inside the tree holds focus — so this root
  * box holds focus when a screen change drops it, then forwards direction keys to the focus system.
@@ -115,9 +126,14 @@ fun ControllerNavRoot(modifier: Modifier = Modifier, content: @Composable () -> 
                     // Reseed ONLY when the root itself is focused (screen just changed). If a real
                     // control has focus, a failed direction must do nothing: falling back to `Next`
                     // is what made Left walk DOWN the list when there was no target to the left.
-                    val moved = focusManager.moveFocus(dir)
+                    val moved = runCatching { focusManager.moveFocus(dir) }.getOrElse {
+                        // No active focus target (a screen change is mid-flight). Reseed the root
+                        // so the next press has somewhere to start from, and swallow this one.
+                        runCatching { rootFocus.requestFocus() }
+                        false
+                    }
                     if (moved) true
-                    else if (rootFocused) focusManager.moveFocus(FocusDirection.Next)
+                    else if (rootFocused) focusManager.moveFocusSafely(FocusDirection.Next)
                     else false
                 },
         ) { content() }

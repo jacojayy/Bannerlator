@@ -464,7 +464,9 @@ class MainActivity : AppCompatActivity() {
     private val padAxisRepeater = object : Runnable {
         override fun run() {
             val stale = android.os.SystemClock.uptimeMillis() - padAxisLastEventMs > 400L
-            if (padAxisHeldKey == 0 || stale) {
+            // A dialog/popup owns a window of its own: never keep injecting D-pad presses into the
+            // Activity underneath it (the focus owner there has no target and used to throw).
+            if (!hasWindowFocus() || padAxisHeldKey == 0 || stale) {
                 padAxisHeldKey = 0
                 return
             }
@@ -495,6 +497,9 @@ class MainActivity : AppCompatActivity() {
         val joystick = (src and android.view.InputDevice.SOURCE_JOYSTICK) == android.view.InputDevice.SOURCE_JOYSTICK ||
             (src and android.view.InputDevice.SOURCE_GAMEPAD) == android.view.InputDevice.SOURCE_GAMEPAD
         if (!joystick) return false
+        // While a Compose Dialog/Popup is up this Activity's Compose tree has no focus target;
+        // injecting a synthetic direction would walk (or crash) the screen behind it.
+        if (!hasWindowFocus()) return false
 
         var x = event.getAxisValue(android.view.MotionEvent.AXIS_HAT_X)
         var y = event.getAxisValue(android.view.MotionEvent.AXIS_HAT_Y)

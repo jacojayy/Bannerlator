@@ -157,6 +157,7 @@ import java.io.File
 import java.io.FileOutputStream
 import com.winlator.star.ui.ControllerFocusIndication
 import com.winlator.star.ui.SocialContent
+import com.winlator.star.ui.moveFocusSafely
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -305,8 +306,8 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         else { goBack(); true }
                     }
                     // Shoulders are just wide horizontal steps. They never change the rail or a tab.
-                    Key.ButtonL1 -> focusManager.moveFocus(FocusDirection.Left)
-                    Key.ButtonR1 -> focusManager.moveFocus(FocusDirection.Right)
+                    Key.ButtonL1 -> focusManager.moveFocusSafely(FocusDirection.Left)
+                    Key.ButtonR1 -> focusManager.moveFocusSafely(FocusDirection.Right)
                     else -> false
                 }
             },

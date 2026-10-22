@@ -102,6 +102,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import com.winlator.star.container.Shortcut
 import com.winlator.star.core.FileUtils
+import com.winlator.star.ui.moveFocusSafely
 import coil.compose.AsyncImage
 import com.winlator.star.store.GameFacts
 import com.winlator.star.store.GoldbergComponent
@@ -556,7 +557,7 @@ internal fun DeckHubGamePage(
                     Key.DirectionRight -> FocusDirection.Right
                     else -> null
                 } ?: return@onKeyEvent false
-                focusManager.moveFocus(dir)
+                focusManager.moveFocusSafely(dir)
             }
             .graphicsLayer {
                 scaleX = pageScale

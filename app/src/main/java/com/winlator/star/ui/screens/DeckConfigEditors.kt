@@ -83,6 +83,7 @@ import com.winlator.star.ui.components.DllOverrides
 import com.winlator.star.ui.components.EnvVarType
 import com.winlator.star.ui.components.KnownEnvVars
 import com.winlator.star.ui.findActivity
+import com.winlator.star.ui.moveFocusSafely
 import com.winlator.star.util.InAppFilePicker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -293,7 +294,7 @@ internal fun DeckConfigDialog(title: String, onDismiss: () -> Unit, content: @Co
                         Key.DirectionRight -> FocusDirection.Right
                         else -> null
                     } ?: return@onKeyEvent false
-                    focusManager.moveFocus(dir)
+                    focusManager.moveFocusSafely(dir)
                 }
                 .padding(16.dp),
         ) {

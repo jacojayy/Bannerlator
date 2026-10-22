@@ -454,6 +454,10 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
             contentsManager.syncContents()
         }
 
+        // Re-read the home dir on every entry: a container created, imported or deleted since
+        // this (first) init must resolve by id. A stale list made a real id look like a NEW
+        // container, so Save created a duplicate and the original kept its old settings.
+        manager.reloadContainers()
         container = if (containerId > 0) manager.getContainerById(containerId) else null
         isEditMode = container != null
         defaultsMode = containerId == EDIT_DEFAULTS_ID

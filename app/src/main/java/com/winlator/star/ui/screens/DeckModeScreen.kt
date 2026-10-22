@@ -220,6 +220,9 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     // The pump sits on the current rail item the moment the New UI opens, so the controller starts
     // on the side bar — then Right/A drops into the pane and the tab drags in behind it.
     val railFocus = remember { FocusRequester() }
+    // Right from the Home rail item must land on the hero. The "+" Add button shares the rail's
+    // Y band, so the geometric search picked it first and the banner looked unreachable.
+    val homeHeroFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val tabs = remember { DeckTabHost() }
     val backLayer = remember { DeckBackLayer() }
@@ -298,6 +301,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
         DeckSideRail(
             selected = section,
             focusRequester = railFocus,
+            homeFocus = homeHeroFocus,
             onSelect = { next ->
                 section = next
                 deckDetail = null
@@ -326,7 +330,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 label = "deckSection",
             ) { currentSection ->
                 when (currentSection) {
-                    "home" -> DeckHome(onEditContainer = { id -> section = "containers"; deckDetail = id })
+                    "home" -> DeckHome(heroFocus = homeHeroFocus, onEditContainer = { id -> section = "containers"; deckDetail = id })
                     "containers" -> AnimatedContent(
                         targetState = deckDetail,
                         transitionSpec = {
@@ -361,6 +365,8 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                     "saves" -> SaveManagerScreen(deckMode = true)
                     "social_hub" -> SocialContent()
                     "settings" -> DeckSettingsScreen()
+                    // Defensive fallback only; never composes alongside the "home" branch, so it
+                    // gets its own requester instead of sharing the rail's homeHeroFocus.
                     else -> DeckHome(onEditContainer = { id -> section = "containers"; deckDetail = id })
                 }
             }
@@ -458,7 +464,10 @@ internal fun decodeCover(context: Context, asset: String): Bitmap? = runCatching
 
 /** Home: the cover wall behind a bottom-anchored 3D carousel — WinHub wordmark, Add Games. */
 @Composable
-private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
+private fun DeckHome(
+    heroFocus: FocusRequester = remember { FocusRequester() },
+    onEditContainer: (Int) -> Unit = {},
+) {
     val context = LocalContext.current
     val activity = context as Activity
     val scope = rememberCoroutineScope()
@@ -628,6 +637,7 @@ private fun DeckHome(onEditContainer: (Int) -> Unit = {}) {
                                 entry = hero,
                                 playtime = hubPlaytimeLabel(context, hero.title),
                                 isContinue = hero.game?.shortcutPath == lastPlayedPath,
+                                focus = heroFocus,
                                 onOpen = { pageFor = hero },
                                 onPlay = { playEntry(hero) },
                                 onMenu = { gameMenuFor = hero },
@@ -1018,7 +1028,12 @@ private fun DeckWordmark() {
  * with the signal blue when current — DroidDeck's SideRail, carrying this app's own sections.
  */
 @Composable
-private fun DeckSideRail(selected: String, focusRequester: FocusRequester, onSelect: (String) -> Unit) {
+private fun DeckSideRail(
+    selected: String,
+    focusRequester: FocusRequester,
+    homeFocus: FocusRequester,
+    onSelect: (String) -> Unit,
+) {
     DeckDragFrame(
         modifier = Modifier
             .width(92.dp)
@@ -1041,6 +1056,8 @@ private fun DeckSideRail(selected: String, focusRequester: FocusRequester, onSel
                     icon = item.icon,
                     current = selected == item.key,
                     modifier = if (selected == item.key) Modifier.focusRequester(focusRequester) else Modifier,
+                    // Only Home has a competing focus target (the "+" button) in its beam.
+                    rightFocus = if (item.key == "home") homeFocus else null,
                     onFocus = { if (selected != item.key) onSelect(item.key) },
                     onClick = { onSelect(item.key) },
                 )
@@ -1055,6 +1072,7 @@ private fun DeckRailItem(
     icon: ImageVector,
     current: Boolean,
     modifier: Modifier = Modifier,
+    rightFocus: FocusRequester? = null,
     onFocus: () -> Unit,
     onClick: () -> Unit,
 ) {
@@ -1090,6 +1108,7 @@ private fun DeckRailItem(
             )
             .deckBringIntoView()
             .deckDragItem("rail:$label")
+            .focusProperties { if (rightFocus != null) right = rightFocus }
             .onFocusChanged { if (it.isFocused) onFocus() }
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {
@@ -1335,6 +1354,7 @@ private fun DeckHomeHero(
     entry: HubEntry,
     playtime: String,
     isContinue: Boolean,
+    focus: FocusRequester,
     onOpen: () -> Unit,
     onPlay: () -> Unit,
     onMenu: () -> Unit,
@@ -1347,8 +1367,15 @@ private fun DeckHomeHero(
             .height(216.dp)
             .clip(shape)
             .background(Deck.surface)
-            .deckOuterFocusStroke(interaction, shape)
+            // The stroke follows onFocusChanged (like the shelves) instead of the clickable's
+            // interaction source, so it cannot disagree with where the D-pad actually is.
+            .deckSelfFocusStroke(shape)
             .deckBringIntoView()
+            // canFocus=true beats clickable's non-touch default: the banner is the single entry
+            // point into the home pane and must be reachable even if the session starts in touch
+            // mode. The requester is wired to the rail's Right by DeckSideRail.
+            .focusProperties { canFocus = true }
+            .focusRequester(focus)
             .combinedClickable(
                 interactionSource = interaction,
                 indication = null,

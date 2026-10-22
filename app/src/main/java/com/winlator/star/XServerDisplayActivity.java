@@ -2289,15 +2289,18 @@ public class XServerDisplayActivity extends AppCompatActivity {
         boolean bionicFgActive = fgEnabled || lsfgOn;
         XServerDrawerState.INSTANCE.setBionicFgActive(bionicFgActive);
         XServerDrawerState.INSTANCE.setFrameGenEnabled(fgEnabled || lsfgOn);
-        // Frame gen normally starts OFF in-game (multiplier 0) regardless of the container setting. The
-        // layer is still loaded at launch (below), so the user can opt in per session from the FG drawer
-        // (live hot-reload). EXCEPTION: an lsfg container that opted into auto-enable seeds its saved
-        // multiplier so frame gen is live + the drawer/badge show ON from launch. The setupUI FPS-limiter
-        // apply (applyFpsLimit) runs after this seed and re-evaluates lsfgGovernsFps(), so the cap steps
-        // aside automatically for mult>=2. The persisted container multiplier is left untouched.
-        // LSFG Native never auto-arms at launch (see prepareLsfgNative); lsfg-vk keeps its opt-in.
-        int lsfgSeedMult = (fgEngine.equals("lsfg") && container.isLsfgAutoEnable() && container.getFrameGenMultiplier() >= 2)
-                ? container.getFrameGenMultiplier() : 0;
+        // Frame gen normally starts OFF in-game (multiplier 0): the engine is loaded at launch
+        // (below) so the player can opt in per session from the drawer. EXCEPTION: "LSFG Auto
+        // Enable" seeds the saved multiplier so an opted-in container is live from frame one and
+        // the drawer/badge show ON. Both LSFG engines honour it; native also needs the imported
+        // DLL, or prepareLsfgNative publishes the reason instead of arming. The seeded multiplier
+        // is what the drawer, HUD and present-mode/VRR logic read, so they all agree at launch.
+        boolean lsfgAutoArm = container.isLsfgAutoEnable()
+                && container.getFrameGenMultiplier() >= 2
+                && (fgEngine.equals("lsfg")
+                    || (fgEngine.equals("lsfg-native")
+                        && com.winlator.star.core.LsfgNative.isDllAvailable(this)));
+        int lsfgSeedMult = lsfgAutoArm ? container.getFrameGenMultiplier() : 0;
         XServerDrawerState.INSTANCE.setFrameGenMultiplier(lsfgSeedMult);
         XServerDrawerState.INSTANCE.setFrameGenFlowScale(container.getFrameGenFlowScale());
         XServerDrawerState.INSTANCE.setFrameGenModel(resolvedFrameGenModel());
@@ -3293,11 +3296,12 @@ public class XServerDisplayActivity extends AppCompatActivity {
             refreshNativeFgAvailability(true, 0);
             return;
         }
-        // Every launch starts with frame generation OFF; the user arms it from the
-        // in-game drawer. isLsfgAutoEnable is an lsfg-vk-era setting and is not
-        // honoured for the native engine - an auto-armed launch is exactly the
-        // state that surprised the tester and cannot be reasoned about from a log.
-        final int launchMult = 0;
+        // "LSFG Auto Enable" is the container's launch switch for BOTH LSFG engines: ON arms the
+        // saved multiplier from frame one, OFF keeps the safe default (chain loaded, generating only
+        // when the player turns it on in the drawer). This used to be hardcoded to 0, which is why
+        // selecting LSFG + Auto Enable and pressing Save never applied at launch.
+        final int launchMult = (container.isLsfgAutoEnable() && container.getFrameGenMultiplier() >= 2)
+            ? container.getFrameGenMultiplier() : 0;
         final float flow = container.getFrameGenFlowScale();
 
         new Thread(() -> {
@@ -3311,7 +3315,10 @@ public class XServerDisplayActivity extends AppCompatActivity {
                     refreshNativeFgAvailability(true, 0);
                     return;
                 }
-                applyLsfgNative(launchMult, flow);
+                // Launch prep runs before XServerView (and its Vulkan renderer) exists, so arming
+                // now would be dropped. Wait for the renderer when we have a multiplier to arm.
+                if (launchMult >= 2) armLsfgNativeWhenReady(flow, NATIVE_FG_ARM_TRIES);
+                else applyLsfgNative(launchMult, flow);
                 refreshNativeFgAvailability(true, NATIVE_FG_CHECK_TRIES);
             });
         }, "lsfg-native-cache").start();
@@ -3331,6 +3338,29 @@ public class XServerDisplayActivity extends AppCompatActivity {
         if (com.winlator.star.FeatureFlags.LSFG_NATIVE_EXPERIMENTS_ENABLED)
             captureHeight = Container.fgCaptureHeightFor(s.getFgCaptureResolution().getValue());
         vkr.setFrameGenTuning(flowScale, currentDisplayRefreshHz(), captureHeight);
+    }
+
+    /**
+     * Arm the launch multiplier once the Vulkan renderer exists. The cache-build callback can run
+     * before XServerView is created (the cache is cached on later launches, so it returns fast);
+     * applyLsfgNative would log "no Vulkan renderer" and silently leave frame gen off. The
+     * multiplier is read from the drawer at arm time: if the player turns FG off (or picks a
+     * different level) while we wait, that live choice wins over the launch seed.
+     */
+    private void armLsfgNativeWhenReady(float flowScale, int triesLeft) {
+        com.winlator.star.renderer.vulkan.VulkanRenderer vkr = vulkanRendererOrNull();
+        if (vkr != null) {
+            int multiplier = XServerDrawerState.INSTANCE.getFrameGenMultiplier().getValue();
+            if (multiplier >= 2) applyLsfgNative(multiplier, flowScale);
+            return;
+        }
+        if (triesLeft > 0) {
+            fgCheckHandler.postDelayed(
+                () -> armLsfgNativeWhenReady(flowScale, triesLeft - 1), 250);
+        } else {
+            Log.w("XServerDisplayActivity",
+                "LSFG Native auto-enable: no Vulkan renderer after waiting - not armed");
+        }
     }
 
     /** Point the renderer at the cache and arm it at `multiplier` (0 = off). */
@@ -3357,8 +3387,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
 
     /**
      * Win-FG Native at launch: select the engine and arm it OFF. Nothing to
-     * build or import - the chain is embedded - so this is immediate. Same
-     * launch rule as LSFG Native: every session starts with frame gen off.
+     * build or import - the chain is embedded - so this is immediate. Unlike
+     * LSFG Native, win-fg has no auto-enable setting: it always starts off.
      */
     private void prepareWinFgNative() {
         applyWinFgNative(0, container.getFrameGenFlowScale(),
@@ -3378,6 +3408,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
     // The renderer and its swapchain come up after launch prep; retry this many
     // times, 1.5 s apart, before giving up on a verdict (the drawer then stays quiet).
     private static final int NATIVE_FG_CHECK_TRIES = 10;
+    // 40 x 250 ms = 10 s for the Vulkan renderer to appear before an auto-arm is abandoned.
+    private static final int NATIVE_FG_ARM_TRIES = 40;
     private final android.os.Handler fgCheckHandler =
         new android.os.Handler(android.os.Looper.getMainLooper());
 

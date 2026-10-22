@@ -836,7 +836,9 @@ internal fun DeckStoresScreen() {
                 selected = deckStores.indexOfFirst { it.screen == selected }.coerceAtLeast(0),
                 onSelect = { selected = deckStores[it].screen },
                 focusable = true,
-                selectOnFocus = false,
+                // Landing on a store pill switches to it, the same one-press behaviour the D-pad
+                // has on the side rail. Walking the strip no longer needs an extra A.
+                selectOnFocus = true,
                 height = 38.dp,
             )
 
@@ -864,8 +866,9 @@ internal fun DeckStoresScreen() {
                 DeckTabBar(
                     tabs = tabs,
                     selected = storeTab,
-                    // A selects. Walking the strip must never yank the pane out from under you.
-                    selectOnFocus = false,
+                    // Focus switches the pane, so Store/Library/Settings/Friends/Profile are one
+                    // D-pad step apart instead of focus-then-A.
+                    selectOnFocus = true,
                     onSelect = { storeTab = it },
                 )
                 Spacer(Modifier.size(12.dp))

@@ -504,6 +504,23 @@ private fun DeckHome(
     var gameMenuFor by remember { mutableStateOf<HubEntry?>(null) }
     var propertiesFor by remember { mutableStateOf<Container?>(null) }
     var cronosReviewFor by remember { mutableStateOf<Container?>(null) }
+    // A game added via Master Containers is a SHORTCUT inside a container you already have, so its
+    // settings must edit that shortcut (per-game overrides), NOT the shared container. Set when the
+    // game menu / detail page asks for Settings; the ContainerEditor is still reached from the
+    // Storage section for whole-container changes.
+    var shortcutSettingsFor by remember { mutableStateOf<Shortcut?>(null) }
+
+    // Open a game's per-shortcut settings (a game added via Master Containers lives as a shortcut in
+    // a shared container, so editing the container would change it for every game in it).
+    fun openGameSettings(entry: HubEntry) {
+        val g = entry.game ?: return
+        val c = containers.find { it.id == g.containerId }
+        when {
+            c == null -> Toast.makeText(context, "Container not found", Toast.LENGTH_SHORT).show()
+            !File(g.shortcutPath).isFile -> Toast.makeText(context, "Shortcut not found", Toast.LENGTH_SHORT).show()
+            else -> shortcutSettingsFor = Shortcut(c, File(g.shortcutPath))
+        }
+    }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
@@ -780,12 +797,7 @@ private fun DeckHome(
                 },
                 onSettings = {
                     gameMenuFor = null
-                    val g = entry.game ?: return@DeckGameMenu
-                    if (containers.none { it.id == g.containerId }) {
-                        Toast.makeText(context, "Container not found", Toast.LENGTH_SHORT).show()
-                    } else {
-                        onEditContainer(g.containerId)
-                    }
+                    openGameSettings(entry)
                 },
                 onAddToHomeScreen = {
                     gameMenuFor = null
@@ -842,6 +854,23 @@ private fun DeckHome(
             DeckPropertiesDialog(container = c, onDismiss = { propertiesFor = null })
         }
 
+        shortcutSettingsFor?.let { sc ->
+            ShortcutSettingsDialogScreen(
+                shortcut = sc,
+                onDismiss = {
+                    shortcutSettingsFor = null
+                    // The editor can rename the game / swap its cover, so re-read the store to keep
+                    // the carousel tile in sync.
+                    scope.launch(Dispatchers.IO) {
+                        val refreshed = HubGamesStore.load(context).map { g ->
+                            HubEntry(g.name, g.coverPath?.let { BitmapFactory.decodeFile(it) }, g)
+                        }
+                        withContext(Dispatchers.Main) { entries = refreshed }
+                    }
+                },
+            )
+        }
+
         cronosReviewFor?.let { c ->
             DeckCronosReviewDialog(
                 container = c,
@@ -866,13 +895,8 @@ private fun DeckHome(
                 onBack = { pageFor = null },
                 onPlay = { pageFor = null; playEntry(entry) },
                 onSettings = {
-                    val g = entry.game
                     pageFor = null
-                    if (g == null || containers.none { it.id == g.containerId }) {
-                        Toast.makeText(context, "Container not found", Toast.LENGTH_SHORT).show()
-                    } else {
-                        onEditContainer(g.containerId)
-                    }
+                    openGameSettings(entry)
                 },
             )
         }

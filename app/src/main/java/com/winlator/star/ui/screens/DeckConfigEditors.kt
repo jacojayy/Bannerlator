@@ -53,6 +53,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -705,6 +706,7 @@ private fun DeckAddEnvVarPicker(
 internal fun DeckWineD3DConfigEditor(
     initialConfig: String,
     onConfirm: (String) -> Unit,
+    onChange: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val config = remember(initialConfig) { com.winlator.star.contentdialog.WineD3DConfigDialog.parseConfig(initialConfig) }
@@ -759,18 +761,26 @@ internal fun DeckWineD3DConfigEditor(
         DeckChoiceRow(label = "Offscreen Rendering Mode", options = ormOptions, selected = orm, onPick = { orm = it })
         DeckChoiceRow(label = "Renderer", options = rendOptions, selected = renderer, onPick = { renderer = it })
     }
+    fun buildConfig(): String {
+        val cfg = com.winlator.star.contentdialog.WineD3DConfigDialog.parseConfig(initialConfig)
+        cfg.put("csmt", if (csmt == "Enabled") "3" else "0")
+        cfg.put("strict_shader_math", if (ssm == "Enabled") "1" else "0")
+        cfg.put("OffscreenRenderingMode", orm)
+        cfg.put("gpuName", gpuName)
+        cfg.put("ddrawrapper", StringUtils.parseIdentifier(ddra))
+        cfg.put("videoMemorySize", StringUtils.parseNumber(videoMem))
+        cfg.put("renderer", renderer)
+        return cfg.toString()
+    }
+
+    // Live commit: every change reaches the host immediately, so the screen's own Save button is
+    // enough. "Done" only collapses the panel (it never gates the edit).
+    LaunchedEffect(Unit) {
+        snapshotFlow { buildConfig() }.collect { onChange?.invoke(it) }
+    }
+
     Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-        DeckButton("Apply") {
-            val cfg = com.winlator.star.contentdialog.WineD3DConfigDialog.parseConfig(initialConfig)
-            cfg.put("csmt", if (csmt == "Enabled") "3" else "0")
-            cfg.put("strict_shader_math", if (ssm == "Enabled") "1" else "0")
-            cfg.put("OffscreenRenderingMode", orm)
-            cfg.put("gpuName", gpuName)
-            cfg.put("ddrawrapper", StringUtils.parseIdentifier(ddra))
-            cfg.put("videoMemorySize", StringUtils.parseNumber(videoMem))
-            cfg.put("renderer", renderer)
-            onConfirm(cfg.toString())
-        }
+        DeckButton("Done") { onConfirm(buildConfig()) }
     }
 }
 
@@ -783,6 +793,7 @@ internal fun DeckVulkanConfigEditor(
     initialConfig: String,
     frameGenSelected: Boolean,
     onConfirm: (String) -> Unit,
+    onChange: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val cfg = remember(initialConfig) { parseVulkanConfig(initialConfig) }
@@ -848,11 +859,17 @@ internal fun DeckVulkanConfigEditor(
             onPick = { swapRB = it == "RGBA" },
         )
     }
+    fun buildConfig(): String =
+        "native=$nativeRender;presentMode=$presentMode;driverId=$driverId;filterMode=$filterMode;swapRB=$swapRB;sfCompatMode=$sfCompatMode;nativeBackend=$nativeBackend"
+
+    // Live commit: every change reaches the host immediately, so the screen's own Save button is
+    // enough. "Done" only collapses the panel (it never gates the edit).
+    LaunchedEffect(Unit) {
+        snapshotFlow { buildConfig() }.collect { onChange?.invoke(it) }
+    }
+
     Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-        DeckButton("Apply") {
-            val config = "native=$nativeRender;presentMode=$presentMode;driverId=$driverId;filterMode=$filterMode;swapRB=$swapRB;sfCompatMode=$sfCompatMode;nativeBackend=$nativeBackend"
-            onConfirm(config)
-        }
+        DeckButton("Done") { onConfirm(buildConfig()) }
     }
 }
 
@@ -874,6 +891,7 @@ private fun parseDeckFpsConfig(s: String): Map<String, String> {
 internal fun DeckFpsConfigEditor(
     initialConfig: String,
     onConfirm: (String) -> Unit,
+    onChange: ((String) -> Unit)? = null,
 ) {
     val cfg = remember(initialConfig) { parseDeckFpsConfig(initialConfig) }
     val diagContext = LocalContext.current
@@ -1070,6 +1088,12 @@ internal fun DeckFpsConfigEditor(
         }
     }
 
+    // Live commit: every change reaches the host immediately, so the screen's own Save button is
+    // enough. "Done" only collapses the panel (it never gates the edit).
+    LaunchedEffect(Unit) {
+        snapshotFlow { buildConfig() }.collect { onChange?.invoke(it) }
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1078,7 +1102,7 @@ internal fun DeckFpsConfigEditor(
         DeckButton("Export diagnostics", primary = false) {
             com.winlator.star.widget.exportHudDiagnostics(diagContext)
         }
-        DeckButton("Apply") { onConfirm(buildConfig()) }
+        DeckButton("Done") { onConfirm(buildConfig()) }
     }
 }
 
@@ -1091,6 +1115,7 @@ internal fun DeckGraphicsDriverConfigEditor(
     graphicsDriver: String,
     initialConfig: String,
     onConfirm: (String) -> Unit,
+    onChange: ((String) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val cfg = remember(initialConfig) {
@@ -1374,42 +1399,50 @@ internal fun DeckGraphicsDriverConfigEditor(
         }
     }
 
-    Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-        DeckButton("Apply") {
-            val config = "vulkanVersion=$vulkanVersion;" +
-                "version=$version;" +
-                "blacklistedExtensions=${blacklisted.joinToString(",")};" +
-                "maxDeviceMemory=${StringUtils.parseNumber(selectedMemoryEntry)};" +
-                "presentMode=$presentMode;" +
-                "syncFrame=${if (syncFrame) "1" else "0"};" +
-                "disablePresentWait=${if (disablePresentWait) "1" else "0"};" +
-                "resourceType=$resourceType;" +
-                "bcnEmulation=$bcnEmulation;" +
-                "bcnEmulationType=$bcnEmulationType;" +
-                "bcnEmulationCache=$bcnEmulationCache;" +
-                "bcnEmulationAstc=${if (bcnEmulationAstc) "1" else "0"};" +
-                "bcnLayerAuto=${if (bcnLayerAuto) "1" else "0"};" +
-                "bcnTranscodeEtc2=${if (bcnTranscodeEtc2) "1" else "0"};" +
-                "bcnTranscodeAstc=${if (bcnTranscodeAstc) "1" else "0"};" +
-                "bcnImageView=${if (bcnImageView) "1" else "0"};" +
-                "bcnDebugLog=${if (bcnDebugLog) "1" else "0"};" +
-                "bcnCompatSparse=${if (bcnCompatSparse) "1" else "0"};" +
-                "compatUseGamenative=${if (compatUseGamenative) "1" else "0"};" +
-                "gpuName=$gpuName" +
-                ";fdDevFeatures=${if (fdDevFeatures) "1" else "0"}" +
-                ";turnipGmem=$turnipGmem" +
-                ";turnipTokens=" + buildList {
-                    if (turnipForceCb) add("forcecb")
-                    if (turnipNoCb) add("nocb")
-                    if (turnipSysmem && turnipGmem != "on") add("sysmem")
-                    if (turnipDeckEmu) add("deck_emu")
-                }.joinToString(",")
-            val detectedPart = detectedKeys.joinToString("") { key ->
-                val v = (detectedValues[key] ?: "").replace(";", "").replace("=", "")
-                ";$key=$v"
-            }
-            onConfirm(config + detectedPart)
+    fun buildConfig(): String {
+        val config = "vulkanVersion=$vulkanVersion;" +
+            "version=$version;" +
+            "blacklistedExtensions=${blacklisted.joinToString(",")};" +
+            "maxDeviceMemory=${StringUtils.parseNumber(selectedMemoryEntry)};" +
+            "presentMode=$presentMode;" +
+            "syncFrame=${if (syncFrame) "1" else "0"};" +
+            "disablePresentWait=${if (disablePresentWait) "1" else "0"};" +
+            "resourceType=$resourceType;" +
+            "bcnEmulation=$bcnEmulation;" +
+            "bcnEmulationType=$bcnEmulationType;" +
+            "bcnEmulationCache=$bcnEmulationCache;" +
+            "bcnEmulationAstc=${if (bcnEmulationAstc) "1" else "0"};" +
+            "bcnLayerAuto=${if (bcnLayerAuto) "1" else "0"};" +
+            "bcnTranscodeEtc2=${if (bcnTranscodeEtc2) "1" else "0"};" +
+            "bcnTranscodeAstc=${if (bcnTranscodeAstc) "1" else "0"};" +
+            "bcnImageView=${if (bcnImageView) "1" else "0"};" +
+            "bcnDebugLog=${if (bcnDebugLog) "1" else "0"};" +
+            "bcnCompatSparse=${if (bcnCompatSparse) "1" else "0"};" +
+            "compatUseGamenative=${if (compatUseGamenative) "1" else "0"};" +
+            "gpuName=$gpuName" +
+            ";fdDevFeatures=${if (fdDevFeatures) "1" else "0"}" +
+            ";turnipGmem=$turnipGmem" +
+            ";turnipTokens=" + buildList {
+                if (turnipForceCb) add("forcecb")
+                if (turnipNoCb) add("nocb")
+                if (turnipSysmem && turnipGmem != "on") add("sysmem")
+                if (turnipDeckEmu) add("deck_emu")
+            }.joinToString(",")
+        val detectedPart = detectedKeys.joinToString("") { key ->
+            val v = (detectedValues[key] ?: "").replace(";", "").replace("=", "")
+            ";$key=$v"
         }
+        return config + detectedPart
+    }
+
+    // Live commit: every change reaches the host immediately, so the screen's own Save button is
+    // enough. "Done" only collapses the panel (it never gates the edit).
+    LaunchedEffect(Unit) {
+        snapshotFlow { buildConfig() }.collect { onChange?.invoke(it) }
+    }
+
+    Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
+        DeckButton("Done") { onConfirm(buildConfig()) }
     }
 }
 
@@ -1426,6 +1459,7 @@ internal fun DeckDxvkConfigEditor(
     relaxDxvkFilter: Boolean,
     initialConfig: String,
     onConfirm: (String) -> Unit,
+    onChange: ((String) -> Unit)? = null,
     onOpenConfigDownload: (() -> Unit)? = null,
     refreshKey: Int = 0,
     onDownloadDxvk: (() -> Unit)? = null,
@@ -1906,22 +1940,30 @@ internal fun DeckDxvkConfigEditor(
         }
     }
 
+    fun buildConfig(): String {
+        val cfg = DXVKConfigDialog.parseConfig(initialConfig)
+        cfg.put("version", selectedDxvk)
+        cfg.put("framerate", StringUtils.parseNumber(selectedFramerate))
+        cfg.put("async", if (asyncEnabled && dxvkType != DXVKConfigDialog.DXVK_TYPE_NONE) "1" else "0")
+        cfg.put("asyncCache", if (asyncCacheEnabled && dxvkType == DXVKConfigDialog.DXVK_TYPE_GPLASYNC) "1" else "0")
+        cfg.put("anisotropy", DXVKConfigDialog.ANISOTROPY_VALUES[anisotropyLabels.indexOf(selectedAnisotropy).coerceAtLeast(0)])
+        cfg.put("lodBias", DXVKConfigDialog.LOD_BIAS_VALUES[lodBiasLabels.indexOf(selectedLodBias).coerceAtLeast(0)])
+        cfg.put("vkd3dVersion", selectedVkd3d)
+        cfg.put("vkd3dLevel", selectedFeatureLevel)
+        cfg.put("ddrawrapper", StringUtils.parseIdentifier(selectedDdra))
+        cfg.put("d7vkVersion", selectedD7vk)
+        cfg.put("dxvkConfigFile", livePath)
+        return cfg.toString()
+    }
+
+    // Live commit: every change reaches the host immediately, so the screen's own Save button is
+    // enough. "Done" only closes the panel (it never gates the edit).
+    LaunchedEffect(Unit) {
+        snapshotFlow { buildConfig() }.collect { onChange?.invoke(it) }
+    }
+
     Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-        DeckButton("Apply") {
-            val cfg = DXVKConfigDialog.parseConfig(initialConfig)
-            cfg.put("version", selectedDxvk)
-            cfg.put("framerate", StringUtils.parseNumber(selectedFramerate))
-            cfg.put("async", if (asyncEnabled && dxvkType != DXVKConfigDialog.DXVK_TYPE_NONE) "1" else "0")
-            cfg.put("asyncCache", if (asyncCacheEnabled && dxvkType == DXVKConfigDialog.DXVK_TYPE_GPLASYNC) "1" else "0")
-            cfg.put("anisotropy", DXVKConfigDialog.ANISOTROPY_VALUES[anisotropyLabels.indexOf(selectedAnisotropy).coerceAtLeast(0)])
-            cfg.put("lodBias", DXVKConfigDialog.LOD_BIAS_VALUES[lodBiasLabels.indexOf(selectedLodBias).coerceAtLeast(0)])
-            cfg.put("vkd3dVersion", selectedVkd3d)
-            cfg.put("vkd3dLevel", selectedFeatureLevel)
-            cfg.put("ddrawrapper", StringUtils.parseIdentifier(selectedDdra))
-            cfg.put("d7vkVersion", selectedD7vk)
-            cfg.put("dxvkConfigFile", livePath)
-            onConfirm(cfg.toString())
-        }
+        DeckButton("Done") { onConfirm(buildConfig()) }
     }
 
     if (showAddKey) {

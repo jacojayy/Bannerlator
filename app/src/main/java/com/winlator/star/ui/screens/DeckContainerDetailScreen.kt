@@ -115,6 +115,18 @@ internal fun DeckContainerDetailScreen(
     var showD7vkDownloadSheet by remember { mutableStateOf(false) }
     var dxvkRefreshKey by remember { mutableStateOf(0) }
     val isVegasWrapper = StringUtils.parseIdentifier(viewModel.selectedDXWrapper).contains("vegas")
+    // Renderer panel writes straight through on every change (the panel has no Apply gate), so
+    // "Save Changes" is enough. Shared by the live-commit and Done paths.
+    val applyRendererConfig: (String) -> Unit = { newConfig ->
+        val m = parseVulkanConfig(newConfig)
+        viewModel.rendererNative = m["native"] == "true"
+        viewModel.rendererPresentMode = m["presentMode"] ?: "fifo"
+        viewModel.rendererDriverId = m["driverId"] ?: "system"
+        viewModel.rendererFilterMode = m["filterMode"]?.toIntOrNull() ?: 0
+        viewModel.rendererSwapRB = m["swapRB"] == "true"
+        viewModel.rendererSfCompatMode = m["sfCompatMode"] != "false"
+        viewModel.rendererNativeBackend = m["nativeBackend"] ?: "auto"
+    }
 
     // Category-navigation layout — a setting (Settings → Appearance → Container Editor Layout).
     // "tabs" = animated top tabs (default), "rail" = animated left rail, "pages" = full-page list.
@@ -322,9 +334,10 @@ internal fun DeckContainerDetailScreen(
                             onToggle = { openSection = if (openSection == "gfxDriver") null else "gfxDriver" },
                         ) {
                             DeckGraphicsDriverConfigEditor(
-                                graphicsDriver = viewModel.selectedGraphicsDriver,
+                                graphicsDriver = StringUtils.parseIdentifier(viewModel.selectedGraphicsDriver),
                                 initialConfig = viewModel.graphicsDriverConfig,
                                     onConfirm = { viewModel.graphicsDriverConfig = it; openSection = null },
+                                    onChange = { viewModel.graphicsDriverConfig = it },
                                 )
                             }
                         }
@@ -351,6 +364,7 @@ internal fun DeckContainerDetailScreen(
                                     relaxDxvkFilter = StringUtils.parseIdentifier(viewModel.selectedGraphicsDriver) == "wrapper-compat-bcn",
                                     initialConfig = viewModel.dxWrapperConfig,
                                     onConfirm = { viewModel.dxWrapperConfig = it; openSection = null },
+                                    onChange = { viewModel.dxWrapperConfig = it },
                                     onOpenConfigDownload = if (isVegasWrapper) { { showStockConfigSheet = true } } else null,
                                     refreshKey = dxvkRefreshKey,
                                     onDownloadDxvk = if (!isVegasWrapper) { { showDxvkDownloadSheet = true } } else null,
@@ -361,6 +375,7 @@ internal fun DeckContainerDetailScreen(
                                 DeckWineD3DConfigEditor(
                                     initialConfig = viewModel.dxWrapperConfig,
                                     onConfirm = { viewModel.dxWrapperConfig = it; openSection = null },
+                                    onChange = { viewModel.dxWrapperConfig = it },
                                 )
                             }
                         }
@@ -388,16 +403,10 @@ internal fun DeckContainerDetailScreen(
                                     ";nativeBackend=${viewModel.rendererNativeBackend}",
                                 frameGenSelected = viewModel.frameGenEngine != "off",
                                 onConfirm = { newConfig ->
-                                    val m = parseVulkanConfig(newConfig)
-                                    viewModel.rendererNative = m["native"] == "true"
-                                    viewModel.rendererPresentMode = m["presentMode"] ?: "fifo"
-                                    viewModel.rendererDriverId = m["driverId"] ?: "system"
-                                    viewModel.rendererFilterMode = m["filterMode"]?.toIntOrNull() ?: 0
-                                    viewModel.rendererSwapRB = m["swapRB"] == "true"
-                                    viewModel.rendererSfCompatMode = m["sfCompatMode"] != "false"
-                                    viewModel.rendererNativeBackend = m["nativeBackend"] ?: "auto"
+                                    applyRendererConfig(newConfig)
                                     openSection = null
                                 },
+                                onChange = applyRendererConfig,
                             )
                         }
                         }
@@ -422,6 +431,7 @@ internal fun DeckContainerDetailScreen(
                             DeckFpsConfigEditor(
                                 initialConfig = viewModel.fpsCounterConfig,
                                 onConfirm = { viewModel.fpsCounterConfig = it; openSection = null },
+                                onChange = { viewModel.fpsCounterConfig = it },
                             )
                         }
                         }

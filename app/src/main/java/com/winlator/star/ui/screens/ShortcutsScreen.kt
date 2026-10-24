@@ -9609,6 +9609,7 @@ internal fun DeckShortcutSettingsScreen(
                 graphicsDriver = StringUtils.parseIdentifier(selectedGfxDriver),
                 initialConfig = graphicsDriverConfig,
                 onConfirm = { graphicsDriverConfig = it; showGfxConfig = false },
+                onChange = { graphicsDriverConfig = it },
             )
         }
     }
@@ -9623,6 +9624,7 @@ internal fun DeckShortcutSettingsScreen(
                     relaxDxvkFilter = StringUtils.parseIdentifier(selectedGfxDriver) == "wrapper-compat-bcn",
                     initialConfig = dxWrapperConfig,
                     onConfirm = { dxWrapperConfig = it; showDxvkConfig = false },
+                    onChange = { dxWrapperConfig = it },
                     onOpenConfigDownload = if (isVegasCfg) { { showStockConfigSheet = true } } else null,
                     refreshKey = dxvkRefreshKey,
                     onDownloadDxvk = { showDxvkDownloadSheet = true },
@@ -9633,6 +9635,7 @@ internal fun DeckShortcutSettingsScreen(
                 DeckWineD3DConfigEditor(
                     initialConfig = dxWrapperConfig,
                     onConfirm = { dxWrapperConfig = it; showDxvkConfig = false },
+                    onChange = { dxWrapperConfig = it },
                 )
             }
         }
@@ -9642,6 +9645,7 @@ internal fun DeckShortcutSettingsScreen(
             DeckWineD3DConfigEditor(
                 initialConfig = dxWrapperConfig,
                 onConfirm = { dxWrapperConfig = it; showWineD3DConfig = false },
+                onChange = { dxWrapperConfig = it },
             )
         }
     }

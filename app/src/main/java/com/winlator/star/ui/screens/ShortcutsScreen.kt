@@ -9614,37 +9614,37 @@ internal fun DeckShortcutSettingsScreen(
     glossaryQuery?.let { ContainerGlossarySheet(initialQuery = it, onDismiss = { glossaryQuery = null }) }
 
     if (showBox64DownloadSheet) {
-        ContentDownloadSheet(
-            contentType = if (isArm64EC) ContentProfile.ContentType.CONTENT_TYPE_WOWBOX64
-                          else ContentProfile.ContentType.CONTENT_TYPE_BOX64,
+        DeckContentDownloadSheet(
+            contentTypes = listOf(if (isArm64EC) ContentProfile.ContentType.CONTENT_TYPE_WOWBOX64
+                          else ContentProfile.ContentType.CONTENT_TYPE_BOX64),
             onDismiss = { showBox64DownloadSheet = false },
             onContentChanged = {},
         )
     }
     if (showFexCoreDownloadSheet) {
-        ContentDownloadSheet(
-            contentType = ContentProfile.ContentType.CONTENT_TYPE_FEXCORE,
+        DeckContentDownloadSheet(
+            contentTypes = listOf(ContentProfile.ContentType.CONTENT_TYPE_FEXCORE),
             onDismiss = { showFexCoreDownloadSheet = false },
             onContentChanged = {},
         )
     }
     if (showDxvkDownloadSheet) {
-        ContentDownloadSheet(
-            contentType = ContentProfile.ContentType.CONTENT_TYPE_DXVK,
+        DeckContentDownloadSheet(
+            contentTypes = listOf(ContentProfile.ContentType.CONTENT_TYPE_DXVK),
             onDismiss = { showDxvkDownloadSheet = false },
             onContentChanged = {},
         )
     }
     if (showVkd3dDownloadSheet) {
-        ContentDownloadSheet(
-            contentType = ContentProfile.ContentType.CONTENT_TYPE_VKD3D,
+        DeckContentDownloadSheet(
+            contentTypes = listOf(ContentProfile.ContentType.CONTENT_TYPE_VKD3D),
             onDismiss = { showVkd3dDownloadSheet = false },
             onContentChanged = {},
         )
     }
     if (showD7vkDownloadSheet) {
-        ContentDownloadSheet(
-            contentType = ContentProfile.ContentType.CONTENT_TYPE_D7VK,
+        DeckContentDownloadSheet(
+            contentTypes = listOf(ContentProfile.ContentType.CONTENT_TYPE_D7VK),
             onDismiss = { showD7vkDownloadSheet = false },
             onContentChanged = {},
         )
@@ -9656,7 +9656,15 @@ internal fun DeckShortcutSettingsScreen(
         )
     }
     if (showSfWarning) {
-        SurfaceFlingerWarningDialog(
+        DeckWarningDialog(
+            title = "SurfaceFlinger renderer — Experimental",
+            message = "The SurfaceFlinger renderer composites game frames directly through your device's " +
+                "display hardware, bypassing the GL/Vulkan compositor.\n\n" +
+                "On some devices and SoCs this can fault the display/GPU driver and REBOOT your device — " +
+                "possibly losing unsaved game progress or corrupting the container. It is validated only " +
+                "on recent Adreno GPUs.\n\n" +
+                "Use at your own risk.",
+            confirmLabel = "I understand, use it",
             onConfirm = { selectedRenderer = "SurfaceFlinger"; showSfWarning = false },
             onDismiss = { showSfWarning = false },
         )

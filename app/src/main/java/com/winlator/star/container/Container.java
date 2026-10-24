@@ -1,7 +1,9 @@
 package com.winlator.star.container;
 
 import android.os.Environment;
+import android.util.Log;
 
+import com.winlator.star.BuildConfig;
 import com.winlator.star.box64.Box64Preset;
 import com.winlator.star.contentdialog.DXVKConfigDialog;
 import com.winlator.star.contentdialog.WineD3DConfigDialog;
@@ -521,9 +523,12 @@ public class Container {
     // old container keeps generating frames instead of silently turning off.
     public String getFrameGenEngine() {
         String e = getExtra("frameGenEngine", "");
-        if (e.isEmpty()) return isFrameGenEnabled() ? "lsfg-native" : "off";
-        if (e.equals("bionic") || e.equals("lsfg") || e.equals("lsfg-native")) return "lsfg-native";
-        return "off";
+        String resolved;
+        if (e.isEmpty()) resolved = isFrameGenEnabled() ? "lsfg-native" : "off";
+        else if (e.equals("bionic") || e.equals("lsfg") || e.equals("lsfg-native")) resolved = "lsfg-native";
+        else resolved = "off";
+        if (BuildConfig.DEBUG) Log.d("FrameGen", "getFrameGenEngine: rawExtra=\"" + e + "\" -> " + resolved);
+        return resolved;
     }
 
     public void setFrameGenEngine(String engine) {
@@ -531,6 +536,7 @@ public class Container {
         putExtra("frameGenEngine", lsfg ? "lsfg-native" : "off");
         // The legacy bionic flag no longer selects an engine; keep it off so no stale path arms it.
         setFrameGenEnabled(false);
+        if (BuildConfig.DEBUG) Log.d("FrameGen", "setFrameGenEngine: got=\"" + engine + "\" -> stored \"" + getExtra("frameGenEngine", "") + "\"");
     }
 
     public boolean isLsfgEngine() {

@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.winlator.star.BuildConfig
 import com.winlator.star.container.Container
 import com.winlator.star.core.StringUtils
 import java.util.Locale
@@ -386,6 +387,8 @@ internal fun DeckContainerDetailScreen(
                             selected = viewModel.frameGenEngine,
                             onPick = {
                                 viewModel.frameGenEngine = it
+                                if (BuildConfig.DEBUG)
+                                    android.util.Log.d("FrameGen", "container editor picked [" + it + "] -> form frameGenEngine=[" + viewModel.frameGenEngine + "]")
                                 // LSFG Native runs in our Vulkan compositor; arming it on OpenGL or
                                 // SurfaceFlinger silently did nothing. The classic editor forbids
                                 // the combo, so switching the renderer is the only workable pick.

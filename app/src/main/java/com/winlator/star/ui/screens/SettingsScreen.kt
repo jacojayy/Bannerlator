@@ -1090,6 +1090,35 @@ fun SettingsScreen(onSaved: () -> Unit = {}) {
             )
         }
 
+        // ── Appearance ────────────────────────────────────────────────
+        FieldSetLabel("Appearance")
+        FieldSet {
+            Text(
+                "How the Deck container editor arranges its categories.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp,
+            )
+            Spacer(Modifier.height(6.dp))
+            var editorLayout by remember { mutableStateOf(prefs.getString("container_editor_layout", "tabs") ?: "tabs") }
+            val editorLayoutOptions = listOf(
+                "tabs" to "Top Tabs",
+                "rail" to "Side Rail",
+                "pages" to "Pages",
+            )
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                editorLayoutOptions.forEachIndexed { index, (value, label) ->
+                    SegmentedButton(
+                        selected = editorLayout == value,
+                        onClick = {
+                            editorLayout = value
+                            prefs.edit().putString("container_editor_layout", value).apply()
+                        },
+                        shape = SegmentedButtonDefaults.itemShape(index, editorLayoutOptions.size),
+                    ) { Text(label) }
+                }
+            }
+        }
+
         // ── Default Screen on Launch ──────────────────────────────────
         FieldSetLabel("Default Screen on Launch")
         FieldSet {

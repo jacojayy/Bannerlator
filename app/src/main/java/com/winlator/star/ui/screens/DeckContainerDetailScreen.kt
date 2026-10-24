@@ -1,6 +1,8 @@
 package com.winlator.star.ui.screens
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -8,16 +10,20 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -32,13 +38,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.preference.PreferenceManager
 import com.winlator.star.BuildConfig
 import com.winlator.star.container.Container
 import com.winlator.star.core.StringUtils
@@ -106,6 +116,16 @@ internal fun DeckContainerDetailScreen(
     var dxvkRefreshKey by remember { mutableStateOf(0) }
     val isVegasWrapper = StringUtils.parseIdentifier(viewModel.selectedDXWrapper).contains("vegas")
 
+    // Category-navigation layout — a setting (Settings → Appearance → Container Editor Layout).
+    // "tabs" = animated top tabs (default), "rail" = animated left rail, "pages" = full-page list.
+    val context = LocalContext.current
+    val layoutPref = remember {
+        PreferenceManager.getDefaultSharedPreferences(context)
+            .getString("container_editor_layout", "tabs") ?: "tabs"
+    }
+    // "pages" layout: whether a category page is open (false = the category list page).
+    var pagesCategoryOpen by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -119,7 +139,11 @@ internal fun DeckContainerDetailScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(
-                onClick = onNavigateBack,
+                onClick = {
+                    // "pages" layout: Back first closes the open category, then leaves the editor.
+                    if (layoutPref == "pages" && pagesCategoryOpen) pagesCategoryOpen = false
+                    else onNavigateBack()
+                },
                 modifier = Modifier.focusRequester(backFocus),
             ) {
                 Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Deck.onBackground)
@@ -157,16 +181,53 @@ internal fun DeckContainerDetailScreen(
             )
         }
 
-        // ── Top tabs — L1/R1 step them; the accent pill stretches onto the new one ──
-        DeckStretchyTabs(
-            labels = tabTitles,
-            selected = tab,
-            onSelect = { tabs.select(it) },
-            focusable = true,
-            selectOnFocus = true,
-            scroll = true,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
-        )
+        // ── Navigation chrome: top tabs / side rail / full-page category list ──
+        if (layoutPref == "tabs") {
+            // L1/R1 step them; the accent pill stretches onto the new one.
+            DeckStretchyTabs(
+                labels = tabTitles,
+                selected = tab,
+                onSelect = { tabs.select(it) },
+                focusable = true,
+                selectOnFocus = true,
+                scroll = true,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+            )
+        }
+
+        if (layoutPref == "pages" && !pagesCategoryOpen) {
+            // Full-page category list; picking one opens that category (Back returns here).
+            DeckDragFrame(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    tabTitles.forEachIndexed { i, label ->
+                        DeckEditorCategoryRow(
+                            label = label,
+                            selected = i == tab,
+                            onClick = { tabs.select(i); pagesCategoryOpen = true },
+                        )
+                    }
+                    Spacer(Modifier.height(16.dp))
+                }
+            }
+        } else {
+        Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (layoutPref == "rail") {
+                DeckEditorCategoryRail(
+                    labels = tabTitles,
+                    selected = tab,
+                    onSelect = { tabs.select(it) },
+                    modifier = Modifier
+                        .width(200.dp)
+                        .fillMaxHeight()
+                        .padding(start = 16.dp),
+                )
+            }
 
         // ── Tab content — L1/R1 drag the page sideways, DroidDeck's long glide ──
         AnimatedContent(
@@ -186,7 +247,7 @@ internal fun DeckContainerDetailScreen(
             },
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth()
+                .fillMaxHeight()
                 .focusGroup(),
             label = "deckContainerTab",
         ) { currentTab ->
@@ -582,6 +643,8 @@ internal fun DeckContainerDetailScreen(
             }
             }
         }
+        }
+        }
 
         // ── Config panels (the classic editor's per-row settings dialogs) ──
         // Config sections render inline (DeckExpandableRow) in their own tabs above — nothing to
@@ -644,4 +707,96 @@ internal fun DeckContainerDetailScreen(
 /** androidx Color int (ARGB) -> the "#RRGGBB" string the classic ColorPickerView exposed. */
 private fun deckColorAsString(argb: Int): String =
     String.format(Locale.US, "#%06X", 0xFFFFFF and argb)
+
+/**
+ * "rail" layout: the category list down the left, with the animated accent bar + tinted background
+ * that stretches onto the selected item (the same DroidDeck feel as the top tab pill).
+ */
+@Composable
+private fun DeckEditorCategoryRail(
+    labels: List<String>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        labels.forEachIndexed { i, label ->
+            val isSel = i == selected
+            val bg by animateColorAsState(
+                targetValue = if (isSel) Deck.primary.copy(alpha = 0.18f) else Color.Transparent,
+                animationSpec = tween(220, easing = DeckEase),
+                label = "railItemBg",
+            )
+            val accent by animateDpAsState(
+                targetValue = if (isSel) 4.dp else 0.dp,
+                animationSpec = tween(240, easing = DeckEase),
+                label = "railItemAccent",
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(bg)
+                    .clickable { onSelect(i) }
+                    .padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(accent)
+                        .height(22.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Deck.primary),
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = label,
+                    color = if (isSel) Deck.onBackground else Deck.onSurfaceVariant,
+                    fontSize = 14.sp,
+                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * "pages" layout: one full-width card per category on its own page; tapping opens that category.
+ */
+@Composable
+private fun DeckEditorCategoryRow(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val bg by animateColorAsState(
+        targetValue = if (selected) Deck.primary.copy(alpha = 0.18f) else Deck.surface,
+        animationSpec = tween(220, easing = DeckEase),
+        label = "pageItemBg",
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            color = if (selected) Deck.onBackground else Deck.onSurfaceVariant,
+            fontSize = 16.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier.weight(1f),
+        )
+        Text("\u203A", color = Deck.onSurfaceVariant, fontSize = 18.sp)
+    }
+}
 

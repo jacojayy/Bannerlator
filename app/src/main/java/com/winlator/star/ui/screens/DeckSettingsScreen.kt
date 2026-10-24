@@ -117,6 +117,9 @@ internal fun DeckSettingsScreen() {
     var orientation by remember { mutableStateOf(AppOrientation.mode(context)) }
     var uiScale by remember { mutableStateOf(AppThemeState.uiScale.value) }
     var fontScale by remember { mutableStateOf(AppThemeState.fontScale.value) }
+    // Container editor category layout ("tabs" | "rail" | "pages") — immediate-write, read by
+    // DeckContainerDetailScreen on open.
+    var editorLayout by remember { mutableStateOf(prefs.getString("container_editor_layout", "tabs") ?: "tabs") }
 
     // ── Sound (MIDI Sound Font) — same as SettingsScreen's Sound section. ──
     var sfNames by remember { mutableStateOf(listOf<String>()) }
@@ -513,6 +516,24 @@ internal fun DeckSettingsScreen() {
                 onChange = {
                     fontScale = it
                     AppThemeState.setFontScale(it)
+                },
+            )
+        }
+
+        // ── Appearance ──
+        DeckGroup(title = "Appearance") {
+            DeckChoiceRow(
+                label = "Container Editor Layout",
+                hint = "How the container editor arranges its categories",
+                options = listOf(
+                    "tabs" to "Top Tabs (animated)",
+                    "rail" to "Side Rail (animated)",
+                    "pages" to "Category Pages",
+                ),
+                selected = editorLayout,
+                onPick = {
+                    editorLayout = it
+                    prefs.edit().putString("container_editor_layout", it).apply()
                 },
             )
         }

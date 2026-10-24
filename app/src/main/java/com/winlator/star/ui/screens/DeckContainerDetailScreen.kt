@@ -364,7 +364,6 @@ internal fun DeckContainerDetailScreen(
                             )
                         }
                         }
-                        }
                     }
 
                     2 -> {

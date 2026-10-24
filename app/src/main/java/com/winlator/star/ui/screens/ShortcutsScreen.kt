@@ -8940,13 +8940,25 @@ internal fun DeckShortcutSettingsScreen(
     }
     LaunchedEffect(tabIndices) { if (selectedTab !in tabIndices) selectedTab = tabIndices.first() }
 
+    // Category-navigation layout — the SAME setting the container editor honours
+    // (Settings → Appearance → Container Editor Layout): "tabs" | "rail" | "pages".
+    val layoutPref = remember {
+        PreferenceManager.getDefaultSharedPreferences(context)
+            .getString("container_editor_layout", "tabs") ?: "tabs"
+    }
+    // "pages" layout: whether a category page is open (false = the category list page).
+    var pagesCategoryOpen by remember { mutableStateOf(false) }
+
     Surface(color = DeckPalette.background, modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = onDismiss) {
+                IconButton(onClick = {
+                    if (layoutPref == "pages" && pagesCategoryOpen) pagesCategoryOpen = false
+                    else onDismiss()
+                }) {
                     Icon(Icons.Default.Close, contentDescription = "Close", tint = DeckPalette.onBackground)
                 }
                 Text(
@@ -8961,22 +8973,55 @@ internal fun DeckShortcutSettingsScreen(
                 DeckButton("Save") { save(); onDismiss() }
             }
 
-            DeckStretchyTabs(
-                labels = tabTitles,
-                selected = tabIndices.indexOf(selectedTab).coerceAtLeast(0),
-                onSelect = { selectedTab = tabIndices[it] },
-                modifier = Modifier.padding(horizontal = 12.dp),
-                scroll = true,
-                fillWidth = false,
-                focusable = true,
-            )
+            if (layoutPref == "tabs") {
+                DeckStretchyTabs(
+                    labels = tabTitles,
+                    selected = tabIndices.indexOf(selectedTab).coerceAtLeast(0),
+                    onSelect = { selectedTab = tabIndices[it] },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                    scroll = true,
+                    fillWidth = false,
+                    focusable = true,
+                )
+            }
 
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (layoutPref == "pages" && !pagesCategoryOpen) {
                 Column(
-                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 24.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    when (selectedTab) {
+                    tabIndices.forEachIndexed { i, id ->
+                        DeckEditorCategoryRow(
+                            label = tabTitles[i],
+                            selected = id == selectedTab,
+                            onClick = { selectedTab = id; pagesCategoryOpen = true },
+                        )
+                    }
+                    Spacer(Modifier.height(16.dp))
+                }
+            } else {
+            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                if (layoutPref == "rail") {
+                    DeckEditorCategoryRail(
+                        labels = tabTitles,
+                        selected = tabIndices.indexOf(selectedTab).coerceAtLeast(0),
+                        onSelect = { selectedTab = tabIndices[it] },
+                        modifier = Modifier
+                            .width(200.dp)
+                            .fillMaxHeight()
+                            .padding(start = 16.dp),
+                    )
+                }
+                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    Column(
+                        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        when (selectedTab) {
                         0 -> {
                             DeckGroup("Game") {
                                 DeckTextRow("Name", value = name, onValueChange = { name = it })
@@ -9541,6 +9586,8 @@ internal fun DeckShortcutSettingsScreen(
                             tvMatchRes = tvMatchRes,
                             onTvMatchResChange = { tvMatchRes = it },
                         )
+                    }
+                        }
                     }
                 }
             }

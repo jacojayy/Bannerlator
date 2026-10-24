@@ -713,7 +713,7 @@ private fun deckColorAsString(argb: Int): String =
  * that stretches onto the selected item (the same DroidDeck feel as the top tab pill).
  */
 @Composable
-private fun DeckEditorCategoryRail(
+internal fun DeckEditorCategoryRail(
     labels: List<String>,
     selected: Int,
     onSelect: (Int) -> Unit,
@@ -769,7 +769,7 @@ private fun DeckEditorCategoryRail(
  * "pages" layout: one full-width card per category on its own page; tapping opens that category.
  */
 @Composable
-private fun DeckEditorCategoryRow(
+internal fun DeckEditorCategoryRow(
     label: String,
     selected: Boolean,
     onClick: () -> Unit,

@@ -198,65 +198,55 @@ internal fun DeckContainerDetailScreen(
                     .padding(horizontal = 24.dp),
             ) {
                 when (currentTab) {
-                    0 -> DeckGroup("General") {
-                        DeckTextRow(
-                            label = "Container Name",
-                            hint = "Shown in the container list",
-                            value = viewModel.containerName,
-                            onValueChange = { viewModel.containerName = it },
-                            width = 360.dp,
-                        )
-                        DeckChoiceRow(
-                            label = "Screen Size",
-                            options = viewModel.screenSizeEntries.map { it to it },
-                            selected = viewModel.screenSizeEntries.firstOrNull {
-                                it.equals(viewModel.selectedScreenSize, ignoreCase = true)
-                            } ?: viewModel.selectedScreenSize,
-                            onPick = { viewModel.selectedScreenSize = it },
-                        )
-                        if (viewModel.selectedScreenSize.equals("custom", ignoreCase = true)) {
+                    0 -> {
+                        DeckGroup("Container") {
                             DeckTextRow(
-                                label = "Custom Width",
-                                hint = "Even pixel width, e.g. 1280",
-                                value = viewModel.customWidth,
-                                onValueChange = { viewModel.customWidth = it },
+                                label = "Container Name",
+                                hint = "Shown in the container list",
+                                value = viewModel.containerName,
+                                onValueChange = { viewModel.containerName = it },
                                 width = 360.dp,
                             )
-                            DeckTextRow(
-                                label = "Custom Height",
-                                hint = "Even pixel height, e.g. 720",
-                                value = viewModel.customHeight,
-                                onValueChange = { viewModel.customHeight = it },
-                                width = 360.dp,
+                            DeckChoiceRow(
+                                label = "Screen Size",
+                                options = viewModel.screenSizeEntries.map { it to it },
+                                selected = viewModel.screenSizeEntries.firstOrNull {
+                                    it.equals(viewModel.selectedScreenSize, ignoreCase = true)
+                                } ?: viewModel.selectedScreenSize,
+                                onPick = { viewModel.selectedScreenSize = it },
+                            )
+                            if (viewModel.selectedScreenSize.equals("custom", ignoreCase = true)) {
+                                DeckTextRow(
+                                    label = "Custom Width",
+                                    hint = "Even pixel width, e.g. 1280",
+                                    value = viewModel.customWidth,
+                                    onValueChange = { viewModel.customWidth = it },
+                                    width = 360.dp,
+                                )
+                                DeckTextRow(
+                                    label = "Custom Height",
+                                    hint = "Even pixel height, e.g. 720",
+                                    value = viewModel.customHeight,
+                                    onValueChange = { viewModel.customHeight = it },
+                                    width = 360.dp,
+                                )
+                            }
+                        }
+                        DeckGroup("Behaviour") {
+                            DeckRow(
+                                label = "Run as Administrator",
+                                hint = "Disables UAC (EnableLUA=0) inside the Wine prefix",
+                                control = { DeckToggle(viewModel.runAsAdmin) { viewModel.runAsAdmin = it } },
+                            )
+                            DeckRow(
+                                label = "Auto Close on Exit",
+                                control = { DeckToggle(viewModel.autoCloseOnExit) { viewModel.autoCloseOnExit = it } },
                             )
                         }
-                        DeckChoiceRow(
-                            label = "Wine Version",
-                            hint = "The Wine / Proton layer this container runs on",
-                            options = viewModel.wineVersionEntries.map { it to it },
-                            selected = viewModel.selectedWineVersion,
-                            onPick = { viewModel.selectedWineVersion = it },
-                        )
-                        DeckChoiceRow(
-                            label = "Audio Driver",
-                            options = viewModel.audioDriverEntries.map { it to it },
-                            selected = viewModel.selectedAudioDriver,
-                            onPick = { viewModel.selectedAudioDriver = it },
-                        )
-                        DeckChoiceRow(
-                            label = "Language",
-                            options = viewModel.lcAllEntries.map { it to it },
-                            selected = viewModel.lcAll,
-                            onPick = { viewModel.lcAll = it },
-                        )
-                        DeckRow(
-                            label = "Run as Administrator",
-                            hint = "Disables UAC (EnableLUA=0) inside the Wine prefix",
-                            control = { DeckToggle(viewModel.runAsAdmin) { viewModel.runAsAdmin = it } },
-                        )
                     }
 
-                    1 -> DeckGroup("Graphics") {
+                    1 -> {
+                        DeckGroup("Graphics Driver") {
                         DeckChoiceRow(
                             label = "Graphics Driver",
                             hint = "Turnip / system Vulkan driver for Direct3D",
@@ -273,9 +263,11 @@ internal fun DeckContainerDetailScreen(
                             DeckGraphicsDriverConfigEditor(
                                 graphicsDriver = viewModel.selectedGraphicsDriver,
                                 initialConfig = viewModel.graphicsDriverConfig,
-                                onConfirm = { viewModel.graphicsDriverConfig = it; openSection = null },
-                            )
+                                    onConfirm = { viewModel.graphicsDriverConfig = it; openSection = null },
+                                )
+                            }
                         }
+                        DeckGroup("Direct3D") {
                         DeckChoiceRow(
                             label = "DX Wrapper",
                             options = viewModel.dxWrapperEntries.map { it to it },
@@ -311,6 +303,8 @@ internal fun DeckContainerDetailScreen(
                                 )
                             }
                         }
+                        }
+                        DeckGroup("Renderer") {
                         DeckChoiceRow(
                             label = "Renderer",
                             options = viewModel.rendererEntries.map { it to it },
@@ -345,6 +339,8 @@ internal fun DeckContainerDetailScreen(
                                 },
                             )
                         }
+                        }
+                        DeckGroup("Display") {
                         DeckChoiceRow(
                             label = "Fullscreen",
                             options = listOf(
@@ -367,14 +363,14 @@ internal fun DeckContainerDetailScreen(
                                 onConfirm = { viewModel.fpsCounterConfig = it; openSection = null },
                             )
                         }
-                        DeckRow(
-                            label = "Auto Close on Exit",
-                            control = { DeckToggle(viewModel.autoCloseOnExit) { viewModel.autoCloseOnExit = it } },
-                        )
+                        }
+                        }
                     }
 
-                    2 -> DeckGroup("Performance") {
-                        if (viewModel.vulkanSupported) DeckChoiceRow(
+                    2 -> {
+                        if (viewModel.vulkanSupported) {
+                        DeckGroup("Frame Generation") {
+                        DeckChoiceRow(
                             label = "Frame Generation",
                             hint = if (viewModel.frameGenEngine != "off" &&
                                 viewModel.selectedRenderer != "Vulkan")
@@ -397,6 +393,18 @@ internal fun DeckContainerDetailScreen(
                             },
                         )
                         DeckRow(
+                            label = "LSFG Performance Mode",
+                            control = { DeckToggle(viewModel.lsfgPerformanceMode) { viewModel.lsfgPerformanceMode = it } },
+                        )
+                        DeckRow(
+                            label = "LSFG Auto Enable",
+                            hint = "Start frame generation live at launch",
+                            control = { DeckToggle(viewModel.lsfgAutoEnable) { viewModel.lsfgAutoEnable = it } },
+                        )
+                        }
+                        }
+                        DeckGroup("Framerate") {
+                        DeckRow(
                             label = "FPS Limiter",
                             hint = "Loads the limiter layer; the cap is tuned in-game",
                             control = { DeckToggle(viewModel.fpsLimiterEnabled) { viewModel.fpsLimiterEnabled = it } },
@@ -406,26 +414,21 @@ internal fun DeckContainerDetailScreen(
                             hint = "Sync the panel refresh to the game's FPS",
                             control = { DeckToggle(viewModel.matchRefreshRate) { viewModel.matchRefreshRate = it } },
                         )
-                        DeckRow(
-                            label = "LSFG Performance Mode",
-                            control = { DeckToggle(viewModel.lsfgPerformanceMode) { viewModel.lsfgPerformanceMode = it } },
-                        )
-                        DeckRow(
-                            label = "LSFG Auto Enable",
-                            hint = "Start frame generation live at launch",
-                            control = { DeckToggle(viewModel.lsfgAutoEnable) { viewModel.lsfgAutoEnable = it } },
-                        )
+                        }
                     }
 
-                    3 -> DeckGroup("CPU & Emulation") {
+                    3 -> {
                         if (viewModel.emulatorEnabled) {
-                            DeckChoiceRow(
-                                label = "Emulator",
-                                options = viewModel.emulatorEntries.map { it to it },
-                                selected = viewModel.selectedEmulator,
-                                onPick = { viewModel.selectedEmulator = it },
-                            )
+                            DeckGroup("Emulator") {
+                                DeckChoiceRow(
+                                    label = "Emulator",
+                                    options = viewModel.emulatorEntries.map { it to it },
+                                    selected = viewModel.selectedEmulator,
+                                    onPick = { viewModel.selectedEmulator = it },
+                                )
+                            }
                         }
+                        DeckGroup("Box64") {
                         DeckChoiceRow(
                             label = "Box64 Version",
                             options = viewModel.box64VersionEntries.map { it to it },
@@ -438,7 +441,9 @@ internal fun DeckContainerDetailScreen(
                             selected = viewModel.selectedBox64PresetIndex.toString(),
                             onPick = { viewModel.selectedBox64PresetIndex = it.toInt() },
                         )
+                        }
                         if (viewModel.isArm64EC) {
+                            DeckGroup("FEXCore") {
                             DeckChoiceRow(
                                 label = "FEXCore Version",
                                 options = viewModel.fexCoreVersionEntries.map { it to it },
@@ -451,10 +456,12 @@ internal fun DeckContainerDetailScreen(
                                 selected = viewModel.selectedFEXCorePresetIndex.toString(),
                                 onPick = { viewModel.selectedFEXCorePresetIndex = it.toInt() },
                             )
+                            }
                         }
                     }
 
-                    4 -> DeckGroup("Input") {
+                    4 -> {
+                        DeckGroup("Input") {
                         DeckRow(
                             label = "Exclusive Input",
                             hint = "One controller API at a time (XInput or DInput). Off lets Wine expose both.",
@@ -472,6 +479,8 @@ internal fun DeckContainerDetailScreen(
                             label = "DInput",
                             control = { DeckToggle(viewModel.enableDInput) { viewModel.enableDInput = it } },
                         )
+                        }
+                        DeckGroup("Feedback") {
                         DeckChoiceRow(
                             label = "Controller Vibration",
                             options = listOf(
@@ -495,6 +504,7 @@ internal fun DeckContainerDetailScreen(
                             hint = "Motion-controlled aiming default for this container",
                             control = { DeckToggle(viewModel.gyroEnabled) { viewModel.gyroEnabled = it } },
                         )
+                        }
                     }
 
                     5 -> DeckGroup("Environment") {
@@ -518,19 +528,42 @@ internal fun DeckContainerDetailScreen(
                         )
                     }
 
-                    else -> DeckGroup("Wine") {
-                        DeckChoiceRow(
-                            label = "Desktop Theme",
-                            options = listOf("Light" to "0", "Dark" to "1"),
-                            selected = viewModel.desktopThemeIndex.toString(),
-                            onPick = { viewModel.desktopThemeIndex = it.toInt() },
-                        )
-                        DeckChoiceRow(
-                            label = "Mouse Warp",
-                            options = viewModel.mouseWarpEntries.mapIndexed { i, e -> i.toString() to e },
-                            selected = viewModel.selectedMouseWarpIndex.toString(),
-                            onPick = { viewModel.selectedMouseWarpIndex = it.toInt() },
-                        )
+                    else -> {
+                        DeckGroup("Wine") {
+                            DeckChoiceRow(
+                                label = "Wine Version",
+                                hint = "The Wine / Proton layer this container runs on",
+                                options = viewModel.wineVersionEntries.map { it to it },
+                                selected = viewModel.selectedWineVersion,
+                                onPick = { viewModel.selectedWineVersion = it },
+                            )
+                            DeckChoiceRow(
+                                label = "Audio Driver",
+                                options = viewModel.audioDriverEntries.map { it to it },
+                                selected = viewModel.selectedAudioDriver,
+                                onPick = { viewModel.selectedAudioDriver = it },
+                            )
+                            DeckChoiceRow(
+                                label = "Language",
+                                options = viewModel.lcAllEntries.map { it to it },
+                                selected = viewModel.lcAll,
+                                onPick = { viewModel.lcAll = it },
+                            )
+                        }
+                        DeckGroup("Desktop") {
+                            DeckChoiceRow(
+                                label = "Theme",
+                                options = listOf("0" to "Light", "1" to "Dark"),
+                                selected = viewModel.desktopThemeIndex.toString(),
+                                onPick = { viewModel.desktopThemeIndex = it.toInt() },
+                            )
+                            DeckChoiceRow(
+                                label = "Mouse Warp",
+                                options = viewModel.mouseWarpEntries.mapIndexed { i, e -> i.toString() to e },
+                                selected = viewModel.selectedMouseWarpIndex.toString(),
+                                onPick = { viewModel.selectedMouseWarpIndex = it.toInt() },
+                            )
+                        }
                     }
                 }
 

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -32,6 +33,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.outlined.HelpOutline
@@ -70,9 +72,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.winlator.star.core.StringUtils
 import com.winlator.star.contentdialog.DXVKConfigDialog
 import com.winlator.star.contentdialog.VegasKeyKnowledge
@@ -257,36 +261,45 @@ internal fun DeckChoiceRowWithDownload(
     }
 }
 
-/** A Deck-styled popup for config sub-pickers (add key, value picker, …). */
+/**
+ * The Deck config popup. Near-fullscreen (96% × 94%) so long editors breathe, with a modern Deck
+ * header + close, a hairline, and a single scroll surface. Controller-first: it owns focus on open,
+ * D-pad walks every row/pill/toggle, and B closes (leaving a text field first if one is editing).
+ */
 @Composable
-internal fun DeckConfigDialog(title: String, onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+internal fun DeckConfigDialog(
+    title: String,
+    onDismiss: () -> Unit,
+    subtitle: String? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     val focusManager = LocalFocusManager.current
     val editTracker = LocalDeckEditTracker.current
     val rootFocus = remember { FocusRequester() }
-    var rootFocused by remember { mutableStateOf(false) }
-    // Controller-first: the popup owns focus on open, D-pad walks it, and B closes it.
+    // Controller-first: the popup owns focus on open so the very first D-pad press walks it.
     LaunchedEffect(Unit) { runCatching { rootFocus.requestFocus() } }
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 560.dp)
-                .clip(RoundedCornerShape(16.dp))
+                .fillMaxWidth(0.96f)
+                .fillMaxHeight(0.94f)
+                .clip(RoundedCornerShape(24.dp))
                 .background(DeckPalette.surface)
-                .border(1.dp, DeckPalette.line2, RoundedCornerShape(16.dp))
+                .border(1.dp, DeckPalette.line2, RoundedCornerShape(24.dp))
                 .focusRequester(rootFocus)
-                .onFocusChanged { rootFocused = it.isFocused }
                 .focusable()
                 .onPreviewKeyEvent { e ->
                     if (e.type == KeyEventType.KeyDown &&
                         (e.key == Key.ButtonB || e.key == Key.Back)
                     ) {
-                        // While one of the popup's text fields is editing, B leaves the field.
+                        // While a text field is editing, B leaves the field instead of closing.
                         if (editTracker.editing) false else { onDismiss(); true }
                     } else false
                 }
                 .onKeyEvent { e ->
-                    if (e.type != KeyEventType.KeyDown || !rootFocused) return@onKeyEvent false
+                    // Bubbles up from the focused child, so a focused text field keeps its own keys
+                    // and everything else still walks the popup with the D-pad.
+                    if (e.type != KeyEventType.KeyDown || editTracker.editing) return@onKeyEvent false
                     val dir = when (e.key) {
                         Key.DirectionUp -> FocusDirection.Up
                         Key.DirectionDown -> FocusDirection.Down
@@ -295,21 +308,46 @@ internal fun DeckConfigDialog(title: String, onDismiss: () -> Unit, content: @Co
                         else -> null
                     } ?: return@onKeyEvent false
                     focusManager.moveFocusSafely(dir)
-                }
-                .padding(16.dp),
+                },
         ) {
-            Text(
-                text = title,
-                color = DeckPalette.onBackground,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 8.dp),
-            )
+            // Header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 22.dp, end = 10.dp, top = 14.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text(
+                        text = title,
+                        color = DeckPalette.onBackground,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (subtitle != null) {
+                        Text(
+                            text = subtitle,
+                            color = DeckPalette.onSurfaceVariant,
+                            fontSize = 12.5.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                    }
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = DeckPalette.onSurfaceVariant)
+                }
+            }
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(DeckPalette.line))
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f, fill = false)
-                    .verticalScroll(rememberScrollState()),
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 22.dp, vertical = 14.dp),
                 content = content,
             )
         }

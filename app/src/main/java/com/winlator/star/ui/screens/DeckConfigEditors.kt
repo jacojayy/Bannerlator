@@ -1161,13 +1161,18 @@ internal fun DeckGraphicsDriverConfigEditor(
                     graphicsProbeMutex.withLock { arr.filter { com.winlator.star.core.GPUInformation.isDriverSupported(it, context) } }
                 }
             }
-        driverVersions = wrapperVersions + atVersions
+        val allVersions = wrapperVersions + atVersions
         gpuNames = gpuList
-        if (version.isEmpty() || (wrapperVersions + atVersions).none { it.equals(version, ignoreCase = true) }) {
+        if (version.isEmpty()) {
             version = wrapperVersions.firstOrNull { it.equals(com.winlator.star.core.DefaultVersion.WRAPPER_ADRENO, ignoreCase = true) }
                 ?: wrapperVersions.firstOrNull { it.equals(com.winlator.star.core.DefaultVersion.WRAPPER, ignoreCase = true) }
                 ?: wrapperVersions.firstOrNull() ?: version
         }
+        // Never silently drop a stored version that isn't in the (filtered) list. An uninstalled or
+        // GPU-filtered-out driver must round-trip: otherwise merely opening this panel and tapping
+        // Apply overwrote the container's real driver version with the default (turnip-sdk36).
+        driverVersions = if (version.isNotEmpty() && allVersions.none { it.equals(version, ignoreCase = true) })
+            listOf(version) + allVersions else allVersions
     }
 
     LaunchedEffect(version) {
@@ -1436,7 +1441,14 @@ internal fun DeckDxvkConfigEditor(
                     ?.mapNotNull { it.verName }?.distinct().orEmpty()
             else listOf()
             withContext(Dispatchers.Main) {
-                allDxvkVersions.value = versions
+                // Preserve a stored DXVK/VEGAS version even when it's no longer installed, so
+                // opening the panel and tapping Apply can't silently revert it to the first
+                // installed build (e.g. 1.11.1-sarek).
+                val storedDxvkVersion = config.get("version")
+                allDxvkVersions.value =
+                    if (storedDxvkVersion.isNotEmpty() && versions.none { it == storedDxvkVersion })
+                        listOf(storedDxvkVersion) + versions
+                    else versions
                 vkd3dVersions.value = vkd3d
                 d7vkVersions.value = d7vk
                 configSourceEntries.value = cfgsrc
@@ -1457,10 +1469,14 @@ internal fun DeckDxvkConfigEditor(
 
     var selectedVkd3d by remember { mutableStateOf(config.get("vkd3dVersion").ifEmpty { "None" }) }
 
-    val filteredDxvk = remember(selectedVkd3d, allDxvkVersions.value, relaxDxvkFilter) {
-        if (selectedVkd3d != "None" && !relaxDxvkFilter) {
+    val storedDxvkForFilter = config.get("version")
+    val filteredDxvk = remember(selectedVkd3d, allDxvkVersions.value, relaxDxvkFilter, storedDxvkForFilter) {
+        val base = if (selectedVkd3d != "None" && !relaxDxvkFilter) {
             allDxvkVersions.value.filter { v -> val major = DXVKConfigDialog.tryGetMajor(v); major == null || major >= 2 }
         } else allDxvkVersions.value
+        // Keep the stored version visible even if the VKD3D major-version filter would hide it.
+        if (storedDxvkForFilter.isNotEmpty() && base.none { it == storedDxvkForFilter })
+            listOf(storedDxvkForFilter) + base else base
     }
     var selectedDxvk by remember(allDxvkVersions.value) {
         val stored = config.get("version")

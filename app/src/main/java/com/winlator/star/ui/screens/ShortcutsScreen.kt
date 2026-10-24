@@ -9610,7 +9610,7 @@ internal fun DeckShortcutSettingsScreen(
         showWrapperManager = false
         wrapperRefreshKey++
     })
-    glossaryQuery?.let { ContainerGlossarySheet(initialQuery = it, onDismiss = { glossaryQuery = null }) }
+    glossaryQuery?.let { DeckGlossarySheet(initialQuery = it, onDismiss = { glossaryQuery = null }) }
 
     if (showBox64DownloadSheet) {
         DeckContentDownloadSheet(

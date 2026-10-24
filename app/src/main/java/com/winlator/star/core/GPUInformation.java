@@ -8,6 +8,18 @@ public abstract class GPUInformation {
         return getRenderer(null, context).toLowerCase().contains("adreno");
     }
 
+    /**
+     * True when the device exposes a hardware Vulkan implementation. Used to hide the Vulkan /
+     * SurfaceFlinger renderers and Frame Generation (LSFG Native runs on the Vulkan compositor)
+     * on devices that have no Vulkan at all — otherwise those options appear selectable and then
+     * silently do nothing. Whether a chosen driver can actually run the layer is still reported
+     * in-game once a renderer is up.
+     */
+    public static boolean isVulkanSupported(Context context) {
+        return context.getPackageManager()
+            .hasSystemFeature(android.content.pm.PackageManager.FEATURE_VULKAN_HARDWARE_VERSION);
+    }
+
     public static boolean isDriverSupported(String driverName, Context context) {
         if (!isAdrenoGPU(context) && !driverName.equals("System"))
             return false;

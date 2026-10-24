@@ -1273,7 +1273,7 @@ private fun TopLevelFields(
         // FG's present-mode/mailbox delivery only exists on the Vulkan host renderer; OpenGL (GLRenderer)
         // and SurfaceFlinger (ASR) have no present-mode control, so FG is unsupported there — gate the
         // whole dropdown on Vulkan and grey it out otherwise (combined with the lsfg-DLL option gate).
-        val fgVulkan = viewModel.selectedRenderer == "Vulkan"
+        val fgVulkan = viewModel.vulkanSupported && viewModel.selectedRenderer == "Vulkan"
         val fgShown = fgEngineLabels[fgSelIdx]
         // Per-engine paragraphs used to print inline under this row (and under the model picker);
         // they now join the generic help behind the row's "?".

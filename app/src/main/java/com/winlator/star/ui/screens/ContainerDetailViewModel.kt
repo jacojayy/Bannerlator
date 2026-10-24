@@ -313,6 +313,9 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
     // ── Renderer ──────────────────────────────────────────────────────────────
     var rendererEntries by mutableStateOf(emptyList<String>()); private set
     var selectedRenderer by mutableStateOf("OpenGL")
+    // False when the device has no hardware Vulkan: the Vulkan/SurfaceFlinger renderers and the
+    // Frame Generation row are then hidden, since they can only run on the Vulkan compositor.
+    var vulkanSupported by mutableStateOf(true); private set
 
     var lcAll by mutableStateOf("")
     var lcAllEntries by mutableStateOf(emptyList<String>()); private set
@@ -493,7 +496,9 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
         // (refreshGraphicsDriverEntries below re-reads the wrapper part after an import/delete.)
         audioDriverEntries = res.getStringArray(R.array.audio_driver_entries).toList()
         emulatorEntries   = res.getStringArray(R.array.emulator_entries).toList()
-        rendererEntries = listOf("OpenGL", "Vulkan", "SurfaceFlinger")
+        vulkanSupported = GPUInformation.isVulkanSupported(context)
+        rendererEntries = if (vulkanSupported) listOf("OpenGL", "Vulkan", "SurfaceFlinger")
+                          else listOf("OpenGL")
         lcAllEntries      = res.getStringArray(R.array.some_lc_all).toList()
         startupSelectionEntries = res.getStringArray(R.array.startup_selection_entries).toList()
         mouseWarpEntries  = listOf(

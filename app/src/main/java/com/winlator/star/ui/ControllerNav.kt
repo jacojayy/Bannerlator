@@ -36,8 +36,8 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 
-/** Amethyst (ThemePreset "Amethyst" primary) — the purple used for the focus outline. */
-private val FocusOutlineColor = Color(0xFFA855F7)
+/** Azure (ThemePreset "Azure" primary) — the blue used for the focus outline. */
+private val FocusOutlineColor = Color(0xFF1A9FFF)
 
 /** Root node that owns fallback D-pad focus for the window; screens re-seed it on navigation. */
 val LocalControllerRootFocus = staticCompositionLocalOf { FocusRequester() }

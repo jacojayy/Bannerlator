@@ -374,7 +374,7 @@ internal fun DeckContainerDetailScreen(
                     }
 
                     2 -> DeckGroup("Performance") {
-                        DeckChoiceRow(
+                        if (viewModel.vulkanSupported) DeckChoiceRow(
                             label = "Frame Generation",
                             hint = if (viewModel.frameGenEngine != "off" &&
                                 viewModel.selectedRenderer != "Vulkan")

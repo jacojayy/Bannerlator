@@ -203,19 +203,19 @@ object ComposeNotifier : Application.ActivityLifecycleCallbacks {
     @Composable
     private fun NoticeCard(message: String, onClick: () -> Unit) {
         val shape = RoundedCornerShape(22.dp)
-        val violet = Color(0xFFA855F7)
+        val accent = Color(0xFF1A9FFF)
 
         Column(
             modifier = Modifier
                 .width(316.dp)
-                .shadow(20.dp, shape, clip = false, ambientColor = violet, spotColor = violet)
+                .shadow(20.dp, shape, clip = false, ambientColor = accent, spotColor = accent)
                 .clip(shape)
                 .background(
                     Brush.linearGradient(
                         listOf(
-                            Color(0xFF9333EA),
-                            Color(0xFF6D28D9),
-                            Color(0xFF3B0F6B),
+                            Color(0xFF2E7DE0),
+                            Color(0xFF1A5FBF),
+                            Color(0xFF0A2A52),
                         )
                     )
                 )

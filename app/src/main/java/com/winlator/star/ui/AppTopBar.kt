@@ -34,7 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /** Right-hand end of the header hairline — the Synthwave primary, so the rail reads purple → magenta. */
-private val HairlineMagenta = Color(0xFFFF2D95)
+private val HairlineBlue = Color(0xFF4FB2FF)
 
 /** Header underline weight: 1dp is a sub-pixel hairline on mdpi panels, 2dp stops reading "thin". */
 private val HairlineThickness = 1.5f.dp
@@ -68,7 +68,7 @@ fun AppTopBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(if (transparent) Color.Transparent else MaterialTheme.colorScheme.surface)
-            // Amethyst hairline separating the header band from the screen below: purple → magenta,
+            // Azure hairline separating the header band from the screen below: blue → lighter blue,
             // tips faded so it reads as a rail rather than a cut. Drawn, not laid out, so the band
             // keeps its 40dp height and `transparent` (the XMB see-through bar) is left untouched.
             .drawBehind {
@@ -78,8 +78,8 @@ fun AppTopBar(
                         brush = Brush.horizontalGradient(
                             0f to accent.copy(alpha = 0f),
                             0.10f to accent,
-                            0.90f to HairlineMagenta,
-                            1f to HairlineMagenta.copy(alpha = 0f),
+                            0.90f to HairlineBlue,
+                            1f to HairlineBlue.copy(alpha = 0f),
                         ),
                         topLeft = Offset(0f, size.height - h),
                         size = Size(size.width, h),

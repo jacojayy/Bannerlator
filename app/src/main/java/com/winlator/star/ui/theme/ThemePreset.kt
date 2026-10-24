@@ -195,11 +195,11 @@ val themePresets: List<ThemePreset> = listOf(
         primary       = Color(0xFFFF6A2C),
     ),
     ThemePreset(
-        name          = "Amethyst",
-        background    = Color(0xFF140D1F),
-        surface       = Color(0xFF1E1430),
-        surfaceVariant= Color(0xFF2A1C42),
-        primary       = Color(0xFFA855F7),
+        name          = "Azure",
+        background    = Color(0xFF0A0E17),
+        surface       = Color(0xFF111A2E),
+        surfaceVariant= Color(0xFF18243F),
+        primary       = Color(0xFF1A9FFF),
     ),
     ThemePreset(
         name          = "Crimson",
@@ -255,4 +255,4 @@ val CUSTOM_PRESET_INDEX = themePresets.size - 1
 
 // The app's default theme. Resolved by name so reordering or adding presets above it can never
 // silently point the app at a different colour scheme.
-val AMETHYST_PRESET_INDEX = themePresets.indexOfFirst { it.name == "Amethyst" }.coerceAtLeast(0)
+val AMETHYST_PRESET_INDEX = themePresets.indexOfFirst { it.name == "Azure" }.coerceAtLeast(0)

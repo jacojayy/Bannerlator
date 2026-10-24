@@ -8386,6 +8386,1299 @@ internal fun ShortcutSettingsDialogScreen(
     } // settings Dialog
 }
 
+/**
+ * Deck-native, full-screen replacement for [ShortcutSettingsDialogScreen]. Same stored fields and the
+ * same save() semantics (the full ~70 shortcut extras), but rendered in the Deck style (DeckPalette /
+ * DeckGroup / DeckChoiceRow / DeckToggle / DeckTextRow) so the per-game editor matches the rest of
+ * Deck mode instead of the classic Material dialog.
+ *
+ * The heavy sub-editors are reused verbatim (ScWinComponentsTab, ScEnvVarsTab, ScAdvancedTab, ScTvTab,
+ * PlayerSlotsEditor and every config/help/audio dialog), so no setting is lost.
+ */
+@Composable
+internal fun DeckShortcutSettingsScreen(
+    shortcut: Shortcut,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val res = context.resources
+    val dp = remember { SettingsDpad() }
+
+    val isEpicShortcut = remember { shortcut.getExtra("storeSource") == "epic" }
+    val isLinuxEntry = false
+
+    var epicEosEnabled by remember { mutableStateOf(shortcut.getExtra("epicEos", "1") != "0") }
+    var epicOvtForce by remember { mutableStateOf(shortcut.getExtra("epicOvtForce", "0") == "1") }
+    var epicOffline by remember { mutableStateOf(shortcut.getExtra("epicOffline", "0") == "1") }
+    var epicOverlayEnabled by remember { mutableStateOf(shortcut.getExtra("epicOverlay", "0") == "1") }
+
+    var isArm64EC by remember { mutableStateOf(false) }
+    var archLoaded by remember { mutableStateOf(false) }
+    var box64Versions by remember { mutableStateOf(listOf<String>()) }
+    var box64Presets by remember { mutableStateOf(listOf<Box64Preset>()) }
+    var fexCoreVersions by remember { mutableStateOf(listOf<String>()) }
+    var fexCorePresets by remember { mutableStateOf(listOf<FEXCorePreset>()) }
+    var controlsProfiles by remember { mutableStateOf(listOf<ControlsProfile>()) }
+    var midiList by remember { mutableStateOf(listOf<String>()) }
+
+    val screenSizeEntries = remember { res.getStringArray(R.array.screen_size_entries).toList() }
+    val rawScreenSize = remember { shortcut.getExtra("screenSize", shortcut.container.getScreenSize()) }
+    var selectedScreenSize by remember {
+        val display = screenSizeEntries.firstOrNull {
+            StringUtils.parseIdentifier(it).equals(rawScreenSize, ignoreCase = true)
+        }
+        mutableStateOf(display ?: "Custom")
+    }
+    var customWidth by remember {
+        mutableStateOf(if (rawScreenSize.contains("x")) rawScreenSize.substringBefore("x") else "800")
+    }
+    var customHeight by remember {
+        mutableStateOf(if (rawScreenSize.contains("x")) rawScreenSize.substringAfter("x") else "600")
+    }
+    var screenAlignment by remember { mutableStateOf(shortcut.getExtra("screenAlignment", "")) }
+
+    var wrapperRefreshKey by remember { mutableStateOf(0) }
+    val graphicsDriverEntries = remember(wrapperRefreshKey) {
+        WrapperManager.driverEntries(context, res.getStringArray(R.array.graphics_driver_entries))
+    }
+    var selectedGfxDriver by remember {
+        val id = shortcut.getExtra("graphicsDriver", shortcut.container.graphicsDriver)
+        mutableStateOf(graphicsDriverEntries.firstOrNull { StringUtils.parseIdentifier(it) == id }
+            ?: graphicsDriverEntries.firstOrNull() ?: id)
+    }
+    var graphicsDriverConfig by remember {
+        mutableStateOf(shortcut.getExtra("graphicsDriverConfig", shortcut.container.getGraphicsDriverConfig()))
+    }
+
+    val dxWrapperEntries = remember { res.getStringArray(R.array.dxwrapper_entries).toList() }
+    var selectedDxWrapper by remember {
+        val id = shortcut.getExtra("dxwrapper", shortcut.container.getDXWrapper())
+        mutableStateOf(dxWrapperEntries.firstOrNull { StringUtils.parseIdentifier(it) == id }
+            ?: dxWrapperEntries.firstOrNull() ?: id)
+    }
+    var dxWrapperConfig by remember {
+        mutableStateOf(shortcut.getExtra("dxwrapperConfig", shortcut.container.getDXWrapperConfig()))
+    }
+
+    var selectedRenderer by remember {
+        val id = shortcut.getExtra("renderer", shortcut.container.renderer)
+        mutableStateOf(
+            when {
+                id.equals("vulkan", ignoreCase = true) -> "Vulkan"
+                id.equals("surfaceflinger", ignoreCase = true) -> "SurfaceFlinger"
+                else -> "OpenGL"
+            }
+        )
+    }
+    var sfCompatMode by remember {
+        mutableStateOf(shortcut.getExtra("sfCompatMode",
+            if (shortcut.container.getRendererSfCompatMode()) "1" else "0") == "1")
+    }
+    var unrealHdrOverride by remember { mutableStateOf(com.winlator.star.core.UnrealHdr.shortcutChoice(shortcut)) }
+
+    var vkNative by remember {
+        mutableStateOf(shortcut.getExtra("native",
+            if (shortcut.container.isRendererNative()) "true" else "false") == "true")
+    }
+    var vkSwapRB by remember {
+        mutableStateOf(shortcut.getExtra("swapRB",
+            if (shortcut.container.getRendererSwapRB()) "true" else "false") == "true")
+    }
+    var vkPresentMode by remember {
+        mutableStateOf(shortcut.getExtra("presentMode", shortcut.container.getRendererPresentMode()))
+    }
+    var vkNativeBackend by remember {
+        mutableStateOf(shortcut.getExtra("nativeBackend", shortcut.container.getRendererNativeBackend()))
+    }
+    var vkRendererDriverId by remember {
+        mutableStateOf(shortcut.getExtra("rendererDriverId", shortcut.container.getRendererDriverId()))
+    }
+    var renderScale by remember {
+        mutableStateOf(shortcut.getExtra("renderScale", shortcut.container.getExtra("renderScale", "1.0")))
+    }
+    var maxGameRefreshRate by remember { mutableStateOf(shortcut.getExtra("maxGameRefreshRate", "")) }
+    var unlockGameRefreshRate by remember { mutableStateOf(shortcut.getExtra("unlockGameRefreshRate", "")) }
+
+    val fgEngines = remember { listOf("off", "lsfg-native") }
+    var frameGenEngine by remember {
+        mutableStateOf(shortcut.getExtra("frameGenEngine", shortcut.container.frameGenEngine)
+            .let { if (it == "bionic" || it == "lsfg") "lsfg-native" else it }
+            .let { if (it == "off") shortcut.container.frameGenEngine else it })
+    }
+    val lsfgDllAvailable = remember { File(context.filesDir, "lsfg-vk/Lossless.dll").isFile }
+
+    var fpsLimiterEnabled by remember {
+        mutableStateOf(
+            shortcut.getExtra("fpsLimiterEnabled", if (shortcut.container.isFpsLimiterEnabled) "1" else "0") == "1"
+        )
+    }
+    var sustainedPerfMode by remember {
+        mutableStateOf(shortcut.getExtra("sustainedPerfMode",
+            if (com.winlator.star.perf.PerformanceSettings.sustainedPerfMode.value) "1" else "0") == "1")
+    }
+    var perfPriorityBoost by remember {
+        mutableStateOf(shortcut.getExtra("perfPriorityBoost",
+            if (com.winlator.star.perf.PerformanceSettings.perfPriorityBoost.value) "1" else "0") == "1")
+    }
+    var preferBigCores by remember {
+        mutableStateOf(shortcut.getExtra("preferBigCores",
+            if (com.winlator.star.perf.PerformanceSettings.preferBigCores.value) "1" else "0") == "1")
+    }
+    val rootOverrides = remember {
+        mutableStateMapOf<String, Boolean>().apply {
+            for (k in com.winlator.star.perf.PerfRootApplier.ROOT_KEYS)
+                put(k, shortcut.getExtra(k, if (com.winlator.star.perf.PerformanceSettings.rootDefaultValue(k)) "1" else "0") == "1")
+        }
+    }
+
+    val audioDriverEntries = remember { res.getStringArray(R.array.audio_driver_entries).toList() }
+    val directAudioSupported = remember {
+        isLinuxEntry || com.winlator.star.core.DirectAudioSupport.isSupported(shortcut.container.wineVersion)
+    }
+    val directAudioEntry = remember {
+        audioDriverEntries.firstOrNull { StringUtils.parseIdentifier(it) == "directaudio" }
+    }
+    var selectedAudioDriver by remember {
+        var id = shortcut.getExtra("audioDriver", shortcut.container.audioDriver)
+        if (id == "directaudio" && !directAudioSupported) id = Container.DEFAULT_AUDIO_DRIVER
+        mutableStateOf(audioDriverEntries.firstOrNull { StringUtils.parseIdentifier(it) == id }
+            ?: audioDriverEntries.firstOrNull() ?: id)
+    }
+
+    val emulatorEntries = remember { res.getStringArray(R.array.emulator_entries).toList() }
+    var selectedEmulator by remember {
+        val id = shortcut.getExtra("emulator", shortcut.container.emulator) ?: ""
+        mutableStateOf(emulatorEntries.firstOrNull { StringUtils.parseIdentifier(it) == id }
+            ?: emulatorEntries.firstOrNull() ?: id)
+    }
+
+    var selectedMidi by remember {
+        mutableStateOf(shortcut.getExtra("midiSoundFont", shortcut.container.getMIDISoundFont()))
+    }
+
+    var name by remember { mutableStateOf(shortcut.name) }
+    var execArgs by remember { mutableStateOf(shortcut.getExtra("execArgs")) }
+    var lcAll by remember { mutableStateOf(shortcut.getExtra("lc_all", shortcut.container.getLC_ALL())) }
+
+    var fullscreenModeOverride by remember {
+        mutableStateOf(
+            run {
+                val m = shortcut.getExtra("fullscreenMode")
+                when {
+                    m.isNotEmpty() -> m.toIntOrNull() ?: -1
+                    shortcut.getExtra("fullscreenStretched", "") == "1" -> Container.FULLSCREEN_STRETCH
+                    else -> -1
+                }
+            }
+        )
+    }
+    var autoCloseOnExit by remember {
+        mutableStateOf(shortcut.getExtra("autoCloseOnExit", shortcut.container.getExtra("autoCloseOnExit", "1")) == "1")
+    }
+    var exclusiveXInput by remember {
+        val v = shortcut.getExtra("exclusiveXInput")
+        mutableStateOf(if (v.isEmpty()) shortcut.container.isExclusiveXInput else v == "1")
+    }
+    val initialInputType = remember {
+        shortcut.getExtra("inputType", shortcut.container.getInputType().toString()).toIntOrNull()
+            ?: shortcut.container.getInputType()
+    }
+    var enableXInput by remember { mutableStateOf((initialInputType and WinHandler.FLAG_INPUT_TYPE_XINPUT.toInt()) != 0) }
+    var enableDInput by remember { mutableStateOf((initialInputType and WinHandler.FLAG_INPUT_TYPE_DINPUT.toInt()) != 0) }
+    var disabledXInput by remember { mutableStateOf(shortcut.getExtra("disableXinput", "0") == "1") }
+    var simTouchScreen by remember { mutableStateOf(shortcut.getExtra("simTouchScreen", "0") == "1") }
+    var controllerSlotOverridesJson by remember { mutableStateOf(shortcut.getExtra("controllerSlotOverrides", "")) }
+    var autoHideControlsOnPad by remember { mutableStateOf(shortcut.getExtra("autoHideControlsOnPad", "")) }
+
+    val numControllersEntries = remember { res.getStringArray(R.array.num_controllers_entries).toList() }
+    var selectedNumControllers by remember {
+        val n = (shortcut.getExtra("numControllers", "1").toIntOrNull() ?: 1).coerceIn(1, numControllersEntries.size)
+        mutableStateOf(numControllersEntries.getOrElse(n - 1) { numControllersEntries.first() })
+    }
+
+    var selectedBox64Version by remember {
+        mutableStateOf(shortcut.getExtra("box64Version", shortcut.container.getBox64Version()) ?: "")
+    }
+    var selectedBox64PresetIndex by remember { mutableIntStateOf(0) }
+    var selectedFexCoreVersion by remember {
+        mutableStateOf(shortcut.getExtra("fexcoreVersion", shortcut.container.getFEXCoreVersion()) ?: "")
+    }
+    var selectedFexCorePresetIndex by remember { mutableIntStateOf(0) }
+    var selectedControlsProfileIndex by remember { mutableIntStateOf(0) }
+
+    val startupSelectionEntries = remember { res.getStringArray(R.array.startup_selection_entries).toList() }
+    var selectedStartupSelection by remember {
+        val idx = (shortcut.getExtra("startupSelection", shortcut.container.getStartupSelection().toString())
+            .toIntOrNull() ?: 0).coerceIn(0, startupSelectionEntries.lastIndex)
+        mutableStateOf(startupSelectionEntries.getOrElse(idx) { startupSelectionEntries.first() })
+    }
+    var startupServicesEnabled by remember {
+        mutableStateOf(
+            WineUtils.parseStartupServicesCsv(
+                shortcut.getExtra("startupServices", shortcut.container.startupServices)
+            ).toSet()
+        )
+    }
+
+    val sharpnessEffectEntries = remember { res.getStringArray(R.array.vkbasalt_sharpness_entries).toList() }
+    var selectedSharpnessEffect by remember {
+        val v = shortcut.getExtra("sharpnessEffect", "None")
+        mutableStateOf(sharpnessEffectEntries.firstOrNull { it == v } ?: sharpnessEffectEntries.firstOrNull() ?: v)
+    }
+    var sharpnessLevel by remember {
+        mutableIntStateOf(shortcut.getExtra("sharpnessLevel", "100").toIntOrNull() ?: 100)
+    }
+    var sharpnessDenoise by remember {
+        mutableIntStateOf(shortcut.getExtra("sharpnessDenoise", "100").toIntOrNull() ?: 100)
+    }
+
+    var reshadeEffects by remember { mutableStateOf(ReshadeManager.scanEffects(context)) }
+    val reshadeLoadout = remember { ReshadeLoadoutState() }
+    LaunchedEffect(Unit) {
+        reshadeLoadout.init(
+            reshadeEffects,
+            shortcut.getExtra("reshadeLoadout", shortcut.container.getReshadeLoadout()).ifEmpty { null },
+            shortcut.getExtra("reshadeMode", shortcut.container.getReshadeMode()),
+            shortcut.getExtra("reshadeParams", shortcut.container.getReshadeParams()).ifEmpty { null },
+            shortcut.getExtra("reshadeEffect", shortcut.container.getReshadeEffect()),
+        )
+    }
+
+    val winComponents = remember {
+        val raw = shortcut.getExtra("wincomponents", shortcut.container.getWinComponents())
+        mutableStateListOf<WinComponentEntry>().also { list ->
+            for (parts in KeyValueSet(raw)) {
+                val key = parts[0]; val idx = parts[1].toIntOrNull() ?: 0
+                val resId = res.getIdentifier(key, "string", context.packageName)
+                val label = if (resId != 0) res.getString(resId) else key
+                list.add(WinComponentEntry(key, idx, label))
+            }
+        }
+    }
+
+    var envVarsStr by remember { mutableStateOf(shortcut.getExtra("envVars")) }
+    var showScAudioSettings by remember { mutableStateOf(false) }
+    val gameDir = remember(shortcut) {
+        runCatching { WinePath.resolveAndroidPath(shortcut.container, shortcut.path)?.parentFile }.getOrNull()
+    }
+    val gameExe = remember(shortcut) {
+        runCatching { WinePath.resolveAndroidPath(shortcut.container, shortcut.path) }.getOrNull()
+    }
+
+    val cpuListViewRef = remember { mutableStateOf<CPUListView?>(null) }
+    var iconBitmap by remember { mutableStateOf<Bitmap?>(shortcut.icon) }
+
+    var showGfxConfig by remember { mutableStateOf(false) }
+    var showWrapperManager by remember { mutableStateOf(false) }
+    var showDxvkConfig by remember { mutableStateOf(false) }
+    var showWineD3DConfig by remember { mutableStateOf(false) }
+    var helpRes by remember { mutableStateOf<Int?>(null) }
+    var helpText by remember { mutableStateOf<String?>(null) }
+    var glossaryQuery by remember { mutableStateOf<String?>(null) }
+    var showBox64DownloadSheet by remember { mutableStateOf(false) }
+    var showFexCoreDownloadSheet by remember { mutableStateOf(false) }
+    var showDxvkDownloadSheet by remember { mutableStateOf(false) }
+    var showVegasDownloadSheet by remember { mutableStateOf(false) }
+    var showVkd3dDownloadSheet by remember { mutableStateOf(false) }
+    var showD7vkDownloadSheet by remember { mutableStateOf(false) }
+    var showSfWarning by remember { mutableStateOf(false) }
+    var showPerfDialog by remember { mutableStateOf(false) }
+    var showIconPickMenu by remember { mutableStateOf(false) }
+
+    var selectedTab by remember { mutableIntStateOf(0) }
+
+    var tvLaunch by remember { mutableStateOf(com.winlator.star.display.ExternalDisplay.launchOnTv(shortcut)) }
+    val tvLaunchStored = remember { com.winlator.star.display.ExternalDisplay.launchOnTv(shortcut) }
+    var tvModeId by remember { mutableStateOf(com.winlator.star.display.ExternalDisplay.modeId(shortcut)) }
+    var tvMatchRes by remember { mutableStateOf(com.winlator.star.display.ExternalDisplay.matchResolution(shortcut)) }
+    var tvDisplayTick by remember { mutableIntStateOf(0) }
+    DisposableEffect(Unit) {
+        val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? android.hardware.display.DisplayManager
+        val listener = object : android.hardware.display.DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) { tvDisplayTick++ }
+            override fun onDisplayRemoved(displayId: Int) { tvDisplayTick++ }
+            override fun onDisplayChanged(displayId: Int) { tvDisplayTick++ }
+        }
+        runCatching { dm?.registerDisplayListener(listener, android.os.Handler(android.os.Looper.getMainLooper())) }
+        onDispose { runCatching { dm?.unregisterDisplayListener(listener) } }
+    }
+    val tvDisplay = remember(tvDisplayTick) { com.winlator.star.display.ExternalDisplay.find(context) }
+
+    var gyroEnabled by remember {
+        mutableStateOf(shortcut.getExtra("gyroEnabled", if (shortcut.container.isGyroEnabled) "1" else "0") == "1")
+    }
+    var gyroTarget by remember {
+        mutableStateOf(shortcut.getExtra("gyroTarget", shortcut.container.gyroTarget.toString()).toIntOrNull() ?: Container.GYRO_TARGET_DEFAULT)
+    }
+    var gyroActivator by remember {
+        mutableStateOf(shortcut.getExtra("gyroActivator", shortcut.container.gyroActivator.toString()).toIntOrNull() ?: Container.GYRO_ACTIVATOR_DEFAULT)
+    }
+    var gyroActivationMode by remember {
+        mutableStateOf(shortcut.getExtra("gyroActivationMode", shortcut.container.gyroActivationMode.toString()).toIntOrNull() ?: Container.GYRO_ACTIVATION_MODE_DEFAULT)
+    }
+    var gyroMode by remember {
+        mutableStateOf(shortcut.getExtra("gyroMode", shortcut.container.gyroMode.toString()).toIntOrNull() ?: Container.GYRO_MODE_DEFAULT)
+    }
+    var gyroSensitivity by remember {
+        mutableStateOf(shortcut.getExtra("gyroSensitivity", shortcut.container.gyroSensitivity.toString()).toFloatOrNull() ?: Container.GYRO_SENSITIVITY_DEFAULT)
+    }
+    var gyroInvertX by remember {
+        mutableStateOf(shortcut.getExtra("gyroInvertX", if (shortcut.container.isGyroInvertX) "1" else "0") == "1")
+    }
+    var gyroInvertY by remember {
+        mutableStateOf(shortcut.getExtra("gyroInvertY", if (shortcut.container.isGyroInvertY) "1" else "0") == "1")
+    }
+
+    fun applyIconFromUri(uri: Uri) {
+        runCatching {
+            val bitmap = context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream)
+            } ?: return@runCatching
+            shortcut.iconFile?.let { f ->
+                f.parentFile?.mkdirs()
+                FileOutputStream(f).use { out -> bitmap.compress(Bitmap.CompressFormat.PNG, 100, out) }
+            }
+            shortcut.icon = bitmap
+            iconBitmap = bitmap
+        }
+    }
+    val iconPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { applyIconFromUri(it) }
+    }
+    val iconPickerInAppLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) InAppFilePicker.pickedUri(result.data)?.let { applyIconFromUri(it) }
+    }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            val cm = ContentsManager(context)
+            cm.syncContents()
+            val wineInfo = WineInfo.fromIdentifier(context, cm, shortcut.container.wineVersion)
+            val arm64ec = wineInfo.isArm64EC()
+
+            val b64Type = if (arm64ec) ContentProfile.ContentType.CONTENT_TYPE_WOWBOX64
+                          else ContentProfile.ContentType.CONTENT_TYPE_BOX64
+            val b64Arr = if (arm64ec) res.getStringArray(R.array.wowbox64_version_entries).toMutableList()
+                         else res.getStringArray(R.array.box64_version_entries).toMutableList()
+            for (p in cm.getProfiles(b64Type)) {
+                val n = ContentsManager.getEntryName(p)
+                b64Arr.add(n.substring(n.indexOf('-') + 1))
+            }
+
+            val fexList = res.getStringArray(R.array.fexcore_version_entries).toMutableList()
+            for (p in cm.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_FEXCORE)) {
+                val n = ContentsManager.getEntryName(p)
+                fexList.add(n.substring(n.indexOf('-') + 1))
+            }
+
+            val b64Presets = Box64PresetManager.getPresets("box64", context)
+            val fexPresets = FEXCorePresetManager.getPresets(context)
+            val profiles = InputControlsManager(context).getProfiles(true)
+
+            val midi = mutableListOf("-- ${context.getString(R.string.disabled)} --", MidiManager.DEFAULT_SF2_FILE)
+            val sfDir = File(context.filesDir, MidiManager.SF_DIR)
+            if (sfDir.exists()) sfDir.listFiles()?.forEach { midi.add(it.name) }
+
+            withContext(Dispatchers.Main) {
+                isArm64EC = arm64ec
+                archLoaded = true
+                box64Versions = b64Arr
+                fexCoreVersions = fexList
+                box64Presets = b64Presets
+                fexCorePresets = fexPresets
+                controlsProfiles = profiles
+                midiList = midi
+
+                val b64Id = shortcut.getExtra("box64Preset", shortcut.container.getBox64Preset())
+                selectedBox64PresetIndex = b64Presets.indexOfFirst { it.id == b64Id }.coerceAtLeast(0)
+
+                val fexId = shortcut.getExtra("fexcorePreset", shortcut.container.getFEXCorePreset())
+                selectedFexCorePresetIndex = fexPresets.indexOfFirst { it.id == fexId }.coerceAtLeast(0)
+
+                val cpId = shortcut.getExtra("controlsProfile", "0").toIntOrNull() ?: 0
+                selectedControlsProfileIndex = if (cpId == 0) 0
+                    else profiles.indexOfFirst { it.id == cpId }.let { if (it >= 0) it + 1 else 0 }
+
+                if (selectedBox64Version.isEmpty()) selectedBox64Version = b64Arr.firstOrNull() ?: ""
+            }
+        }
+    }
+
+    fun save() {
+        val newName = name.trim()
+        if (newName.isNotEmpty() && newName != shortcut.name) {
+            renameShortcut(shortcut, newName)
+        }
+
+        val screenSize = if (selectedScreenSize == "Custom") {
+            val w = customWidth.trim(); val h = customHeight.trim()
+            if (w.matches(Regex("[0-9]+")) && h.matches(Regex("[0-9]+"))) {
+                val wi = w.toInt(); val hi = h.toInt()
+                if (wi % 2 == 0 && hi % 2 == 0) "${wi}x${hi}" else Container.DEFAULT_SCREEN_SIZE
+            } else Container.DEFAULT_SCREEN_SIZE
+        } else {
+            StringUtils.parseIdentifier(selectedScreenSize)
+        }
+
+        var finalInputType = 0
+        if (enableXInput) finalInputType = finalInputType or WinHandler.FLAG_INPUT_TYPE_XINPUT.toInt()
+        if (enableDInput) finalInputType = finalInputType or WinHandler.FLAG_INPUT_TYPE_DINPUT.toInt()
+
+        val wincomps = winComponents.joinToString(",") { "${it.key}=${it.selectedIndex}" }
+        val envVars = envVarsStr
+        val cpuList = cpuListViewRef.value?.getCheckedCPUListAsString() ?: shortcut.getExtra("cpuList", shortcut.container.getCPUList(true))
+
+        val b64PresetId = box64Presets.getOrElse(selectedBox64PresetIndex) { null }?.id ?: Box64Preset.COMPATIBILITY
+        val fexPresetId = fexCorePresets.getOrElse(selectedFexCorePresetIndex) { null }?.id ?: FEXCorePreset.COMPATIBILITY
+        val ctrlProfileId = if (selectedControlsProfileIndex == 0) 0
+            else controlsProfiles.getOrElse(selectedControlsProfileIndex - 1) { null }?.id ?: 0
+
+        val midiVal = if (midiList.isNotEmpty() && selectedMidi == midiList.firstOrNull()) "" else selectedMidi
+        val startupIdx = startupSelectionEntries.indexOf(selectedStartupSelection).coerceAtLeast(0)
+        val numCtrl = (numControllersEntries.indexOf(selectedNumControllers) + 1).coerceAtLeast(1)
+
+        with(shortcut) {
+            putExtra("execArgs", execArgs.ifEmpty { null })
+            if (isEpicShortcut) putExtra("epicEos", if (epicEosEnabled) "1" else "0")
+            if (isEpicShortcut) putExtra("epicOvtForce", if (epicOvtForce) "1" else "0")
+            if (isEpicShortcut) putExtra("epicOffline", if (epicOffline) "1" else "0")
+            if (isEpicShortcut) putExtra("epicOverlay", if (epicOverlayEnabled) "1" else "0")
+            putExtra("screenSize", screenSize)
+            putExtra("screenAlignment", screenAlignment.ifEmpty { null })
+            putExtra("graphicsDriver", StringUtils.parseIdentifier(selectedGfxDriver))
+            putExtra("graphicsDriverConfig", graphicsDriverConfig)
+            putExtra(com.winlator.star.core.UnrealHdr.EXTRA, unrealHdrOverride.ifEmpty { null })
+            putExtra(com.winlator.star.display.ExternalDisplay.EXTRA_LAUNCH, if (tvLaunch) "1" else "0")
+            putExtra(com.winlator.star.display.ExternalDisplay.EXTRA_MODE_ID, tvModeId.toString())
+            putExtra(com.winlator.star.display.ExternalDisplay.EXTRA_MATCH_RES, if (tvMatchRes) "1" else "0")
+            putExtra("renderer", StringUtils.parseIdentifier(selectedRenderer))
+            putExtra("sfCompatMode", if (sfCompatMode) "1" else "0")
+            putExtra("gyroEnabled", if (gyroEnabled) "1" else "0")
+            putExtra("gyroTarget", gyroTarget.toString())
+            putExtra("gyroActivator", gyroActivator.toString())
+            putExtra("gyroActivationMode", gyroActivationMode.toString())
+            putExtra("gyroMode", gyroMode.toString())
+            putExtra("gyroSensitivity", gyroSensitivity.toString())
+            putExtra("gyroInvertX", if (gyroInvertX) "1" else "0")
+            putExtra("gyroInvertY", if (gyroInvertY) "1" else "0")
+            putExtra("native", if (vkNative) "true" else "false")
+            putExtra("swapRB", if (vkSwapRB) "true" else "false")
+            putExtra("presentMode", vkPresentMode)
+            putExtra("nativeBackend", vkNativeBackend)
+            putExtra("rendererDriverId", vkRendererDriverId)
+            putExtra("renderScale", if (renderScale == "1.0") null else renderScale)
+            putExtra("maxGameRefreshRate", maxGameRefreshRate.ifEmpty { null })
+            putExtra("unlockGameRefreshRate", unlockGameRefreshRate.ifEmpty { null })
+            if (frameGenEngine != "off" && frameGenEngine != shortcut.container.frameGenEngine) {
+                putExtra("frameGenEngine", frameGenEngine)
+            } else {
+                putExtra("frameGenEngine", null)
+            }
+            putExtra("frameGenEngineExplicit", null)
+            putExtra("fpsLimiterEnabled", if (fpsLimiterEnabled) "1" else "0")
+            putExtra("sustainedPerfMode", perfExtraOrNull(sustainedPerfMode, com.winlator.star.perf.PerformanceSettings.sustainedPerfMode.value))
+            putExtra("perfPriorityBoost", perfExtraOrNull(perfPriorityBoost, com.winlator.star.perf.PerformanceSettings.perfPriorityBoost.value))
+            putExtra("preferBigCores", perfExtraOrNull(preferBigCores, com.winlator.star.perf.PerformanceSettings.preferBigCores.value))
+            for (rk in com.winlator.star.perf.PerfRootApplier.ROOT_KEYS)
+                putExtra(rk, perfExtraOrNull(rootOverrides[rk] ?: false, com.winlator.star.perf.PerformanceSettings.rootDefaultValue(rk)))
+            putExtra("dxwrapper", StringUtils.parseIdentifier(selectedDxWrapper))
+            putExtra("dxwrapperConfig", dxWrapperConfig)
+            putExtra("audioDriver", StringUtils.parseIdentifier(selectedAudioDriver).let {
+                if (it == "directaudio" && !directAudioSupported) Container.DEFAULT_AUDIO_DRIVER else it
+            })
+            putExtra("emulator", StringUtils.parseIdentifier(selectedEmulator))
+            putExtra("midiSoundFont", midiVal.ifEmpty { null })
+            putExtra("lc_all", lcAll)
+            putExtra("fullscreenMode", if (fullscreenModeOverride < 0) null else fullscreenModeOverride.toString())
+            putExtra("fullscreenStretched", null)
+            putExtra("autoCloseOnExit", if (autoCloseOnExit) "1" else "0")
+            putExtra("inputType", finalInputType.toString())
+            putExtra("exclusiveXInput", if (exclusiveXInput) "1" else "0")
+            putExtra("disableXinput", if (disabledXInput) "1" else null)
+            putExtra("simTouchScreen", if (simTouchScreen) "1" else "0")
+            putExtra("controllerSlotOverrides", controllerSlotOverridesJson.ifEmpty { null })
+            putExtra("autoHideControlsOnPad", autoHideControlsOnPad.ifEmpty { null })
+            putExtra("numControllers", numCtrl.toString())
+            putExtra("box64Version", selectedBox64Version)
+            putExtra("box64Preset", b64PresetId)
+            putExtra("fexcoreVersion", selectedFexCoreVersion)
+            putExtra("fexcorePreset", fexPresetId)
+            putExtra("controlsProfile", if (ctrlProfileId > 0) ctrlProfileId.toString() else null)
+            putExtra("startupSelection", startupIdx.toString())
+            putExtra("startupServices", startupServicesEnabled.joinToString(","))
+            putExtra("sharpnessEffect", selectedSharpnessEffect)
+            putExtra("sharpnessLevel", sharpnessLevel.toString())
+            putExtra("sharpnessDenoise", sharpnessDenoise.toString())
+            putExtra("reshadeLoadout", reshadeLoadout.loadoutJsonOrNull())
+            putExtra("reshadeMode", reshadeLoadout.mode)
+            putExtra("reshadeParams", reshadeLoadout.paramsJsonOrNull())
+            putExtra("reshadeEffect", reshadeLoadout.firstEffectName())
+            putExtra("wincomponents", wincomps)
+            putExtra("envVars", envVars.ifEmpty { null })
+            putExtra("cpuList", cpuList)
+            saveData()
+        }
+    }
+
+    val panelRates = remember {
+        com.winlator.star.widget.XServerView.getSupportedRefreshRates(
+            if (android.os.Build.VERSION.SDK_INT >= 30) context.display
+            else (context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay)
+    }
+
+    val tvTabVisible = tvDisplay != null || tvLaunchStored || tvLaunch
+    val tabIndices = remember(tvTabVisible) {
+        listOf(0, 6, 1, 2, 3, 4) + (if (tvTabVisible) listOf(5) else emptyList())
+    }
+    val tabTitles = remember(tabIndices) {
+        tabIndices.map {
+            when (it) {
+                0 -> "General"; 1 -> "Win Components"; 2 -> "Env Vars"
+                3 -> "Advanced"; 4 -> "Controller"; 6 -> "Graphics"; else -> "TV"
+            }
+        }
+    }
+    LaunchedEffect(tabIndices) { if (selectedTab !in tabIndices) selectedTab = tabIndices.first() }
+
+    Surface(color = DeckPalette.background, modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = DeckPalette.onBackground)
+                }
+                Text(
+                    shortcut.name,
+                    color = DeckPalette.onBackground,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).padding(start = 4.dp),
+                )
+                DeckButton("Save") { save(); onDismiss() }
+            }
+
+            DeckStretchyTabs(
+                labels = tabTitles,
+                selected = tabIndices.indexOf(selectedTab).coerceAtLeast(0),
+                onSelect = { selectedTab = tabIndices[it] },
+                modifier = Modifier.padding(horizontal = 12.dp),
+                scroll = true,
+                fillWidth = false,
+                focusable = true,
+            )
+
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    when (selectedTab) {
+                        0 -> {
+                            DeckGroup("Game") {
+                                DeckTextRow("Name", value = name, onValueChange = { name = it })
+                                if (!isLinuxEntry) {
+                                    DeckTextRow("Exec arguments", value = execArgs, onValueChange = { execArgs = it })
+                                }
+                                val storageLabel = remember(shortcut) { CopyGameToDriveC.storageLabel(shortcut) }
+                                DeckRow("Storage", hint = storageLabel) {
+                                    val exeName = remember(shortcut) {
+                                        CopyGameToDriveC.parse(shortcut).exeWin.substringAfterLast('\\').substringAfterLast('/')
+                                    }
+                                    Text(exeName.ifEmpty { "Unknown" }, color = DeckPalette.onSurfaceVariant, fontSize = 12.5.sp)
+                                }
+                                DeckRow("Icon") {
+                                    DeckButton("Select Icon", primary = false) { showIconPickMenu = true }
+                                    Box {
+                                        DropdownMenu(expanded = showIconPickMenu, onDismissRequest = { showIconPickMenu = false }) {
+                                            DropdownMenuItem(text = { Text("Browse files") }, onClick = {
+                                                showIconPickMenu = false
+                                                iconPickerInAppLauncher.launch(InAppFilePicker.buildIntent(context, InAppFilePicker.IMAGES, "Select icon image"))
+                                            })
+                                            DropdownMenuItem(text = { Text("Pick via system…") }, onClick = {
+                                                showIconPickMenu = false
+                                                iconPickerLauncher.launch("image/*")
+                                            })
+                                        }
+                                    }
+                                }
+                                iconBitmap?.let { bmp ->
+                                    DeckRow("Current icon") {
+                                        Image(bitmap = bmp.asImageBitmap(), contentDescription = null, modifier = Modifier.size(40.dp))
+                                    }
+                                }
+                            }
+                            if (isEpicShortcut) {
+                                DeckGroup("Epic Online Services") {
+                                    DeckRow("EOS auth", hint = "Sign EOS games in with your Epic account") {
+                                        DeckToggle(checked = epicEosEnabled, onChange = { epicEosEnabled = it })
+                                    }
+                                    DeckRow("Force Denuvo ownership token", hint = "For Denuvo games we don't auto-detect") {
+                                        DeckToggle(checked = epicOvtForce && epicEosEnabled, onChange = { epicOvtForce = it })
+                                    }
+                                    DeckRow("Launch offline", hint = "Skip Epic sign-in for this game") {
+                                        DeckToggle(checked = epicOffline && epicEosEnabled, onChange = { epicOffline = it })
+                                    }
+                                    if (com.winlator.star.FeatureFlags.EPIC_OVERLAY_ENABLED) {
+                                        DeckRow("Epic Friends Overlay", hint = "Experimental in-game overlay on Shift+F3") {
+                                            DeckToggle(checked = epicOverlayEnabled, onChange = { epicOverlayEnabled = it })
+                                        }
+                                    }
+                                }
+                            }
+                            DeckGroup("Display") {
+                                DeckChoiceRow(
+                                    label = "Screen size",
+                                    options = screenSizeEntries.map { it to it },
+                                    selected = selectedScreenSize,
+                                    onPick = { selectedScreenSize = it },
+                                )
+                                if (selectedScreenSize == "Custom") {
+                                    DeckTextRow("Width", value = customWidth, onValueChange = { customWidth = it }, width = 140.dp)
+                                    DeckTextRow("Height", value = customHeight, onValueChange = { customHeight = it }, width = 140.dp)
+                                }
+                                run {
+                                    val saValues = listOf("", "0", "1", "2")
+                                    val saLabels = listOf(
+                                        stringResource(R.string.use_container_default),
+                                        stringResource(R.string.screen_alignment_center),
+                                        stringResource(R.string.screen_alignment_top),
+                                        stringResource(R.string.screen_alignment_bottom),
+                                    )
+                                    DeckChoiceRow(
+                                        label = stringResource(R.string.screen_alignment),
+                                        options = saValues.zip(saLabels),
+                                        selected = saValues.getOrElse(saValues.indexOf(screenAlignment).coerceAtLeast(0)) { "" },
+                                        onPick = { screenAlignment = it },
+                                    )
+                                }
+                                if (!isLinuxEntry && panelRates.isNotEmpty()) {
+                                    val ratesAbove60 = panelRates.filter { it > 60 }
+                                    val rrValues = listOf("", "locked", "0") + ratesAbove60.map { it.toString() }
+                                    val rrLabels = listOf(
+                                        stringResource(R.string.use_container_default),
+                                        stringResource(R.string.in_game_refresh_locked),
+                                        stringResource(R.string.max_game_refresh_rate_unlimited),
+                                    ) + ratesAbove60.map { "$it Hz" }
+                                    val currentValue = when {
+                                        unlockGameRefreshRate.isEmpty() && maxGameRefreshRate.isEmpty() -> ""
+                                        unlockGameRefreshRate == "0" -> "locked"
+                                        else -> maxGameRefreshRate.ifEmpty { "0" }
+                                    }
+                                    DeckChoiceRow(
+                                        label = stringResource(R.string.in_game_refresh_rate),
+                                        options = rrValues.zip(rrLabels),
+                                        selected = rrValues.getOrElse(rrValues.indexOf(currentValue).coerceAtLeast(0)) { "" },
+                                        onPick = { v ->
+                                            when (v) {
+                                                "" -> { unlockGameRefreshRate = ""; maxGameRefreshRate = "" }
+                                                "locked" -> { unlockGameRefreshRate = "0"; maxGameRefreshRate = "0" }
+                                                else -> { unlockGameRefreshRate = "1"; maxGameRefreshRate = v }
+                                            }
+                                        },
+                                    )
+                                }
+                                val fsOverrideLabels = listOf(
+                                    stringResource(R.string.fullscreen_mode_default),
+                                    stringResource(R.string.fullscreen_mode_off),
+                                    stringResource(R.string.fullscreen_mode_fit),
+                                    stringResource(R.string.fullscreen_mode_stretch),
+                                    stringResource(R.string.fullscreen_mode_fill),
+                                    stringResource(R.string.fullscreen_mode_integer),
+                                )
+                                val fsOverrideIdx = if (fullscreenModeOverride < 0) 0
+                                    else (fullscreenModeOverride + 1).coerceIn(1, fsOverrideLabels.size - 1)
+                                DeckChoiceRow(
+                                    label = stringResource(R.string.fullscreen_mode),
+                                    options = fsOverrideLabels.indices.toList().map { it.toString() to fsOverrideLabels[it] },
+                                    selected = fsOverrideIdx.toString(),
+                                    onPick = { sel ->
+                                        val idx = sel.toIntOrNull() ?: 0
+                                        fullscreenModeOverride = if (idx <= 0) -1 else idx - 1
+                                    },
+                                )
+                                if (!isLinuxEntry) {
+                                    DeckRow("Close when game exits") {
+                                        DeckToggle(checked = autoCloseOnExit, onChange = { autoCloseOnExit = it })
+                                    }
+                                }
+                            }
+                            DeckGroup("Frame Generation") {
+                                val fgLabels = listOf(
+                                    stringResource(R.string.frame_generation_off),
+                                    stringResource(R.string.frame_generation_lsfg_native),
+                                )
+                                val fgVulkan = isLinuxEntry || selectedRenderer == "Vulkan"
+                                DeckChoiceRow(
+                                    label = stringResource(R.string.frame_generation),
+                                    hint = if (!fgVulkan) stringResource(R.string.frame_generation_requires_vulkan)
+                                           else if (!lsfgDllAvailable) stringResource(R.string.frame_generation_lsfg_needs_dll)
+                                           else null,
+                                    options = fgEngines.zip(fgLabels),
+                                    selected = frameGenEngine,
+                                    onPick = { frameGenEngine = it },
+                                )
+                                DeckRow(stringResource(R.string.fps_limiter)) {
+                                    DeckToggle(checked = fpsLimiterEnabled, onChange = { fpsLimiterEnabled = it })
+                                }
+                                run {
+                                    val perfOverrideCount =
+                                        (if (sustainedPerfMode != com.winlator.star.perf.PerformanceSettings.sustainedPerfMode.value) 1 else 0) +
+                                        (if (perfPriorityBoost != com.winlator.star.perf.PerformanceSettings.perfPriorityBoost.value) 1 else 0) +
+                                        (if (preferBigCores != com.winlator.star.perf.PerformanceSettings.preferBigCores.value) 1 else 0) +
+                                        com.winlator.star.perf.PerfRootApplier.ROOT_KEYS.count { (rootOverrides[it] ?: false) != com.winlator.star.perf.PerformanceSettings.rootDefaultValue(it) }
+                                    DeckRow(
+                                        label = "Performance",
+                                        hint = if (perfOverrideCount > 0) "$perfOverrideCount overridden" else "Global defaults",
+                                    ) {
+                                        DeckButton("Configure", primary = false) { showPerfDialog = true }
+                                    }
+                                }
+                            }
+                            DeckGroup("Audio") {
+                                DeckChoiceRow(
+                                    label = stringResource(R.string.audio_driver),
+                                    hint = if (!directAudioSupported && directAudioEntry != null)
+                                        "DirectAudio requires Proton ${com.winlator.star.core.DirectAudioSupport.SUPPORTED_LABEL}" else null,
+                                    options = audioDriverEntries.map { it to it },
+                                    selected = selectedAudioDriver,
+                                    onPick = { selectedAudioDriver = it },
+                                )
+                                val scAudioId = StringUtils.parseIdentifier(selectedAudioDriver)
+                                if (scAudioId == "pulseaudio" || scAudioId == "alsa" || scAudioId == "directaudio") {
+                                    DeckRow("Audio settings") {
+                                        DeckButton("Configure", primary = false) { showScAudioSettings = true }
+                                    }
+                                }
+                                run {
+                                    val micDriverActive = scAudioId == "directaudio" && directAudioSupported
+                                    val micOn = com.winlator.star.core.DirectAudioSupport.isMicEnabledInEnv(envVarsStr)
+                                    val micPermLauncher = rememberLauncherForActivityResult(
+                                        ActivityResultContracts.RequestPermission()
+                                    ) { granted ->
+                                        envVarsStr = com.winlator.star.core.DirectAudioSupport.withMicEnabled(envVarsStr, granted)
+                                        if (!granted) Toast.makeText(context, "Microphone permission denied — mic stays off.", Toast.LENGTH_SHORT).show()
+                                    }
+                                    DeckRow(
+                                        label = "Microphone",
+                                        hint = if (micDriverActive) "Let games use the mic (DirectAudio captures input)"
+                                               else "Available on the DirectAudio driver",
+                                    ) {
+                                        DeckToggle(checked = micOn && micDriverActive, onChange = { want ->
+                                            if (micDriverActive) {
+                                                if (want) {
+                                                    if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO)
+                                                            == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                                                        envVarsStr = com.winlator.star.core.DirectAudioSupport.withMicEnabled(envVarsStr, true)
+                                                    } else {
+                                                        micPermLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                                                    }
+                                                } else {
+                                                    envVarsStr = com.winlator.star.core.DirectAudioSupport.withMicEnabled(envVarsStr, false)
+                                                }
+                                            }
+                                        })
+                                    }
+                                }
+                            }
+                            if (!isLinuxEntry) {
+                                DeckGroup("Launcher") {
+                                    val emulatorShown =
+                                        if (archLoaded && !isArm64EC) EmulatorLabels.box64EntryOf(emulatorEntries)
+                                        else EmulatorLabels.display(selectedEmulator, isArm64EC)
+                                    DeckChoiceRow(
+                                        label = "Emulator",
+                                        options = EmulatorLabels.options(emulatorEntries, isArm64EC).map { it to it },
+                                        selected = emulatorShown,
+                                        onPick = { selectedEmulator = EmulatorLabels.fromDisplay(it, emulatorEntries, isArm64EC) },
+                                    )
+                                    if (midiList.isNotEmpty()) {
+                                        DeckChoiceRow(
+                                            label = "MIDI Sound Font",
+                                            options = midiList.map { it to it },
+                                            selected = midiList.firstOrNull { it == selectedMidi } ?: midiList.first(),
+                                            onPick = { selectedMidi = it },
+                                        )
+                                    }
+                                    DeckTextRow("LC_ALL", value = lcAll, onValueChange = { lcAll = it })
+                                }
+                            }
+                        }
+                        6 -> {
+                            DeckGroup("Graphics") {
+                                DeckChoiceRow(
+                                    label = stringResource(R.string.graphics_driver),
+                                    options = graphicsDriverEntries.map { it to it },
+                                    selected = selectedGfxDriver,
+                                    configPanel = true,
+                                    onConfigClick = { showGfxConfig = true },
+                                    onPick = { selectedGfxDriver = it },
+                                )
+                                if (!isLinuxEntry) {
+                                    DeckRow(
+                                        label = stringResource(R.string.graphics_driver),
+                                        hint = GraphicsDriverConfigDialog.getVersion(graphicsDriverConfig),
+                                    ) {
+                                        DeckButton("Configure", primary = false) { showGfxConfig = true }
+                                    }
+                                    DeckRow("Wrapper Manager", hint = stringResource(R.string.wrapper_manager_open)) {
+                                        DeckButton("Manage", primary = false) { showWrapperManager = true }
+                                    }
+                                    DeckChoiceRow(
+                                        label = stringResource(R.string.dxwrapper),
+                                        options = dxWrapperEntries.map { it to it },
+                                        selected = selectedDxWrapper,
+                                        configPanel = true,
+                                        onConfigClick = {
+                                            val w = StringUtils.parseIdentifier(selectedDxWrapper)
+                                            if (w.contains("dxvk") || w.contains("vegas")) showDxvkConfig = true else showWineD3DConfig = true
+                                        },
+                                        onPick = { newWrapper ->
+                                            val wasVegas = StringUtils.parseIdentifier(selectedDxWrapper).contains("vegas")
+                                            val isVegas = StringUtils.parseIdentifier(newWrapper).contains("vegas")
+                                            selectedDxWrapper = newWrapper
+                                            if (wasVegas && !isVegas) {
+                                                val cfg = DXVKConfigDialog.parseConfig(dxWrapperConfig)
+                                                if (cfg.get("dxvkConfigFile").isNotEmpty()) {
+                                                    dxWrapperConfig = dxWrapperConfig.split(",").filter { !it.startsWith("dxvkConfigFile=") }.joinToString(",")
+                                                }
+                                            }
+                                        },
+                                    )
+                                    DeckRow("DX Wrapper Config") {
+                                        DeckButton("Configure", primary = false) {
+                                            val w = StringUtils.parseIdentifier(selectedDxWrapper)
+                                            if (w.contains("dxvk") || w.contains("vegas")) showDxvkConfig = true else showWineD3DConfig = true
+                                        }
+                                    }
+                                    DeckChoiceRow(
+                                        label = stringResource(R.string.renderer),
+                                        options = listOf("OpenGL", "Vulkan", "SurfaceFlinger").map { it to it },
+                                        selected = selectedRenderer,
+                                        onPick = {
+                                            if (it == "SurfaceFlinger" && selectedRenderer != "SurfaceFlinger") showSfWarning = true
+                                            else selectedRenderer = it
+                                        },
+                                    )
+                                    if (selectedRenderer == "SurfaceFlinger") {
+                                        DeckRow(stringResource(R.string.renderer_sf_compat), hint = stringResource(R.string.renderer_sf_compat_hint)) {
+                                            DeckToggle(checked = sfCompatMode, onChange = { sfCompatMode = it })
+                                        }
+                                    }
+                                    if (selectedRenderer == "Vulkan") {
+                                        DeckRow(stringResource(R.string.renderer_native)) {
+                                            DeckToggle(checked = vkNative, onChange = { vkNative = it })
+                                        }
+                                        DeckChoiceRow(
+                                            label = stringResource(R.string.renderer_colors),
+                                            options = listOf("BGRA", "RGBA").map { it to it },
+                                            selected = if (vkSwapRB) "RGBA" else "BGRA",
+                                            onPick = { vkSwapRB = (it == "RGBA") },
+                                        )
+                                        run {
+                                            val vkPmValues = listOf("fifo", "mailbox", "immediate")
+                                            val vkPmLabels = listOf(
+                                                stringResource(R.string.renderer_present_mode_fifo),
+                                                stringResource(R.string.renderer_present_mode_mailbox),
+                                                stringResource(R.string.renderer_present_mode_immediate),
+                                            )
+                                            DeckChoiceRow(
+                                                label = stringResource(R.string.renderer_present_mode),
+                                                options = vkPmValues.zip(vkPmLabels),
+                                                selected = vkPresentMode,
+                                                onPick = { vkPresentMode = it },
+                                            )
+                                        }
+                                        if (vkNative) {
+                                            val vkBackendValues = listOf("auto", "asr", "flip")
+                                            val vkBackendLabels = listOf(
+                                                stringResource(R.string.renderer_native_backend_auto),
+                                                stringResource(R.string.renderer_native_backend_asr),
+                                                stringResource(R.string.renderer_native_backend_flip),
+                                            )
+                                            DeckChoiceRow(
+                                                label = stringResource(R.string.renderer_native_backend),
+                                                options = vkBackendValues.zip(vkBackendLabels),
+                                                selected = vkNativeBackend,
+                                                onPick = { vkNativeBackend = it },
+                                            )
+                                        }
+                                        val vkDriverOptions = remember {
+                                            val installed = try {
+                                                com.winlator.star.contents.AdrenotoolsManager(context).enumarateInstalledDrivers()
+                                            } catch (e: Exception) { arrayListOf<String>() }
+                                            (listOf("system") + installed).distinct()
+                                        }
+                                        DeckChoiceRow(
+                                            label = stringResource(R.string.renderer_driver_id),
+                                            options = vkDriverOptions.map { it to it },
+                                            selected = if (vkDriverOptions.contains(vkRendererDriverId)) vkRendererDriverId else "system",
+                                            onPick = { vkRendererDriverId = it },
+                                        )
+                                        if (frameGenEngine != "off") {
+                                            Text(
+                                                stringResource(R.string.renderer_present_mode_fg_note),
+                                                color = DeckPalette.onSurfaceVariant,
+                                                fontSize = 12.sp,
+                                            )
+                                        }
+                                    }
+                                    run {
+                                        val renderScaleValues = listOf("1.0", "1.25", "1.5", "2.0")
+                                        val renderScaleLabels = listOf("Off", "1.25x", "1.5x", "2x")
+                                        DeckChoiceRow(
+                                            label = "Render scale (supersampling)",
+                                            options = renderScaleValues.zip(renderScaleLabels),
+                                            selected = renderScale,
+                                            onPick = { renderScale = it },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        4 -> {
+                            DeckGroup("Input") {
+                                if (!isLinuxEntry) {
+                                    DeckRow(stringResource(R.string.enable_xinput_for_wine_game)) {
+                                        DeckToggle(checked = enableXInput, onChange = { enableXInput = it })
+                                    }
+                                    DeckRow(stringResource(R.string.enable_dinput_for_wine_game)) {
+                                        DeckToggle(checked = enableDInput, onChange = { enableDInput = it })
+                                    }
+                                    DeckRow("Exclusive Input") {
+                                        DeckToggle(checked = exclusiveXInput, onChange = { checked ->
+                                            exclusiveXInput = checked
+                                            if (!checked) { enableXInput = true; enableDInput = true }
+                                            else if (enableXInput && enableDInput) enableDInput = false
+                                        })
+                                    }
+                                    DeckRow("Disable XInput") {
+                                        DeckToggle(checked = disabledXInput, onChange = { disabledXInput = it })
+                                    }
+                                }
+                                DeckRow("Touchscreen Mode") {
+                                    DeckToggle(checked = simTouchScreen, onChange = { simTouchScreen = it })
+                                }
+                                if (!isLinuxEntry) {
+                                    DeckChoiceRow(
+                                        label = "Num Controllers",
+                                        options = numControllersEntries.map { it to it },
+                                        selected = selectedNumControllers,
+                                        onPick = { selectedNumControllers = it },
+                                    )
+                                }
+                            }
+                            DeckGroup("Overlay") {
+                                run {
+                                    val autoHideLabels = listOf("Use container default", "On", "Off")
+                                    val autoHideValues = listOf("", "1", "0")
+                                    val autoHideIdx = when (autoHideControlsOnPad) { "1" -> 1; "0" -> 2; else -> 0 }
+                                    DeckChoiceRow(
+                                        label = "Hide on-screen controls when a controller connects",
+                                        options = autoHideValues.zip(autoHideLabels),
+                                        selected = autoHideValues[autoHideIdx],
+                                        onPick = { autoHideControlsOnPad = it },
+                                    )
+                                }
+                                if (controllerSlotOverridesJson.isNotEmpty()) {
+                                    DeckRow("Player Slots", hint = "Inheriting shows the container's Player Slots") {
+                                        DeckButton("Use container default", primary = false) { controllerSlotOverridesJson = "" }
+                                    }
+                                } else {
+                                    DeckRow("Player Slots", hint = "Inheriting the container's Player Slots. Pin a controller below to override.") {}
+                                }
+                                PlayerSlotsEditor(
+                                    savedOverridesJson = controllerSlotOverridesJson.ifEmpty { "{}" },
+                                    onOverridesChange = { controllerSlotOverridesJson = it },
+                                )
+                            }
+                            DeckGroup("Gyro") {
+                                DeckRow(stringResource(R.string.gyro_enabled)) {
+                                    DeckToggle(checked = gyroEnabled, onChange = { gyroEnabled = it })
+                                }
+                                if (gyroEnabled) {
+                                    val gyroModeLabels = listOf(
+                                        stringResource(R.string.gyro_mode_rate),
+                                        stringResource(R.string.gyro_mode_orientation),
+                                    )
+                                    DeckChoiceRow(
+                                        label = stringResource(R.string.gyro_mode_label),
+                                        options = gyroModeLabels.indices.toList().map { it.toString() to gyroModeLabels[it] },
+                                        selected = gyroMode.coerceIn(0, gyroModeLabels.lastIndex).toString(),
+                                        onPick = { opt ->
+                                            gyroMode = opt.toIntOrNull() ?: 0
+                                            if (gyroMode == Container.GYRO_MODE_ORIENTATION && gyroTarget == Container.GYRO_TARGET_MOUSE)
+                                                gyroTarget = Container.GYRO_TARGET_DEFAULT
+                                        },
+                                    )
+                                    val gyroTargetLabels = listOf(
+                                        stringResource(R.string.gyro_target_right_stick),
+                                        stringResource(R.string.gyro_target_left_stick),
+                                        stringResource(R.string.gyro_target_mouse),
+                                    )
+                                    DeckChoiceRow(
+                                        label = stringResource(R.string.gyro_target_label),
+                                        options = gyroTargetLabels.indices.toList().map { it.toString() to gyroTargetLabels[it] },
+                                        selected = gyroTarget.coerceIn(0, gyroTargetLabels.lastIndex).toString(),
+                                        onPick = { opt ->
+                                            gyroTarget = opt.toIntOrNull() ?: 0
+                                            if (gyroTarget == Container.GYRO_TARGET_MOUSE) gyroMode = Container.GYRO_MODE_RATE
+                                        },
+                                    )
+                                    val gyroActivatorLabels = listOf(
+                                        stringResource(R.string.gyro_activator_l1),
+                                        stringResource(R.string.gyro_activator_l2),
+                                        stringResource(R.string.gyro_activator_r1),
+                                        stringResource(R.string.gyro_activator_r3),
+                                        stringResource(R.string.gyro_activator_always),
+                                    )
+                                    DeckChoiceRow(
+                                        label = stringResource(R.string.gyro_activator_label),
+                                        options = gyroActivatorLabels.indices.toList().map { it.toString() to gyroActivatorLabels[it] },
+                                        selected = gyroActivator.coerceIn(0, gyroActivatorLabels.lastIndex).toString(),
+                                        onPick = { gyroActivator = it.toIntOrNull() ?: 0 },
+                                    )
+                                    if (gyroActivator != Container.GYRO_ACTIVATOR_ALWAYS) {
+                                        val gyroActivationModeLabels = listOf(
+                                            stringResource(R.string.gyro_activation_hold),
+                                            stringResource(R.string.gyro_activation_toggle),
+                                        )
+                                        DeckChoiceRow(
+                                            label = stringResource(R.string.gyro_activation_mode_label),
+                                            options = gyroActivationModeLabels.indices.toList().map { it.toString() to gyroActivationModeLabels[it] },
+                                            selected = gyroActivationMode.coerceIn(0, gyroActivationModeLabels.lastIndex).toString(),
+                                            onPick = { gyroActivationMode = it.toIntOrNull() ?: 0 },
+                                        )
+                                    }
+                                    DeckSliderRow(
+                                        label = stringResource(R.string.gyro_sensitivity_label),
+                                        value = gyroSensitivity,
+                                        range = 0.1f..10f,
+                                        format = { "%.1f".format(it) },
+                                        onChange = { gyroSensitivity = it },
+                                    )
+                                    DeckRow(stringResource(R.string.gyro_invert_x)) {
+                                        DeckToggle(checked = gyroInvertX, onChange = { gyroInvertX = it })
+                                    }
+                                    DeckRow(stringResource(R.string.gyro_invert_y)) {
+                                        DeckToggle(checked = gyroInvertY, onChange = { gyroInvertY = it })
+                                    }
+                                }
+                            }
+                        }
+                        1 -> {
+                            RecommendedComponentsSection(
+                                container = shortcut.container,
+                                exeFile = gameExe,
+                                gameDir = gameDir,
+                                shortcutBaseName = shortcut.name,
+                            )
+                            ScWinComponentsTab(winComponents)
+                        }
+                        2 -> ScEnvVarsTab(envVarsStr, { envVarsStr = it }, gameDir, isLinuxEntry)
+                        3 -> ScAdvancedTab(
+                            shortcut = shortcut,
+                            onPresetListChanged = {
+                                box64Presets = Box64PresetManager.getPresets("box64", context)
+                                fexCorePresets = FEXCorePresetManager.getPresets(context)
+                            },
+                            isArm64EC = isArm64EC,
+                            isLinuxEntry = isLinuxEntry,
+                            box64Versions = box64Versions,
+                            selectedBox64Version = selectedBox64Version,
+                            onBox64VersionChange = { selectedBox64Version = it },
+                            box64Presets = box64Presets,
+                            selectedBox64PresetIndex = selectedBox64PresetIndex,
+                            onBox64PresetIndexChange = { selectedBox64PresetIndex = it },
+                            fexCoreVersions = fexCoreVersions,
+                            selectedFexCoreVersion = selectedFexCoreVersion,
+                            onFexVersionChange = { selectedFexCoreVersion = it },
+                            fexCorePresets = fexCorePresets,
+                            selectedFexPresetIndex = selectedFexCorePresetIndex,
+                            onFexPresetIndexChange = { selectedFexCorePresetIndex = it },
+                            controlsProfiles = controlsProfiles,
+                            selectedControlsProfileIndex = selectedControlsProfileIndex,
+                            onControlsProfileChange = { selectedControlsProfileIndex = it },
+                            startupSelectionEntries = startupSelectionEntries,
+                            selectedStartupSelection = selectedStartupSelection,
+                            onStartupChange = { selectedStartupSelection = it },
+                            startupServicesEnabled = startupServicesEnabled,
+                            onStartupServiceToggle = { raw, on ->
+                                startupServicesEnabled =
+                                    if (on) startupServicesEnabled + raw else startupServicesEnabled - raw
+                            },
+                            cpuListViewRef = cpuListViewRef,
+                            initialCpuList = shortcut.getExtra("cpuList", shortcut.container.getCPUList(true)),
+                            onCpuListSnapshot = { shortcut.putExtra("cpuList", it) },
+                            sharpnessEffectEntries = sharpnessEffectEntries,
+                            selectedSharpnessEffect = selectedSharpnessEffect,
+                            onSharpnessEffectChange = { selectedSharpnessEffect = it },
+                            sharpnessLevel = sharpnessLevel,
+                            onSharpnessLevelChange = { sharpnessLevel = it },
+                            sharpnessDenoise = sharpnessDenoise,
+                            onSharpnessDenoiseChange = { sharpnessDenoise = it },
+                            reshadeLoadout = reshadeLoadout,
+                            reshadeEffects = reshadeEffects,
+                            onReshadeCatalogChanged = {
+                                reshadeEffects = ReshadeManager.scanEffects(context)
+                                reshadeLoadout.reconcile(reshadeEffects)
+                            },
+                            reshadeSupported = StringUtils.parseIdentifier(selectedDxWrapper).let { it.contains("dxvk") || it.contains("vegas") },
+                            onShowBox64DownloadSheet = { showBox64DownloadSheet = true },
+                            onShowFexCoreDownloadSheet = { showFexCoreDownloadSheet = true },
+                        )
+                        5 -> ScTvTab(
+                            dp = dp,
+                            display = tvDisplay,
+                            gameScreenSize = if (selectedScreenSize == "Custom") "${customWidth}x${customHeight}"
+                                             else StringUtils.parseIdentifier(selectedScreenSize),
+                            tvLaunch = tvLaunch,
+                            onTvLaunchChange = { tvLaunch = it },
+                            tvModeId = tvModeId,
+                            onTvModeIdChange = { tvModeId = it },
+                            tvMatchRes = tvMatchRes,
+                            onTvMatchResChange = { tvMatchRes = it },
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                DeckButton("Cancel", primary = false) { onDismiss() }
+                DeckButton("Save") { save(); onDismiss() }
+            }
+        }
+    }
+
+    if (showGfxConfig) {
+        GraphicsDriverConfigDialog(
+            graphicsDriver = StringUtils.parseIdentifier(selectedGfxDriver),
+            initialConfig = graphicsDriverConfig,
+            onConfirm = { graphicsDriverConfig = it; showGfxConfig = false },
+            onDismiss = { showGfxConfig = false },
+        )
+    }
+    val isVegasCfg = StringUtils.parseIdentifier(selectedDxWrapper).contains("vegas")
+    val relaxDxvkFilter = StringUtils.parseIdentifier(selectedGfxDriver) == "wrapper-compat-bcn"
+    if (showDxvkConfig) {
+        DxvkConfigDialog(
+            isArm64EC = isArm64EC,
+            isVegas = isVegasCfg,
+            relaxDxvkFilter = relaxDxvkFilter,
+            initialConfig = dxWrapperConfig,
+            onConfirm = { dxWrapperConfig = it; showDxvkConfig = false },
+            onDismiss = { showDxvkConfig = false },
+            onDownloadDxvk = { showDxvkConfig = false; if (isVegasCfg) showVegasDownloadSheet = true else showDxvkDownloadSheet = true },
+            onDownloadVkd3d = { showDxvkConfig = false; showVkd3dDownloadSheet = true },
+            onDownloadD7vk = { showDxvkConfig = false; showD7vkDownloadSheet = true },
+        )
+    }
+    if (showWineD3DConfig) {
+        WineD3DConfigDialog(
+            initialConfig = dxWrapperConfig,
+            onConfirm = { dxWrapperConfig = it; showWineD3DConfig = false },
+            onDismiss = { showWineD3DConfig = false },
+        )
+    }
+    helpRes?.let { HelpDialog(it) { helpRes = null } }
+    helpText?.let { HelpTextDialog(it) { helpText = null } }
+    if (showWrapperManager) WrapperManagerDialog(onDismiss = {
+        showWrapperManager = false
+        wrapperRefreshKey++
+    })
+    glossaryQuery?.let { ContainerGlossarySheet(initialQuery = it, onDismiss = { glossaryQuery = null }) }
+
+    if (showBox64DownloadSheet) {
+        ContentDownloadSheet(
+            contentType = if (isArm64EC) ContentProfile.ContentType.CONTENT_TYPE_WOWBOX64
+                          else ContentProfile.ContentType.CONTENT_TYPE_BOX64,
+            onDismiss = { showBox64DownloadSheet = false },
+            onContentChanged = {},
+        )
+    }
+    if (showFexCoreDownloadSheet) {
+        ContentDownloadSheet(
+            contentType = ContentProfile.ContentType.CONTENT_TYPE_FEXCORE,
+            onDismiss = { showFexCoreDownloadSheet = false },
+            onContentChanged = {},
+        )
+    }
+    if (showDxvkDownloadSheet) {
+        ContentDownloadSheet(
+            contentType = ContentProfile.ContentType.CONTENT_TYPE_DXVK,
+            onDismiss = { showDxvkDownloadSheet = false },
+            onContentChanged = {},
+        )
+    }
+    if (showVkd3dDownloadSheet) {
+        ContentDownloadSheet(
+            contentType = ContentProfile.ContentType.CONTENT_TYPE_VKD3D,
+            onDismiss = { showVkd3dDownloadSheet = false },
+            onContentChanged = {},
+        )
+    }
+    if (showD7vkDownloadSheet) {
+        ContentDownloadSheet(
+            contentType = ContentProfile.ContentType.CONTENT_TYPE_D7VK,
+            onDismiss = { showD7vkDownloadSheet = false },
+            onContentChanged = {},
+        )
+    }
+    if (showVegasDownloadSheet) {
+        VegasDownloadSheet(
+            onDismiss = { showVegasDownloadSheet = false },
+            onContentChanged = {},
+        )
+    }
+    if (showSfWarning) {
+        SurfaceFlingerWarningDialog(
+            onConfirm = { selectedRenderer = "SurfaceFlinger"; showSfWarning = false },
+            onDismiss = { showSfWarning = false },
+        )
+    }
+    if (showScAudioSettings) {
+        AudioSettingsDialog(
+            initial = audioConfigFromEnv(envVarsStr, StringUtils.parseIdentifier(selectedAudioDriver)),
+            scopeLabel = "this game",
+            latencyLive = true,
+            driverLabel = when (StringUtils.parseIdentifier(selectedAudioDriver)) {
+                "alsa" -> "ALSA"; "pulseaudio" -> "PulseAudio"; "directaudio" -> "DirectAudio"
+                else -> StringUtils.parseIdentifier(selectedAudioDriver)
+            },
+            driverId = StringUtils.parseIdentifier(selectedAudioDriver),
+            onDismiss = { showScAudioSettings = false },
+            onSave = { cfg ->
+                envVarsStr = audioConfigToEnv(envVarsStr, cfg, StringUtils.parseIdentifier(selectedAudioDriver))
+                showScAudioSettings = false
+            },
+        )
+    }
+    if (showPerfDialog) {
+        com.winlator.star.ui.PerformanceDashboardDialogPerGame(
+            sustained = sustainedPerfMode, onSustained = { sustainedPerfMode = it },
+            priority = perfPriorityBoost, onPriority = { perfPriorityBoost = it },
+            bigCores = preferBigCores, onBigCores = { preferBigCores = it },
+            rootValue = { rootOverrides[it] ?: false },
+            onRoot = { k, v -> rootOverrides[k] = v },
+            onResetAll = {
+                sustainedPerfMode = com.winlator.star.perf.PerformanceSettings.sustainedPerfMode.value
+                perfPriorityBoost = com.winlator.star.perf.PerformanceSettings.perfPriorityBoost.value
+                preferBigCores = com.winlator.star.perf.PerformanceSettings.preferBigCores.value
+                for (rk in com.winlator.star.perf.PerfRootApplier.ROOT_KEYS)
+                    rootOverrides[rk] = com.winlator.star.perf.PerformanceSettings.rootDefaultValue(rk)
+            },
+            onDismiss = { showPerfDialog = false },
+        )
+    }
+}
+
 /** The Material icon for each shortcut-settings tab (mirrors the container editor's tabIcon glyphs;
  *  Controller gets a gamepad). Used by both the portrait top bar and the landscape rail. */
 private fun shortcutTabIcon(title: String): ImageVector = when (title) {

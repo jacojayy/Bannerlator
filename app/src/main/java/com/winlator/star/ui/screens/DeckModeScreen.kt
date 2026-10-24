@@ -855,7 +855,7 @@ private fun DeckHome(
         }
 
         shortcutSettingsFor?.let { sc ->
-            ShortcutSettingsDialogScreen(
+            DeckShortcutSettingsScreen(
                 shortcut = sc,
                 onDismiss = {
                     shortcutSettingsFor = null

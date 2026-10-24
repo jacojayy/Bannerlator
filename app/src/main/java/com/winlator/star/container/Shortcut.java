@@ -98,6 +98,22 @@ import java.nio.file.Files;
             loadCoverArt();
 
             Container.checkObsoleteOrMissingProperties(extraData);
+
+            healLegacyFrameGenExtra();
+        }
+
+        // One-time cleanup of the retired per-game frame-gen stamp. Old builds wrote
+        // frameGenEngineExplicit=1 and stamped an inherited "off" onto every shortcut; the resolver
+        // now reads a per-game "off" as "inherit the container" anyway, so drop both here and rewrite
+        // the .desktop only when it actually changes. An enabled per-game engine is left untouched.
+        private void healLegacyFrameGenExtra() {
+            boolean dirty = extraData.has("frameGenEngineExplicit");
+            extraData.remove("frameGenEngineExplicit");
+            if ("off".equals(getExtra("frameGenEngine"))) {
+                extraData.remove("frameGenEngine");
+                dirty = true;
+            }
+            if (dirty) saveData();
         }
 
         private void loadCoverArt() {

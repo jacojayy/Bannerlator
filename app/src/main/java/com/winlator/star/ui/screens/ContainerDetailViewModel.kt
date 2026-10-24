@@ -1011,9 +1011,12 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
             // Edit mode — the form is written straight onto the real container.
             applyFormTo(c, gdConfig, dxConfig, fpsConfig, envVarsIn, cpuListIn, cpuListWoW64In,
                 colorAsString, seedControllerGlobals = false)
-            c.saveData()
+            val saved = c.saveData()
             saveMouseWarp(c)
             saveRunAsAdmin(c)
+            // saveData() used to swallow a failed disk write, so a container whose config could not
+            // be written looked like it saved and then silently reverted on reopen. Surface it.
+            AppUtils.showToast(context, if (saved) R.string.container_saved else R.string.container_save_failed)
             onComplete()
         }
         else {

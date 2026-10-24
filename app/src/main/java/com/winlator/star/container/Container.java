@@ -1209,11 +1209,19 @@ public class Container {
         };
     }
 
-    public void saveData() {
+    public boolean saveData() {
         try {
-            FileUtils.writeString(getConfigFile(), getData().toString());
+            File file = getConfigFile();
+            File dir = file.getParentFile();
+            if (dir != null && !dir.exists()) dir.mkdirs();
+            boolean ok = FileUtils.writeString(file, getData().toString());
+            if (!ok) Log.e("Container", "saveData: could not write " + file.getAbsolutePath());
+            return ok;
         }
-        catch (JSONException e) {}
+        catch (JSONException e) {
+            Log.e("Container", "saveData: could not serialise container config", e);
+            return false;
+        }
     }
 
     // The full config JSON exactly as saveData() persists it (extraData included). Split out of

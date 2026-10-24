@@ -773,9 +773,9 @@ internal fun DeckVulkanConfigEditor(
             DeckChoiceRow(
                 label = "Native Backend",
                 options = listOf(
-                    "Auto" to "auto",
-                    "SurfaceFlinger (ASR)" to "asr",
-                    "Vulkan FLIP" to "flip",
+                    "auto" to "Auto",
+                    "asr" to "SurfaceFlinger (ASR)",
+                    "flip" to "Vulkan FLIP",
                 ),
                 selected = nativeBackend,
                 onPick = { nativeBackend = it },
@@ -785,9 +785,9 @@ internal fun DeckVulkanConfigEditor(
             label = "Present Mode",
             hint = if (nativeRender) "Ignored under native rendering" else null,
             options = listOf(
-                "FIFO (vsync)" to "fifo",
-                "Mailbox" to "mailbox",
-                "Immediate" to "immediate",
+                "fifo" to "FIFO (vsync)",
+                "mailbox" to "Mailbox",
+                "immediate" to "Immediate",
             ),
             selected = presentMode,
             onPick = { presentMode = it },
@@ -924,8 +924,8 @@ internal fun DeckFpsConfigEditor(
         DeckChoiceRow(
             label = "HUD style",
             options = listOf(
-                "Classic" to "classic", "GameHub" to "gamehub",
-                "GameNative" to "gamenative", "Fusion" to "fusion",
+                "classic" to "Classic", "gamehub" to "GameHub",
+                "gamenative" to "GameNative", "fusion" to "Fusion",
             ),
             selected = hudStyle,
             onPick = { hudStyle = it },
@@ -979,13 +979,13 @@ internal fun DeckFpsConfigEditor(
             val bandMode = if (!tempBands) 0 else if (tempAuto) 1 else 2
             DeckChoiceRow(
                 label = "Temp unit",
-                options = listOf("\u00B0C" to "0", "\u00B0F" to "1"),
+                options = listOf("0" to "\u00B0C", "1" to "\u00B0F"),
                 selected = if (tempUnitF) "1" else "0",
                 onPick = { tempUnitF = it == "1" },
             )
             DeckChoiceRow(
                 label = "Danger colors",
-                options = listOf("Off" to "0", "Auto" to "1", "Manual" to "2"),
+                options = listOf("0" to "Off", "1" to "Auto", "2" to "Manual"),
                 selected = bandMode.toString(),
                 onPick = {
                     val m = it.toInt()
@@ -1010,14 +1010,14 @@ internal fun DeckFpsConfigEditor(
             if (gameHub) {
                 DeckChoiceRow(
                     label = "HUD skin",
-                    options = listOf("Classic" to "classic", "Neon" to "neon", "Mono" to "mono"),
+                    options = listOf("classic" to "Classic", "neon" to "Neon", "mono" to "Mono"),
                     selected = skin,
                     onPick = { skin = it },
                 )
             }
             DeckChoiceRow(
                 label = "HUD color",
-                options = listOf("Soft" to "soft", "Mid" to "mid", "Vivid" to "vivid"),
+                options = listOf("soft" to "Soft", "mid" to "Mid", "vivid" to "Vivid"),
                 selected = color,
                 onPick = { color = it },
             )
@@ -1260,9 +1260,9 @@ internal fun DeckGraphicsDriverConfigEditor(
             label = "GMEM (tiled rendering)",
             hint = "Auto applies gmem only on Adreno 710/720/722",
             options = listOf(
-                "Auto (Adreno 710/720/722)" to "auto",
-                "Force On" to "on",
-                "Force Off" to "off",
+                "auto" to "Auto (Adreno 710/720/722)",
+                "on" to "Force On",
+                "off" to "Force Off",
             ),
             selected = turnipGmem,
             onPick = { turnipGmem = it },

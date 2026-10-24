@@ -507,7 +507,8 @@ internal fun DeckContainerDetailScreen(
                         }
                     }
 
-                    5 -> DeckGroup("Environment") {
+                    5 -> {
+                        DeckGroup("Environment") {
                         DeckExpandableRow(
                             label = "Env Vars",
                             hint = "KEY=value pairs",
@@ -520,12 +521,15 @@ internal fun DeckContainerDetailScreen(
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
+                        }
+                        DeckGroup("Startup") {
                         DeckChoiceRow(
                             label = "Startup Selection",
                             options = viewModel.startupSelectionEntries.mapIndexed { i, e -> i.toString() to e },
                             selected = viewModel.selectedStartupSelection.toString(),
                             onPick = { viewModel.selectedStartupSelection = it.toInt() },
                         )
+                        }
                     }
 
                     else -> {

@@ -17,6 +17,7 @@ import com.winlator.star.store.download.DownloadForegroundService
 import com.winlator.star.store.download.DownloadScope
 import com.winlator.star.util.ImportEtaTracker
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -154,7 +155,7 @@ object ContentsInstaller {
         appContext: Context,
         downloadUrl: String,
         onStatus: (String) -> Unit = {},
-    ): Boolean = withContext(DownloadScope.io) {
+    ): Boolean = withContext(Dispatchers.IO) {
         val ctx = appContext.applicationContext
         var temp: File? = null
         try {

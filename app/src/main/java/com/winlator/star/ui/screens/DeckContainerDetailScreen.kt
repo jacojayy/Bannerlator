@@ -5,19 +5,28 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -32,9 +41,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -157,37 +169,39 @@ internal fun DeckContainerDetailScreen(
             )
         }
 
-        // ── Top tabs — L1/R1 step them; the accent pill stretches onto the new one ──
-        DeckStretchyTabs(
-            labels = tabTitles,
-            selected = tab,
-            onSelect = { tabs.select(it) },
-            focusable = true,
-            selectOnFocus = true,
-            scroll = true,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
-        )
-
-        // ── Tab content — L1/R1 drag the page sideways, DroidDeck's long glide ──
-        AnimatedContent(
-            targetState = tab,
-            transitionSpec = {
-                val forward = targetState >= initialState
-                (fadeIn(tween(300, delayMillis = 60, easing = DeckEase)) +
-                    slideInHorizontally(tween(420, delayMillis = 60, easing = DeckEase)) {
-                        if (forward) it / 24 else -it / 24
-                    })
-                    .togetherWith(
-                        fadeOut(tween(170, easing = DeckEase)) +
-                            slideOutHorizontally(tween(170, easing = DeckEase)) {
-                                if (forward) -it / 40 else it / 40
-                            },
-                    )
-            },
+        // ── Category sidebar + page — L1/R1 step the categories; the rail marks the one you're
+        //    on, the page glides in beside it. ──
+        Row(
             modifier = Modifier
                 .weight(1f)
-                .fillMaxWidth()
-                .focusGroup(),
+                .fillMaxWidth(),
+        ) {
+            DeckEditorCategoryRail(
+                labels = tabTitles,
+                selected = tab,
+                onSelect = { tabs.select(it) },
+            )
+
+            // ── Page content — L1/R1 drag the page sideways, DroidDeck's long glide ──
+            AnimatedContent(
+                targetState = tab,
+                transitionSpec = {
+                    val forward = targetState >= initialState
+                    (fadeIn(tween(300, delayMillis = 60, easing = DeckEase)) +
+                        slideInHorizontally(tween(420, delayMillis = 60, easing = DeckEase)) {
+                            if (forward) it / 24 else -it / 24
+                        })
+                        .togetherWith(
+                            fadeOut(tween(170, easing = DeckEase)) +
+                                slideOutHorizontally(tween(170, easing = DeckEase)) {
+                                    if (forward) -it / 40 else it / 40
+                                },
+                        )
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .focusGroup(),
             label = "deckContainerTab",
         ) { currentTab ->
             DeckDragFrame(modifier = Modifier.fillMaxSize()) {
@@ -533,13 +547,21 @@ internal fun DeckContainerDetailScreen(
 
                     else -> {
                         DeckGroup("Wine") {
-                            DeckChoiceRow(
-                                label = "Wine Version",
-                                hint = "The Wine / Proton layer this container runs on",
-                                options = viewModel.wineVersionEntries.map { it to it },
-                                selected = viewModel.selectedWineVersion,
-                                onPick = { viewModel.selectedWineVersion = it },
-                            )
+                            // Wine version is only settable when CREATE-ing: an existing container's
+                            // applyFormTo never writes wineVersion (the classic editor locks the row
+                            // for the same reason), so leaving it editable here made a wine change
+                            // look accepted and then silently revert on reopen. Show it only when it
+                            // can actually be saved, and route the pick through onWineVersionChanged
+                            // so the arch-dependent defaults (emulator / box64 / FEXCore) re-seed.
+                            if (viewModel.wineVersionEnabled) {
+                                DeckChoiceRow(
+                                    label = "Wine Version",
+                                    hint = "The Wine / Proton layer this container runs on",
+                                    options = viewModel.wineVersionEntries.map { it to it },
+                                    selected = viewModel.selectedWineVersion,
+                                    onPick = { viewModel.onWineVersionChanged(it) },
+                                )
+                            }
                             DeckChoiceRow(
                                 label = "Audio Driver",
                                 options = viewModel.audioDriverEntries.map { it to it },
@@ -573,6 +595,7 @@ internal fun DeckContainerDetailScreen(
                 Spacer(Modifier.height(16.dp))
             }
             }
+        }
         }
 
         // ── Config panels (the classic editor's per-row settings dialogs) ──
@@ -636,4 +659,71 @@ internal fun DeckContainerDetailScreen(
 /** androidx Color int (ARGB) -> the "#RRGGBB" string the classic ColorPickerView exposed. */
 private fun deckColorAsString(argb: Int): String =
     String.format(Locale.US, "#%06X", 0xFFFFFF and argb)
+
+/**
+ * The container editor's category sidebar. A vertical list of the editor's categories, one focus
+ * target each: D-pad focus moves the selection (like the shell's rail), A / touch picks directly.
+ * L1/R1 still step it through [LocalDeckTabs] at the call site. Kept deliberately plain text — the
+ * point is to stop the editor reading as one endless wall of rows.
+ */
+@Composable
+private fun DeckEditorCategoryRail(
+    labels: List<String>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .width(190.dp)
+            .padding(start = 16.dp, end = 10.dp, top = 6.dp, bottom = 8.dp)
+            .focusGroup()
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        labels.forEachIndexed { index, label ->
+            val interaction = remember { MutableInteractionSource() }
+            val focused by interaction.collectIsFocusedAsState()
+            val current = index == selected
+            val bg by animateColorAsState(
+                targetValue = when {
+                    current -> Deck.primary.copy(alpha = 0.16f)
+                    focused -> Deck.surfaceVariant
+                    else -> Color.Transparent
+                },
+                animationSpec = tween(200),
+                label = "categoryBg",
+            )
+            Box(
+                contentAlignment = Alignment.CenterStart,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(bg)
+                    .border(
+                        width = 1.dp,
+                        color = when {
+                            current -> Deck.primary
+                            focused -> Deck.line
+                            else -> Color.Transparent
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                    )
+                    .onFocusChanged { if (it.isFocused) onSelect(index) }
+                    .clickable(interactionSource = interaction, indication = null) { onSelect(index) }
+                    .padding(horizontal = 14.dp),
+            ) {
+                Text(
+                    text = label,
+                    color = if (current) Deck.primary else Deck.onBackground,
+                    fontSize = 15.sp,
+                    fontWeight = if (current) FontWeight.Bold else FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
 

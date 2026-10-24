@@ -977,7 +977,7 @@ private fun rootPresetRow(
 
 /** Poll current device GPU MHz / SoC temp / governor (~1.5s) for the pre-launch gauges. */
 @Composable
-private fun rememberLiveReadouts(): Map<String, String> {
+internal fun rememberLiveReadouts(): Map<String, String> {
     val ctx = LocalContext.current
     val hud = remember { com.winlator.star.widget.HudMetrics(ctx) }
     var readouts by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -997,7 +997,7 @@ private fun rememberLiveReadouts(): Map<String, String> {
     return readouts
 }
 
-private fun readGovernor(): String? {
+internal fun readGovernor(): String? {
     for (c in PerfNodeResolver.cpuCores()) {
         val g = c.governor ?: continue
         try {

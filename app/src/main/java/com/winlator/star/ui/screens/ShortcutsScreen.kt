@@ -9679,7 +9679,7 @@ internal fun DeckShortcutSettingsScreen(
         )
     }
     if (showPerfDialog) {
-        com.winlator.star.ui.PerformanceDashboardDialogPerGame(
+        DeckPerformanceDialog(
             sustained = sustainedPerfMode, onSustained = { sustainedPerfMode = it },
             priority = perfPriorityBoost, onPriority = { perfPriorityBoost = it },
             bigCores = preferBigCores, onBigCores = { preferBigCores = it },

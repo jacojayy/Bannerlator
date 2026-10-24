@@ -8683,6 +8683,8 @@ internal fun DeckShortcutSettingsScreen(
     var showSfWarning by remember { mutableStateOf(false) }
     var showPerfDialog by remember { mutableStateOf(false) }
     var showIconPickMenu by remember { mutableStateOf(false) }
+    var dxvkRefreshKey by remember { mutableStateOf(0) }
+    var showStockConfigSheet by remember { mutableStateOf(false) }
 
     var selectedTab by remember { mutableIntStateOf(0) }
 
@@ -9556,33 +9558,51 @@ internal fun DeckShortcutSettingsScreen(
     }
 
     if (showGfxConfig) {
-        GraphicsDriverConfigDialog(
-            graphicsDriver = StringUtils.parseIdentifier(selectedGfxDriver),
-            initialConfig = graphicsDriverConfig,
-            onConfirm = { graphicsDriverConfig = it; showGfxConfig = false },
-            onDismiss = { showGfxConfig = false },
-        )
+        DeckConfigDialog(title = stringResource(R.string.graphics_driver), onDismiss = { showGfxConfig = false }) {
+            DeckGraphicsDriverConfigEditor(
+                graphicsDriver = StringUtils.parseIdentifier(selectedGfxDriver),
+                initialConfig = graphicsDriverConfig,
+                onConfirm = { graphicsDriverConfig = it; showGfxConfig = false },
+            )
+        }
     }
-    val isVegasCfg = StringUtils.parseIdentifier(selectedDxWrapper).contains("vegas")
-    val relaxDxvkFilter = StringUtils.parseIdentifier(selectedGfxDriver) == "wrapper-compat-bcn"
     if (showDxvkConfig) {
-        DxvkConfigDialog(
-            isArm64EC = isArm64EC,
-            isVegas = isVegasCfg,
-            relaxDxvkFilter = relaxDxvkFilter,
-            initialConfig = dxWrapperConfig,
-            onConfirm = { dxWrapperConfig = it; showDxvkConfig = false },
-            onDismiss = { showDxvkConfig = false },
-            onDownloadDxvk = { showDxvkConfig = false; if (isVegasCfg) showVegasDownloadSheet = true else showDxvkDownloadSheet = true },
-            onDownloadVkd3d = { showDxvkConfig = false; showVkd3dDownloadSheet = true },
-            onDownloadD7vk = { showDxvkConfig = false; showD7vkDownloadSheet = true },
-        )
+        val isVegasCfg = StringUtils.parseIdentifier(selectedDxWrapper).contains("vegas")
+        DeckConfigDialog(title = "DX Wrapper Config", onDismiss = { showDxvkConfig = false }) {
+            if (StringUtils.parseIdentifier(selectedDxWrapper).let { it.contains("dxvk") || it.contains("vegas") }) {
+                DeckDxvkConfigEditor(
+                    isArm64EC = isArm64EC,
+                    isVegas = isVegasCfg,
+                    containerRootDir = shortcut.container.rootDir,
+                    relaxDxvkFilter = StringUtils.parseIdentifier(selectedGfxDriver) == "wrapper-compat-bcn",
+                    initialConfig = dxWrapperConfig,
+                    onConfirm = { dxWrapperConfig = it; showDxvkConfig = false },
+                    onOpenConfigDownload = if (isVegasCfg) { { showStockConfigSheet = true } } else null,
+                    refreshKey = dxvkRefreshKey,
+                    onDownloadDxvk = { showDxvkDownloadSheet = true },
+                    onDownloadVkd3d = { showVkd3dDownloadSheet = true },
+                    onDownloadD7vk = { showD7vkDownloadSheet = true },
+                )
+            } else {
+                DeckWineD3DConfigEditor(
+                    initialConfig = dxWrapperConfig,
+                    onConfirm = { dxWrapperConfig = it; showDxvkConfig = false },
+                )
+            }
+        }
     }
     if (showWineD3DConfig) {
-        WineD3DConfigDialog(
-            initialConfig = dxWrapperConfig,
-            onConfirm = { dxWrapperConfig = it; showWineD3DConfig = false },
-            onDismiss = { showWineD3DConfig = false },
+        DeckConfigDialog(title = "DX Wrapper Config", onDismiss = { showWineD3DConfig = false }) {
+            DeckWineD3DConfigEditor(
+                initialConfig = dxWrapperConfig,
+                onConfirm = { dxWrapperConfig = it; showWineD3DConfig = false },
+            )
+        }
+    }
+    if (showStockConfigSheet) {
+        DeckStockConfigSheet(
+            onDismiss = { showStockConfigSheet = false; dxvkRefreshKey++ },
+            onContentChanged = { dxvkRefreshKey++ },
         )
     }
     helpRes?.let { HelpDialog(it) { helpRes = null } }

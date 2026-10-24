@@ -6412,7 +6412,8 @@ internal fun ShortcutSettingsDialogScreen(
     val fgEngines = remember { listOf("off", "lsfg-native") }
     var frameGenEngine by remember {
         mutableStateOf(shortcut.getExtra("frameGenEngine", shortcut.container.frameGenEngine)
-            .let { if (it == "bionic" || it == "lsfg") "lsfg-native" else it })
+            .let { if (it == "bionic" || it == "lsfg") "lsfg-native" else it }
+            .let { if (it == "off") shortcut.container.frameGenEngine else it })
     }
     val lsfgDllAvailable = remember { File(context.filesDir, "lsfg-vk/Lossless.dll").isFile }
 
@@ -6846,13 +6847,14 @@ internal fun ShortcutSettingsDialogScreen(
             putExtra("unlockGameRefreshRate", unlockGameRefreshRate.ifEmpty { null })
             // Override-when-different, like the rows below: stamping the inherited value here
             // turned the container's then-current engine into a permanent per-game override.
-            if (frameGenEngine != shortcut.container.frameGenEngine) {
+            // "Off" means inherit too (the resolver reads it the same as an absent extra), so it
+            // clears the extra instead of pinning the game off against a later LSFG container.
+            if (frameGenEngine != "off" && frameGenEngine != shortcut.container.frameGenEngine) {
                 putExtra("frameGenEngine", frameGenEngine)
-                putExtra("frameGenEngineExplicit", "1")
             } else {
                 putExtra("frameGenEngine", null)
-                putExtra("frameGenEngineExplicit", null)
             }
+            putExtra("frameGenEngineExplicit", null)
             putExtra("fpsLimiterEnabled", if (fpsLimiterEnabled) "1" else "0")
             // Override-when-different: write the per-game key only when it differs from the global
             // default; otherwise null clears the extra so the game re-inherits (hasExtra=false).

@@ -403,13 +403,13 @@ private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<Xmb
             val picked = fgEngines[fgLabels.indexOf(v)]
             // Same override-when-different rule as the pop-up editor: only a real deviation from
             // the container is an override; matching it clears the extra instead of cementing it.
-            if (picked != c.frameGenEngine) {
+            // "Off" means inherit too, so it clears rather than pinning the game off.
+            if (picked != "off" && picked != c.frameGenEngine) {
                 xmb.set(p, "frameGenEngine", picked)
-                xmb.set(p, "frameGenEngineExplicit", "1")
             } else {
                 xmb.set(p, "frameGenEngine", null)
-                xmb.set(p, "frameGenEngineExplicit", null)
             }
+            xmb.set(p, "frameGenEngineExplicit", null)
         }
     rows += XmbRow.Toggle("fpsLimiter", "FPS limiter", Icons.Filled.Speed,
         p.ex("fpsLimiterEnabled", if (c.isFpsLimiterEnabled) "1" else "0") == "1") { xmb.set(p, "fpsLimiterEnabled", if (it) "1" else "0") }

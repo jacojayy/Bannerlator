@@ -10662,14 +10662,11 @@ return true;
         final String containerEngine = container.getFrameGenEngine();
         if (shortcut != null) {
             final String e = shortcut.getExtra("frameGenEngine", "");
-            // The old per-game editor stamped the inherited engine onto EVERY save, so an
-            // unmarked per-game "off" may simply predate the container being switched to LSFG.
-            // Such a stamp silently suppressed frame gen and made the drawer say "enable it in
-            // the container", which was already on. Respect an Off only when it was an explicit
-            // choice (frameGenEngineExplicit=1, written by the current editors).
-            final boolean legacyOff = "off".equals(e)
-                && !shortcut.hasExtra("frameGenEngineExplicit");
-            if (!e.isEmpty() && !legacyOff)
+            // A per-game "off" is not a choice of engine: it means "inherit the container", just
+            // like an absent extra. Only an enabled per-game engine overrides the container, so a
+            // stale Off on the shortcut can no longer hide a container that has frame gen on -
+            // which is what made the drawer say "enable it in the container" while it already was.
+            if (!e.isEmpty() && !"off".equals(e))
                 return "lsfg".equals(e) ? "lsfg-native" : e;
         }
         // lsfg-vk retired 2026-09-05 (parked on feat/lsfg-vk-plumbing): a legacy

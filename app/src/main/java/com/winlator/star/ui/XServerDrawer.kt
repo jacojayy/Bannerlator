@@ -1632,7 +1632,7 @@ private fun FrameGenSection(state: XServerDrawerState) {
         }
     } else {
         Text(
-            "Frame Generation is off for this game. Enable it in the game's or container's settings.",
+            "Enable Frame Generation in this container's settings to tune it here.",
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
             fontSize = 11.sp,
             modifier = Modifier.padding(start = 4.dp, top = 2.dp)

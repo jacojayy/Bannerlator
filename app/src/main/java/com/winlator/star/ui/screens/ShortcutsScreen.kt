@@ -9662,7 +9662,7 @@ internal fun DeckShortcutSettingsScreen(
         )
     }
     if (showScAudioSettings) {
-        AudioSettingsDialog(
+        DeckAudioSettingsDialog(
             initial = audioConfigFromEnv(envVarsStr, StringUtils.parseIdentifier(selectedAudioDriver)),
             scopeLabel = "this game",
             latencyLive = true,

@@ -8402,7 +8402,6 @@ internal fun DeckShortcutSettingsScreen(
 ) {
     val context = LocalContext.current
     val res = context.resources
-    val dp = remember { SettingsDpad() }
 
     val isEpicShortcut = remember { shortcut.getExtra("storeSource") == "epic" }
     val isLinuxEntry = false
@@ -9476,10 +9475,10 @@ internal fun DeckShortcutSettingsScreen(
                                 gameDir = gameDir,
                                 shortcutBaseName = shortcut.name,
                             )
-                            ScWinComponentsTab(winComponents)
+                            DeckWinComponentsTab(winComponents)
                         }
-                        2 -> ScEnvVarsTab(envVarsStr, { envVarsStr = it }, gameDir, isLinuxEntry)
-                        3 -> ScAdvancedTab(
+                        2 -> DeckEnvVarsTab(envVarsStr, { envVarsStr = it }, gameDir, isLinuxEntry)
+                        3 -> DeckAdvancedTab(
                             shortcut = shortcut,
                             onPresetListChanged = {
                                 box64Presets = Box64PresetManager.getPresets("box64", context)
@@ -9530,8 +9529,7 @@ internal fun DeckShortcutSettingsScreen(
                             onShowBox64DownloadSheet = { showBox64DownloadSheet = true },
                             onShowFexCoreDownloadSheet = { showFexCoreDownloadSheet = true },
                         )
-                        5 -> ScTvTab(
-                            dp = dp,
+                        5 -> DeckTvTab(
                             display = tvDisplay,
                             gameScreenSize = if (selectedScreenSize == "Custom") "${customWidth}x${customHeight}"
                                              else StringUtils.parseIdentifier(selectedScreenSize),
@@ -9708,6 +9706,349 @@ private fun shortcutTabIcon(title: String): ImageVector = when (title) {
  * [display] null = the tab is only here because this game still has the setting stored.
  * [gameScreenSize] this game's own render resolution ("1280x720"), for the "Match the TV's" subtitle.
  */
+@Composable
+private fun DeckWinComponentsTab(components: androidx.compose.runtime.snapshots.SnapshotStateList<WinComponentEntry>) {
+    val directx = components.filter { it.key.startsWith("direct") }
+    val general = components.filterNot { it.key.startsWith("direct") }
+    val options = listOf("Builtin (Wine)", "Native (Windows)")
+    val optionPairs = options.indices.toList().map { it.toString() to options[it] }
+    fun select(comp: WinComponentEntry, value: String) {
+        val i = components.indexOfFirst { it.key == comp.key }
+        if (i >= 0) components[i] = components[i].copy(selectedIndex = (value.toIntOrNull() ?: 0).coerceAtLeast(0))
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (directx.isNotEmpty()) {
+            DeckGroup("DirectX") {
+                directx.forEach { comp ->
+                    DeckChoiceRow(
+                        label = comp.label,
+                        options = optionPairs,
+                        selected = comp.selectedIndex.coerceIn(0, options.lastIndex).toString(),
+                        onPick = { select(comp, it) },
+                    )
+                }
+            }
+        }
+        if (general.isNotEmpty()) {
+            DeckGroup("General") {
+                general.forEach { comp ->
+                    DeckChoiceRow(
+                        label = comp.label,
+                        options = optionPairs,
+                        selected = comp.selectedIndex.coerceIn(0, options.lastIndex).toString(),
+                        onPick = { select(comp, it) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeckEnvVarsTab(
+    envVars: String,
+    onEnvVarsChange: (String) -> Unit,
+    gameDir: File?,
+    isLinuxEntry: Boolean = false,
+) {
+    DeckGroup("Environment variables") {
+        EnvVarsEditor(
+            value = envVars,
+            onValueChange = onEnvVarsChange,
+            modifier = Modifier.fillMaxWidth(),
+            gameDir = gameDir,
+            preferDllsHelp = if (isLinuxEntry) stringResource(R.string.help_linux_prefer_game_dlls) else null,
+        )
+    }
+}
+
+@Composable
+private fun DeckAdvancedTab(
+    shortcut: Shortcut,
+    onPresetListChanged: () -> Unit,
+    isArm64EC: Boolean,
+    isLinuxEntry: Boolean = false,
+    box64Versions: List<String>,
+    selectedBox64Version: String,
+    onBox64VersionChange: (String) -> Unit,
+    box64Presets: List<Box64Preset>,
+    selectedBox64PresetIndex: Int,
+    onBox64PresetIndexChange: (Int) -> Unit,
+    fexCoreVersions: List<String>,
+    selectedFexCoreVersion: String,
+    onFexVersionChange: (String) -> Unit,
+    fexCorePresets: List<FEXCorePreset>,
+    selectedFexPresetIndex: Int,
+    onFexPresetIndexChange: (Int) -> Unit,
+    controlsProfiles: List<ControlsProfile>,
+    selectedControlsProfileIndex: Int,
+    onControlsProfileChange: (Int) -> Unit,
+    startupSelectionEntries: List<String>,
+    selectedStartupSelection: String,
+    onStartupChange: (String) -> Unit,
+    startupServicesEnabled: Set<String>,
+    onStartupServiceToggle: (String, Boolean) -> Unit,
+    cpuListViewRef: MutableState<CPUListView?>,
+    initialCpuList: String,
+    onCpuListSnapshot: (String) -> Unit,
+    sharpnessEffectEntries: List<String>,
+    selectedSharpnessEffect: String,
+    onSharpnessEffectChange: (String) -> Unit,
+    sharpnessLevel: Int,
+    onSharpnessLevelChange: (Int) -> Unit,
+    sharpnessDenoise: Int,
+    onSharpnessDenoiseChange: (Int) -> Unit,
+    reshadeLoadout: ReshadeLoadoutState = ReshadeLoadoutState(),
+    reshadeEffects: List<ReshadeManager.ReshadeEffect> = emptyList(),
+    onReshadeCatalogChanged: () -> Unit = {},
+    reshadeSupported: Boolean = true,
+    onShowBox64DownloadSheet: () -> Unit = {},
+    onShowFexCoreDownloadSheet: () -> Unit = {},
+) {
+    val context = LocalContext.current
+    var presetRevision by remember { mutableIntStateOf(0) }
+    DisposableEffect(Unit) {
+        onDispose {
+            cpuListViewRef.value?.let { onCpuListSnapshot(it.checkedCPUListAsString) }
+            cpuListViewRef.value = null
+        }
+    }
+    val emulatorLabel = if (isArm64EC) "WOWBox64" else "Box64"
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (!isLinuxEntry) {
+            DeckGroup(emulatorLabel) {
+                DeckChoiceRow(
+                    label = "$emulatorLabel Version",
+                    options = box64Versions.map { it to it },
+                    selected = box64Versions.firstOrNull { it == selectedBox64Version } ?: selectedBox64Version,
+                    onPick = onBox64VersionChange,
+                )
+                DeckRow("$emulatorLabel Downloads") {
+                    DeckButton("Download", primary = false) { onShowBox64DownloadSheet() }
+                }
+                val presetNames = box64Presets.map { it.name }
+                val b64Id = box64Presets.getOrNull(selectedBox64PresetIndex)?.id ?: ""
+                val b64Customised = remember(presetRevision, b64Id) {
+                    b64Id.isNotEmpty() && PresetOverrides.isCustomised(
+                        context, false, b64Id, PresetScope.SHORTCUT, shortcut.container, shortcut
+                    )
+                }
+                DeckChoiceRow(
+                    label = "$emulatorLabel Preset",
+                    hint = if (b64Customised) "Customised for this game" else null,
+                    options = presetNames.indices.toList().map { it.toString() to presetNames[it] },
+                    selected = selectedBox64PresetIndex.coerceIn(0, (presetNames.size - 1).coerceAtLeast(0)).toString(),
+                    onPick = { onBox64PresetIndexChange(it.toIntOrNull() ?: 0) },
+                )
+                PresetEditorRow(
+                    kind = PresetKind.BOX64,
+                    selectedPresetId = b64Id,
+                    scope = PresetScope.SHORTCUT,
+                    container = shortcut.container,
+                    shortcut = shortcut,
+                    onSelect = { id ->
+                        box64Presets.indexOfFirst { it.id == id }.takeIf { it >= 0 }?.let(onBox64PresetIndexChange)
+                    },
+                    onListChanged = { onPresetListChanged(); presetRevision++ },
+                    onValuesChanged = { presetRevision++ },
+                )
+            }
+        }
+        if (isArm64EC || isLinuxEntry) {
+            DeckGroup("FEXCore") {
+                if (!isLinuxEntry) {
+                    DeckChoiceRow(
+                        label = stringResource(R.string.fexcore_version),
+                        options = fexCoreVersions.map { it to it },
+                        selected = fexCoreVersions.firstOrNull { it == selectedFexCoreVersion } ?: selectedFexCoreVersion,
+                        onPick = onFexVersionChange,
+                    )
+                    DeckRow("FEXCore Downloads") {
+                        DeckButton("Download", primary = false) { onShowFexCoreDownloadSheet() }
+                    }
+                }
+                val fexNames = fexCorePresets.map { it.name }
+                val fexId = fexCorePresets.getOrNull(selectedFexPresetIndex)?.id ?: ""
+                val fexCustomised = remember(presetRevision, fexId) {
+                    fexId.isNotEmpty() && PresetOverrides.isCustomised(
+                        context, true, fexId, PresetScope.SHORTCUT, shortcut.container, shortcut
+                    )
+                }
+                DeckChoiceRow(
+                    label = stringResource(R.string.fexcore_preset),
+                    hint = if (fexCustomised) "Customised for this game" else null,
+                    options = fexNames.indices.toList().map { it.toString() to fexNames[it] },
+                    selected = selectedFexPresetIndex.coerceIn(0, (fexNames.size - 1).coerceAtLeast(0)).toString(),
+                    onPick = { onFexPresetIndexChange(it.toIntOrNull() ?: 0) },
+                )
+                PresetEditorRow(
+                    kind = PresetKind.FEXCORE,
+                    selectedPresetId = fexId,
+                    scope = PresetScope.SHORTCUT,
+                    container = shortcut.container,
+                    shortcut = shortcut,
+                    onSelect = { id ->
+                        fexCorePresets.indexOfFirst { it.id == id }.takeIf { it >= 0 }?.let(onFexPresetIndexChange)
+                    },
+                    onListChanged = { onPresetListChanged(); presetRevision++ },
+                    onValuesChanged = { presetRevision++ },
+                )
+            }
+        }
+        run {
+            val profileNames = mutableListOf(stringResource(R.string.none))
+            profileNames.addAll(controlsProfiles.map { it.getName() })
+            DeckChoiceRow(
+                label = "Controls Profile",
+                options = profileNames.indices.toList().map { it.toString() to profileNames[it] },
+                selected = selectedControlsProfileIndex.coerceIn(0, profileNames.lastIndex).toString(),
+                onPick = { onControlsProfileChange(it.toIntOrNull() ?: 0) },
+            )
+        }
+        if (!isLinuxEntry) {
+            DeckGroup("Startup") {
+                DeckChoiceRow(
+                    label = stringResource(R.string.startup_selection),
+                    options = startupSelectionEntries.indices.toList().map { it.toString() to startupSelectionEntries[it] },
+                    selected = startupSelectionEntries.indexOf(selectedStartupSelection).coerceAtLeast(0).toString(),
+                    onPick = { onStartupChange(startupSelectionEntries.getOrElse(it.toIntOrNull() ?: 0) { startupSelectionEntries.first() }) },
+                )
+                if (startupSelectionEntries.indexOf(selectedStartupSelection) == Container.STARTUP_SELECTION_CUSTOM.toInt()) {
+                    StartupServicesToggleList(
+                        enabled = startupServicesEnabled,
+                        onToggle = onStartupServiceToggle,
+                    )
+                }
+            }
+        }
+        DeckGroup(stringResource(R.string.processor_affinity)) {
+            AndroidView(
+                factory = { ctx ->
+                    CPUListView(ctx).also { cpv ->
+                        cpv.setCheckedCPUList(initialCpuList)
+                        cpuListViewRef.value = cpv
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().wrapContentHeight(),
+            )
+        }
+        if (!isLinuxEntry) {
+            DeckGroup("Sharpness (VKBasalt)") {
+                DeckChoiceRow(
+                    label = "Effect",
+                    options = sharpnessEffectEntries.map { it to it },
+                    selected = selectedSharpnessEffect,
+                    onPick = onSharpnessEffectChange,
+                )
+                DeckSliderRow(
+                    label = "Level",
+                    value = sharpnessLevel.toFloat(),
+                    range = 0f..100f,
+                    format = { "${it.toInt()}%" },
+                    onChange = { onSharpnessLevelChange(it.toInt()) },
+                )
+                DeckSliderRow(
+                    label = "Denoise",
+                    value = sharpnessDenoise.toFloat(),
+                    range = 0f..100f,
+                    format = { "${it.toInt()}%" },
+                    onChange = { onSharpnessDenoiseChange(it.toInt()) },
+                )
+            }
+            DeckGroup("ReShade loadout") {
+                ReshadeLoadoutEditor(
+                    state = reshadeLoadout,
+                    effects = reshadeEffects,
+                    supported = reshadeSupported,
+                    onCatalogChanged = onReshadeCatalogChanged,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeckTvTab(
+    display: android.view.Display?,
+    gameScreenSize: String,
+    tvLaunch: Boolean,
+    onTvLaunchChange: (Boolean) -> Unit,
+    tvModeId: Int,
+    onTvModeIdChange: (Int) -> Unit,
+    tvMatchRes: Boolean,
+    onTvMatchResChange: (Boolean) -> Unit,
+) {
+    val modes = com.winlator.star.display.ExternalDisplay.selectableModes(display)
+    val hdrReason = if (display == null) null else com.winlator.star.display.ExternalDisplay.hdrUnavailableReason(display)
+    val hdrOk = display != null && hdrReason == null
+
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        DeckGroup("External display") {
+            DeckRow(
+                label = if (display != null) com.winlator.star.display.ExternalDisplay.title(display) else "No external display",
+                hint = if (display != null) com.winlator.star.display.ExternalDisplay.summary(display)
+                       else "Nothing is plugged in. This game is still set to launch on a TV, so the tab stays here.",
+            ) {}
+            DeckRow(
+                label = "Launch this game on the TV",
+                hint = com.winlator.star.display.ExternalDisplay.HELP_LAUNCH,
+            ) {
+                DeckToggle(checked = tvLaunch, onChange = onTvLaunchChange)
+            }
+            if (modes.size > 1) {
+                val values = listOf(0) + modes.map { it.modeId }
+                val labels = listOf("Default (leave the TV as it is)") +
+                    modes.map { com.winlator.star.display.ExternalDisplay.modeLabel(it) }
+                DeckChoiceRow(
+                    label = "Output mode",
+                    hint = "What the TV is told to run at.",
+                    options = values.indices.toList().map { it.toString() to labels[it] },
+                    selected = values.indexOf(tvModeId).coerceAtLeast(0).toString(),
+                    onPick = { onTvModeIdChange(values.getOrElse(it.toIntOrNull() ?: 0) { 0 }) },
+                )
+            } else {
+                DeckRow(
+                    label = "Output mode",
+                    hint = if (display != null) "This screen advertises one output mode."
+                           else "Plug a screen in to choose an output mode.",
+                ) {
+                    Text(
+                        com.winlator.star.display.ExternalDisplay.modeLabel(modes.firstOrNull()).ifEmpty { "—" },
+                        color = DeckPalette.onSurfaceVariant,
+                        fontSize = 12.5.sp,
+                    )
+                }
+            }
+            DeckRow(
+                label = "Match the TV's resolution",
+                hint = run {
+                    val tvRes = com.winlator.star.display.ExternalDisplay.resolutionOf(
+                        com.winlator.star.display.ExternalDisplay.effectiveMode(display, tvModeId))
+                    if (tvRes.isEmpty()) com.winlator.star.display.ExternalDisplay.HELP_MATCH_RES
+                    else "Render at ${tvRes.replace("x", "×")} instead of this game's ${gameScreenSize.replace("x", "×")}."
+                },
+            ) {
+                DeckToggle(checked = tvMatchRes, onChange = onTvMatchResChange)
+            }
+            DeckRow(
+                label = "Use HDR on the TV",
+                hint = hdrReason ?: "Automatic. This screen accepts HDR10, so HDR output switches on for this game.",
+            ) {
+                Text(
+                    if (hdrOk) "On" else "Off",
+                    color = if (hdrOk) DeckPalette.good else DeckPalette.onSurfaceVariant,
+                    fontSize = 12.5.sp,
+                )
+            }
+        }
+        DeckGroup("Notes") {
+            DeckRow(com.winlator.star.display.ExternalDisplay.NOTE_UNPLUG) {}
+            DeckRow(com.winlator.star.display.ExternalDisplay.NOTE_TOUCH) {}
+        }
+    }
+}
+
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun ScTvTab(

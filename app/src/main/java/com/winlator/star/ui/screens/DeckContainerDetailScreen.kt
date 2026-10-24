@@ -380,8 +380,8 @@ internal fun DeckContainerDetailScreen(
                                 "LSFG Native needs Vulkan — the Renderer switches on pick"
                             else "LSFG Native frame interpolation",
                             options = listOf(
-                                "Off" to "off",
-                                "LSFG" to "lsfg-native",
+                                "off" to "Off",
+                                "lsfg-native" to "LSFG",
                             ),
                             selected = viewModel.frameGenEngine,
                             onPick = {

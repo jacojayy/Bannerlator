@@ -753,55 +753,51 @@ internal fun DeckSettingsScreen() {
         }
     }
     if (showBackupDialog) {
-        AlertDialog(
-            onDismissRequest = { showBackupDialog = false },
-            title = { Text("Backup Data") },
-            text = { Text("Do you want to create a backup of the app's data directory?") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showBackupDialog = false
-                    isBackingUp = true
-                    val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
-                    executor.execute {
-                        val dataDir = context.filesDir.parentFile
-                        val backupFile = File(Environment.getExternalStorageDirectory(), "app_data_backup.tar")
-                        try {
-                            com.winlator.star.core.TarCompressorUtils.archive(
-                                arrayOf(dataDir), backupFile,
-                            ) { file -> !file.absolutePath.contains("imagefs/tmp/.sysvshm") }
-                            (context as? Activity)?.runOnUiThread {
-                                isBackingUp = false
-                                AppUtils.showToast(context, "Backup completed: ${backupFile.path}")
-                            }
-                        } catch (_: Exception) {
-                            (context as? Activity)?.runOnUiThread {
-                                isBackingUp = false
-                                AppUtils.showToast(context, "Backup failed.")
-                            }
+        DeckWarningDialog(
+            title = "Backup Data",
+            message = "Do you want to create a backup of the app's data directory?",
+            confirmLabel = "Yes",
+            onConfirm = {
+                showBackupDialog = false
+                isBackingUp = true
+                val executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors())
+                executor.execute {
+                    val dataDir = context.filesDir.parentFile
+                    val backupFile = File(Environment.getExternalStorageDirectory(), "app_data_backup.tar")
+                    try {
+                        com.winlator.star.core.TarCompressorUtils.archive(
+                            arrayOf(dataDir), backupFile,
+                        ) { file -> !file.absolutePath.contains("imagefs/tmp/.sysvshm") }
+                        (context as? Activity)?.runOnUiThread {
+                            isBackingUp = false
+                            AppUtils.showToast(context, "Backup completed: ${backupFile.path}")
+                        }
+                    } catch (_: Exception) {
+                        (context as? Activity)?.runOnUiThread {
+                            isBackingUp = false
+                            AppUtils.showToast(context, "Backup failed.")
                         }
                     }
-                }) { Text("Yes") }
+                }
             },
-            dismissButton = { TextButton(onClick = { showBackupDialog = false }) { Text("No") } },
+            onDismiss = { showBackupDialog = false },
         )
     }
     if (showRestoreConfirm) {
-        AlertDialog(
-            onDismissRequest = { showRestoreConfirm = false; pendingRestoreUri = null },
-            title = { Text("Restore Data") },
-            text = { Text("This will restart the app. Continue?") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showRestoreConfirm = false
-                    pendingRestoreUri?.let { uri ->
-                        val intent = Intent(context, com.winlator.star.restore.RestoreActivity::class.java)
-                        intent.data = uri
-                        context.startActivity(intent)
-                        (context as? Activity)?.finish()
-                    }
-                }) { Text("Restore") }
+        DeckWarningDialog(
+            title = "Restore Data",
+            message = "This will restart the app. Continue?",
+            confirmLabel = "Restore",
+            onConfirm = {
+                showRestoreConfirm = false
+                pendingRestoreUri?.let { uri ->
+                    val intent = Intent(context, com.winlator.star.restore.RestoreActivity::class.java)
+                    intent.data = uri
+                    context.startActivity(intent)
+                    (context as? Activity)?.finish()
+                }
             },
-            dismissButton = { TextButton(onClick = { showRestoreConfirm = false; pendingRestoreUri = null }) { Text("Cancel") } },
+            onDismiss = { showRestoreConfirm = false; pendingRestoreUri = null },
         )
     }
 }

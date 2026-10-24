@@ -60,7 +60,6 @@ import com.winlator.star.contentdialog.ContentDialog
 import com.winlator.star.core.AppUtils
 import com.winlator.star.core.PreloaderDialog
 import com.winlator.star.midi.MidiManager
-import com.winlator.star.xenvironment.ImageFsInstaller
 
 /**
  * Deck Mode's settings page — a 1:1 mirror of [SettingsScreen]: the same preference keys, the same
@@ -607,7 +606,7 @@ internal fun DeckSettingsScreen() {
             DeckRow(label = "Reinstall ImageFS", hint = "Restore system files; containers unchanged") {
                 DeckButton("Reinstall", primary = false) {
                     ContentDialog.confirm(context, R.string.do_you_want_to_reinstall_imagefs) {
-                        mainActivity?.let { ImageFsInstaller.installFromAssets(it) }
+                        mainActivity?.reinstallImageFs()
                     }
                 }
             }

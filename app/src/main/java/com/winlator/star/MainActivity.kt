@@ -231,6 +231,9 @@ class MainActivity : AppCompatActivity() {
             WinlatorTheme {
                 val isInstalling by splashViewModel.isInstalling.collectAsState()
                 val installProgress by splashViewModel.progress.collectAsState()
+                val installStatus by splashViewModel.status.collectAsState()
+                val installStep by splashViewModel.step.collectAsState()
+                val installDegraded by splashViewModel.degraded.collectAsState()
                 val showProceed by splashViewModel.showProceed.collectAsState()
 
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -262,6 +265,9 @@ class MainActivity : AppCompatActivity() {
                     if (isInstalling) {
                         SplashScreen(
                             progress = installProgress,
+                            status = installStatus,
+                            step = installStep,
+                            degraded = installDegraded,
                             showProceed = showProceed,
                             onProceed = {
                                 splashViewModel.dismissSplash()
@@ -291,6 +297,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
+    /** Settings → Reinstall ImageFS: runs behind the same WinHub setup overlay. */
+    internal fun reinstallImageFs() = splashViewModel.reinstallImageFs(this)
 
     private fun launchStore(screen: Screen) {
         val cls = when (screen) {

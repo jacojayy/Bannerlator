@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -540,9 +541,14 @@ internal fun DeckHubGamePage(
         label = "hubPageAlpha",
     )
     val pageFocus = remember { FocusRequester() }
+    val playFocus = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
-    // The page owns the D-pad while it is open: focus lands here, then walks the chips and buttons.
-    LaunchedEffect(Unit) { runCatching { pageFocus.requestFocus() } }
+    // Controller-first: seed the page root, then hand focus to Play so A starts the game.
+    LaunchedEffect(Unit) {
+        runCatching { pageFocus.requestFocus() }
+        kotlinx.coroutines.delay(180)
+        runCatching { playFocus.requestFocus() }
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -567,17 +573,19 @@ internal fun DeckHubGamePage(
             .background(DeckPalette.background)
             .pointerInput(Unit) { detectTapGestures { } },
     ) {
-        Column(
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState()),
+                .padding(start = 20.dp, end = 24.dp, top = 16.dp, bottom = 18.dp),
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(310.dp)
-                    .clip(RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp))
-                    .background(DeckPalette.surface),
+                    .weight(1.15f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(DeckPalette.surface)
+                    .border(1.dp, DeckPalette.line, RoundedCornerShape(20.dp)),
             ) {
                 val art: Any? = bannerUrl ?: entry.bitmap
                 if (art != null) {
@@ -593,16 +601,16 @@ internal fun DeckHubGamePage(
                         .matchParentSize()
                         .background(
                             Brush.verticalGradient(
-                                0f to Color.Black.copy(alpha = 0.25f),
-                                0.5f to Color.Transparent,
-                                1f to DeckPalette.background,
+                                0f to Color.Black.copy(alpha = 0.20f),
+                                0.45f to Color.Transparent,
+                                1f to Color.Black.copy(alpha = 0.85f),
                             ),
                         ),
                 )
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(horizontal = 24.dp, vertical = 18.dp),
+                        .padding(horizontal = 22.dp, vertical = 18.dp),
                 ) {
                     Text(
                         text = origin.uppercase(),
@@ -615,49 +623,83 @@ internal fun DeckHubGamePage(
                     Text(
                         text = entry.title,
                         color = Color.White,
-                        fontSize = 30.sp,
-                        lineHeight = 33.sp,
+                        fontSize = 32.sp,
+                        lineHeight = 35.sp,
                         fontWeight = FontWeight.Black,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(14.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.Black.copy(alpha = 0.48f))
+                        .clickable(onClick = onBack)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.ArrowBack,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("Back", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
 
-            Column(modifier = Modifier.padding(horizontal = 24.dp)) {
-                Spacer(Modifier.height(14.dp))
+            Column(
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier
+                    .weight(0.85f)
+                    .fillMaxHeight(),
+            ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     DeckHubStat("Hours played", hours)
                     DeckHubStat("Source", origin)
                 }
-                DeckScoresRow(scores)
-                description?.let { DeckAboutCard(GameFacts.cleanText(it)) }
+                DeckScoresRow(scores, Modifier.padding(top = 10.dp))
+                description?.takeIf { it.isNotBlank() }?.let { raw ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(DeckPalette.surface)
+                            .border(1.dp, DeckPalette.line, RoundedCornerShape(12.dp))
+                            .padding(14.dp),
+                    ) {
+                        Text(
+                            text = "ABOUT",
+                            color = DeckPalette.primary,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 1.4.sp,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = GameFacts.cleanText(raw),
+                            color = DeckPalette.onSurfaceVariant,
+                            fontSize = 12.5.sp,
+                            lineHeight = 18.sp,
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(18.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    HubGradientButton("Play", onClick = onPlay)
+                    HubGradientButton(
+                        text = "Play",
+                        modifier = Modifier.focusRequester(playFocus),
+                        onClick = onPlay,
+                    )
                     DeckButton("Settings", primary = false, onClick = onSettings)
                 }
-                Spacer(Modifier.height(28.dp))
             }
-        }
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .padding(start = 20.dp, top = 18.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(Color.Black.copy(alpha = 0.42f))
-                .clickable(onClick = onBack)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-        ) {
-            Icon(
-                Icons.Filled.ArrowBack,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text("Back", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

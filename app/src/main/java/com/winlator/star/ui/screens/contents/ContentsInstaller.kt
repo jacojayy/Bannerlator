@@ -145,6 +145,33 @@ object ContentsInstaller {
     }
 
     /**
+     * First-run helper: downloads [downloadUrl] and installs it to completion, reporting one
+     * human-readable status line. Unlike [install] this is suspend and does not touch the download
+     * registry or the foreground service — the first-run splash is foreground and owns the only
+     * progress surface, so a notification would just duplicate it.
+     */
+    suspend fun installAwait(
+        appContext: Context,
+        downloadUrl: String,
+        onStatus: (String) -> Unit = {},
+    ): Boolean = withContext(DownloadScope.io) {
+        val ctx = appContext.applicationContext
+        var temp: File? = null
+        try {
+            temp = RemoteSourceRepository(ctx).downloadToTemp(downloadUrl, onStatus)
+            onStatus("Installing")
+            installComponentBlocking(ctx, Uri.fromFile(temp!!)) { frac ->
+                onStatus("Installing ${(frac * 100).toInt()}%")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "first-run install failed for $downloadUrl", e)
+            false
+        } finally {
+            temp?.let { runCatching { it.delete() } }
+        }
+    }
+
+    /**
      * "Save archive only": downloads the catalog item and files the raw archive in [ComponentLibrary]
      * (My Files, under the Contents save location) — no extract, no install, the app's contents folder
      * is untouched. Deliberately rides the SAME rails as [install]: same registry key (so a row is

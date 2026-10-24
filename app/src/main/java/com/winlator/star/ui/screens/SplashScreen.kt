@@ -1,332 +1,419 @@
 package com.winlator.star.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.scaleIn
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.winlator.star.BuildConfig
-import com.winlator.star.R
-import androidx.compose.runtime.withFrameMillis
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.min
-import kotlin.math.sin
+import kotlinx.coroutines.delay
 
-private data class SparkleSpec(
-    val angleDeg: Float,
-    val distFrac: Float,
-    val size: Float,
-    val periodMs: Long,
-    val offsetMs: Long,
-    val driftXFrac: Float,
-    val riseYFrac: Float,
+private val SETUP_STEPS = listOf(
+    "System files",
+    "Proton 9 arm64ec",
+    "DXVK 2.4.1 gplasync",
+    "FEXCore 2610 PPA unix",
+    "VKD3D 3.0.1",
 )
 
-private val SPARKLE_SPECS: List<SparkleSpec> = run {
-    val rng = java.util.Random(42L)
-    List(18) {
-        SparkleSpec(
-            angleDeg   = rng.nextFloat() * 360f,
-            distFrac   = 0.42f + rng.nextFloat() * 0.42f,
-            size       = 2.5f + rng.nextFloat() * 3.5f,
-            periodMs   = 1200L + (rng.nextFloat() * 1000f).toLong(),
-            offsetMs   = (rng.nextFloat() * 2500f).toLong(),
-            driftXFrac = (rng.nextFloat() - 0.5f) * 0.08f,
-            riseYFrac  = 0.03f + rng.nextFloat() * 0.06f,
-        )
-    }
-}
-
-private val STATUS_LABELS = listOf(
-    "Installing system files",
-    "Extracting Wine prefix",
-    "Setting up Proton",
-    "Configuring runtime",
-    "Finalizing setup",
-)
-
+/**
+ * First-open / ImageFS-reinstall surface. Landscape Deck layout: pulsing WinHub wordmark on the
+ * left, one progress surface on the right that walks ImageFS and then each pinned component.
+ * Everything is read-only until setup finishes; the Proceed button then takes controller focus.
+ */
 @Composable
 fun SplashScreen(
     progress: Int,
+    status: String,
+    step: Int,
+    degraded: Boolean,
     showProceed: Boolean = false,
     onProceed: () -> Unit = {},
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "splash")
-
-    val displayedProgress by animateIntAsState(
-        targetValue = progress,
-        animationSpec = tween(300),
-        label = "counter",
-    )
-
-    val statusText = if (progress >= 100) "Installation complete"
-                     else STATUS_LABELS[minOf((progress / 22), STATUS_LABELS.size - 1)]
-
-    val dotPhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue  = 3.99f,
-        animationSpec = infiniteRepeatable(
-            animation  = tween(1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "dots",
-    )
-    val dots = if (progress < 100) ".".repeat(dotPhase.toInt() + 1) else ""
-
-    val logoScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue  = 1.07f,
-        animationSpec = infiniteRepeatable(
-            animation  = tween(2400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "logoScale",
-    )
-
-    val shimmerPos by infiniteTransition.animateFloat(
-        initialValue = -0.3f,
-        targetValue  = 1.3f,
-        animationSpec = infiniteRepeatable(
-            animation  = tween(1600, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "shimmer",
-    )
-
-    var frameTime by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(Unit) {
-        while (true) { withFrameMillis { frameTime = it } }
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentAlignment = Alignment.Center,
+            .background(DeckPalette.background),
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(horizontal = 48.dp),
-        ) {
-            Image(
-                painter = painterResource(R.drawable.splash_logo),
-                contentDescription = null,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .scale(logoScale),
-            )
-
-            Spacer(Modifier.height(12.dp))
-
-            Text(
-                text = "V ${BuildConfig.VERSION_NAME}",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            Text(
-                text = "$statusText$dots",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            Spacer(Modifier.height(32.dp))
-
-            GlowingProgressBar(
-                progress    = displayedProgress / 100f,
-                shimmerPos  = shimmerPos,
-                isComplete  = progress >= 100,
-                modifier    = Modifier.fillMaxWidth().height(6.dp),
-            )
-
-            Spacer(Modifier.height(10.dp))
-
-            Text(
-                text = "$displayedProgress%",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            AnimatedVisibility(
-                visible = showProceed,
-                enter   = fadeIn(tween(400)) + scaleIn(tween(400), initialScale = 0.92f),
-            ) {
-                Column {
-                    Spacer(Modifier.height(32.dp))
-                    Button(
-                        onClick = onProceed,
-                        colors  = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        shape   = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Proceed", color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SparkleCanvas(time: Long, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        val cx       = size.width / 2f
-        val cy       = size.height / 2f
-        val halfSize = min(size.width, size.height) / 2f
-
-        SPARKLE_SPECS.forEach { spec ->
-            val phase = ((time + spec.offsetMs) % spec.periodMs).toFloat() / spec.periodMs
-            val alpha = when {
-                phase < 0.25f -> phase / 0.25f
-                phase < 0.75f -> 1f
-                else          -> 1f - (phase - 0.75f) / 0.25f
-            } * 0.8f
-
-            val angleRad = Math.toRadians(spec.angleDeg.toDouble()).toFloat()
-            val dist     = spec.distFrac * halfSize
-            val x        = cx + cos(angleRad) * dist + spec.driftXFrac * halfSize * phase
-            val y        = cy + sin(angleRad) * dist - spec.riseYFrac * halfSize * phase
-
-            drawFourPointStar(x, y, spec.size, alpha)
-        }
-    }
-}
-
-private fun DrawScope.drawFourPointStar(cx: Float, cy: Float, radius: Float, alpha: Float) {
-    val path        = Path()
-    val innerRadius = radius * 0.35f
-    val count       = 4
-    for (i in 0 until count) {
-        val outerAngle = (i.toFloat() / count) * 2f * PI.toFloat() - PI.toFloat() / 2f
-        val innerAngle = outerAngle + PI.toFloat() / count
-        val ox = cx + cos(outerAngle) * radius
-        val oy = cy + sin(outerAngle) * radius
-        val ix = cx + cos(innerAngle) * innerRadius
-        val iy = cy + sin(innerAngle) * innerRadius
-        if (i == 0) path.moveTo(ox, oy) else path.lineTo(ox, oy)
-        path.lineTo(ix, iy)
-    }
-    path.close()
-    drawPath(path, Color.White.copy(alpha = alpha))
-}
-
-@Composable
-private fun GlowingProgressBar(
-    progress: Float,
-    shimmerPos: Float,
-    isComplete: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    // intentional: the glow/gradient/track/shimmer below form a hand-tuned multi-stop brand
-    // progress visual (no clean per-stop colorScheme token) and are drawn inside a DrawScope
-    // (outside composition), so they're left off-theme; the rest of the splash follows the theme.
-    val glowColor = if (isComplete) Color(0xFFC084FC) else Color(0xFFA855F7)
-
-    Canvas(modifier = modifier) {
-        val barH   = size.height
-        val barW   = size.width
-        val radius = barH / 2f
-        val fillW  = (barW * progress).coerceIn(0f, barW)
-
-        // Track
-        drawRoundRect(
-            color        = Color(0xFF333333),
-            size         = Size(barW, barH),
-            cornerRadius = CornerRadius(radius),
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            DeckPalette.primary.copy(alpha = 0.13f),
+                            Color.Transparent,
+                        ),
+                        radius = 1100f,
+                    ),
+                ),
         )
 
-        if (fillW > 0f) {
-            // Fake glow: three progressively smaller, more opaque layers
-            listOf(
-                6f to 0.12f,
-                4f to 0.18f,
-                2f to 0.28f,
-            ).forEach { (expand, a) ->
-                drawRoundRect(
-                    color        = glowColor.copy(alpha = a),
-                    topLeft      = Offset(-expand / 2f, -expand / 2f),
-                    size         = Size(fillW + expand, barH + expand),
-                    cornerRadius = CornerRadius(radius + expand / 2f),
-                )
-            }
-
-            // Fill gradient
-            drawRoundRect(
-                brush = Brush.horizontalGradient(
-                    colors = listOf(Color(0xFF4C1D95), Color(0xFF7C3AED), Color(0xFFA855F7)),
-                    endX   = fillW,
-                ),
-                size         = Size(fillW, barH),
-                cornerRadius = CornerRadius(radius),
-            )
-
-            // Shimmer sweep while installing
-            if (!isComplete) {
-                val shimX     = shimmerPos * fillW
-                val shimHalf  = barH * 4f
-                clipRect(right = fillW) {
-                    drawRoundRect(
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(
-                                Color.Transparent,
-                                Color.White.copy(alpha = 0.5f),
-                                Color.Transparent,
-                            ),
-                            startX = shimX - shimHalf,
-                            endX   = shimX + shimHalf,
-                        ),
-                        size         = Size(fillW, barH),
-                        cornerRadius = CornerRadius(radius),
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val landscape = maxWidth > maxHeight
+            if (landscape) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(48.dp),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 56.dp, vertical = 36.dp),
+                ) {
+                    SplashBrand(Modifier.weight(1f))
+                    SplashProgress(
+                        progress = progress,
+                        status = status,
+                        step = step,
+                        degraded = degraded,
+                        showProceed = showProceed,
+                        onProceed = onProceed,
+                        modifier = Modifier.widthIn(max = 460.dp).fillMaxHeight(),
+                    )
+                }
+            } else {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 32.dp, vertical = 28.dp),
+                ) {
+                    SplashBrand()
+                    Spacer(Modifier.height(28.dp))
+                    SplashProgress(
+                        progress = progress,
+                        status = status,
+                        step = step,
+                        degraded = degraded,
+                        showProceed = showProceed,
+                        onProceed = onProceed,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SplashBrand(modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "winhub")
+    val pulse by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.035f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "winhubPulse",
+    )
+    val glow by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1500, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "winhubGlow",
+    )
+
+    Box(
+        modifier = modifier,
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth(0.78f)
+                .height(190.dp)
+                .graphicsLayer { alpha = glow }
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            DeckPalette.primary.copy(alpha = 0.30f),
+                            Color.Transparent,
+                        ),
+                    ),
+                ),
+        )
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.graphicsLayer {
+                scaleX = pulse
+                scaleY = pulse
+            },
+        ) {
+            Row {
+                Text(
+                    text = "Win",
+                    color = Color.White,
+                    fontSize = 58.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = (-1.5).sp,
+                )
+                Text(
+                    text = "Hub",
+                    color = DeckPalette.primary,
+                    fontSize = 58.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = (-1.5).sp,
+                )
+            }
+            Text(
+                text = "SYSTEM SETUP",
+                color = DeckPalette.onSurfaceVariant,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 3.2.sp,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SplashProgress(
+    progress: Int,
+    status: String,
+    step: Int,
+    degraded: Boolean,
+    showProceed: Boolean,
+    onProceed: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val clamped = progress.coerceIn(0, 100)
+    val animated by animateFloatAsState(
+        targetValue = clamped / 100f,
+        animationSpec = tween(320),
+        label = "setupProgress",
+    )
+    val proceedFocus = remember { FocusRequester() }
+    LaunchedEffect(showProceed) {
+        if (showProceed) {
+            delay(90)
+            runCatching { proceedFocus.requestFocus() }
+        }
+    }
+
+    Column(
+        verticalArrangement = Arrangement.Center,
+        modifier = modifier,
+    ) {
+        Text(
+            text = "Setting up",
+            color = DeckPalette.onBackground,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(
+            text = status,
+            color = DeckPalette.onSurfaceVariant,
+            fontSize = 13.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+
+        Spacer(Modifier.height(18.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(8.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(DeckPalette.surfaceVariant),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth(animated)
+                    .fillMaxHeight()
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(DeckPalette.primary, Color(0xFF59C1FF)),
+                        ),
+                    ),
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+        ) {
+            Text(
+                text = "$clamped%",
+                color = DeckPalette.onBackground,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "STEP ${(step + 1).coerceAtMost(SETUP_STEPS.size)} OF ${SETUP_STEPS.size}",
+                color = DeckPalette.onSurfaceVariant,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 1.2.sp,
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+        SETUP_STEPS.forEachIndexed { index, label ->
+            SetupStepRow(
+                label = label,
+                done = step > index,
+                active = step == index,
+            )
+            if (index != SETUP_STEPS.lastIndex) Spacer(Modifier.height(9.dp))
+        }
+
+        if (degraded) {
+            Text(
+                text = "Some components were skipped. You can retry them later from Contents.",
+                color = DeckPalette.error,
+                fontSize = 11.5.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 14.dp),
+            )
+        }
+
+        if (showProceed) {
+            Spacer(Modifier.height(22.dp))
+            SplashProceedButton(onProceed = onProceed, focusRequester = proceedFocus)
+        }
+    }
+}
+
+@Composable
+private fun SetupStepRow(label: String, done: Boolean, active: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(16.dp)
+                .clip(CircleShape)
+                .background(
+                    when {
+                        done -> DeckPalette.primary
+                        active -> DeckPalette.primary.copy(alpha = 0.22f)
+                        else -> Color.Transparent
+                    },
+                )
+                .border(
+                    width = 1.5.dp,
+                    color = when {
+                        done -> DeckPalette.primary
+                        active -> DeckPalette.primary
+                        else -> DeckPalette.line2
+                    },
+                    shape = CircleShape,
+                ),
+        ) {
+            when {
+                done -> Box(
+                    Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(DeckPalette.onPrimary),
+                )
+                active -> Box(
+                    Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(DeckPalette.primary),
+                )
+            }
+        }
+        Text(
+            text = label,
+            color = if (done || active) DeckPalette.onBackground else DeckPalette.onSurfaceVariant,
+            fontSize = 13.sp,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 10.dp),
+        )
+    }
+}
+
+@Composable
+private fun SplashProceedButton(
+    onProceed: () -> Unit,
+    focusRequester: FocusRequester,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .focusRequester(focusRequester)
+            .onKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown &&
+                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                ) {
+                    onProceed()
+                    true
+                } else false
+            }
+            .clip(RoundedCornerShape(12.dp))
+            .background(DeckPalette.primary)
+            .deckOuterFocusStroke(
+                interaction = interaction,
+                shape = RoundedCornerShape(12.dp),
+                focusColor = DeckPalette.onPrimary,
+            )
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onProceed,
+            ),
+    ) {
+        Text(
+            text = "Proceed",
+            color = DeckPalette.onPrimary,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }

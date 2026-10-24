@@ -9607,7 +9607,7 @@ internal fun DeckShortcutSettingsScreen(
     }
     helpRes?.let { HelpDialog(it) { helpRes = null } }
     helpText?.let { HelpTextDialog(it) { helpText = null } }
-    if (showWrapperManager) WrapperManagerDialog(onDismiss = {
+    if (showWrapperManager) DeckWrapperManagerDialog(onDismiss = {
         showWrapperManager = false
         wrapperRefreshKey++
     })

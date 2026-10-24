@@ -8677,7 +8677,6 @@ internal fun DeckShortcutSettingsScreen(
     var showBox64DownloadSheet by remember { mutableStateOf(false) }
     var showFexCoreDownloadSheet by remember { mutableStateOf(false) }
     var showDxvkDownloadSheet by remember { mutableStateOf(false) }
-    var showVegasDownloadSheet by remember { mutableStateOf(false) }
     var showVkd3dDownloadSheet by remember { mutableStateOf(false) }
     var showD7vkDownloadSheet by remember { mutableStateOf(false) }
     var showSfWarning by remember { mutableStateOf(false) }
@@ -9646,12 +9645,6 @@ internal fun DeckShortcutSettingsScreen(
         DeckContentDownloadSheet(
             contentTypes = listOf(ContentProfile.ContentType.CONTENT_TYPE_D7VK),
             onDismiss = { showD7vkDownloadSheet = false },
-            onContentChanged = {},
-        )
-    }
-    if (showVegasDownloadSheet) {
-        VegasDownloadSheet(
-            onDismiss = { showVegasDownloadSheet = false },
             onContentChanged = {},
         )
     }

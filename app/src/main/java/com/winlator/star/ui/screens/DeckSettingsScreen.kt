@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -120,6 +122,12 @@ internal fun DeckSettingsScreen() {
     // Container editor category layout ("tabs" | "rail" | "pages") — immediate-write, read by
     // DeckContainerDetailScreen on open.
     var editorLayout by remember { mutableStateOf(prefs.getString("container_editor_layout", "tabs") ?: "tabs") }
+    // This page's own category layout ("tabs" | "rail" | "pages"). Defaults to the left rail — the
+    // requested default — and is independent of the container editor's choice.
+    var settingsLayout by remember { mutableStateOf(prefs.getString("settings_layout", "rail") ?: "rail") }
+    var settingsTab by remember { mutableStateOf(0) }
+    var settingsPagesCategoryOpen by remember { mutableStateOf(false) }
+    val settingsTabs = remember { listOf("General", "Interface", "System", "Graphics") }
 
     // ── Sound (MIDI Sound Font) — same as SettingsScreen's Sound section. ──
     var sfNames by remember { mutableStateOf(listOf<String>()) }
@@ -318,23 +326,87 @@ internal fun DeckSettingsScreen() {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(DeckPalette.background)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 22.dp, vertical = 18.dp),
+            .background(DeckPalette.background),
     ) {
-        Text(
-            text = "Settings",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            color = DeckPalette.onBackground,
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = "Identical to the Settings tab",
-            fontSize = 13.sp,
-            color = DeckPalette.onSurfaceVariant,
-        )
+        // ── Header ──
+        Column(modifier = Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 18.dp, bottom = 10.dp)) {
+            Text(
+                text = "Settings",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold,
+                color = DeckPalette.onBackground,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Identical to the Settings tab",
+                fontSize = 13.sp,
+                color = DeckPalette.onSurfaceVariant,
+            )
+        }
 
+        // ── Category navigation: top tabs / left rail / full-page list ──
+        if (settingsLayout == "tabs") {
+            DeckStretchyTabs(
+                labels = settingsTabs,
+                selected = settingsTab,
+                onSelect = { settingsTab = it },
+                focusable = true,
+                selectOnFocus = true,
+                scroll = true,
+                modifier = Modifier.padding(horizontal = 22.dp, vertical = 4.dp),
+            )
+        }
+
+        if (settingsLayout == "pages" && !settingsPagesCategoryOpen) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 22.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                settingsTabs.forEachIndexed { i, label ->
+                    DeckEditorCategoryRow(
+                        label = label,
+                        selected = i == settingsTab,
+                        onClick = { settingsTab = i; settingsPagesCategoryOpen = true },
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+        } else {
+        Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            if (settingsLayout == "rail") {
+                DeckEditorCategoryRail(
+                    labels = settingsTabs,
+                    selected = settingsTab,
+                    onSelect = { settingsTab = it },
+                    modifier = Modifier
+                        .width(200.dp)
+                        .fillMaxHeight()
+                        .padding(start = 16.dp),
+                )
+            }
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 22.dp, vertical = 8.dp),
+        ) {
+        if (settingsLayout == "pages" && settingsPagesCategoryOpen) {
+            DeckRow(
+                label = "← All categories",
+                hint = "Back to the category list",
+                onConfigClick = { settingsPagesCategoryOpen = false },
+                control = {},
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+        when (settingsTab) {
+        0 -> {
         // ── Updates ──
         DeckGroup(title = "Updates") {
             DeckRow(label = "Notify me about updates") {
@@ -392,26 +464,6 @@ internal fun DeckSettingsScreen() {
             )
         }
 
-        // ── Box64 ──
-        DeckGroup(title = "Box64") {
-            DeckChoiceRow(
-                label = "Box64 Preset",
-                options = box64Presets.map { it.id to it.name },
-                selected = box64,
-                onPick = { box64 = it; saved = false },
-            )
-        }
-
-        // ── FEXCore Config ──
-        DeckGroup(title = "FEXCore Config") {
-            DeckChoiceRow(
-                label = "FEXCore Preset",
-                options = fexPresets.map { it.id to it.name },
-                selected = fex,
-                onPick = { fex = it; saved = false },
-            )
-        }
-
         // ── Sound ──
         DeckGroup(title = "Sound") {
             DeckChoiceRow(
@@ -441,22 +493,28 @@ internal fun DeckSettingsScreen() {
             }
         }
 
-        // ── Path Settings ──
-        DeckGroup(title = "Path Settings") {
-            DeckRow(
-                label = "Winlator Path",
-                hint = winlatorPathUri?.lastPathSegment ?: "/storage/emulated/0/Winlator",
-            ) {
-                DeckButton("Choose", primary = false) { winlatorPathLauncher.launch(null) }
-            }
-            DeckRow(
-                label = "Shortcut Export Path",
-                hint = shortcutsPathUri?.lastPathSegment ?: "/storage/emulated/0/Winlator/Shortcuts",
-            ) {
-                DeckButton("Choose", primary = false) { shortcutsPathLauncher.launch(null) }
-            }
+        // ── Box64 ──
+        DeckGroup(title = "Box64") {
+            DeckChoiceRow(
+                label = "Box64 Preset",
+                options = box64Presets.map { it.id to it.name },
+                selected = box64,
+                onPick = { box64 = it; saved = false },
+            )
         }
 
+        // ── FEXCore Config ──
+        DeckGroup(title = "FEXCore Config") {
+            DeckChoiceRow(
+                label = "FEXCore Preset",
+                options = fexPresets.map { it.id to it.name },
+                selected = fex,
+                onPick = { fex = it; saved = false },
+            )
+        }
+
+        }
+        1 -> {
         // ── Side Menu ──
         DeckGroup(title = "Side Menu") {
             DeckRow(label = "Show game stores") {
@@ -536,6 +594,21 @@ internal fun DeckSettingsScreen() {
                     prefs.edit().putString("container_editor_layout", it).apply()
                 },
             )
+            DeckChoiceRow(
+                label = "Settings Layout",
+                hint = "How this Settings page arranges its categories",
+                options = listOf(
+                    "tabs" to "Top Tabs (animated)",
+                    "rail" to "Side Rail (animated)",
+                    "pages" to "Category Pages",
+                ),
+                selected = settingsLayout,
+                onPick = {
+                    settingsLayout = it
+                    settingsPagesCategoryOpen = false
+                    prefs.edit().putString("settings_layout", it).apply()
+                },
+            )
         }
 
         // ── Default Screen on Launch ──
@@ -555,6 +628,24 @@ internal fun DeckSettingsScreen() {
         DeckGroup(title = "Big Picture Mode") {
             DeckRow(label = "Enable Big Picture Mode on App Launch") {
                 DeckToggle(bigPicture) { bigPicture = it; saved = false }
+            }
+        }
+
+        }
+        2 -> {
+        // ── Path Settings ──
+        DeckGroup(title = "Path Settings") {
+            DeckRow(
+                label = "Winlator Path",
+                hint = winlatorPathUri?.lastPathSegment ?: "/storage/emulated/0/Winlator",
+            ) {
+                DeckButton("Choose", primary = false) { winlatorPathLauncher.launch(null) }
+            }
+            DeckRow(
+                label = "Shortcut Export Path",
+                hint = shortcutsPathUri?.lastPathSegment ?: "/storage/emulated/0/Winlator/Shortcuts",
+            ) {
+                DeckButton("Choose", primary = false) { shortcutsPathLauncher.launch(null) }
             }
         }
 
@@ -643,6 +734,8 @@ internal fun DeckSettingsScreen() {
             }
         }
 
+        }
+        3 -> {
         // ── Frame Generation — LSFG Native (Lossless Scaling) ──
         DeckGroup(title = "Frame Generation — LSFG Native") {
             DeckRow(label = "Status", hint = lsfgDllStatus) {
@@ -679,12 +772,17 @@ internal fun DeckSettingsScreen() {
                 DeckButton("Open", primary = false) { showPerformance = true }
             }
         }
+        }
+        }
+        }
+        }
+        }
 
-        Spacer(Modifier.height(24.dp))
-
+        // ── Save bar (fixed, outside the tab content) ──
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 12.dp),
         ) {
             Box(
                 contentAlignment = Alignment.Center,
@@ -712,7 +810,6 @@ internal fun DeckSettingsScreen() {
                 )
             }
         }
-        Spacer(Modifier.height(24.dp))
     }
     }
 

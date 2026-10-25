@@ -3,8 +3,10 @@ package com.winhub.hernandez.ui.theme
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.material3.ColorScheme
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -13,8 +15,14 @@ import kotlinx.coroutines.flow.combine
 object AppThemeState {
     private lateinit var themePrefs: SharedPreferences
 
-    private val _presetIndex = MutableStateFlow(AMETHYST_PRESET_INDEX)
+    private val _presetIndex = MutableStateFlow(DEFAULT_PRESET_INDEX)
     val presetIndex: StateFlow<Int> = _presetIndex
+
+    // Compose-observable snapshot of the resolved preset. DeckPalette reads this during
+    // composition, so changing the theme recomposes every Deck widget live. Kept separate from
+    // the StateFlow above because Deck drawing code needs a plain snapshot, not a Flow.
+    private val _deckPreset = mutableStateOf(themePresets.first())
+    val deckPreset: ThemePreset get() = _deckPreset.value
 
     private val _customAccent = MutableStateFlow(Color(0xFF0055FF))
     val customAccent: StateFlow<Color> = _customAccent
@@ -43,6 +51,28 @@ object AppThemeState {
 
     // The preset whose background/surface colors back the custom accent
     private val _customBaseIndex = MutableStateFlow(0)
+
+    private fun resolvePreset(index: Int): ThemePreset {
+        val base = if (index == CUSTOM_PRESET_INDEX)
+            themePresets.getOrElse(_customBaseIndex.value) { themePresets.first() }
+        else
+            themePresets.getOrElse(index) { themePresets.first() }
+        if (index != CUSTOM_PRESET_INDEX) return base
+        val accent = _customAccent.value
+        val onAccent = if (accent.luminance() > 0.5f) Color(0xFF000000) else Color(0xFFFFFFFF)
+        return base.copy(
+            primary = accent,
+            onPrimary = onAccent,
+            secondary = accent,
+            onSecondary = onAccent,
+            accentDim = lerp(accent, Color(0xFF000000), 0.55f),
+            secondaryDim = lerp(accent, Color(0xFF000000), 0.55f),
+        )
+    }
+
+    private fun refreshDeckPreset() {
+        _deckPreset.value = resolvePreset(_presetIndex.value)
+    }
 
     val colorScheme: kotlinx.coroutines.flow.Flow<ColorScheme> =
         combine(_presetIndex, _customAccent, _isDarkMode) { index, accent, dark ->
@@ -83,13 +113,17 @@ object AppThemeState {
             themePrefs.edit().putBoolean("preset_schema_v2", true).apply()
         }
 
-        // Forced preset: the Appearance tab (the only theme picker) is hidden, so there is no UI
-        // to change the theme back with. Saved values are deliberately ignored, and rewritten so
-        // prefs never contradict what is on screen.
-        if (themePrefs.getInt("preset_index", -1) != AMETHYST_PRESET_INDEX) {
-            themePrefs.edit().putInt("preset_index", AMETHYST_PRESET_INDEX).apply()
+        // One-time reset: the preset list was rebuilt for the seven-theme picker, so every old
+        // index (which pointed into the previous, much longer list) is meaningless. Start those
+        // users on Marcescence; afterwards the picker's choice persists normally.
+        if (!themePrefs.getBoolean("preset_schema_v3", false)) {
+            themePrefs.edit()
+                .putInt("preset_index", DEFAULT_PRESET_INDEX)
+                .putBoolean("preset_schema_v3", true)
+                .apply()
         }
-        _presetIndex.value = AMETHYST_PRESET_INDEX
+        _presetIndex.value = themePrefs.getInt("preset_index", DEFAULT_PRESET_INDEX)
+            .coerceIn(0, themePresets.size - 1)
         val savedAccent = themePrefs.getInt("custom_accent", Color(0xFF0055FF).toArgb())
         _customAccent.value = Color(savedAccent)
         _customBaseIndex.value = themePrefs.getInt("custom_base_index", 1).coerceIn(0, CUSTOM_PRESET_INDEX)
@@ -99,6 +133,7 @@ object AppThemeState {
         _showSdStorage.value = themePrefs.getBoolean("show_sd_storage", true)
         _uiScale.value = themePrefs.getFloat("ui_scale", 0.9f).coerceIn(0.5f, 1.5f)
         _fontScale.value = themePrefs.getFloat("font_scale", 0.9f).coerceIn(0.5f, 1.5f)
+        refreshDeckPreset()
     }
 
     /** Show or hide the drawer's Stores section. Default on, so nothing changes until asked. */
@@ -134,6 +169,7 @@ object AppThemeState {
     fun setPreset(index: Int) {
         _presetIndex.value = index.coerceIn(0, themePresets.size - 1)
         themePrefs.edit().putInt("preset_index", _presetIndex.value).apply()
+        refreshDeckPreset()
     }
 
     fun setCustomAccent(color: Color) {
@@ -148,6 +184,7 @@ object AppThemeState {
             .putInt("custom_accent", color.toArgb())
             .putInt("preset_index", CUSTOM_PRESET_INDEX)
             .apply()
+        refreshDeckPreset()
     }
 
     fun currentColorSchemeSnapshot(): ColorScheme {

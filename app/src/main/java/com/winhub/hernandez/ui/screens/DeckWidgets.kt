@@ -48,6 +48,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -102,6 +103,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.winhub.hernandez.ui.theme.AppThemeState
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 import kotlinx.coroutines.coroutineScope
@@ -395,18 +397,29 @@ internal val DeckEase = androidx.compose.animation.core.CubicBezierEasing(0.2f, 
  */
 internal val LocalDeckMode = compositionLocalOf { false }
 
-/** DroidDeck's Graphite palette, used by the Deck Mode widgets (same hex values as ui/Theme.kt). */
+/**
+ * DroidDeck palette, now backed by the live [AppThemeState] preset. Property names are unchanged
+ * so the ~500 existing call sites keep working; each getter reads the Compose snapshot state,
+ * which means any composable that uses a Deck color recomposes when the theme changes.
+ *
+ * [error] stays fixed red for destructive actions. [good] follows the preset's success token so
+ * Monochrome can stay strictly black/white/red instead of introducing green.
+ */
 internal object DeckPalette {
-    val background = Color(0xFF0A0B0D)
-    val surface = Color(0xFF121417)
-    val surfaceVariant = Color(0xFF1A1D22)
-    val line = Color(0xFF262A31)
-    val line2 = Color(0xFF343A43)
-    val onBackground = Color(0xFFF2F4F7)
-    val onSurfaceVariant = Color(0xFF9AA3AF)
-    val primary = Color(0xFF1A9FFF)
-    val onPrimary = Color(0xFF03111F)
-    val good = Color(0xFF4CD37F)
+    private val p get() = AppThemeState.deckPreset
+    val background get() = p.background
+    val surface get() = p.surface
+    val surfaceVariant get() = p.surfaceVariant
+    val line get() = p.line
+    val line2 get() = p.line2
+    val onBackground get() = p.onBackground
+    val onSurfaceVariant get() = p.onSurfaceVariant
+    val primary get() = p.primary
+    val onPrimary get() = p.onPrimary
+    val secondary get() = p.secondary
+    val onSecondary get() = p.onSecondary
+    val secondaryDim get() = p.secondaryDim
+    val good get() = p.success
     val error = Color(0xFFFF8A80)
 
     /** DroidDeck's GroupShape. */
@@ -504,7 +517,7 @@ internal fun DeckRow(
             Icon(
                 imageVector = Icons.Filled.ChevronRight,
                 contentDescription = "Has a config panel",
-                tint = DeckPalette.primary,
+                tint = DeckPalette.secondary,
                 modifier = Modifier
                     .padding(start = 4.dp)
                     .size(18.dp),
@@ -570,7 +583,7 @@ internal fun DeckExpandableRow(
             Icon(
                 imageVector = Icons.Filled.ChevronRight,
                 contentDescription = if (expanded) "Collapse" else "Expand",
-                tint = DeckPalette.primary,
+                tint = DeckPalette.secondary,
                 modifier = Modifier
                     .padding(start = 4.dp)
                     .size(18.dp)
@@ -603,7 +616,7 @@ internal fun DeckExpandableRow(
 @Composable
 internal fun DeckToggle(checked: Boolean, onChange: (Boolean) -> Unit) {
     val knob by animateFloatAsState(if (checked) 1f else 0f, label = "deckToggle")
-    val track = if (checked) DeckPalette.primary else DeckPalette.surfaceVariant
+    val track = if (checked) DeckPalette.secondary else DeckPalette.surfaceVariant
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
@@ -618,7 +631,7 @@ internal fun DeckToggle(checked: Boolean, onChange: (Boolean) -> Unit) {
                 .background(track)
                 .border(
                     width = 1.dp,
-                    color = if (checked) DeckPalette.primary else DeckPalette.line2,
+                    color = if (checked) DeckPalette.secondary else DeckPalette.line2,
                     shape = RoundedCornerShape(99.dp),
                 ),
         ) {
@@ -628,7 +641,7 @@ internal fun DeckToggle(checked: Boolean, onChange: (Boolean) -> Unit) {
                     .size(22.dp)
                     .graphicsLayer { translationX = knob * 22.dp.toPx() }
                     .clip(CircleShape)
-                    .background(if (checked) DeckPalette.onPrimary else DeckPalette.onSurfaceVariant),
+                    .background(if (checked) DeckPalette.onSecondary else DeckPalette.onSurfaceVariant),
             )
         }
     }
@@ -767,6 +780,11 @@ internal fun DeckSliderRow(
             value = value,
             onValueChange = onChange,
             valueRange = range,
+            colors = SliderDefaults.colors(
+                thumbColor = DeckPalette.secondary,
+                activeTrackColor = DeckPalette.secondary,
+                inactiveTrackColor = DeckPalette.surfaceVariant,
+            ),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp),
@@ -890,7 +908,11 @@ internal fun DeckStretchyTabs(
     height: Dp = 40.dp,
 ) {
     val density = LocalDensity.current
-    val spread = fillWidth && !scroll
+    // A scrolling strip must wrap its tabs: filling the width while the Row wraps left the
+    // surface/border painted across an empty tail on the right. `spread` already implies
+    // "not scrolling", so both flags share one condition.
+    val fill = fillWidth && !scroll
+    val spread = fill
     val lefts = remember(labels.size) { mutableStateListOf<Float>() }
     val rights = remember(labels.size) { mutableStateListOf<Float>() }
     val start = remember { Animatable(0f) }
@@ -934,7 +956,7 @@ internal fun DeckStretchyTabs(
 
     Box(
         modifier = modifier
-            .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
+            .then(if (fill) Modifier.fillMaxWidth() else Modifier)
             .height(height + 6.dp)
             .clip(RoundedCornerShape(13.dp))
             .background(DeckPalette.surfaceVariant)
@@ -943,7 +965,7 @@ internal fun DeckStretchyTabs(
     ) {
         Box(
             modifier = Modifier
-                .then(if (fillWidth) Modifier.fillMaxSize() else Modifier)
+                .then(if (fill) Modifier.fillMaxSize() else Modifier)
                 .then(if (scroll) Modifier.horizontalScroll(scrollState) else Modifier),
         ) {
             Box(Modifier.height(height)) {

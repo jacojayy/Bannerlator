@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -134,6 +135,12 @@ internal fun DeckContainerDetailScreen(
     val layoutPref = remember {
         PreferenceManager.getDefaultSharedPreferences(context)
             .getString("container_editor_layout", "tabs") ?: "tabs"
+    }
+    // "popup" = config editors open in a DeckConfigDialog; "dropdown" = classic inline
+    // DeckExpandableRow. Read once per open (the Settings screen writes it before we get here).
+    val configEditorStyle = remember {
+        PreferenceManager.getDefaultSharedPreferences(context)
+            .getString("config_editor_style", "popup") ?: "popup"
     }
     // "pages" layout: whether a category page is open (false = the category list page).
     var pagesCategoryOpen by remember { mutableStateOf(false) }
@@ -327,11 +334,14 @@ internal fun DeckContainerDetailScreen(
                             selected = viewModel.selectedGraphicsDriver,
                             onPick = { viewModel.selectedGraphicsDriver = it },
                         )
-                        DeckExpandableRow(
+                        DeckConfigSection(
                             label = "Driver Config",
                             hint = "Turnip / BCn / wrapper tuning",
-                            expanded = openSection == "gfxDriver",
-                            onToggle = { openSection = if (openSection == "gfxDriver") null else "gfxDriver" },
+                            title = "Driver Config",
+                            sectionKey = "gfxDriver",
+                            style = configEditorStyle,
+                            openSection = openSection,
+                            onOpen = { openSection = it },
                         ) {
                             DeckGraphicsDriverConfigEditor(
                                 graphicsDriver = StringUtils.parseIdentifier(viewModel.selectedGraphicsDriver),
@@ -348,11 +358,14 @@ internal fun DeckContainerDetailScreen(
                             selected = viewModel.selectedDXWrapper,
                             onPick = { viewModel.selectedDXWrapper = it },
                         )
-                        DeckExpandableRow(
+                        DeckConfigSection(
                             label = "Wrapper Config",
                             hint = "DXVK / VKD3D / wined3d tuning",
-                            expanded = openSection == "dxWrapper",
-                            onToggle = { openSection = if (openSection == "dxWrapper") null else "dxWrapper" },
+                            title = "Wrapper Config",
+                            sectionKey = "dxWrapper",
+                            style = configEditorStyle,
+                            openSection = openSection,
+                            onOpen = { openSection = it },
                         ) {
                             if (StringUtils.parseIdentifier(viewModel.selectedDXWrapper)
                                     .let { it.contains("dxvk") || it.contains("vegas") }
@@ -387,11 +400,14 @@ internal fun DeckContainerDetailScreen(
                             selected = viewModel.selectedRenderer,
                             onPick = { viewModel.selectedRenderer = it },
                         )
-                        DeckExpandableRow(
+                        DeckConfigSection(
                             label = "Renderer Config",
                             hint = "Native render / present mode / colours",
-                            expanded = openSection == "renderer",
-                            onToggle = { openSection = if (openSection == "renderer") null else "renderer" },
+                            title = "Renderer Config",
+                            sectionKey = "renderer",
+                            style = configEditorStyle,
+                            openSection = openSection,
+                            onOpen = { openSection = it },
                         ) {
                             DeckVulkanConfigEditor(
                                 initialConfig = "native=${viewModel.rendererNative}" +
@@ -421,11 +437,14 @@ internal fun DeckContainerDetailScreen(
                             selected = viewModel.fullscreenMode.toString(),
                             onPick = { viewModel.fullscreenMode = it.toInt() },
                         )
-                        DeckExpandableRow(
+                        DeckConfigSection(
                             label = "Show FPS",
                             hint = "On-screen frame counter",
-                            expanded = openSection == "fps",
-                            onToggle = { openSection = if (openSection == "fps") null else "fps" },
+                            title = "FPS Counter",
+                            sectionKey = "fps",
+                            style = configEditorStyle,
+                            openSection = openSection,
+                            onOpen = { openSection = it },
                             control = { DeckToggle(viewModel.showFPS) { viewModel.showFPS = it } },
                         ) {
                             DeckFpsConfigEditor(
@@ -719,6 +738,47 @@ private fun deckColorAsString(argb: Int): String =
     String.format(Locale.US, "#%06X", 0xFFFFFF and argb)
 
 /**
+ * One config editor row. "dropdown" keeps the classic inline [DeckExpandableRow] (the editor
+ * expands under the row); "popup" shows a plain [DeckRow] with a config chevron that opens the
+ * editor in a [DeckConfigDialog] — the same popup the shortcut editor uses. The editor content is
+ * identical in both modes, so every field/behaviour stays in one place.
+ */
+@Composable
+private fun DeckConfigSection(
+    label: String,
+    hint: String,
+    title: String,
+    sectionKey: String,
+    style: String,
+    openSection: String?,
+    onOpen: (String?) -> Unit,
+    control: @Composable () -> Unit = {},
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    if (style == "dropdown") {
+        DeckExpandableRow(
+            label = label,
+            hint = hint,
+            expanded = openSection == sectionKey,
+            onToggle = { onOpen(if (openSection == sectionKey) null else sectionKey) },
+            control = control,
+            content = content,
+        )
+    } else {
+        DeckRow(
+            label = label,
+            hint = hint,
+            configPanel = true,
+            onConfigClick = { onOpen(sectionKey) },
+            control = control,
+        )
+        if (openSection == sectionKey) {
+            DeckConfigDialog(title = title, onDismiss = { onOpen(null) }, content = content)
+        }
+    }
+}
+
+/**
  * "rail" layout: the category list down the left, with the animated accent bar + tinted background
  * that stretches onto the selected item (the same DroidDeck feel as the top tab pill).
  */
@@ -739,7 +799,7 @@ internal fun DeckEditorCategoryRail(
         labels.forEachIndexed { i, label ->
             val isSel = i == selected
             val bg by animateColorAsState(
-                targetValue = if (isSel) Deck.primary.copy(alpha = 0.18f) else Color.Transparent,
+                targetValue = if (isSel) Deck.secondary.copy(alpha = 0.18f) else Color.Transparent,
                 animationSpec = tween(220, easing = DeckEase),
                 label = "railItemBg",
             )
@@ -763,7 +823,7 @@ internal fun DeckEditorCategoryRail(
                         .width(accent)
                         .height(22.dp)
                         .clip(RoundedCornerShape(2.dp))
-                        .background(Deck.primary),
+                        .background(Deck.secondary),
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
@@ -788,7 +848,7 @@ internal fun DeckEditorCategoryRow(
     onClick: () -> Unit,
 ) {
     val bg by animateColorAsState(
-        targetValue = if (selected) Deck.primary.copy(alpha = 0.18f) else Deck.surface,
+        targetValue = if (selected) Deck.secondary.copy(alpha = 0.18f) else Deck.surface,
         animationSpec = tween(220, easing = DeckEase),
         label = "pageItemBg",
     )

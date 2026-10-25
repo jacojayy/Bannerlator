@@ -1209,9 +1209,13 @@ public class ControlElement {
 
                 // Draw detection area (semi-transparent)
                 paint.setStyle(Paint.Style.FILL);
+                // Detection tint follows the live accent (theme, or the profile's custom accent)
+                // instead of a hardcoded blue, so it recolors with every theme.
+                int detectionAccent = inputControlsView.getAccentColor();
                 paint.setColor(customAreaAppearanceEnabled
                         ? colorWithAlpha(customAreaColor, customAreaOpacity)
-                        : Color.argb((int)(overlayAlpha * 0.3f), 100, 100, 255));
+                        : Color.argb((int)(overlayAlpha * 0.3f),
+                                Color.red(detectionAccent), Color.green(detectionAccent), Color.blue(detectionAccent)));
                 canvas.drawRoundRect(cx - areaHalfW, cy - areaHalfH, cx + areaHalfW, cy + areaHalfH, 16, 16, paint);
 
                 // Draw area border
@@ -1258,9 +1262,11 @@ public class ControlElement {
 
                 // Draw mouse area (semi-transparent green tint)
                 paint.setStyle(Paint.Style.FILL);
+                int mouseAccent = inputControlsView.getAccentColor();
                 paint.setColor(customAreaAppearanceEnabled
                         ? colorWithAlpha(customAreaColor, customAreaOpacity)
-                        : Color.argb((int)(overlayAlpha * 0.25f), 0, 200, 100));
+                        : Color.argb((int)(overlayAlpha * 0.25f),
+                                Color.red(mouseAccent), Color.green(mouseAccent), Color.blue(mouseAccent)));
                 canvas.drawRoundRect(cx - mw, cy - mh, cx + mw, cy + mh, 12, 12, paint);
 
                 // Border
@@ -1424,7 +1430,7 @@ public class ControlElement {
         // (0x40) keeps showing through at low opacity, reading as a solid blue fill on the
         // compact SQUARE keys (MRB/BKSP/SPACE/ENTER) while their fill/stroke/text fade out.
         int shadowAlpha = (int) (0x40 * gameHubDim * effectiveOpacity);
-        int shadowColor = Color.argb(shadowAlpha, 0x1C, 0x85, 0xFE);
+        int shadowColor = Color.argb(shadowAlpha, Color.red(accent), Color.green(accent), Color.blue(accent));
 
         if (selected && !hasAccent) {
             int highlightAlpha = (int) (255 * overlayOpacity);
@@ -1674,7 +1680,8 @@ public class ControlElement {
                     paint.setStyle(Paint.Style.FILL);
                     paint.setColor(customAreaAppearanceEnabled
                             ? colorWithAlpha(customAreaColor, customAreaOpacity)
-                            : Color.argb((int)(fillAlpha * 0.15f), 100, 100, 255));
+                            : Color.argb((int)(fillAlpha * 0.15f),
+                                    Color.red(accent), Color.green(accent), Color.blue(accent)));
                     canvas.drawRoundRect(cx - areaHalfW, cy - areaHalfH, cx + areaHalfW, cy + areaHalfH, areaRadius, areaRadius, paint);
                     paint.setStyle(Paint.Style.STROKE);
                     paint.setColor(customAreaAppearanceEnabled
@@ -1743,7 +1750,8 @@ public class ControlElement {
                 paint.setStyle(Paint.Style.FILL);
                 paint.setColor(customAreaAppearanceEnabled
                         ? colorWithAlpha(customAreaColor, customAreaOpacity)
-                        : Color.argb((int)(fillAlpha * 0.12f), 0, 200, 100));
+                        : Color.argb((int)(fillAlpha * 0.12f),
+                                Color.red(accent), Color.green(accent), Color.blue(accent)));
                 canvas.drawRoundRect(cx - mw, cy - mh, cx + mw, cy + mh, 12, 12, paint);
                 paint.setStyle(Paint.Style.STROKE);
                 paint.setColor(customAreaAppearanceEnabled

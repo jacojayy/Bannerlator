@@ -96,9 +96,9 @@ import kotlin.math.roundToInt
 private val EditorMaxSliderWidth = 300.dp
 private val EditorPadding = 12.dp
 private val EditorSpacing = 8.dp
-private val EditorBackground = Color(0xFF1A1A2E)
-private val EditorSurface = Color(0xFF2A2A3E)
-private val EditorAccent = Color(0xFF4FC3F7)
+private val EditorBackground get() = AppThemeState.deckPreset.surface
+private val EditorSurface get() = AppThemeState.deckPreset.surfaceVariant
+private val EditorAccent get() = AppThemeState.deckPreset.primary
 private val EditorText = Color.White
 private val EditorSubText = Color.White.copy(alpha = 0.7f)
 private val EditorTextValue = Color.White.copy(alpha = 0.9f)

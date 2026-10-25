@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
@@ -269,7 +270,7 @@ private fun SplashProgress(
                     .fillMaxHeight()
                     .background(
                         Brush.horizontalGradient(
-                            listOf(DeckPalette.primary, Color(0xFF59C1FF)),
+                            listOf(DeckPalette.primary, lerp(DeckPalette.primary, Color.White, 0.45f)),
                         ),
                     ),
             )

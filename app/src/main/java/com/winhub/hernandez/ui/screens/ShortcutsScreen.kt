@@ -8955,6 +8955,15 @@ internal fun DeckShortcutSettingsScreen(
     // "pages" layout: whether a category page is open (false = the category list page).
     var pagesCategoryOpen by remember { mutableStateOf(false) }
 
+    // "popup" = config editors open in a DeckConfigDialog (the original shortcut style);
+    // "dropdown" = the classic container style, inline under the row. Shared with the container
+    // editor through the same preference.
+    val configEditorStyle = remember {
+        PreferenceManager.getDefaultSharedPreferences(context)
+            .getString("config_editor_style", "popup") ?: "popup"
+    }
+    var configSection by remember { mutableStateOf<String?>(null) }
+
     Surface(color = DeckPalette.background, modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             Row(
@@ -9275,16 +9284,32 @@ internal fun DeckShortcutSettingsScreen(
                                     label = stringResource(R.string.graphics_driver),
                                     options = graphicsDriverEntries.map { it to it },
                                     selected = selectedGfxDriver,
-                                    configPanel = true,
-                                    onConfigClick = { showGfxConfig = true },
+                                    configPanel = configEditorStyle != "dropdown",
+                                    onConfigClick = if (configEditorStyle == "dropdown") null else ({ showGfxConfig = true }),
                                     onPick = { selectedGfxDriver = it },
                                 )
                                 if (!isLinuxEntry) {
-                                    DeckRow(
-                                        label = stringResource(R.string.graphics_driver),
-                                        hint = GraphicsDriverConfigDialog.getVersion(graphicsDriverConfig),
-                                    ) {
-                                        DeckButton("Configure", primary = false) { showGfxConfig = true }
+                                    if (configEditorStyle == "dropdown") {
+                                        DeckExpandableRow(
+                                            label = "Driver Config",
+                                            hint = GraphicsDriverConfigDialog.getVersion(graphicsDriverConfig),
+                                            expanded = configSection == "gfxDriver",
+                                            onToggle = { configSection = if (configSection == "gfxDriver") null else "gfxDriver" },
+                                        ) {
+                                            DeckGraphicsDriverConfigEditor(
+                                                graphicsDriver = StringUtils.parseIdentifier(selectedGfxDriver),
+                                                initialConfig = graphicsDriverConfig,
+                                                onConfirm = { graphicsDriverConfig = it; configSection = null },
+                                                onChange = { graphicsDriverConfig = it },
+                                            )
+                                        }
+                                    } else {
+                                        DeckRow(
+                                            label = stringResource(R.string.graphics_driver),
+                                            hint = GraphicsDriverConfigDialog.getVersion(graphicsDriverConfig),
+                                        ) {
+                                            DeckButton("Configure", primary = false) { showGfxConfig = true }
+                                        }
                                     }
                                     DeckRow("Wrapper Manager", hint = stringResource(R.string.wrapper_manager_open)) {
                                         DeckButton("Manage", primary = false) { showWrapperManager = true }
@@ -9293,11 +9318,11 @@ internal fun DeckShortcutSettingsScreen(
                                         label = stringResource(R.string.dxwrapper),
                                         options = dxWrapperEntries.map { it to it },
                                         selected = selectedDxWrapper,
-                                        configPanel = true,
-                                        onConfigClick = {
+                                        configPanel = configEditorStyle != "dropdown",
+                                        onConfigClick = if (configEditorStyle == "dropdown") null else ({
                                             val w = StringUtils.parseIdentifier(selectedDxWrapper)
                                             if (w.contains("dxvk") || w.contains("vegas")) showDxvkConfig = true else showWineD3DConfig = true
-                                        },
+                                        }),
                                         onPick = { newWrapper ->
                                             val wasVegas = StringUtils.parseIdentifier(selectedDxWrapper).contains("vegas")
                                             val isVegas = StringUtils.parseIdentifier(newWrapper).contains("vegas")
@@ -9310,10 +9335,45 @@ internal fun DeckShortcutSettingsScreen(
                                             }
                                         },
                                     )
-                                    DeckRow("DX Wrapper Config") {
-                                        DeckButton("Configure", primary = false) {
-                                            val w = StringUtils.parseIdentifier(selectedDxWrapper)
-                                            if (w.contains("dxvk") || w.contains("vegas")) showDxvkConfig = true else showWineD3DConfig = true
+                                    if (configEditorStyle == "dropdown") {
+                                        val wrapperIsDxvk = StringUtils.parseIdentifier(selectedDxWrapper)
+                                            .let { it.contains("dxvk") || it.contains("vegas") }
+                                        DeckExpandableRow(
+                                            label = "DX Wrapper Config",
+                                            hint = if (wrapperIsDxvk) "DXVK / VKD3D tuning" else "WineD3D tuning",
+                                            expanded = configSection == "dxWrapper",
+                                            onToggle = { configSection = if (configSection == "dxWrapper") null else "dxWrapper" },
+                                        ) {
+                                            if (wrapperIsDxvk) {
+                                                val isVegasCfg = StringUtils.parseIdentifier(selectedDxWrapper).contains("vegas")
+                                                DeckDxvkConfigEditor(
+                                                    isArm64EC = isArm64EC,
+                                                    isVegas = isVegasCfg,
+                                                    containerRootDir = shortcut.container.rootDir,
+                                                    relaxDxvkFilter = StringUtils.parseIdentifier(selectedGfxDriver) == "wrapper-compat-bcn",
+                                                    initialConfig = dxWrapperConfig,
+                                                    onConfirm = { dxWrapperConfig = it; configSection = null },
+                                                    onChange = { dxWrapperConfig = it },
+                                                    onOpenConfigDownload = if (isVegasCfg) { { showStockConfigSheet = true } } else null,
+                                                    refreshKey = dxvkRefreshKey,
+                                                    onDownloadDxvk = { showDxvkDownloadSheet = true },
+                                                    onDownloadVkd3d = { showVkd3dDownloadSheet = true },
+                                                    onDownloadD7vk = { showD7vkDownloadSheet = true },
+                                                )
+                                            } else {
+                                                DeckWineD3DConfigEditor(
+                                                    initialConfig = dxWrapperConfig,
+                                                    onConfirm = { dxWrapperConfig = it; configSection = null },
+                                                    onChange = { dxWrapperConfig = it },
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        DeckRow("DX Wrapper Config") {
+                                            DeckButton("Configure", primary = false) {
+                                                val w = StringUtils.parseIdentifier(selectedDxWrapper)
+                                                if (w.contains("dxvk") || w.contains("vegas")) showDxvkConfig = true else showWineD3DConfig = true
+                                            }
                                         }
                                     }
                                     DeckChoiceRow(

@@ -218,14 +218,14 @@ internal fun DeckConfigChip(label: String, selected: Boolean, onClick: () -> Uni
         modifier = Modifier
             .heightIn(min = 36.dp)
             .clip(RoundedCornerShape(9.dp))
-            .background(if (selected) DeckPalette.primary else DeckPalette.surface)
-            .border(1.dp, if (selected) DeckPalette.primary else DeckPalette.line2, RoundedCornerShape(9.dp))
+            .background(if (selected) DeckPalette.secondary else DeckPalette.surface)
+            .border(1.dp, if (selected) DeckPalette.secondary else DeckPalette.line2, RoundedCornerShape(9.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         Text(
             text = label,
-            color = if (selected) DeckPalette.onPrimary else DeckPalette.onSurfaceVariant,
+            color = if (selected) DeckPalette.onSecondary else DeckPalette.onSurfaceVariant,
             fontSize = 12.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
         )

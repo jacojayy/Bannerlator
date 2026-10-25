@@ -74,6 +74,7 @@ import com.winhub.hernandez.ui.screens.DeckCover
 import com.winhub.hernandez.ui.screens.decodeCover
 import com.winhub.hernandez.ui.screens.featuredCovers
 import com.winhub.hernandez.ui.screens.hueOf
+import com.winhub.hernandez.ui.theme.AppThemeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -81,10 +82,10 @@ import kotlinx.coroutines.withContext
 // values that read over any cover art rather than the ambient theme's surface colours.
 private val HeroText = Color(0xFFF3F5F8)
 private val HeroTextDim = Color(0xFFB6BCC6)
-// Deck signal blue: every accent in this overlay — launch steps, spinner, hint, the shutdown bar
-// and the corner light — shares the Home tab's colour. (Launch was Amethyst #A855F7 before.)
-private val StatusAccent = Color(0xFF1A9FFF)
-private val HeroAccent = StatusAccent
+// Live theme accent: every accent in this overlay — launch steps, spinner, hint, the shutdown bar
+// and the corner light — follows the selected theme (Marcescence blue by default).
+private val StatusAccent get() = AppThemeState.deckPreset.primary
+private val HeroAccent get() = StatusAccent
 
 /**
  * The Home tab's look, shared by the launch hero and the shutdown/status screen: the deck

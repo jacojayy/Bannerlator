@@ -21,8 +21,20 @@ data class ThemePreset(
     val onSurfaceVariant: Color = Color(0xFFAAAAAA),
     val onBackground: Color = Color(0xFFFFFFFF),
     val onPrimary: Color = Color(0xFFFFFFFF),
+    // Secondary accent. Defaults to the primary so every existing look stays single-tone;
+    // Halloween overrides it with a witch purple so orange strokes pair with purple fills.
+    val secondary: Color = primary,
+    val onSecondary: Color = onPrimary,
+    val secondaryDim: Color = accentDim,
+    // Deck Mode hairline tokens. Defaults derive from surface -> onSurface; Marcescence pins
+    // the original graphite values so its look is byte-identical.
+    val line: Color = lerp(surface, onSurface, 0.10f),
+    val line2: Color = lerp(surface, onSurface, 0.18f),
     val divider: Color = Color(0xFF404040),
     val error: Color = Color(0xFFCF6679),
+    // Success/installed indicator. Green everywhere except Monochrome, which keeps its strict
+    // black/white/red language (red stays reserved for destructive actions).
+    val success: Color = Color(0xFF4CD37F),
     // Elevated "container" surfaces (Material3's surfaceContainer family) for raised cards,
     // dialogs and buttons-on-cards. Derived defaults lerp `surface` toward `onSurface` so every
     // preset gets a tasteful, automatically-recoloring elevation ramp (low → high → highest).
@@ -46,12 +58,16 @@ data class ThemePreset(
             accentOverride.luminance() > 0.5f -> Color(0xFF000000)
             else                              -> Color(0xFFFFFFFF)
         }
+        // A custom accent replaces the whole two-tone pair; built-in presets keep their
+        // designed secondary (identical to primary except Halloween's purple).
+        val secondaryAccent = if (accentOverride == null) secondary else accent
+        val onSecondaryAccent = if (accentOverride == null) onSecondary else onAccent
         return darkColorScheme(
             primary              = accent,
             onPrimary            = onAccent,
-            secondary            = accent,
-            onSecondary          = onAccent,
-            secondaryContainer   = accent.copy(alpha = 0.30f),
+            secondary            = secondaryAccent,
+            onSecondary          = onSecondaryAccent,
+            secondaryContainer   = secondaryAccent.copy(alpha = 0.30f),
             onSecondaryContainer = onSurface,
             background           = background,
             onBackground         = onBackground,
@@ -83,12 +99,14 @@ data class ThemePreset(
             accentOverride.luminance() > 0.5f -> Color(0xFF000000)
             else                              -> Color(0xFFFFFFFF)
         }
+        val secondaryAccent = if (accentOverride == null) secondary else accent
+        val onSecondaryAccent = if (accentOverride == null) onSecondary else onAccent
         return lightColorScheme(
             primary              = accent,
             onPrimary            = onAccent,
-            secondary            = accent,
-            onSecondary          = onAccent,
-            secondaryContainer   = accent.copy(alpha = 0.20f),
+            secondary            = secondaryAccent,
+            onSecondary          = onSecondaryAccent,
+            secondaryContainer   = secondaryAccent.copy(alpha = 0.20f),
             onSecondaryContainer = Color(0xFF1A1A1A),
             background           = Color(0xFFF5F5F5),
             onBackground         = Color(0xFF1A1A1A),
@@ -108,138 +126,104 @@ data class ThemePreset(
 }
 
 val themePresets: List<ThemePreset> = listOf(
+    // ── Marcescence: the app's default. Same graphite surfaces as the Deck shell, with the
+    //    Deck blue accent and its original dark on-accent ink. Pinned line tokens keep the
+    //    look byte-identical to the pre-theme-picker build.
     ThemePreset(
-        name          = "Classic Dark",
-        background    = Color(0xFF1A1A1A),
-        surface       = Color(0xFF2A2A2A),
-        surfaceVariant= Color(0xFF333333),
-        primary       = Color(0xFF0055FF),
+        name             = "Marcescence",
+        background       = Color(0xFF0A0B0D),
+        surface          = Color(0xFF121417),
+        surfaceVariant   = Color(0xFF1A1D22),
+        primary          = Color(0xFF1A9FFF),
+        onPrimary        = Color(0xFF03111F),
+        onBackground     = Color(0xFFF2F4F7),
+        onSurfaceVariant = Color(0xFF9AA3AF),
+        line             = Color(0xFF262A31),
+        line2            = Color(0xFF343A43),
     ),
     ThemePreset(
-        name          = "AMOLED",
-        background    = Color(0xFF000000),
-        surface       = Color(0xFF000000),
-        surfaceVariant= Color(0xFF050505),
-        primary       = Color(0xFF0055FF),
-        accentDim     = Color(0xFF002277),  // exact legacy value → default stays byte-identical
-        onSurface     = Color(0xFFEEEEEE),
-        divider       = Color(0xFF111111),
-        // Restore the rebuilt blue-on-black card/dialog depth at the default so raised surfaces
-        // don't flatten into pure black: low card ≈ legacy 1A1A2E, dialogs/buttons ≈ 2A2A38,
-        // buttons-on-cards / tracks ≈ 38383F.
-        surfaceContainer        = Color(0xFF1A1A2E),
-        surfaceContainerHigh    = Color(0xFF2A2A38),
-        surfaceContainerHighest = Color(0xFF38383F),
+        name             = "Purple",
+        background       = Color(0xFF0F0A14),
+        surface          = Color(0xFF171020),
+        surfaceVariant   = Color(0xFF20162C),
+        primary          = Color(0xFFA855F7),
+        onPrimary        = Color(0xFFFFFFFF),
+        onBackground     = Color(0xFFF4F0FA),
+        onSurfaceVariant = Color(0xFFA99CB8),
+        line             = Color(0xFF2A2236),
+        line2            = Color(0xFF382D47),
     ),
     ThemePreset(
-        name          = "Ocean",
-        background    = Color(0xFF0D1B2A),
-        surface       = Color(0xFF162435),
-        surfaceVariant= Color(0xFF1E3045),
-        primary       = Color(0xFF0EA5E9),
+        name             = "Red",
+        background       = Color(0xFF140A0A),
+        surface          = Color(0xFF1D1111),
+        surfaceVariant   = Color(0xFF281717),
+        primary          = Color(0xFFEF4444),
+        onPrimary        = Color(0xFFFFFFFF),
+        onBackground     = Color(0xFFF7EFEF),
+        onSurfaceVariant = Color(0xFFB49A9A),
+        line             = Color(0xFF33201F),
+        line2            = Color(0xFF442B2A),
     ),
     ThemePreset(
-        name          = "Forest",
-        background    = Color(0xFF0D1A12),
-        surface       = Color(0xFF142010),
-        surfaceVariant= Color(0xFF1C2E1A),
-        primary       = Color(0xFF22C55E),
+        name             = "Green",
+        background       = Color(0xFF0A140D),
+        surface          = Color(0xFF101D14),
+        surfaceVariant   = Color(0xFF16281C),
+        primary          = Color(0xFF22C55E),
+        onPrimary        = Color(0xFF04140A),
+        onBackground     = Color(0xFFEEF7F1),
+        onSurfaceVariant = Color(0xFF94AD9C),
+        line             = Color(0xFF1F3326),
+        line2            = Color(0xFF2C4636),
     ),
     ThemePreset(
-        name          = "Sunset",
-        background    = Color(0xFF1A0D0D),
-        surface       = Color(0xFF251515),
-        surfaceVariant= Color(0xFF301C1C),
-        primary       = Color(0xFFF97316),
+        name             = "Monochrome",
+        background       = Color(0xFF000000),
+        surface          = Color(0xFF0A0A0A),
+        surfaceVariant   = Color(0xFF161616),
+        primary          = Color(0xFFFFFFFF),
+        onPrimary        = Color(0xFF000000),
+        onSurface        = Color(0xFFEDEDED),
+        onBackground     = Color(0xFFFFFFFF),
+        onSurfaceVariant = Color(0xFF9A9A9A),
+        line             = Color(0xFF242424),
+        line2            = Color(0xFF333333),
+        success          = Color(0xFFE5E5E5),
     ),
     ThemePreset(
-        name          = "Rose",
-        background    = Color(0xFF1A0D14),
-        surface       = Color(0xFF25151E),
-        surfaceVariant= Color(0xFF301C28),
-        primary       = Color(0xFFEC4899),
+        name             = "Pink",
+        background       = Color(0xFF140A10),
+        surface          = Color(0xFF1D1017),
+        surfaceVariant   = Color(0xFF281520),
+        primary          = Color(0xFFEC4899),
+        onPrimary        = Color(0xFFFFFFFF),
+        onBackground     = Color(0xFFF9EEF4),
+        onSurfaceVariant = Color(0xFFB89AAB),
+        line             = Color(0xFF331F2B),
+        line2            = Color(0xFF442B3A),
     ),
+    // ── Halloween: candlelit pumpkin. Orange strokes + witch-purple fills; the purple only
+    //    appears on low-emphasis surfaces (toggles, slider track, selected chips/rail), never
+    //    as body text or a full-bleed background. Destructive red stays red.
     ThemePreset(
-        name          = "Steel",
-        background    = Color(0xFF131419),
-        surface       = Color(0xFF1C1D25),
-        surfaceVariant= Color(0xFF252630),
-        primary       = Color(0xFF64748B),
+        name             = "Halloween",
+        background       = Color(0xFF0B0708),
+        surface          = Color(0xFF161011),
+        surfaceVariant   = Color(0xFF20171A),
+        primary          = Color(0xFFFF7518),
+        onPrimary        = Color(0xFF1A0B02),
+        secondary        = Color(0xFF9D4EDD),
+        onSecondary      = Color(0xFFFFFFFF),
+        accentDim        = Color(0xFF3A1D63),
+        secondaryDim     = Color(0xFF3A1D63),
+        onSurface        = Color(0xFFEADFD6),
+        onBackground     = Color(0xFFF4EDE7),
+        onSurfaceVariant = Color(0xFFB5A498),
+        line             = Color(0xFF2C2024),
+        line2            = Color(0xFF3A2A2F),
     ),
-    // ── Extended preset selection (added 2026-06-30; all opt-in, AMOLED stays the default) ──
-    // Each carries only its core shades; the elevation ramp (surfaceContainer family) and
-    // accentDim derive automatically. onPrimary is forced dark on light/bright accents
-    // (phosphor green, gold, frost cyan, near-white mono) so on-accent text/icons stay legible.
-    ThemePreset(
-        name          = "Midnight Cobalt",
-        background    = Color(0xFF0A0E1A),
-        surface       = Color(0xFF111A2E),
-        surfaceVariant= Color(0xFF18243F),
-        primary       = Color(0xFF2D6BFF),
-    ),
-    ThemePreset(
-        name          = "Phosphor",
-        background    = Color(0xFF000000),
-        surface       = Color(0xFF07120A),
-        surfaceVariant= Color(0xFF0C1E14),
-        primary       = Color(0xFF2BE05B),
-        onSurface     = Color(0xFFC8F5D2),
-        onSurfaceVariant = Color(0xFF6FA37C),
-        onPrimary     = Color(0xFF001505),
-    ),
-    ThemePreset(
-        name          = "Carbon & Ember",
-        background    = Color(0xFF121212),
-        surface       = Color(0xFF1C1A18),
-        surfaceVariant= Color(0xFF2A2522),
-        primary       = Color(0xFFFF6A2C),
-    ),
-    ThemePreset(
-        name          = "Azure",
-        background    = Color(0xFF0A0E17),
-        surface       = Color(0xFF111A2E),
-        surfaceVariant= Color(0xFF18243F),
-        primary       = Color(0xFF1A9FFF),
-    ),
-    ThemePreset(
-        name          = "Crimson",
-        background    = Color(0xFF160A0C),
-        surface       = Color(0xFF221012),
-        surfaceVariant= Color(0xFF301619),
-        primary       = Color(0xFFEF4444),
-    ),
-    ThemePreset(
-        name          = "Synthwave",
-        background    = Color(0xFF14081E),
-        surface       = Color(0xFF1E0F2E),
-        surfaceVariant= Color(0xFF2A1640),
-        primary       = Color(0xFFFF2D95),
-    ),
-    ThemePreset(
-        name          = "Royal Gold",
-        background    = Color(0xFF14110A),
-        surface       = Color(0xFF1E1810),
-        surfaceVariant= Color(0xFF2A2216),
-        primary       = Color(0xFFE0A82E),
-        onPrimary     = Color(0xFF1A1305),
-    ),
-    ThemePreset(
-        name          = "Frost",
-        background    = Color(0xFF11141A),
-        surface       = Color(0xFF1A2029),
-        surfaceVariant= Color(0xFF252E3B),
-        primary       = Color(0xFF88C0D0),
-        onPrimary     = Color(0xFF08141A),
-    ),
-    ThemePreset(
-        name          = "Monochrome",
-        background    = Color(0xFF000000),
-        surface       = Color(0xFF0D0D0D),
-        surfaceVariant= Color(0xFF1A1A1A),
-        primary       = Color(0xFFE5E5E5),
-        onSurface     = Color(0xFFEDEDED),
-        onPrimary     = Color(0xFF000000),
-    ),
+    // Hidden slot backing the legacy custom-accent picker. Not listed in the Appearance picker.
     ThemePreset(
         name          = "Custom",
         background    = Color(0xFF121212),
@@ -255,4 +239,7 @@ val CUSTOM_PRESET_INDEX = themePresets.size - 1
 
 // The app's default theme. Resolved by name so reordering or adding presets above it can never
 // silently point the app at a different colour scheme.
-val AMETHYST_PRESET_INDEX = themePresets.indexOfFirst { it.name == "Azure" }.coerceAtLeast(0)
+val DEFAULT_PRESET_INDEX = themePresets.indexOfFirst { it.name == "Marcescence" }.coerceAtLeast(0)
+
+/** The seven user-selectable themes (the hidden Custom slot is excluded). */
+val selectableThemePresets: List<ThemePreset> = themePresets.filter { it.name != "Custom" }

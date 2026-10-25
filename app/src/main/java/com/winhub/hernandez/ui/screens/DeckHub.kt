@@ -79,6 +79,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.FocusDirection
@@ -310,10 +311,13 @@ internal fun HubGradientButton(
             .clip(RoundedCornerShape(12.dp))
             .background(
                 Brush.horizontalGradient(
-                    listOf(Color(0xFF0A2E52), Color(0xFF1A9FFF)),
+                    listOf(
+                        lerp(DeckPalette.primary, Color.Black, 0.78f),
+                        DeckPalette.primary,
+                    ),
                 ),
             )
-            .border(1.dp, Color(0xFF59C1FF).copy(alpha = 0.55f), RoundedCornerShape(12.dp))
+            .border(1.dp, lerp(DeckPalette.primary, Color.White, 0.45f).copy(alpha = 0.55f), RoundedCornerShape(12.dp))
             .deckOuterFocusStroke(
                 interaction = interaction,
                 shape = RoundedCornerShape(12.dp),
@@ -434,9 +438,9 @@ internal fun HubCarousel(
                                 drawRoundRect(
                                     brush = Brush.linearGradient(
                                         colors = listOf(
-                                            Color(0xFF1A9FFF),
-                                            Color(0xFFA6E3FF),
-                                            Color(0xFF1A9FFF),
+                                            DeckPalette.primary,
+                                            lerp(DeckPalette.primary, Color.White, 0.55f),
+                                            DeckPalette.primary,
                                         ),
                                         start = Offset(x, 0f),
                                         end = Offset(x + span, size.height),
@@ -614,7 +618,7 @@ internal fun DeckHubGamePage(
                 ) {
                     Text(
                         text = origin.uppercase(),
-                        color = Color(0xFF8FD4FF),
+                        color = lerp(DeckPalette.primary, Color.White, 0.55f),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 1.8.sp,

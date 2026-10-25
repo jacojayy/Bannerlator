@@ -203,7 +203,7 @@ object ComposeNotifier : Application.ActivityLifecycleCallbacks {
     @Composable
     private fun NoticeCard(message: String, onClick: () -> Unit) {
         val shape = RoundedCornerShape(22.dp)
-        val accent = Color(0xFF1A9FFF)
+        val accent = com.winhub.hernandez.ui.theme.AppThemeState.deckPreset.primary
 
         Column(
             modifier = Modifier

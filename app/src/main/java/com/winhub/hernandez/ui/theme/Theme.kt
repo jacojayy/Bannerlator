@@ -85,7 +85,7 @@ fun WinlatorTheme(content: @Composable () -> Unit) {
             // Purple focus outline in place of the ripple, plus the D-pad walk root every screen
             // inherits (keys are only dispatched while something in the tree holds focus). Set
             // inside MaterialTheme so nothing deeper can shadow it.
-            CompositionLocalProvider(LocalIndication provides remember { ControllerFocusIndication() }) {
+            CompositionLocalProvider(LocalIndication provides remember(colorScheme.primary) { ControllerFocusIndication(colorScheme.primary) }) {
                 ControllerNavRoot { content() }
             }
         }

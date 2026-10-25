@@ -35,9 +35,10 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
+import com.winhub.hernandez.ui.theme.AppThemeState
 
-/** Azure (ThemePreset "Azure" primary) — the blue used for the focus outline. */
-private val FocusOutlineColor = Color(0xFF1A9FFF)
+/** Live theme accent, used as the default focus-outline color. */
+private val FocusOutlineColor get() = Color(AppThemeState.getCurrentAccentArgb())
 
 /** Root node that owns fallback D-pad focus for the window; screens re-seed it on navigation. */
 val LocalControllerRootFocus = staticCompositionLocalOf { FocusRequester() }

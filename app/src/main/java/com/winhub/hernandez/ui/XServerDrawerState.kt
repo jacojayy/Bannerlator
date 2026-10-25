@@ -2,6 +2,7 @@ package com.winhub.hernandez.ui
 
 import com.winhub.hernandez.perf.PerfRootApplier
 import com.winhub.hernandez.perf.PerformanceSettings
+import com.winhub.hernandez.ui.theme.AppThemeState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -359,7 +360,7 @@ object XServerDrawerState {
     private val _controlsFollowTheme = MutableStateFlow(true)
     val controlsFollowTheme: StateFlow<Boolean> = _controlsFollowTheme
 
-    private val _controlsAccentColor = MutableStateFlow(0xFF0055FF.toInt())
+    private val _controlsAccentColor = MutableStateFlow(AppThemeState.getCurrentAccentArgb())
     val controlsAccentColor: StateFlow<Int> = _controlsAccentColor
 
     // ── Power-user performance toggles (non-root; live-toggleable in-game) ──
@@ -640,7 +641,7 @@ object XServerDrawerState {
         _fpsConfig.value = ""
         _overlayOpacity.value = 0.75f
         _controlsFollowTheme.value = true
-        _controlsAccentColor.value = 0xFF0055FF.toInt()
+        _controlsAccentColor.value = AppThemeState.getCurrentAccentArgb()
         _sustainedPerfMode.value = false
         _perfPriorityBoost.value = false
         _preferBigCores.value = false

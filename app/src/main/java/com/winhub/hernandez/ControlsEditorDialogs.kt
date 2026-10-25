@@ -39,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.winhub.hernandez.inputcontrols.ControlElement
 import com.winhub.hernandez.inputcontrols.ControlsProfile
+import com.winhub.hernandez.ui.theme.AppThemeState
 import kotlin.math.roundToInt
 
 const val DIALOG_ADD_ELEMENT = "add_element"
@@ -46,9 +47,9 @@ const val DIALOG_BACKGROUND_IMAGE = "background_image"
 const val DIALOG_GROUP_VISIBILITY = "group_visibility"
 const val DIALOG_CUSTOM_ICON_SOURCE = "custom_icon_source"
 
-private val DialogBackground = Color(0xFF1A1A2E)
-private val DialogSurface = Color(0xFF24243A)
-private val DialogAccent = Color(0xFF4FC3F7)
+private val DialogBackground get() = AppThemeState.deckPreset.surface
+private val DialogSurface get() = AppThemeState.deckPreset.surfaceVariant
+private val DialogAccent get() = AppThemeState.deckPreset.primary
 private val DialogText = Color.White
 private val DialogSubText = Color.White.copy(alpha = 0.72f)
 private val DialogShape = RoundedCornerShape(10.dp)

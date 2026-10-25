@@ -163,16 +163,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** The DroidDeck palette (Graphite), lifted verbatim from DroidDeck's ui/Theme.kt. */
+/**
+ * The Deck shell palette. Delegates to [DeckPalette] (which is backed by the live theme preset),
+ * so the shell, its hosted screens and its popups all recolor together. [attention] stays a fixed
+ * amber warning semantic in every theme.
+ */
 internal object Deck {
-    val background = Color(0xFF0A0B0D)
-    val surface = Color(0xFF121417)
-    val surfaceVariant = Color(0xFF1A1D22)
-    val line = Color(0xFF262A31)
-    val onBackground = Color(0xFFF2F4F7)
-    val onSurfaceVariant = Color(0xFF9AA3AF)
-    val primary = Color(0xFF1A9FFF)
-    val onPrimary = Color(0xFF03111F)
+    val background get() = DeckPalette.background
+    val surface get() = DeckPalette.surface
+    val surfaceVariant get() = DeckPalette.surfaceVariant
+    val line get() = DeckPalette.line
+    val onBackground get() = DeckPalette.onBackground
+    val onSurfaceVariant get() = DeckPalette.onSurfaceVariant
+    val primary get() = DeckPalette.primary
+    val onPrimary get() = DeckPalette.onPrimary
+    val secondary get() = DeckPalette.secondary
+    val onSecondary get() = DeckPalette.onSecondary
     val attention = Color(0xFFFFB547)
 }
 
@@ -274,19 +280,22 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
         colorScheme = darkColorScheme(
             primary = Deck.primary,
             onPrimary = Deck.onPrimary,
-            secondary = Deck.onSurfaceVariant,
+            secondary = Deck.secondary,
+            onSecondary = Deck.onSecondary,
+            secondaryContainer = Deck.secondary.copy(alpha = 0.30f),
+            onSecondaryContainer = Deck.onBackground,
             background = Deck.background,
             onBackground = Deck.onBackground,
             surface = Deck.surface,
             onSurface = Deck.onBackground,
             surfaceVariant = Deck.surfaceVariant,
             onSurfaceVariant = Deck.onSurfaceVariant,
-            error = Color(0xFFFF8A80),
+            error = DeckPalette.error,
         ),
     ) {
         CompositionLocalProvider(
             LocalInputModeManager provides deckInputMode,
-            LocalIndication provides remember { ControllerFocusIndication(Deck.primary) },
+            LocalIndication provides remember(Deck.primary) { ControllerFocusIndication(Deck.primary) },
             LocalDeckTabs provides tabs,
             LocalDeckBack provides backLayer,
             LocalDeckEditTracker provides editTracker,

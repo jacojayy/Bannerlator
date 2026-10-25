@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -25,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,6 +51,8 @@ import com.winhub.hernandez.fexcore.FEXCorePresetManager
 import com.winhub.hernandez.store.SteamPrefs
 import com.winhub.hernandez.store.SteamRegion
 import com.winhub.hernandez.ui.theme.AppThemeState
+import com.winhub.hernandez.ui.theme.ThemePreset
+import com.winhub.hernandez.ui.theme.selectableThemePresets
 import android.app.Activity
 import android.content.Intent
 import android.os.Environment
@@ -127,7 +132,15 @@ internal fun DeckSettingsScreen() {
     var settingsLayout by remember { mutableStateOf(prefs.getString("settings_layout", "rail") ?: "rail") }
     var settingsTab by remember { mutableStateOf(0) }
     var settingsPagesCategoryOpen by remember { mutableStateOf(false) }
-    val settingsTabs = remember { listOf("General", "Interface", "System", "Graphics") }
+    val settingsTabs = remember { listOf("General", "Interface", "Appearance", "System", "Graphics") }
+
+    // ── Theme + config-editor presentation (immediate-write). ──
+    val themeChoices = remember { selectableThemePresets }
+    val themeIndex by AppThemeState.presetIndex.collectAsState(initial = AppThemeState.presetIndex.value)
+    val selectedTheme = themeChoices.getOrNull(themeIndex)?.name ?: themeChoices.first().name
+    var configEditorStyle by remember {
+        mutableStateOf(prefs.getString("config_editor_style", "popup") ?: "popup")
+    }
 
     // ── Sound (MIDI Sound Font) — same as SettingsScreen's Sound section. ──
     var sfNames by remember { mutableStateOf(listOf<String>()) }
@@ -578,8 +591,66 @@ internal fun DeckSettingsScreen() {
             )
         }
 
-        // ── Appearance ──
-        DeckGroup(title = "Appearance") {
+        // ── Default Screen on Launch ──
+        DeckGroup(title = "Default Screen on Launch") {
+            DeckChoiceRow(
+                label = "Default landing screen",
+                options = listOf(
+                    "games" to "Game Shortcuts",
+                    "containers" to "Containers",
+                ),
+                selected = landing,
+                onPick = { landing = it; saved = false },
+            )
+        }
+
+        // ── Big Picture Mode ──
+        DeckGroup(title = "Big Picture Mode") {
+            DeckRow(label = "Enable Big Picture Mode on App Launch") {
+                DeckToggle(bigPicture) { bigPicture = it; saved = false }
+            }
+        }
+
+        }
+        2 -> {
+        // ── Theme ──
+        DeckGroup(title = "Theme") {
+            DeckChoiceRow(
+                label = "App Theme",
+                hint = "Recolors the whole app, including popups and touch controls",
+                options = themeChoices.map { it.name to it.name },
+                selected = selectedTheme,
+                onPick = { name ->
+                    val idx = themeChoices.indexOfFirst { it.name == name }
+                    if (idx >= 0) AppThemeState.setPreset(idx)
+                },
+            )
+            DeckRow(
+                label = "Preview",
+                hint = selectedTheme,
+                control = {
+                    ThemePreviewDots(
+                        themeChoices.firstOrNull { it.name == selectedTheme } ?: themeChoices.first(),
+                    )
+                },
+            )
+        }
+
+        // ── Editors ──
+        DeckGroup(title = "Editors") {
+            DeckChoiceRow(
+                label = "Config Editor Style",
+                hint = "How driver, wrapper and renderer settings open",
+                options = listOf(
+                    "popup" to "Popup (dialog)",
+                    "dropdown" to "Dropdown (inline)",
+                ),
+                selected = configEditorStyle,
+                onPick = {
+                    configEditorStyle = it
+                    prefs.edit().putString("config_editor_style", it).apply()
+                },
+            )
             DeckChoiceRow(
                 label = "Container Editor Layout",
                 hint = "How the container editor arranges its categories",
@@ -611,28 +682,8 @@ internal fun DeckSettingsScreen() {
             )
         }
 
-        // ── Default Screen on Launch ──
-        DeckGroup(title = "Default Screen on Launch") {
-            DeckChoiceRow(
-                label = "Default landing screen",
-                options = listOf(
-                    "games" to "Game Shortcuts",
-                    "containers" to "Containers",
-                ),
-                selected = landing,
-                onPick = { landing = it; saved = false },
-            )
         }
-
-        // ── Big Picture Mode ──
-        DeckGroup(title = "Big Picture Mode") {
-            DeckRow(label = "Enable Big Picture Mode on App Launch") {
-                DeckToggle(bigPicture) { bigPicture = it; saved = false }
-            }
-        }
-
-        }
-        2 -> {
+        3 -> {
         // ── Path Settings ──
         DeckGroup(title = "Path Settings") {
             DeckRow(
@@ -735,7 +786,7 @@ internal fun DeckSettingsScreen() {
         }
 
         }
-        3 -> {
+        4 -> {
         // ── Frame Generation — LSFG Native (Lossless Scaling) ──
         DeckGroup(title = "Frame Generation — LSFG Native") {
             DeckRow(label = "Status", hint = lsfgDllStatus) {
@@ -896,5 +947,24 @@ internal fun DeckSettingsScreen() {
             },
             onDismiss = { showRestoreConfirm = false; pendingRestoreUri = null },
         )
+    }
+}
+
+/** Four-dot live preview of the active theme: background, surface, primary and secondary. */
+@Composable
+private fun ThemePreviewDots(preset: ThemePreset) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        listOf(preset.background, preset.surface, preset.primary, preset.secondary).forEach { color ->
+            Box(
+                Modifier
+                    .size(18.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(color)
+                    .border(1.dp, DeckPalette.line2, RoundedCornerShape(5.dp)),
+            )
+        }
     }
 }

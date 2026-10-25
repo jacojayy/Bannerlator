@@ -9282,7 +9282,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
         }
         else {
             XServerDrawerState.INSTANCE.setControlsFollowTheme(true);
-            XServerDrawerState.INSTANCE.setControlsAccentColor(0xFF0055FF);
+            XServerDrawerState.INSTANCE.setControlsAccentColor(
+                    com.winhub.hernandez.ui.theme.AppThemeState.getCurrentAccentArgb());
         }
     }
 

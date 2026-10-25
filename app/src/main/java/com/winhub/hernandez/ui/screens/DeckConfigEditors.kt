@@ -49,7 +49,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -287,59 +287,56 @@ internal fun DeckChoiceRowWithDownload(
  * popup is walkable with the same pad as the rest of the Deck shell.
  *
  * The listener is installed on the dialog's ComposeView (it sees generic motion before Compose's
- * own handler) and the previous listener is restored on dispose, so closing a popup can never
- * leave the pad dead. It always returns false, so it only observes — it never swallows input.
+ * own handler). The view belongs to this dialog and is discarded when it closes, so there is no
+ * shared listener to restore. It always returns false, so it only observes — never swallows input.
  */
 @Composable
 private fun DeckDialogControllerBridge() {
     val view = LocalView.current
-    DisposableEffect(view) {
-        val previous = view.onGenericMotionListener
+    val listener = remember(view) {
         var heldKey = 0
         var lastMs = 0L
-        val listener = android.view.View.OnGenericMotionListener { _, event ->
+        android.view.View.OnGenericMotionListener { _, event ->
             val source = event.source
             val pad = (source and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK ||
                 (source and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
-            if (!pad) return@OnGenericMotionListener false
-            var x = event.getAxisValue(MotionEvent.AXIS_HAT_X)
-            var y = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
-            if (x == 0f && y == 0f) {
-                x = event.getAxisValue(MotionEvent.AXIS_X)
-                y = event.getAxisValue(MotionEvent.AXIS_Y)
-            }
-            val dz = 0.6f
-            val key = when {
-                x <= -dz && kotlin.math.abs(x) >= kotlin.math.abs(y) ->
-                    android.view.KeyEvent.KEYCODE_DPAD_LEFT
-                x >= dz && kotlin.math.abs(x) >= kotlin.math.abs(y) ->
-                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT
-                y <= -dz -> android.view.KeyEvent.KEYCODE_DPAD_UP
-                y >= dz -> android.view.KeyEvent.KEYCODE_DPAD_DOWN
-                else -> 0
-            }
-            val now = SystemClock.uptimeMillis()
-            if (key == 0) {
-                heldKey = 0
-                return@OnGenericMotionListener false
-            }
-            // Edge-trigger once, then auto-repeat while held (same cadence as the shell).
-            if (key != heldKey || now - lastMs > 380L) {
-                heldKey = key
-                lastMs = now
-                view.dispatchKeyEvent(
-                    android.view.KeyEvent(now, now, android.view.KeyEvent.ACTION_DOWN, key, 0)
-                )
-                view.dispatchKeyEvent(
-                    android.view.KeyEvent(now, now, android.view.KeyEvent.ACTION_UP, key, 0)
-                )
+            if (pad) {
+                var x = event.getAxisValue(MotionEvent.AXIS_HAT_X)
+                var y = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
+                if (x == 0f && y == 0f) {
+                    x = event.getAxisValue(MotionEvent.AXIS_X)
+                    y = event.getAxisValue(MotionEvent.AXIS_Y)
+                }
+                val dz = 0.6f
+                val key = when {
+                    x <= -dz && kotlin.math.abs(x) >= kotlin.math.abs(y) ->
+                        android.view.KeyEvent.KEYCODE_DPAD_LEFT
+                    x >= dz && kotlin.math.abs(x) >= kotlin.math.abs(y) ->
+                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT
+                    y <= -dz -> android.view.KeyEvent.KEYCODE_DPAD_UP
+                    y >= dz -> android.view.KeyEvent.KEYCODE_DPAD_DOWN
+                    else -> 0
+                }
+                val now = SystemClock.uptimeMillis()
+                if (key == 0) {
+                    heldKey = 0
+                } else if (key != heldKey || now - lastMs > 380L) {
+                    // Edge-trigger once, then auto-repeat while held (same cadence as the shell).
+                    heldKey = key
+                    lastMs = now
+                    view.dispatchKeyEvent(
+                        android.view.KeyEvent(now, now, android.view.KeyEvent.ACTION_DOWN, key, 0)
+                    )
+                    view.dispatchKeyEvent(
+                        android.view.KeyEvent(now, now, android.view.KeyEvent.ACTION_UP, key, 0)
+                    )
+                }
             }
             // Never consume: the event still reaches Compose/system handling.
             false
         }
-        view.setOnGenericMotionListener(listener)
-        onDispose { view.setOnGenericMotionListener(previous) }
     }
+    SideEffect { view.setOnGenericMotionListener(listener) }
 }
 
 /**

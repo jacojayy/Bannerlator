@@ -328,12 +328,15 @@ private fun SteamLoginScreen(
                     label = "Username",
                     value = username,
                     onValueChange = onUsernameChange,
+                    imeAction = ImeAction.Next,
                 )
                 DeckConfigTextField(
                     label = "Password",
                     value = password,
                     onValueChange = onPasswordChange,
                     password = true,
+                    imeAction = ImeAction.Done,
+                    onImeAction = onLoginClick,
                 )
             }
             Spacer(Modifier.height(16.dp))

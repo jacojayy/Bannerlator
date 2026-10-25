@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -72,6 +73,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -151,6 +153,8 @@ internal fun DeckConfigTextField(
     minHeight: androidx.compose.ui.unit.Dp = 0.dp,
     isError: Boolean = false,
     password: Boolean = false,
+    imeAction: ImeAction = ImeAction.Default,
+    onImeAction: (() -> Unit)? = null,
 ) {
     val edit = rememberDeckEditState()
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
@@ -171,7 +175,8 @@ internal fun DeckConfigTextField(
                     numeric -> KeyboardOptions(keyboardType = KeyboardType.Number)
                     password -> KeyboardOptions(keyboardType = KeyboardType.Password)
                     else -> KeyboardOptions.Default
-                },
+                }.copy(imeAction = imeAction),
+                keyboardActions = KeyboardActions(onDone = { onImeAction?.invoke() }),
                 visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
                 colors = TextFieldDefaults.colors(
                     focusedContainerColor = DeckPalette.surfaceVariant,

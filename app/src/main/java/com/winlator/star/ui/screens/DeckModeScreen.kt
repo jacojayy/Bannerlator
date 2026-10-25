@@ -107,6 +107,7 @@ import com.winlator.star.container.ContainerManager
 import com.winlator.star.container.Shortcut
 import com.winlator.star.core.GameIdentifier
 import com.winlator.star.store.SaveManagerScreen
+import com.winlator.star.store.SteamPrefs
 import com.winlator.star.store.deckTileFocus
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusDirection
@@ -496,6 +497,7 @@ private fun DeckHome(
     var pending by remember { mutableStateOf<Pair<File, GameIdentifier.GameIdentity>?>(null) }
     var launchRequest by remember { mutableStateOf<Shortcut?>(null) }
     var launchSteam by remember { mutableStateOf<Boolean?>(null) }
+    var launchMethodFor by remember { mutableStateOf<Shortcut?>(null) }
     var pageFor by remember { mutableStateOf<HubEntry?>(null) }
     var addModeMenu by remember { mutableStateOf(false) }
     var addMode by remember { mutableStateOf(HubAddMode.MASTER) }
@@ -586,6 +588,30 @@ private fun DeckHome(
                     Toast.makeText(context, "That game's shortcut is missing — re-add it", Toast.LENGTH_SHORT).show()
                 } else {
                     launchRequest = shortcut
+                }
+            }
+        }
+    }
+
+    fun openLaunchMethod(entry: HubEntry) {
+        val game = entry.game
+        if (game == null) {
+            Toast.makeText(context, "Add this game first — use Add Games", Toast.LENGTH_SHORT).show()
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            val shortcut = runCatching {
+                val container = ContainerManager(context).getContainerById(game.containerId)
+                    ?: return@runCatching null
+                val desktop = File(game.shortcutPath)
+                if (!desktop.isFile) return@runCatching null
+                Shortcut(container, desktop)
+            }.getOrNull()
+            withContext(Dispatchers.Main) {
+                if (shortcut == null) {
+                    Toast.makeText(context, "That game's shortcut is missing — re-add it", Toast.LENGTH_SHORT).show()
+                } else {
+                    launchMethodFor = shortcut
                 }
             }
         }
@@ -799,6 +825,10 @@ private fun DeckHome(
                     gameMenuFor = null
                     openGameSettings(entry)
                 },
+                onLaunchMethod = {
+                    gameMenuFor = null
+                    openLaunchMethod(entry)
+                },
                 onAddToHomeScreen = {
                     gameMenuFor = null
                     val g = entry.game ?: return@DeckGameMenu
@@ -852,6 +882,26 @@ private fun DeckHome(
 
         propertiesFor?.let { c ->
             DeckPropertiesDialog(container = c, onDismiss = { propertiesFor = null })
+        }
+
+        launchMethodFor?.let { s ->
+            DeckLaunchMethodDialog(
+                shortcut = s,
+                onDismiss = { launchMethodFor = null },
+                heading = "Launch method",
+                confirmLabel = "Save",
+                onLaunch = { mode, gm, remember ->
+                    s.putExtra("launchMode", mode)
+                    s.putExtra("launchModeRemembered", if (remember) "1" else "0")
+                    if (gm != null) {
+                        SteamPrefs.init(context)
+                        SteamPrefs.setGoldbergMode(steamAppIdOf(s), gm)
+                    }
+                    s.saveData()
+                    launchMethodFor = null
+                    Toast.makeText(context, "Launch method saved", Toast.LENGTH_SHORT).show()
+                },
+            )
         }
 
         shortcutSettingsFor?.let { sc ->

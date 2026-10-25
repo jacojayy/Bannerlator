@@ -8406,6 +8406,12 @@ internal fun DeckShortcutSettingsScreen(
     val isEpicShortcut = remember { shortcut.getExtra("storeSource") == "epic" }
     val isLinuxEntry = false
 
+    // Launch method is owned by the launch pipeline (DeckLaunchStack), which reads these two extras.
+    // Exposed here so a remembered choice can be changed without deleting the shortcut.
+    var launchMode by remember { mutableStateOf(shortcut.getExtra("launchMode", "")) }
+    var launchModeRemembered by remember { mutableStateOf(shortcut.getExtra("launchModeRemembered", "") == "1") }
+    var showLaunchMethod by remember { mutableStateOf(false) }
+
     var epicEosEnabled by remember { mutableStateOf(shortcut.getExtra("epicEos", "1") != "0") }
     var epicOvtForce by remember { mutableStateOf(shortcut.getExtra("epicOvtForce", "0") == "1") }
     var epicOffline by remember { mutableStateOf(shortcut.getExtra("epicOffline", "0") == "1") }
@@ -9028,6 +9034,17 @@ internal fun DeckShortcutSettingsScreen(
                                 if (!isLinuxEntry) {
                                     DeckTextRow("Exec arguments", value = execArgs, onValueChange = { execArgs = it })
                                 }
+                                DeckRow(
+                                    label = "Launch method",
+                                    hint = if (!launchModeRemembered) "Ask every launch" else when (launchMode) {
+                                        "RealSteam" -> "SteamLite (real Steam client)"
+                                        "Goldberg" -> "Goldberg (offline emulator)"
+                                        "Raw" -> "Raw .exe (no Steam layer)"
+                                        else -> "Ask every launch"
+                                    },
+                                    configPanel = true,
+                                    onConfigClick = { showLaunchMethod = true },
+                                ) {}
                                 val storageLabel = remember(shortcut) { CopyGameToDriveC.storageLabel(shortcut) }
                                 DeckRow("Storage", hint = storageLabel) {
                                     val exeName = remember(shortcut) {
@@ -9745,6 +9762,25 @@ internal fun DeckShortcutSettingsScreen(
                     rootOverrides[rk] = com.winlator.star.perf.PerformanceSettings.rootDefaultValue(rk)
             },
             onDismiss = { showPerfDialog = false },
+        )
+    }
+    if (showLaunchMethod) {
+        DeckLaunchMethodDialog(
+            shortcut = shortcut,
+            onDismiss = { showLaunchMethod = false },
+            heading = "Launch method",
+            confirmLabel = "Save",
+            onLaunch = { mode, gm, remember ->
+                shortcut.putExtra("launchMode", mode)
+                shortcut.putExtra("launchModeRemembered", if (remember) "1" else "0")
+                if (gm != null) {
+                    SteamPrefs.init(context)
+                    SteamPrefs.setGoldbergMode(steamAppIdOf(shortcut), gm)
+                }
+                launchMode = mode
+                launchModeRemembered = remember
+                showLaunchMethod = false
+            },
         )
     }
 }

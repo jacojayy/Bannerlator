@@ -1095,6 +1095,8 @@ internal fun DeckLaunchMethodDialog(
     shortcut: Shortcut,
     onDismiss: () -> Unit,
     steamOverride: Boolean? = null,
+    heading: String = "Choose how to launch",
+    confirmLabel: String = "Launch",
     onLaunch: (mode: String, goldbergMode: GoldbergMode?, remember: Boolean) -> Unit,
 ) {
     val context = LocalContext.current
@@ -1143,7 +1145,7 @@ internal fun DeckLaunchMethodDialog(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                "Choose how to launch",
+                heading,
                 color = DeckPalette.onSurfaceVariant,
                 fontSize = 12.5.sp,
                 modifier = Modifier.padding(top = 2.dp, bottom = 16.dp),
@@ -1226,7 +1228,7 @@ internal fun DeckLaunchMethodDialog(
             }
             Spacer(Modifier.height(14.dp))
             HubGradientButton(
-                "Launch",
+                confirmLabel,
                 onClick = { onLaunch(method, if (method == "Goldberg") goldbergMode else null, rememberChoice) },
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -1434,6 +1436,7 @@ internal fun DeckGameMenu(
     title: String,
     onPlay: () -> Unit,
     onSettings: () -> Unit,
+    onLaunchMethod: () -> Unit,
     onAddToHomeScreen: () -> Unit,
     onProperties: () -> Unit,
     onDelete: () -> Unit,
@@ -1468,6 +1471,7 @@ internal fun DeckGameMenu(
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
             )
             DeckGameMenuRow("Play", Icons.Filled.PlayArrow, onClick = onPlay)
+            DeckGameMenuRow("Launch method\u2026", Icons.Filled.Layers, onClick = onLaunchMethod)
             DeckGameMenuRow("Settings", Icons.Filled.Settings, onClick = onSettings)
             DeckGameMenuRow("Add to Home Screen", Icons.Filled.Home, onClick = onAddToHomeScreen)
             DeckGameMenuRow("Properties", Icons.Filled.Info, onClick = onProperties)

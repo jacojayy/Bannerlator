@@ -22,10 +22,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalIndication
@@ -1237,7 +1233,7 @@ private fun DeckRailItem(
                 shape = RoundedCornerShape(14.dp),
             )
             .deckBringIntoView()
-            .deckDragItem("rail:$label")
+            .deckDragItem("rail:$label", selfOnly = true)
             .focusProperties { if (rightFocus != null) right = rightFocus }
             .onFocusChanged { if (it.isFocused) onFocus() }
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
@@ -1307,13 +1303,7 @@ internal fun DeckCapsuleWall(covers: List<DeckCover>, driftMs: Int, modifier: Mo
     val capW = 112.dp
     val capH = 168.dp
     val gap = 14.dp
-    val transition = rememberInfiniteTransition(label = "deckwall")
-    val drift = transition.animateFloat(
-        0f,
-        1f,
-        infiniteRepeatable(tween(driftMs, easing = LinearEasing)),
-        label = "drift",
-    )
+    val drift = rememberAmbientPhase(driftMs)
     BoxWithConstraints(modifier.fillMaxSize()) {
         val tilt = Math.toRadians(13.0)
         val cosTilt = kotlin.math.cos(tilt).toFloat()

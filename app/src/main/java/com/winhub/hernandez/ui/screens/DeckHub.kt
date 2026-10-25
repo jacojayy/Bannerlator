@@ -8,12 +8,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.widget.Toast
 import android.provider.OpenableColumns
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -382,15 +377,10 @@ internal fun HubCarousel(
                 }
             },
     ) {
-        // One infinite clock for the selected cover's stroke: blue -> light blue, sliding around
-        // the frame while the tile is focused.
-        val shimmer = rememberInfiniteTransition(label = "hubStroke")
-        val strokePhase by shimmer.animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(durationMillis = 2600, easing = LinearEasing)),
-            label = "hubStrokePhase",
-        )
+        // One ambient clock for the selected cover's stroke: blue -> light blue, sliding around
+        // the frame while the tile is focused. Throttled and lifecycle-scoped (see
+        // rememberAmbientPhase) so the launcher does not redraw at every vsync while idle.
+        val strokePhase = rememberAmbientPhase(2600)
         entries.forEachIndexed { index, entry ->
             val delta = index - current
             val distance = abs(delta)
@@ -437,7 +427,7 @@ internal fun HubCarousel(
                                 drawContent()
                                 val w = 2.5.dp.toPx()
                                 val span = size.width + size.height
-                                val x = -span + span * 2f * strokePhase
+                                val x = -span + span * 2f * strokePhase.value
                                 drawRoundRect(
                                     brush = Brush.linearGradient(
                                         colors = listOf(

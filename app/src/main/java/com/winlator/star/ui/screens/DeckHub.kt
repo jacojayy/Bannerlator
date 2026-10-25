@@ -1311,22 +1311,46 @@ internal fun DeckLaunchStack(
     }
 
     request?.let { s ->
-        DeckLaunchMethodDialog(
-            shortcut = s,
-            onDismiss = onMenuClosed,
-            steamOverride = steamOverride,
-            onLaunch = { mode, gm, rememberChoice ->
-                onMenuClosed()
-                s.putExtra("launchMode", mode)
-                s.putExtra("launchModeRemembered", if (rememberChoice) "1" else "0")
-                s.saveData()
-                when (mode) {
-                    "Goldberg" -> launchWithGoldberg(s, gm ?: GoldbergMode.REGULAR)
+        // Honour "Remember this choice" from an earlier launch (same contract the classic launch
+        // path uses in ShortcutsScreen/BigPictureScreen): skip the chooser and go straight into the
+        // remembered mode. Without this the deck always reopened the method dialog.
+        val rememberedMode = s.getExtra("launchMode", "")
+        val remembered = rememberedMode.isNotEmpty() && s.getExtra("launchModeRemembered", "") == "1"
+        if (remembered) {
+            LaunchedEffect(s) {
+                // Launch first, then close the menu: closing first would dispose this effect (and
+                // cancel the coroutine) before the launch ever ran.
+                when (rememberedMode) {
+                    "Goldberg" -> {
+                        val appId = steamAppIdOf(s)
+                        SteamPrefs.init(context)
+                        val gm = SteamPrefs.getGoldbergMode(appId)
+                            .let { if (it == GoldbergMode.OFF) GoldbergMode.REGULAR else it }
+                        launchWithGoldberg(s, gm)
+                    }
                     "Raw" -> launchShortcut(activity, s)
                     else -> launchWithSteamLite(s)
                 }
-            },
-        )
+                onMenuClosed()
+            }
+        } else {
+            DeckLaunchMethodDialog(
+                shortcut = s,
+                onDismiss = onMenuClosed,
+                steamOverride = steamOverride,
+                onLaunch = { mode, gm, rememberChoice ->
+                    onMenuClosed()
+                    s.putExtra("launchMode", mode)
+                    s.putExtra("launchModeRemembered", if (rememberChoice) "1" else "0")
+                    s.saveData()
+                    when (mode) {
+                        "Goldberg" -> launchWithGoldberg(s, gm ?: GoldbergMode.REGULAR)
+                        "Raw" -> launchShortcut(activity, s)
+                        else -> launchWithSteamLite(s)
+                    }
+                },
+            )
+        }
     }
 
     componentDownloadFor?.let {

@@ -730,7 +730,10 @@ internal fun DeckEditorCategoryRail(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier,
+        // Scrollable: with many categories the tail ran off the bottom of the rail, so those
+        // options were visible-ish but unreachable (no way to scroll, and D-pad focus could not
+        // bring them on screen). Compose auto-scrolls to the focused row once it can scroll.
+        modifier = modifier.verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         labels.forEachIndexed { i, label ->

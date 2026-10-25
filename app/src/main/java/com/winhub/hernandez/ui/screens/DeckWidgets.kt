@@ -1,5 +1,7 @@
 package com.winhub.hernandez.ui.screens
 
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
@@ -37,7 +39,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -158,6 +159,44 @@ internal class DeckDragRegistry {
     val bounds = mutableStateMapOf<Any, Rect>()
     var focusedKey: Any? by mutableStateOf(null)
     var rootTopLeft: Offset by mutableStateOf(Offset.Zero)
+
+    private val handler = Handler(Looper.getMainLooper())
+    private var clearToken = 0
+    private var pendingClear: Runnable? = null
+
+    /** Focus landed on [key]: cancel any clear still waiting for the item that lost it. */
+    fun focus(key: Any) {
+        clearToken++
+        pendingClear?.let { handler.removeCallbacks(it) }
+        pendingClear = null
+        focusedKey = key
+    }
+
+    /**
+     * Focus left [key] but the surface may still hold focus (it moved to a non-drag control, or
+     * to a sibling). Wait a beat so a drag item that takes focus in the same pass wins and the
+     * ring keeps stretching; if nothing takes it, drop the stale ring.
+     */
+    fun clearSoon(key: Any) {
+        val token = ++clearToken
+        pendingClear?.let { handler.removeCallbacks(it) }
+        val runnable = Runnable {
+            if (clearToken == token && focusedKey == key) {
+                focusedKey = null
+                pendingClear = null
+            }
+        }
+        pendingClear = runnable
+        handler.postDelayed(runnable, 80L)
+    }
+
+    /** Focus left the whole surface: drop the ring immediately. */
+    fun clearNow() {
+        clearToken++
+        pendingClear?.let { handler.removeCallbacks(it) }
+        pendingClear = null
+        focusedKey = null
+    }
 }
 
 internal val LocalDeckDrag = compositionLocalOf<DeckDragRegistry?> { null }
@@ -167,7 +206,12 @@ internal val LocalDeckDrag = compositionLocalOf<DeckDragRegistry?> { null }
 internal fun Modifier.deckDragItem(key: Any): Modifier {
     val registry = LocalDeckDrag.current
     DisposableEffect(registry, key) {
-        onDispose { registry?.bounds?.remove(key) }
+        onDispose {
+            registry?.bounds?.remove(key)
+            // The item that owned the ring left composition (page swap / recycle): drop it now
+            // instead of leaving the last painted rect on screen.
+            if (registry?.focusedKey == key) registry?.clearNow()
+        }
     }
     if (registry == null) return this
     return this
@@ -175,7 +219,13 @@ internal fun Modifier.deckDragItem(key: Any): Modifier {
             val local = coords.boundsInRoot().translate(-registry.rootTopLeft.x, -registry.rootTopLeft.y)
             if (registry.bounds[key] != local) registry.bounds[key] = local
         }
-        .onFocusChanged { if (it.isFocused || it.hasFocus) registry.focusedKey = key }
+        .onFocusChanged { state ->
+            if (state.isFocused || state.hasFocus) {
+                registry.focus(key)
+            } else if (registry.focusedKey == key) {
+                registry.clearSoon(key)
+            }
+        }
 }
 
 private fun Rect.translate(dx: Float, dy: Float): Rect =
@@ -240,7 +290,7 @@ internal fun DeckDragFrame(
                     // Focus left this surface (tab/page swap, or a control outside the frame).
                     // Drop the last item so its stroke cannot remain painted on the new page;
                     // keep `armed` so returning to the frame still stretches instead of snapping.
-                    registry.focusedKey = null
+                    registry.clearNow()
                 }
             }
             .drawWithContent {

@@ -1219,6 +1219,7 @@ private fun CustomSaveRow(
     onBackup: () -> Unit,
     onRestore: () -> Unit,
 ) {
+    val dragKey = remember { Any() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -1227,6 +1228,7 @@ private fun CustomSaveRow(
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+            .deckDragItem(dragKey)
             .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
     ) {
         // Thumbnail = the shortcut's own art (cover → icon); custom games have no Steam appId cover.
@@ -1407,6 +1409,7 @@ private fun EpicSaveRow(
 ) {
     val setUp = status.containerLabel != null
     val actionsEnabled = !busy && setUp && status.cloudSaveEnabled
+    val dragKey = remember { Any() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -1417,6 +1420,7 @@ private fun EpicSaveRow(
             .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
             // Tapping the card opens the Epic store detail page. The Up/Down IconButtons keep their own
             // click handlers so they stay independently tappable (not swallowed by the card click).
+            .deckDragItem(dragKey)
             .clickable(onClick = onOpen)
             .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
     ) {
@@ -1700,6 +1704,7 @@ private fun GogSaveRow(
     val hasManualFolder = status.saveDir != null
     // Up/Down light up when EITHER a manual folder is set OR the game can auto-resolve.
     val actionsEnabled = !busy && (hasManualFolder || status.autoResolvable)
+    val dragKey = remember { Any() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -1710,6 +1715,7 @@ private fun GogSaveRow(
             .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
             // Tapping the card opens the GOG store detail page. The Up/Down IconButtons keep their own
             // click handlers so they stay independently tappable (not swallowed by the card click).
+            .deckDragItem(dragKey)
             .clickable(onClick = onOpen)
             .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
     ) {
@@ -1829,6 +1835,7 @@ private fun SaveStatusRow(
     // Sync-from-Cloud is pointless with nothing in the cloud (e.g. a Not-backed-up game) — gate it so
     // the meaningful action (Sync to Cloud = back it up) stands out.
     val syncFromEnabled = actionsEnabled && status.cloudFileCount > 0
+    val dragKey = remember { Any() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -1842,6 +1849,7 @@ private fun SaveStatusRow(
                         else MaterialTheme.colorScheme.outline,
                 shape = RoundedCornerShape(12.dp),
             )
+            .deckDragItem(dragKey)
             .clickable(onClick = onOpen)
             .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
     ) {

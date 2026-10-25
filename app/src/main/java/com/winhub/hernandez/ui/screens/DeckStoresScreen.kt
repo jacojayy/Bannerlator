@@ -315,7 +315,9 @@ private fun DeckLibraryPane(screen: Screen, context: Context, onGameClick: (Deck
                 ) {
                     itemsIndexed(list, key = { index, game -> "$index-${game.title}" }) { index, game ->
                         DeckRise(index = index % 10) {
-                            DeckGameCard(game) { onGameClick(game) }
+                            Box(Modifier.deckDragItem("$index-${game.title}")) {
+                                DeckGameCard(game) { onGameClick(game) }
+                            }
                         }
                     }
                 }

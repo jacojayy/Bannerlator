@@ -175,16 +175,7 @@ internal fun Modifier.deckDragItem(key: Any): Modifier {
             val local = coords.boundsInRoot().translate(-registry.rootTopLeft.x, -registry.rootTopLeft.y)
             if (registry.bounds[key] != local) registry.bounds[key] = local
         }
-        .onFocusChanged { state ->
-            if (state.isFocused || state.hasFocus) {
-                registry.focusedKey = key
-            } else if (registry.focusedKey == key) {
-                // Focus left this item (for a non-drag control or out of the frame). Without
-                // this the frame kept its ring on the last tile while the D-pad was elsewhere,
-                // which reads as a second cursor.
-                registry.focusedKey = null
-            }
-        }
+        .onFocusChanged { if (it.isFocused || it.hasFocus) registry.focusedKey = key }
 }
 
 private fun Rect.translate(dx: Float, dy: Float): Rect =
@@ -494,14 +485,13 @@ internal fun DeckRow(
     onConfigClick: (() -> Unit)? = null,
     control: @Composable () -> Unit,
 ) {
+    val dragKey = remember { Any() }
     val rowInteraction = remember { MutableInteractionSource() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            // Deliberately NOT a deckDragItem: the enclosing frame would then paint its ring
-            // around the whole row whenever a child toggle/chevron had focus. The real control
-            // owns the only ring.
+            .deckDragItem(dragKey)
             // Tapping the row still opens the panel, but the row must not be a D-pad stop: a ring
             // around the whole row when the real control is the button/toggle is what made focus
             // look like it was "on the entire row". The chevron below is the focusable affordance.
@@ -588,11 +578,13 @@ internal fun DeckExpandableRow(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val rotation by animateFloatAsState(if (expanded) 90f else 0f, label = "deckExpandChevron")
+    val dragKey = remember { Any() }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
+                .deckDragItem(dragKey)
                 .clickable(onClick = onToggle)
                 .padding(horizontal = 14.dp, vertical = 11.dp),
         ) {
@@ -780,7 +772,8 @@ internal fun DeckSliderRow(
     format: (Float) -> String,
     onChange: (Float) -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    val dragKey = remember { Any() }
+    Column(modifier = Modifier.fillMaxWidth().deckDragItem(dragKey)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier

@@ -460,7 +460,9 @@ private fun SocialFeed(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     items(visible, key = { it.number }) { post ->
-                        SocialPostRow(post) { onOpen(post) }
+                        Box(Modifier.deckDragItem("social-post-${post.number}")) {
+                            SocialPostRow(post) { onOpen(post) }
+                        }
                     }
                 }
                 }

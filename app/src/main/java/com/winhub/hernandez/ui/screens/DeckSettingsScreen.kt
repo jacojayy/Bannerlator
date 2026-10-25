@@ -853,6 +853,7 @@ internal fun DeckSettingsScreen() {
                     .height(48.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(DeckPalette.primary)
+                    .deckDragItem("settings-save")
                     .clickable { save() }
                     .padding(horizontal = 28.dp),
             ) {

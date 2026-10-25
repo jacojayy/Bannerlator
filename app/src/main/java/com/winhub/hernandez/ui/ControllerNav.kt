@@ -54,10 +54,7 @@ class ControllerFocusIndication(private val outline: Color = FocusOutlineColor) 
     override fun rememberUpdatedInstance(interactionSource: InteractionSource): IndicationInstance {
         val focused = interactionSource.collectIsFocusedAsState()
         val pressed = interactionSource.collectIsPressedAsState()
-        // Keyed on the colour too: a theme change swaps the shell's indication, but the
-        // interaction source is unchanged, so keying only on it kept the old ring colour until
-        // the control left composition (the "theme only applies after a tab switch" bug).
-        val instance = remember(interactionSource, outline) { ControllerFocusInstance(outline) }
+        val instance = remember(interactionSource) { ControllerFocusInstance(outline) }
         instance.focused = focused
         instance.pressed = pressed
         return instance

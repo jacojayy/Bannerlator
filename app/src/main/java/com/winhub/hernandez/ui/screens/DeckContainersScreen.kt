@@ -20,6 +20,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -751,15 +752,18 @@ private fun DeckContainerCard(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clip(DeckPalette.groupShape)
             .background(DeckPalette.surface)
-            // The surrounding DeckDragFrame draws the focus ring for this card. A second
-            // primary border here made focused cards show two strokes.
-            .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+            .border(
+                1.dp,
+                if (focused) DeckPalette.primary else DeckPalette.line,
+                DeckPalette.groupShape,
+            )
             .clickable(interactionSource = interaction, indication = null, onClick = onEdit)
             .padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
     ) {

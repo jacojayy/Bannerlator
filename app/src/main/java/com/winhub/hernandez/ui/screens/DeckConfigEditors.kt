@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -95,6 +96,7 @@ import com.winhub.hernandez.ui.findActivity
 import com.winhub.hernandez.ui.moveFocusSafely
 import com.winhub.hernandez.util.InAppFilePicker
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -291,7 +293,12 @@ internal fun DeckConfigDialog(
     val editTracker = LocalDeckEditTracker.current
     val rootFocus = remember { FocusRequester() }
     // Controller-first: the popup owns focus on open so the very first D-pad press walks it.
-    LaunchedEffect(Unit) { runCatching { rootFocus.requestFocus() } }
+    // Requesting focus in the first composition happens before the dialog window is attached and
+    // silently fails, leaving the D-pad walking the screen behind the popup — wait a frame.
+    LaunchedEffect(Unit) {
+        delay(50)
+        runCatching { rootFocus.requestFocus() }
+    }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
             modifier = Modifier
@@ -302,6 +309,7 @@ internal fun DeckConfigDialog(
                 .border(1.dp, DeckPalette.line2, RoundedCornerShape(24.dp))
                 .focusRequester(rootFocus)
                 .focusable()
+                .focusGroup()
                 .onPreviewKeyEvent { e ->
                     if (e.type == KeyEventType.KeyDown &&
                         (e.key == Key.ButtonB || e.key == Key.Back)
@@ -321,7 +329,9 @@ internal fun DeckConfigDialog(
                         Key.DirectionRight -> FocusDirection.Right
                         else -> null
                     } ?: return@onKeyEvent false
-                    focusManager.moveFocusSafely(dir)
+                    // A direction with no geometric target (the root just took focus, or the
+                    // content is a single column) falls back to Next so the popup still walks.
+                    focusManager.moveFocusSafely(dir) || focusManager.moveFocusSafely(FocusDirection.Next)
                 },
         ) {
             // Header

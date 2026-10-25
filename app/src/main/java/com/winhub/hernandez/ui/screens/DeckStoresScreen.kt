@@ -31,9 +31,11 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -53,6 +55,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -141,7 +146,12 @@ private fun launchDeckLogin(context: Context, screen: Screen) {
         Screen.Steam -> SteamLoginActivity::class.java
         else -> return
     }
-    context.startActivity(Intent(context, cls))
+    val intent = Intent(context, cls)
+    // Steam's login finishes back into the Deck pane when it was opened from here. Without this
+    // it launches the classic store-first shell and the first login drops the user into the old
+    // library instead of the Deck one.
+    if (screen == Screen.Steam) intent.putExtra(SteamLoginActivity.EXTRA_FROM_DECK, true)
+    context.startActivity(intent)
 }
 
 /** Live sign-in, straight off each store's own session store. */
@@ -628,6 +638,20 @@ internal fun DeckStoresScreen() {
     var steamInstall by remember { mutableStateOf<DeckSteamTarget?>(null) }
     var showDownloads by remember { mutableStateOf(false) }
     var showMature by remember { mutableStateOf(StoreMatureSetting.get(context)) }
+    // Returning from a store's login Activity does not recompose by itself. Bump a tick on every
+    // resume so the sign-in gate (and the lit brand dots) re-read the session that just changed.
+    var resumeTick by remember { mutableIntStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) resumeTick++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val signedInByStore = remember(resumeTick) {
+        deckStores.associate { it.screen to deckSignedIn(context, it.screen) }
+    }
     val dlEntries by DownloadRegistry.entries.collectAsState()
     val activeDownloads = dlEntries.count { it.isActive }
     LaunchedEffect(Unit) { DownloadRegistry.init(context) }
@@ -831,7 +855,7 @@ internal fun DeckStoresScreen() {
             DeckStretchyTabs(
                 labels = deckStores.map { it.chip },
                 dots = deckStores.map { tile ->
-                    tile.dot.copy(alpha = if (deckSignedIn(context, tile.screen)) 1f else 0.35f)
+                    tile.dot.copy(alpha = if (signedInByStore[tile.screen] == true) 1f else 0.35f)
                 },
                 selected = deckStores.indexOfFirst { it.screen == selected }.coerceAtLeast(0),
                 onSelect = { selected = deckStores[it].screen },
@@ -844,7 +868,7 @@ internal fun DeckStoresScreen() {
 
             Spacer(Modifier.size(16.dp))
 
-            if (deckSignedIn(context, active.screen)) {
+            if (signedInByStore[active.screen] == true) {
                 var storeTab by remember(active.screen) { mutableStateOf(0) }
                 // Steam alone carries the social pair: Friends + Profile, the same composables
                 // the store front embeds, in the Deck tab strip. Every store gets Settings.

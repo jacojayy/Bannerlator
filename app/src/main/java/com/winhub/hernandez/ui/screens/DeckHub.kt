@@ -414,6 +414,9 @@ internal fun HubCarousel(
                 label = "hubAlpha",
             )
 
+            // Read in composition: the shimmer lambda draws with it, and a theme change must
+            // invalidate that lambda instead of waiting for an unrelated recomposition.
+            val shimmerAccent = DeckPalette.primary
             Box(
                 modifier = Modifier
                     .size(width = 132.dp, height = 198.dp)
@@ -438,9 +441,9 @@ internal fun HubCarousel(
                                 drawRoundRect(
                                     brush = Brush.linearGradient(
                                         colors = listOf(
-                                            DeckPalette.primary,
-                                            lerp(DeckPalette.primary, Color.White, 0.55f),
-                                            DeckPalette.primary,
+                                            shimmerAccent,
+                                            lerp(shimmerAccent, Color.White, 0.55f),
+                                            shimmerAccent,
                                         ),
                                         start = Offset(x, 0f),
                                         end = Offset(x + span, size.height),

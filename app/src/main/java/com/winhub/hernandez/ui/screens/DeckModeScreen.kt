@@ -248,7 +248,10 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     val backLayer = remember { DeckBackLayer() }
     val editTracker = remember { DeckEditTracker() }
     LaunchedEffect(section, deckDetail) { tabs.bind(0) }
-    LaunchedEffect(introDone, section) {
+    // Park on the rail ONCE when the shell opens. Keying this on `section` re-parked the rail on
+    // every section change, including changes triggered from inside the content, which is what
+    // yanked the D-pad back to the sidebar and made the player redo the walk.
+    LaunchedEffect(introDone) {
         if (introDone) runCatching { railFocus.requestFocus() }
     }
     // Back from a detail re-parks focus on the rail item we came from. Opening a detail parks
@@ -412,9 +415,11 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                     .padding(end = 14.dp, bottom = 8.dp),
             )
 
-            // DroidDeck's corner light — one circular blue glow just inside the top right of every
-            // pane. Draw-only, so it never intercepts touches meant for the screen underneath, and
-            // anchored so it stops short of the pane's content instead of washing across it.
+            // DroidDeck's corner light — one circular accent glow just inside the top right of
+            // every pane. Draw-only, so it never intercepts touches meant for the screen
+            // underneath, and anchored so it stops short of the pane's content instead of washing
+            // across it. The accent is read in composition so a theme change invalidates the draw.
+            val cornerAccent = Deck.primary
             Box(
                 modifier = Modifier
                     .matchParentSize()
@@ -424,9 +429,9 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         drawCircle(
                             brush = Brush.radialGradient(
                                 colors = listOf(
-                                    Deck.primary.copy(alpha = 0.24f),
-                                    Deck.primary.copy(alpha = 0.10f),
-                                    Deck.primary.copy(alpha = 0.04f),
+                                    cornerAccent.copy(alpha = 0.24f),
+                                    cornerAccent.copy(alpha = 0.10f),
+                                    cornerAccent.copy(alpha = 0.04f),
                                     Color.Transparent,
                                 ),
                                 center = center,
@@ -1648,6 +1653,7 @@ private fun DeckHomeShelf(
             letterSpacing = 1.6.sp,
             modifier = Modifier.padding(bottom = 8.dp),
         )
+        val shelfAccent = Deck.primary
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1662,7 +1668,7 @@ private fun DeckHomeShelf(
                         val gap = 3.dp.toPx()
                         val x = start.value - scroll.value - gap
                         drawRoundRect(
-                            color = Deck.primary,
+                            color = shelfAccent,
                             topLeft = Offset(x, -gap),
                             size = Size(
                                 end.value - start.value + gap * 2f,

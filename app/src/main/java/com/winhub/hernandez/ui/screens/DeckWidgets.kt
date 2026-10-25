@@ -486,12 +486,21 @@ internal fun DeckRow(
     control: @Composable () -> Unit,
 ) {
     val dragKey = remember { Any() }
+    val rowInteraction = remember { MutableInteractionSource() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .deckDragItem(dragKey)
-            .then(if (onConfigClick != null) Modifier.clickable(onClick = onConfigClick) else Modifier)
+            // Tapping the row still opens the panel, but the row must not be a D-pad stop: a ring
+            // around the whole row when the real control is the button/toggle is what made focus
+            // look like it was "on the entire row". The chevron below is the focusable affordance.
+            .then(
+                if (onConfigClick != null) Modifier
+                    .focusProperties { canFocus = false }
+                    .clickable(interactionSource = rowInteraction, indication = null, onClick = onConfigClick)
+                else Modifier,
+            )
             .padding(horizontal = 14.dp, vertical = 11.dp),
     ) {
         Column(
@@ -518,14 +527,32 @@ internal fun DeckRow(
         }
         control()
         if (configPanel) {
-            Icon(
-                imageVector = Icons.Filled.ChevronRight,
-                contentDescription = "Has a config panel",
-                tint = DeckPalette.secondary,
+            val chevronInteraction = remember { MutableInteractionSource() }
+            val chevronShape = RoundedCornerShape(10.dp)
+            Box(
+                contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .padding(start = 4.dp)
-                    .size(18.dp),
-            )
+                    .size(40.dp)
+                    .clip(chevronShape)
+                    .then(
+                        if (onConfigClick != null) Modifier
+                            .clickable(
+                                interactionSource = chevronInteraction,
+                                indication = null,
+                                onClick = onConfigClick,
+                            )
+                            .deckSelfFocusStroke(chevronShape)
+                        else Modifier,
+                    ),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.ChevronRight,
+                    contentDescription = "Has a config panel",
+                    tint = DeckPalette.secondary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
     }
     Box(
@@ -1044,7 +1071,13 @@ private fun DeckStretchyTab(
             .fillMaxHeight()
             .then(if (focusable) Modifier else Modifier.focusProperties { canFocus = false })
             .clip(RoundedCornerShape(10.dp))
-            .deckFocusBorder(interaction, RoundedCornerShape(10.dp), Color.Transparent)
+            // With selectOnFocus the stretchy selection pill is already the indicator; a second
+            // border on the same tab reads as two cursors. Focus-only strips still need one.
+            .then(
+                if (focusable && !selectOnFocus)
+                    Modifier.deckFocusBorder(interaction, RoundedCornerShape(10.dp), Color.Transparent)
+                else Modifier,
+            )
             .deckBringIntoView()
             .onFocusChanged { if (focusable && selectOnFocus && it.isFocused && !active) onClick() }
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)

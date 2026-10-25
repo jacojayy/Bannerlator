@@ -53,6 +53,11 @@ import com.winhub.hernandez.ui.theme.WinlatorTheme
 
 class SteamLoginActivity : ComponentActivity(), SteamAuthManager.AuthListener {
 
+    companion object {
+        /** Set when sign-in was opened from Deck Mode; success returns to the Deck store, not the classic shell. */
+        const val EXTRA_FROM_DECK = "from_deck"
+    }
+
     private var username by mutableStateOf("")
     private var password by mutableStateOf("")
     private var isLoading by mutableStateOf(false)
@@ -226,6 +231,13 @@ class SteamLoginActivity : ComponentActivity(), SteamAuthManager.AuthListener {
         statusText = "Signed in!"
         isStatusError = false
         isLoading = false
+        // Deck Mode opened this screen from its own Steam store pane. Finish straight back into
+        // that pane (which re-reads the session on resume) instead of launching the classic
+        // store-first shell, or the user lands in the old library after their first login.
+        if (intent.getBooleanExtra(EXTRA_FROM_DECK, false)) {
+            finish()
+            return
+        }
         // Back to the store-first host (singleTop + CLEAR_TOP reuses the instance that launched
         // us, so its onNewIntent/onResume picks up the fresh login without a second copy).
         startActivity(

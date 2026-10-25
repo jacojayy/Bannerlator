@@ -2027,7 +2027,6 @@ private fun FileItemRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 3.dp)
-            .deckDragItem("fm-row-${file.absolutePath}")
             .then(if (deck) Modifier.deckOuterFocusStroke(rowInteraction, rowShape) else Modifier)
             .deckBringIntoView()
             .combinedClickable(
@@ -2252,7 +2251,6 @@ private fun FavoriteCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 3.dp)
-            .deckDragItem("fm-fav-${file.absolutePath}")
             .then(if (deck) Modifier.deckOuterFocusStroke(favInteraction, favShape) else Modifier)
             .deckBringIntoView()
             .clickable(
@@ -2405,7 +2403,6 @@ private fun FileGridTile(
         Card(
             modifier = Modifier
                 .padding(4.dp)
-                .deckDragItem("fm-grid-${file.absolutePath}")
                 .then(if (deck) Modifier.deckOuterFocusStroke(tileInteraction, tileShape) else Modifier)
                 .deckBringIntoView()
                 .combinedClickable(
@@ -2673,7 +2670,6 @@ private fun ParentFolderRow(compact: Boolean, onTap: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .deckDragItem("fm-parent-row")
             .clickable(onClick = onTap)
             .padding(horizontal = 16.dp, vertical = if (compact) 6.dp else 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -2698,7 +2694,6 @@ private fun ParentFolderTile(onTap: () -> Unit) {
     Column(
         modifier = Modifier
             .padding(4.dp)
-            .deckDragItem("fm-parent-tile")
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onTap)
             .padding(8.dp),

@@ -498,6 +498,7 @@ private fun DeckHome(
     var launchRequest by remember { mutableStateOf<Shortcut?>(null) }
     var launchSteam by remember { mutableStateOf<Boolean?>(null) }
     var launchMethodFor by remember { mutableStateOf<Shortcut?>(null) }
+    var launchMethodSteam by remember { mutableStateOf<Boolean?>(null) }
     var pageFor by remember { mutableStateOf<HubEntry?>(null) }
     var addModeMenu by remember { mutableStateOf(false) }
     var addMode by remember { mutableStateOf(HubAddMode.MASTER) }
@@ -611,6 +612,7 @@ private fun DeckHome(
                 if (shortcut == null) {
                     Toast.makeText(context, "That game's shortcut is missing — re-add it", Toast.LENGTH_SHORT).show()
                 } else {
+                    launchMethodSteam = game.appId != null || game.store == "Steam"
                     launchMethodFor = shortcut
                 }
             }
@@ -887,7 +889,8 @@ private fun DeckHome(
         launchMethodFor?.let { s ->
             DeckLaunchMethodDialog(
                 shortcut = s,
-                onDismiss = { launchMethodFor = null },
+                onDismiss = { launchMethodFor = null; launchMethodSteam = null },
+                steamOverride = launchMethodSteam,
                 heading = "Launch method",
                 confirmLabel = "Save",
                 onLaunch = { mode, gm, remember ->
@@ -899,6 +902,7 @@ private fun DeckHome(
                     }
                     s.saveData()
                     launchMethodFor = null
+                    launchMethodSteam = null
                     Toast.makeText(context, "Launch method saved", Toast.LENGTH_SHORT).show()
                 },
             )

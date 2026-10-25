@@ -725,7 +725,7 @@
                 android:text="@string/processor_affinity"
                 android:layout_marginTop="8dp" />
 
-            <com.winlator.star.widget.CPUListView
+            <com.winhub.hernandez.widget.CPUListView
                 android:id="@+id/CPUListView"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

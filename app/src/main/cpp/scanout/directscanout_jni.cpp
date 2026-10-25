@@ -1,6 +1,6 @@
 // JNI wrapper for the renderer-neutral ScanoutContext, packaged as the small
 // standalone libdirect_scanout.so (links log/android/dl/atomic only — NO Vulkan,
-// NO adrenotools). Loaded by com.winlator.star.renderer.DirectScanout so a GL
+// NO adrenotools). Loaded by com.winhub.hernandez.renderer.DirectScanout so a GL
 // container can drive direct scanout without dragging in libvulkan_renderer.
 //
 // This lib + DirectScanout.java back the GL renderer's Native Rendering path
@@ -27,12 +27,12 @@ static inline ScanoutContext* ctx(jlong handle) {
 extern "C" {
 
 JNIEXPORT jlong JNICALL
-Java_com_winlator_star_renderer_DirectScanout_nativeInit(JNIEnv*, jobject) {
+Java_com_winhub_hernandez_renderer_DirectScanout_nativeInit(JNIEnv*, jobject) {
     return reinterpret_cast<jlong>(new ScanoutContext());
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_DirectScanout_nativeSetWindows(
+Java_com_winhub_hernandez_renderer_DirectScanout_nativeSetWindows(
         JNIEnv* env, jobject, jlong handle, jobject gameSurface, jobject cursorSurface) {
     auto* c = ctx(handle);
     if (!c) return;
@@ -48,7 +48,7 @@ Java_com_winlator_star_renderer_DirectScanout_nativeSetWindows(
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_DirectScanout_nativeSetFallbackWindow(
+Java_com_winhub_hernandez_renderer_DirectScanout_nativeSetFallbackWindow(
         JNIEnv* env, jobject, jlong handle, jobject surface) {
     auto* c = ctx(handle);
     if (!c) return;
@@ -57,7 +57,7 @@ Java_com_winlator_star_renderer_DirectScanout_nativeSetFallbackWindow(
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_DirectScanout_nativeSetBuffer(
+Java_com_winhub_hernandez_renderer_DirectScanout_nativeSetBuffer(
         JNIEnv*, jobject, jlong handle, jlong ahbPtr,
         jint x, jint y, jint w, jint h, jint fenceFd) {
     auto* c = ctx(handle);
@@ -68,7 +68,7 @@ Java_com_winlator_star_renderer_DirectScanout_nativeSetBuffer(
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_DirectScanout_nativeSetCursorImage(
+Java_com_winhub_hernandez_renderer_DirectScanout_nativeSetCursorImage(
         JNIEnv* env, jobject, jlong handle, jobject buf, jshort w, jshort h, jshort stride) {
     auto* c = ctx(handle);
     if (!c || !buf) return;
@@ -79,7 +79,7 @@ Java_com_winlator_star_renderer_DirectScanout_nativeSetCursorImage(
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_DirectScanout_nativeSetCursorPos(
+Java_com_winhub_hernandez_renderer_DirectScanout_nativeSetCursorPos(
         JNIEnv*, jobject, jlong handle, jshort x, jshort y, jshort hotX, jshort hotY) {
     auto* c = ctx(handle);
     if (!c) return;
@@ -88,43 +88,43 @@ Java_com_winlator_star_renderer_DirectScanout_nativeSetCursorPos(
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_DirectScanout_nativeApplyPendingCursor(
+Java_com_winhub_hernandez_renderer_DirectScanout_nativeApplyPendingCursor(
         JNIEnv*, jobject, jlong handle) {
     if (auto* c = ctx(handle)) c->applyPendingCursor();
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_DirectScanout_nativeSetDst(
+Java_com_winhub_hernandez_renderer_DirectScanout_nativeSetDst(
         JNIEnv*, jobject, jlong handle, jint x, jint y, jint w, jint h) {
     if (auto* c = ctx(handle)) c->setDst(x, y, w, h);
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_DirectScanout_nativeSetSurfaceSize(
+Java_com_winhub_hernandez_renderer_DirectScanout_nativeSetSurfaceSize(
         JNIEnv*, jobject, jlong handle, jint w, jint h) {
     if (auto* c = ctx(handle)) c->setSurfaceSize(w, h);
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_DirectScanout_nativeSetContainerSize(
+Java_com_winhub_hernandez_renderer_DirectScanout_nativeSetContainerSize(
         JNIEnv*, jobject, jlong handle, jint w, jint h) {
     if (auto* c = ctx(handle)) c->setContainerSize(w, h);
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_winlator_star_renderer_DirectScanout_nativeIsActive(JNIEnv*, jobject, jlong handle) {
+Java_com_winhub_hernandez_renderer_DirectScanout_nativeIsActive(JNIEnv*, jobject, jlong handle) {
     auto* c = ctx(handle);
     return c ? (jboolean)c->isActive() : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_winlator_star_renderer_DirectScanout_nativeIsGameFrameDelivered(JNIEnv*, jobject, jlong handle) {
+Java_com_winhub_hernandez_renderer_DirectScanout_nativeIsGameFrameDelivered(JNIEnv*, jobject, jlong handle) {
     auto* c = ctx(handle);
     return c ? (jboolean)c->isGameFrameDelivered() : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_DirectScanout_nativeDestroy(JNIEnv*, jobject, jlong handle) {
+Java_com_winhub_hernandez_renderer_DirectScanout_nativeDestroy(JNIEnv*, jobject, jlong handle) {
     auto* c = ctx(handle);
     if (!c) return;
     c->destroy();

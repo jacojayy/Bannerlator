@@ -15,7 +15,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
 }
 
 extern "C" JNIEXPORT bool JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeInit(
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeInit(
         JNIEnv* env, jobject, jobject surface, jint w, jint h)
 {
     ANativeWindow* win = ANativeWindow_fromSurface(env, surface);
@@ -35,7 +35,7 @@ Java_com_winlator_star_renderer_ASurfaceRenderer_nativeInit(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeDestroy(JNIEnv*, jobject) {
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeDestroy(JNIEnv*, jobject) {
     std::unique_lock lk(g_ctxMutex);
     auto* ctx = g_ctx;
     if (!ctx) return;
@@ -45,19 +45,19 @@ Java_com_winlator_star_renderer_ASurfaceRenderer_nativeDestroy(JNIEnv*, jobject)
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeInitScanout(JNIEnv*, jobject) {
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeInitScanout(JNIEnv*, jobject) {
     std::shared_lock lk(g_ctxMutex);
     if (auto* r = g_ctx) r->initScanout();
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeDestroyScanout(JNIEnv*, jobject) {
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeDestroyScanout(JNIEnv*, jobject) {
     std::shared_lock lk(g_ctxMutex);
     if (auto* r = g_ctx) r->destroyScanout();
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeSetSfCallbackTarget(
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeSetSfCallbackTarget(
         JNIEnv* env, jobject, jobject rendererRef)
 {
     std::shared_lock lk(g_ctxMutex);
@@ -65,7 +65,7 @@ Java_com_winlator_star_renderer_ASurfaceRenderer_nativeSetSfCallbackTarget(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeScanoutSetCursorImage(
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeScanoutSetCursorImage(
         JNIEnv* env, jobject, jobject buf, jshort w, jshort h, jshort stride)
 {
     if (!buf) return;
@@ -77,7 +77,7 @@ Java_com_winlator_star_renderer_ASurfaceRenderer_nativeScanoutSetCursorImage(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeScanoutSetCursorPos(
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeScanoutSetCursorPos(
         JNIEnv*, jobject, jshort x, jshort y, jshort hotX, jshort hotY, jboolean cursorVisible)
 {
     std::shared_lock lk(g_ctxMutex);
@@ -85,7 +85,7 @@ Java_com_winlator_star_renderer_ASurfaceRenderer_nativeScanoutSetCursorPos(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeScanoutSetDst(
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeScanoutSetDst(
         JNIEnv*, jobject, jint x, jint y, jint w, jint h)
 {
     std::shared_lock lk(g_ctxMutex);
@@ -93,7 +93,7 @@ Java_com_winlator_star_renderer_ASurfaceRenderer_nativeScanoutSetDst(
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeReattachSurface(JNIEnv* env, jobject, jobject surface) {
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeReattachSurface(JNIEnv* env, jobject, jobject surface) {
     if (!surface) return JNI_FALSE;
     ANativeWindow* win = ANativeWindow_fromSurface(env, surface);
     if (!win) return JNI_FALSE;
@@ -109,7 +109,7 @@ Java_com_winlator_star_renderer_ASurfaceRenderer_nativeReattachSurface(JNIEnv* e
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeRegisterWindowSC(
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeRegisterWindowSC(
         JNIEnv* env, jobject, jlong contentId, jstring debugName)
 {
     std::shared_lock lk(g_ctxMutex);
@@ -122,7 +122,7 @@ Java_com_winlator_star_renderer_ASurfaceRenderer_nativeRegisterWindowSC(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeUnregisterWindowSC(
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeUnregisterWindowSC(
         JNIEnv*, jobject, jlong contentId)
 {
     std::shared_lock lk(g_ctxMutex);
@@ -130,7 +130,7 @@ Java_com_winlator_star_renderer_ASurfaceRenderer_nativeUnregisterWindowSC(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeScanoutSetCursorVisibility(
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeScanoutSetCursorVisibility(
         JNIEnv*, jobject, jboolean visible)
 {
     std::shared_lock lk(g_ctxMutex);
@@ -138,7 +138,7 @@ Java_com_winlator_star_renderer_ASurfaceRenderer_nativeScanoutSetCursorVisibilit
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativePrepareCpuSourceBuffers(
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativePrepareCpuSourceBuffers(
         JNIEnv*, jclass, jlong buffer0, jlong buffer1, jlong buffer2)
 {
     std::shared_lock lk(g_ctxMutex);
@@ -153,7 +153,7 @@ Java_com_winlator_star_renderer_ASurfaceRenderer_nativePrepareCpuSourceBuffers(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeReleaseCpuSourceBuffers(
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeReleaseCpuSourceBuffers(
         JNIEnv*, jclass, jlong buffer0, jlong buffer1, jlong buffer2)
 {
     std::shared_lock lk(g_ctxMutex);
@@ -166,7 +166,7 @@ Java_com_winlator_star_renderer_ASurfaceRenderer_nativeReleaseCpuSourceBuffers(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeSetWindowBuffer(
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeSetWindowBuffer(
         JNIEnv* env, jobject, jlong contentId,
         jlong ahbPtr, jint fenceFd, jlong windowId, jlong serial, jobject ahbImage, jint slot, jboolean sfCompatMode)
 {
@@ -187,19 +187,19 @@ Java_com_winlator_star_renderer_ASurfaceRenderer_nativeSetWindowBuffer(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeBeginTransaction(JNIEnv*, jobject) {
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeBeginTransaction(JNIEnv*, jobject) {
     std::shared_lock lk(g_ctxMutex);
     if (auto* r = g_ctx) r->beginTransaction();
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeApplyTransaction(JNIEnv*, jobject) {
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeApplyTransaction(JNIEnv*, jobject) {
     std::shared_lock lk(g_ctxMutex);
     if (auto* r = g_ctx) r->applyTransaction();
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_ASurfaceRenderer_nativeUpdateWindow(
+Java_com_winhub_hernandez_renderer_ASurfaceRenderer_nativeUpdateWindow(
         JNIEnv*, jobject, jlong contentId, jboolean visible, jint zOrder,
         jint srcL, jint srcT, jint srcR, jint srcB,
         jint dstL, jint dstT, jint dstR, jint dstB)

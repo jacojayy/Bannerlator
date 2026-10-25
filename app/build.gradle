@@ -58,7 +58,7 @@ tasks.register("prepareKotlinBuildScriptModel"){}
 preBuild.dependsOn(downloadImageFS)
 
 android {
-    namespace 'com.winlator.star'
+    namespace 'com.winhub.hernandez'
     compileSdk 34
     buildToolsVersion "35.0.0"
 
@@ -148,7 +148,7 @@ android {
     productFlavors {
         standard {
             dimension "version"
-            applicationId "com.winlator.banner"
+            applicationId "com.winhub.hernandez"
             resValue "string", "app_name", "WinHub"
         }
         ludashi {
@@ -276,7 +276,7 @@ dependencies {
     annotationProcessor 'com.github.bumptech.glide:compiler:4.11.0'
 
     // topjohnwu libsu — the ONLY su-invoking dependency in the app. Used exclusively by
-    // com.winlator.star.perf.RootManager (the power-user performance toggles' root tier).
+    // com.winhub.hernandez.perf.RootManager (the power-user performance toggles' root tier).
     implementation 'com.github.topjohnwu.libsu:core:6.0.0'
 
     // ProcessLifecycleOwner: the perf revert registry restores sysfs nodes when the whole app

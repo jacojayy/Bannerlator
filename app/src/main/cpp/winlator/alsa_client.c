@@ -157,7 +157,7 @@ static int reopen(AlsaStream *s) {
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_winlator_star_alsaserver_ALSAClient_create(JNIEnv *env, jobject obj, jint format,
+Java_com_winhub_hernandez_alsaserver_ALSAClient_create(JNIEnv *env, jobject obj, jint format,
                                                jbyte channelCount, jint sampleRate, jint bufferSize) {
     (void) env; (void) obj;
     AlsaStream *s = (AlsaStream *) calloc(1, sizeof(AlsaStream));
@@ -174,7 +174,7 @@ Java_com_winlator_star_alsaserver_ALSAClient_create(JNIEnv *env, jobject obj, ji
 // the container/shortcut env + banner_audio prefs) and on every in-game "apply". Bumping g_configGen
 // makes all live streams reopen on their next write() so the change applies without a relaunch.
 JNIEXPORT void JNICALL
-Java_com_winlator_star_alsaserver_ALSAClient_nativeSetAudioConfig(JNIEnv *env, jclass clazz,
+Java_com_winhub_hernandez_alsaserver_ALSAClient_nativeSetAudioConfig(JNIEnv *env, jclass clazz,
                                                jint perfMode, jint adaptive, jint bufTarget, jint maxBuf) {
     (void) env; (void) clazz;
     g_perfMode  = perfMode;
@@ -187,7 +187,7 @@ Java_com_winlator_star_alsaserver_ALSAClient_nativeSetAudioConfig(JNIEnv *env, j
 }
 
 JNIEXPORT jint JNICALL
-Java_com_winlator_star_alsaserver_ALSAClient_write(JNIEnv *env, jobject obj, jlong streamPtr, jobject buffer,
+Java_com_winhub_hernandez_alsaserver_ALSAClient_write(JNIEnv *env, jobject obj, jlong streamPtr, jobject buffer,
                                               jint numFrames) {
     (void) obj;
     AlsaStream *s = (AlsaStream *) streamPtr;
@@ -224,7 +224,7 @@ Java_com_winlator_star_alsaserver_ALSAClient_write(JNIEnv *env, jobject obj, jlo
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_alsaserver_ALSAClient_start(JNIEnv *env, jobject obj, jlong streamPtr) {
+Java_com_winhub_hernandez_alsaserver_ALSAClient_start(JNIEnv *env, jobject obj, jlong streamPtr) {
     (void) env; (void) obj;
     AlsaStream *s = (AlsaStream *) streamPtr;
     if (s && s->stream) {
@@ -235,7 +235,7 @@ Java_com_winlator_star_alsaserver_ALSAClient_start(JNIEnv *env, jobject obj, jlo
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_alsaserver_ALSAClient_stop(JNIEnv *env, jobject obj, jlong streamPtr) {
+Java_com_winhub_hernandez_alsaserver_ALSAClient_stop(JNIEnv *env, jobject obj, jlong streamPtr) {
     (void) env; (void) obj;
     AlsaStream *s = (AlsaStream *) streamPtr;
     if (s && s->stream) {
@@ -246,7 +246,7 @@ Java_com_winlator_star_alsaserver_ALSAClient_stop(JNIEnv *env, jobject obj, jlon
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_alsaserver_ALSAClient_pause(JNIEnv *env, jobject obj, jlong streamPtr) {
+Java_com_winhub_hernandez_alsaserver_ALSAClient_pause(JNIEnv *env, jobject obj, jlong streamPtr) {
     (void) env; (void) obj;
     AlsaStream *s = (AlsaStream *) streamPtr;
     if (s && s->stream) {
@@ -257,7 +257,7 @@ Java_com_winlator_star_alsaserver_ALSAClient_pause(JNIEnv *env, jobject obj, jlo
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_alsaserver_ALSAClient_flush(JNIEnv *env, jobject obj, jlong streamPtr) {
+Java_com_winhub_hernandez_alsaserver_ALSAClient_flush(JNIEnv *env, jobject obj, jlong streamPtr) {
     (void) env; (void) obj;
     AlsaStream *s = (AlsaStream *) streamPtr;
     if (s && s->stream) {
@@ -267,7 +267,7 @@ Java_com_winlator_star_alsaserver_ALSAClient_flush(JNIEnv *env, jobject obj, jlo
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_alsaserver_ALSAClient_close(JNIEnv *env, jobject obj, jlong streamPtr) {
+Java_com_winhub_hernandez_alsaserver_ALSAClient_close(JNIEnv *env, jobject obj, jlong streamPtr) {
     (void) env; (void) obj;
     AlsaStream *s = (AlsaStream *) streamPtr;
     if (!s) return;

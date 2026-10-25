@@ -70,7 +70,7 @@
         tools:ignore="ProtectedPermissions" />
 
     <application
-        android:name="com.winlator.star.BannerlatorApp"
+        android:name="com.winhub.hernandez.BannerlatorApp"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -88,7 +88,7 @@
 
         <!-- Main activity -->
         <activity
-            android:name="com.winlator.star.MainActivity"
+            android:name="com.winhub.hernandez.MainActivity"
             android:theme="@style/Theme.Bannerlator.Splash"
             android:screenOrientation="sensor"
             android:exported="true"
@@ -108,7 +108,7 @@
              session log, then program disconnected" when the cable came out. Handled instead by
              onConfigurationChanged + the display listener, which pause the game and keep it alive. -->
         <activity
-            android:name="com.winlator.star.XServerDisplayActivity"
+            android:name="com.winhub.hernandez.XServerDisplayActivity"
             android:theme="@style/AppThemeFullscreen"
             android:launchMode="singleTask"
             android:supportsPictureInPicture="true"
@@ -123,7 +123,7 @@
              display-move configChanges as the session: it is the screen the user is holding when a
              cable moves, and recreating it there would only make it blink. -->
         <activity
-            android:name="com.winlator.star.display.TvCompanionActivity"
+            android:name="com.winhub.hernandez.display.TvCompanionActivity"
             android:theme="@style/AppThemeFullscreen.Dark"
             android:launchMode="singleTask"
             android:taskAffinity=".display.TvCompanion"
@@ -132,7 +132,7 @@
             android:exported="false" />
 
         <activity
-            android:name="com.winlator.star.XrActivity"
+            android:name="com.winhub.hernandez.XrActivity"
             android:theme="@style/AppThemeFullscreen"
             android:launchMode="singleTask"
             android:resizeableActivity="false"
@@ -148,13 +148,13 @@
         </activity>
 
         <activity
-            android:name="com.winlator.star.ControlsEditorActivity"
+            android:name="com.winhub.hernandez.ControlsEditorActivity"
             android:theme="@style/AppThemeFullscreen"
             android:screenOrientation="sensorLandscape"
             android:exported="false" />
 
         <activity
-            android:name="com.winlator.star.ExternalControllerBindingsActivity"
+            android:name="com.winhub.hernandez.ExternalControllerBindingsActivity"
             android:theme="@style/AppTheme"
             android:screenOrientation="sensor"
             android:exported="false" />
@@ -166,20 +166,20 @@
             android:exported="false" />
 
         <activity
-            android:name="com.winlator.star.FilePickerActivity"
+            android:name="com.winhub.hernandez.FilePickerActivity"
             android:theme="@style/AppTheme.Dark"
             android:screenOrientation="sensor"
             android:exported="false" />
 
         <activity
-            android:name="com.winlator.star.ShortcutPickerActivity"
+            android:name="com.winhub.hernandez.ShortcutPickerActivity"
             android:theme="@style/AppTheme"
             android:screenOrientation="sensor"
             android:exported="false" />
 
         <activity
             android:exported="false"
-            android:name="com.winlator.star.store.GogMainActivity"
+            android:name="com.winhub.hernandez.store.GogMainActivity"
             android:screenOrientation="sensor"
             android:launchMode="singleTop"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation"
@@ -187,18 +187,18 @@
             android:theme="@style/AppTheme"/>
         <activity 
             android:exported="false"
-            android:name="com.winlator.star.store.GogLoginActivity"
+            android:name="com.winhub.hernandez.store.GogLoginActivity"
             android:screenOrientation="fullSensor"
             android:theme="@style/AppTheme"/>
         <activity 
             android:exported="false"
-            android:name="com.winlator.star.store.GogGamesActivity"
+            android:name="com.winhub.hernandez.store.GogGamesActivity"
             android:screenOrientation="fullSensor"
             android:theme="@style/AppTheme"/>
 
         <activity
             android:exported="false"
-            android:name="com.winlator.star.store.EpicMainActivity"
+            android:name="com.winhub.hernandez.store.EpicMainActivity"
             android:screenOrientation="sensor"
             android:launchMode="singleTop"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation"
@@ -206,36 +206,36 @@
             android:theme="@style/AppTheme"/>
         <activity
             android:exported="false"
-            android:name="com.winlator.star.store.MediaVideoActivity"
+            android:name="com.winhub.hernandez.store.MediaVideoActivity"
             android:screenOrientation="sensor"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation"
             android:theme="@style/AppTheme"/>
         <activity
             android:exported="false"
-            android:name="com.winlator.star.store.StoreWebActivity"
+            android:name="com.winhub.hernandez.store.StoreWebActivity"
             android:screenOrientation="sensor"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/AppTheme"/>
         <activity
             android:exported="false"
-            android:name="com.winlator.star.store.StoreCatalogDetailActivity"
+            android:name="com.winhub.hernandez.store.StoreCatalogDetailActivity"
             android:screenOrientation="sensor"
             android:theme="@style/AppTheme"/>
         <activity
             android:exported="false"
-            android:name="com.winlator.star.store.EpicLoginActivity"
+            android:name="com.winhub.hernandez.store.EpicLoginActivity"
             android:screenOrientation="fullSensor"
             android:theme="@style/AppTheme"/>
         <activity
             android:exported="false"
-            android:name="com.winlator.star.store.EpicGamesActivity"
+            android:name="com.winhub.hernandez.store.EpicGamesActivity"
             android:screenOrientation="fullSensor"
             android:theme="@style/AppTheme"/>
 
         <activity
             android:exported="false"
-            android:name="com.winlator.star.store.AmazonMainActivity"
+            android:name="com.winhub.hernandez.store.AmazonMainActivity"
             android:screenOrientation="sensor"
             android:launchMode="singleTop"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation"
@@ -243,37 +243,37 @@
             android:theme="@style/AppTheme"/>
         <activity 
             android:exported="false"
-            android:name="com.winlator.star.store.AmazonLoginActivity"
+            android:name="com.winhub.hernandez.store.AmazonLoginActivity"
             android:screenOrientation="fullSensor"
             android:theme="@style/AppTheme"/>
         <activity 
             android:exported="false"
-            android:name="com.winlator.star.store.AmazonGamesActivity"
+            android:name="com.winhub.hernandez.store.AmazonGamesActivity"
             android:screenOrientation="fullSensor"
             android:theme="@style/AppTheme"/>
         <activity
             android:exported="false"
-            android:name="com.winlator.star.store.GogGameDetailActivity"
+            android:name="com.winhub.hernandez.store.GogGameDetailActivity"
             android:screenOrientation="fullSensor"
             android:theme="@style/AppTheme"/>
         <activity
             android:exported="false"
-            android:name="com.winlator.star.store.EpicGameDetailActivity"
+            android:name="com.winhub.hernandez.store.EpicGameDetailActivity"
             android:screenOrientation="fullSensor"
             android:theme="@style/AppTheme"/>
         <activity
             android:exported="false"
-            android:name="com.winlator.star.store.EpicFreeGamesActivity"
+            android:name="com.winhub.hernandez.store.EpicFreeGamesActivity"
             android:screenOrientation="fullSensor"
             android:theme="@style/AppTheme"/>
         <activity
             android:exported="false"
-            android:name="com.winlator.star.store.AmazonGameDetailActivity"
+            android:name="com.winhub.hernandez.store.AmazonGameDetailActivity"
             android:screenOrientation="fullSensor"
             android:theme="@style/AppTheme"/>
         <activity
             android:exported="false"
-            android:name="com.winlator.star.store.FolderPickerActivity"
+            android:name="com.winhub.hernandez.store.FolderPickerActivity"
             android:screenOrientation="fullSensor"
             android:theme="@style/AppTheme"/>
 
@@ -282,7 +282,7 @@
             android:name=".ShortcutBroadcastReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.winlator.star.SHORTCUT_ADDED" />
+                <action android:name="com.winhub.hernandez.SHORTCUT_ADDED" />
             </intent-filter>
         </receiver>
 
@@ -321,30 +321,30 @@
         <meta-data
             android:name="android.allow_multiple_resumed_activities"
             android:value="true" />
-        <activity android:name="com.winlator.star.store.SteamMainActivity" android:exported="false" android:screenOrientation="sensor" android:theme="@style/AppTheme" android:launchMode="singleTop" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation" android:windowSoftInputMode="adjustResize"/>
-        <activity android:name="com.winlator.star.store.SteamLoginActivity" android:exported="false" android:screenOrientation="sensor" android:theme="@style/AppTheme"/>
-        <activity android:name="com.winlator.star.store.SteamGamesActivity" android:exported="false" android:screenOrientation="sensor" android:theme="@style/AppTheme" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation"/>
-        <activity android:name="com.winlator.star.store.SteamGameDetailActivity" android:exported="false" android:screenOrientation="sensor" android:theme="@style/AppTheme"/>
-        <activity android:name="com.winlator.star.store.DownloadManagerActivity" android:exported="false" android:screenOrientation="fullSensor" android:theme="@style/AppTheme"/>
-        <activity android:name="com.winlator.star.store.SteamSaveManagerActivity" android:exported="false" android:screenOrientation="sensor" android:theme="@style/AppTheme" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation"/>
-        <activity android:name="com.winlator.star.store.SteamFriendsActivity" android:exported="false" android:screenOrientation="sensor" android:theme="@style/AppTheme" android:windowSoftInputMode="adjustResize" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation"/>
-        <activity android:name="com.winlator.star.store.QrLoginActivity" android:exported="false" android:screenOrientation="fullSensor" android:theme="@style/AppTheme"/>
+        <activity android:name="com.winhub.hernandez.store.SteamMainActivity" android:exported="false" android:screenOrientation="sensor" android:theme="@style/AppTheme" android:launchMode="singleTop" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation" android:windowSoftInputMode="adjustResize"/>
+        <activity android:name="com.winhub.hernandez.store.SteamLoginActivity" android:exported="false" android:screenOrientation="sensor" android:theme="@style/AppTheme"/>
+        <activity android:name="com.winhub.hernandez.store.SteamGamesActivity" android:exported="false" android:screenOrientation="sensor" android:theme="@style/AppTheme" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation"/>
+        <activity android:name="com.winhub.hernandez.store.SteamGameDetailActivity" android:exported="false" android:screenOrientation="sensor" android:theme="@style/AppTheme"/>
+        <activity android:name="com.winhub.hernandez.store.DownloadManagerActivity" android:exported="false" android:screenOrientation="fullSensor" android:theme="@style/AppTheme"/>
+        <activity android:name="com.winhub.hernandez.store.SteamSaveManagerActivity" android:exported="false" android:screenOrientation="sensor" android:theme="@style/AppTheme" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation"/>
+        <activity android:name="com.winhub.hernandez.store.SteamFriendsActivity" android:exported="false" android:screenOrientation="sensor" android:theme="@style/AppTheme" android:windowSoftInputMode="adjustResize" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation"/>
+        <activity android:name="com.winhub.hernandez.store.QrLoginActivity" android:exported="false" android:screenOrientation="fullSensor" android:theme="@style/AppTheme"/>
         <activity
-            android:name="com.winlator.star.UnpackArchiveActivity"
+            android:name="com.winhub.hernandez.UnpackArchiveActivity"
             android:theme="@style/AppTheme"
             android:screenOrientation="sensor"
             android:exported="false" />
 
         <service
-            android:name="com.winlator.star.core.unpack.UnpackService"
+            android:name="com.winhub.hernandez.core.unpack.UnpackService"
             android:foregroundServiceType="dataSync"
             android:exported="false" />
 
-        <service android:name="com.winlator.star.store.SteamForegroundService" android:foregroundServiceType="dataSync" android:exported="false"/>
-        <service android:name="com.winlator.star.store.download.DownloadForegroundService" android:foregroundServiceType="dataSync" android:exported="false"/>
+        <service android:name="com.winhub.hernandez.store.SteamForegroundService" android:foregroundServiceType="dataSync" android:exported="false"/>
+        <service android:name="com.winhub.hernandez.store.download.DownloadForegroundService" android:foregroundServiceType="dataSync" android:exported="false"/>
         <!-- Held while a container/game session is running so the OS low-memory killer can't reap
              the guest while the app is backgrounded (else it "Shutting down" on return). -->
-        <service android:name="com.winlator.star.core.GameSessionForegroundService" android:foregroundServiceType="dataSync" android:exported="false"/>
+        <service android:name="com.winhub.hernandez.core.GameSessionForegroundService" android:foregroundServiceType="dataSync" android:exported="false"/>
     </application>
 </manifest>
 

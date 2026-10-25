@@ -172,7 +172,7 @@ extern "C" {
 // side only passes true once the permission is already granted. The Steam drivers are then switched
 // on after init, which leaves USB (the 2026 controller's puck, or a cable) working either way.
 JNIEXPORT jboolean JNICALL
-Java_com_winlator_star_inputcontrols_SteamControllerBackend_nativeInit(JNIEnv *, jclass, jboolean bluetooth) {
+Java_com_winhub_hernandez_inputcontrols_SteamControllerBackend_nativeInit(JNIEnv *, jclass, jboolean bluetooth) {
     std::lock_guard<std::mutex> guard(g_lock);
     if (g_initialized) return JNI_TRUE;
 
@@ -202,7 +202,7 @@ Java_com_winlator_star_inputcontrols_SteamControllerBackend_nativeInit(JNIEnv *,
 // Updates SDL, syncs the pad table and writes up to 4 pads into ints/floats (strides above).
 // Returns the pad count, or -1 when not initialized.
 JNIEXPORT jint JNICALL
-Java_com_winlator_star_inputcontrols_SteamControllerBackend_nativePoll(JNIEnv *env, jclass, jintArray ints, jfloatArray floats) {
+Java_com_winhub_hernandez_inputcontrols_SteamControllerBackend_nativePoll(JNIEnv *env, jclass, jintArray ints, jfloatArray floats) {
     std::lock_guard<std::mutex> guard(g_lock);
     if (!g_initialized) return -1;
 
@@ -243,7 +243,7 @@ Java_com_winlator_star_inputcontrols_SteamControllerBackend_nativePoll(JNIEnv *e
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_winlator_star_inputcontrols_SteamControllerBackend_nativeGetName(JNIEnv *env, jclass, jint id) {
+Java_com_winhub_hernandez_inputcontrols_SteamControllerBackend_nativeGetName(JNIEnv *env, jclass, jint id) {
     std::lock_guard<std::mutex> guard(g_lock);
     const char *name = g_initialized ? SDL_GetGamepadNameForID((SDL_JoystickID)id) : nullptr;
     return env->NewStringUTF(name ? name : "Steam Controller");
@@ -251,14 +251,14 @@ Java_com_winlator_star_inputcontrols_SteamControllerBackend_nativeGetName(JNIEnv
 
 // Stable per-controller key (BLE: "SteamController.<MAC>"), used as the app's slot descriptor.
 JNIEXPORT jstring JNICALL
-Java_com_winlator_star_inputcontrols_SteamControllerBackend_nativeGetPath(JNIEnv *env, jclass, jint id) {
+Java_com_winhub_hernandez_inputcontrols_SteamControllerBackend_nativeGetPath(JNIEnv *env, jclass, jint id) {
     std::lock_guard<std::mutex> guard(g_lock);
     const char *path = g_initialized ? SDL_GetGamepadPathForID((SDL_JoystickID)id) : nullptr;
     return path ? env->NewStringUTF(path) : nullptr;
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_inputcontrols_SteamControllerBackend_nativeRumble(JNIEnv *, jclass, jint id, jint low, jint high, jint durationMs) {
+Java_com_winhub_hernandez_inputcontrols_SteamControllerBackend_nativeRumble(JNIEnv *, jclass, jint id, jint low, jint high, jint durationMs) {
     std::lock_guard<std::mutex> guard(g_lock);
     if (!g_initialized) return;
     Pad *pad = findPadLocked((SDL_JoystickID)id);
@@ -268,7 +268,7 @@ Java_com_winlator_star_inputcontrols_SteamControllerBackend_nativeRumble(JNIEnv 
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_inputcontrols_SteamControllerBackend_nativeShutdown(JNIEnv *, jclass) {
+Java_com_winhub_hernandez_inputcontrols_SteamControllerBackend_nativeShutdown(JNIEnv *, jclass) {
     std::lock_guard<std::mutex> guard(g_lock);
     if (!g_initialized) return;
     for (int i = 0; i < g_numPads; i++) SDL_CloseGamepad(g_pads[i].gamepad);

@@ -149,7 +149,7 @@ static void *open_lib(const char *dir, const char *name) {
 
 // Returns 0 on success, negative on error.
 JNIEXPORT jint JNICALL
-Java_com_winlator_star_xenvironment_components_PulseAudioComponent_nativeSuspendSink(
+Java_com_winhub_hernandez_xenvironment_components_PulseAudioComponent_nativeSuspendSink(
         JNIEnv *env, jclass clazz, jstring jdir, jstring jserver, jstring jsink, jboolean suspend) {
     (void) clazz;
     const char *dir    = (*env)->GetStringUTFChars(env, jdir, NULL);
@@ -238,7 +238,7 @@ done:
 // drop. Returns the NEW module's index (>=0) so the caller can pass it back as `unloadModuleIdx` next
 // time; negative on error. Call off the main thread.
 JNIEXPORT jint JNICALL
-Java_com_winlator_star_xenvironment_components_PulseAudioComponent_nativeRecreateSink(
+Java_com_winhub_hernandez_xenvironment_components_PulseAudioComponent_nativeRecreateSink(
         JNIEnv *env, jclass clazz, jstring jdir, jstring jserver, jstring jnewsink, jstring jextra, jint junload) {
     (void) clazz;
     const char *dir     = (*env)->GetStringUTFChars(env, jdir, NULL);

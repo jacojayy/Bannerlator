@@ -126,7 +126,7 @@ static void dump_ahb_usage(uint64_t usage)
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_winlator_star_renderer_AHBImage_hardwareBufferFromSocket(
+Java_com_winhub_hernandez_renderer_AHBImage_hardwareBufferFromSocket(
         JNIEnv *env, jobject obj, jint fd)
 {
     jclass cls = (*env)->GetObjectClass(env, obj);
@@ -171,7 +171,7 @@ Java_com_winlator_star_renderer_AHBImage_hardwareBufferFromSocket(
 }
 
 JNIEXPORT jint JNICALL
-Java_com_winlator_star_renderer_AHBImage_copyHardwareBuffer(
+Java_com_winhub_hernandez_renderer_AHBImage_copyHardwareBuffer(
         JNIEnv *env, jobject obj, jobject srcBuffer, jlong dstPtr,
         jshort width, jshort height, jshort srcStride, jint waitFence)
 {
@@ -228,7 +228,7 @@ Java_com_winlator_star_renderer_AHBImage_copyHardwareBuffer(
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_winlator_star_renderer_AHBImage_createHardwareBuffer(
+Java_com_winhub_hernandez_renderer_AHBImage_createHardwareBuffer(
         JNIEnv *env, jobject obj, jshort width, jshort height)
 {
     if (width <= 0 || height <= 0) {
@@ -269,7 +269,7 @@ Java_com_winlator_star_renderer_AHBImage_createHardwareBuffer(
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_AHBImage_destroyHardwareBuffer(
+Java_com_winhub_hernandez_renderer_AHBImage_destroyHardwareBuffer(
         JNIEnv *env, jobject obj, jlong ptr)
 {
     AHardwareBuffer *ahb = (AHardwareBuffer *)(uintptr_t)ptr;
@@ -280,7 +280,7 @@ Java_com_winlator_star_renderer_AHBImage_destroyHardwareBuffer(
 }
 
 JNIEXPORT jint JNICALL
-Java_com_winlator_star_renderer_AHBImage_unlockHardwareBuffer(
+Java_com_winhub_hernandez_renderer_AHBImage_unlockHardwareBuffer(
         JNIEnv *env, jobject obj, jlong ptr)
 {
     AHardwareBuffer *ahb = (AHardwareBuffer *)(uintptr_t)ptr;
@@ -296,7 +296,7 @@ Java_com_winlator_star_renderer_AHBImage_unlockHardwareBuffer(
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_winlator_star_renderer_AHBImage_lockHardwareBuffer(
+Java_com_winhub_hernandez_renderer_AHBImage_lockHardwareBuffer(
         JNIEnv *env, jobject obj, jlong ptr)
 {
     AHardwareBuffer* hardwareBuffer = (AHardwareBuffer*)ptr;
@@ -340,7 +340,7 @@ Java_com_winlator_star_renderer_AHBImage_lockHardwareBuffer(
 }
 
 JNIEXPORT jshort JNICALL
-Java_com_winlator_star_renderer_AHBImage_getStride(
+Java_com_winhub_hernandez_renderer_AHBImage_getStride(
         JNIEnv *env, jobject obj, jlong ptr)
 {
     AHardwareBuffer *ahb = (AHardwareBuffer *)(uintptr_t)ptr;
@@ -352,7 +352,7 @@ Java_com_winlator_star_renderer_AHBImage_getStride(
 }
 
 JNIEXPORT jshort JNICALL
-Java_com_winlator_star_renderer_AHBImage_nativeGetWidth(
+Java_com_winhub_hernandez_renderer_AHBImage_nativeGetWidth(
         JNIEnv *env, jobject obj, jlong ptr)
 {
     AHardwareBuffer *ahb = (AHardwareBuffer *)(uintptr_t)ptr;
@@ -364,7 +364,7 @@ Java_com_winlator_star_renderer_AHBImage_nativeGetWidth(
 }
 
 JNIEXPORT jshort JNICALL
-Java_com_winlator_star_renderer_AHBImage_nativeGetHeight(
+Java_com_winhub_hernandez_renderer_AHBImage_nativeGetHeight(
         JNIEnv *env, jobject obj, jlong ptr)
 {
     AHardwareBuffer *ahb = (AHardwareBuffer *)(uintptr_t)ptr;
@@ -376,6 +376,6 @@ Java_com_winlator_star_renderer_AHBImage_nativeGetHeight(
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_AHBImage_nativeCloseFd(JNIEnv *env, jclass clazz, jint fd) {
+Java_com_winhub_hernandez_renderer_AHBImage_nativeCloseFd(JNIEnv *env, jclass clazz, jint fd) {
     if (fd >= 0) close(fd);
 }

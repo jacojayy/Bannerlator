@@ -1,4 +1,4 @@
-//! JNI exports for `com.winlator.star.store.blsteam.BlEpicDownload`.
+//! JNI exports for `com.winhub.hernandez.store.blsteam.BlEpicDownload`.
 //!
 //! ```text
 //! nativeStart(manifest: byte[], installDir: String, cdnPrefixes: String[], pendingFileIdx: int[],
@@ -200,7 +200,7 @@ fn log_both(env: &mut JNIEnv, listener: &JObject, line: &str) {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlEpicDownload_nativeStart(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlEpicDownload_nativeStart(
     mut env: JNIEnv,
     _class: JClass,
     manifest: JByteArray,
@@ -360,7 +360,7 @@ fn run_on_thread(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlEpicDownload_nativeCancel(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlEpicDownload_nativeCancel(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -374,7 +374,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlEpicDownload_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlEpicDownload_nativeRelease(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlEpicDownload_nativeRelease(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,

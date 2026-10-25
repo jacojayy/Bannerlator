@@ -433,7 +433,7 @@ jobs:
         # Rebrand + packaging assertion: the JNI entry point Kotlin binds at boot must be exported,
         # otherwise the boot probe (BlSteamClient.probe) fails silently on device.
         "$NDK_BIN/llvm-nm" -D --defined-only "$SO" \
-          | grep -q ' Java_com_winlator_star_store_blsteam_BlSteamClient_nativeVersion$' \
+          | grep -q ' Java_com_winhub_hernandez_store_blsteam_BlSteamClient_nativeVersion$' \
           || { echo "libblsteam.so lacks the BlSteamClient_nativeVersion JNI export" >&2; exit 1; }
         "$NDK_BIN/llvm-readelf" -d "$SO" | grep -i soname
         ls -la "$SO"

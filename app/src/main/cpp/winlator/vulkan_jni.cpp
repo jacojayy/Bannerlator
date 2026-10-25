@@ -51,7 +51,7 @@ static void* openAdrenotoolsDriver(const char* driverPath, const char* libraryNa
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeInit(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeInit(
     JNIEnv* env, jobject, jobject surface, jint w, jint h,
     jstring jDriverPath, jstring jLibraryName, jstring jNativeLibDir, jboolean jLsfgVk11Compat)
 {
@@ -76,15 +76,15 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeInit(
     }
 }
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeResize(JNIEnv*, jobject, jlong h, jint w, jint ht) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeResize(JNIEnv*, jobject, jlong h, jint w, jint ht) {
     auto* r=reinterpret_cast<VulkanRendererContext*>(h); if (r) r->onSurfaceResized(w,ht);
 }
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeDestroy(JNIEnv*, jobject, jlong h) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeDestroy(JNIEnv*, jobject, jlong h) {
     delete reinterpret_cast<VulkanRendererContext*>(h);
 }
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeUpdateWindowContent(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeUpdateWindowContent(
     JNIEnv* env, jobject, jlong handle, jlong id, jobject buf, jshort w, jshort h, jshort stride, jint x, jint y)
 {
     auto* r=reinterpret_cast<VulkanRendererContext*>(handle);
@@ -94,28 +94,28 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeUpdateWindowContent(
         r->updateWindowContent(id,px,w,h,stride,x,y);
 }
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeUpdateWindowContentAHB(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeUpdateWindowContentAHB(
     JNIEnv*, jobject, jlong handle, jlong id, jlong ahbPtr, jshort w, jshort h, jint x, jint y)
 {
     auto* r=reinterpret_cast<VulkanRendererContext*>(handle);
     if (r&&ahbPtr) r->updateWindowContentAHB(id,reinterpret_cast<AHardwareBuffer*>(ahbPtr),w,h,x,y);
 }
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetTransform(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetTransform(
     JNIEnv*, jobject, jlong handle, jfloat ox, jfloat oy, jfloat sx, jfloat sy)
 {
     auto* r=reinterpret_cast<VulkanRendererContext*>(handle); if (r) r->setTransform(ox,oy,sx,sy);
 }
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetPointerPos(JNIEnv*, jobject, jlong handle, jshort x, jshort y) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetPointerPos(JNIEnv*, jobject, jlong handle, jshort x, jshort y) {
     auto* r=reinterpret_cast<VulkanRendererContext*>(handle); if (r) r->updatePointerPosition(x,y);
 }
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetCursorVisible(JNIEnv*, jobject, jlong handle, jboolean v) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetCursorVisible(JNIEnv*, jobject, jlong handle, jboolean v) {
     auto* r=reinterpret_cast<VulkanRendererContext*>(handle); if (r) r->setCursorVisible(v);
 }
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeUpdateCursorImage(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeUpdateCursorImage(
     JNIEnv* env, jobject, jlong handle, jobject buf, jshort w, jshort h, jshort hotX, jshort hotY)
 {
     auto* r=reinterpret_cast<VulkanRendererContext*>(handle);
@@ -125,7 +125,7 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeUpdateCursorImage(
         r->updateCursorImage(px,w,h,hotX,hotY);
 }
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetRenderList(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetRenderList(
     JNIEnv* env, jobject, jlong handle, jlongArray jids, jintArray jxs, jintArray jys, jint count)
 {
     auto* r=reinterpret_cast<VulkanRendererContext*>(handle);
@@ -140,24 +140,24 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetRenderList(
     env->ReleasePrimitiveArrayCritical(jids,ids, JNI_ABORT);
 }
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeRemoveWindow(JNIEnv*, jobject, jlong handle, jlong id) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeRemoveWindow(JNIEnv*, jobject, jlong handle, jlong id) {
     auto* r=reinterpret_cast<VulkanRendererContext*>(handle); if (r) r->removeWindow(id);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeInitScanout(JNIEnv*, jobject, jlong handle) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeInitScanout(JNIEnv*, jobject, jlong handle) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->initScanout();
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeDestroyScanout(JNIEnv*, jobject, jlong handle) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeDestroyScanout(JNIEnv*, jobject, jlong handle) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->destroyScanout();
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeScanoutSetBuffer(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeScanoutSetBuffer(
     JNIEnv*, jobject, jlong handle, jlong ahbPtr, jint x, jint y, jint w, jint h, jint fenceFd)
 {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
@@ -165,7 +165,7 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeScanoutSetBuffer(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeScanoutSetCursorImage(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeScanoutSetCursorImage(
     JNIEnv* env, jobject, jlong handle, jobject buf, jshort w, jshort h, jshort stride)
 {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
@@ -176,7 +176,7 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeScanoutSetCursorImag
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeScanoutSetCursorPos(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeScanoutSetCursorPos(
     JNIEnv*, jobject, jlong handle, jshort x, jshort y, jshort hotX, jshort hotY)
 {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
@@ -184,13 +184,13 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeScanoutSetCursorPos(
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeIsScanoutActive(JNIEnv*, jobject, jlong handle) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeIsScanoutActive(JNIEnv*, jobject, jlong handle) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     return r ? (jboolean)r->scanoutActive.load() : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeScanoutSetDst(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeScanoutSetDst(
     JNIEnv*, jobject, jlong handle, jint x, jint y, jint w, jint h)
 {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
@@ -200,7 +200,7 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeScanoutSetDst(
 // #413: compositor clip rect (surface px) used as the swapchain scissor in recordCmdBuf so FILL/STRETCH
 // overflow is cropped to the game's half. A full-surface (or w<=0) rect disables the clip.
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetClipRegion(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetClipRegion(
     JNIEnv*, jobject, jlong handle, jint x, jint y, jint w, jint h)
 {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
@@ -208,7 +208,7 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetClipRegion(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetScanoutWindow(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetScanoutWindow(
     JNIEnv* env, jobject, jlong handle, jobject gameSurface, jobject cursorSurface)
 {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
@@ -225,25 +225,25 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetScanoutWindow(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetVerboseLog(JNIEnv*, jobject, jlong handle, jboolean v) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetVerboseLog(JNIEnv*, jobject, jlong handle, jboolean v) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setVerboseLog((bool)v);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeDumpRendererInfo(JNIEnv*, jobject, jlong handle) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeDumpRendererInfo(JNIEnv*, jobject, jlong handle) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->dumpRendererInfo();
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeIsGameFrameDelivered(JNIEnv*, jobject, jlong handle) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeIsGameFrameDelivered(JNIEnv*, jobject, jlong handle) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     return r ? (jboolean)r->gameFrameDelivered.load() : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetFilterMode(JNIEnv*, jobject, jlong handle, jint mode) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetFilterMode(JNIEnv*, jobject, jlong handle, jint mode) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setFilterMode((int)mode);
 }
@@ -252,13 +252,13 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetFilterMode(JNIEnv
 //   0=none 1=linear 2=nearest 3=sgsr 4=fsr(fill) 5=fsr_fit(letterbox)
 //   6=sharpen 7=nis 8=sgsr_quality
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetUpscaler(JNIEnv*, jobject, jlong handle, jint mode) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetUpscaler(JNIEnv*, jobject, jlong handle, jint mode) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setUpscaler((int)mode);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetSwapRB(JNIEnv*, jobject, jlong handle, jboolean enabled) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetSwapRB(JNIEnv*, jobject, jlong handle, jboolean enabled) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setSwapRB(enabled == JNI_TRUE);
 }
@@ -266,76 +266,76 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetSwapRB(JNIEnv*, j
 // High-quality supersampling downscale toggle (render res > display res).
 // Independent of the scaling-mode enum.
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetHqDownscale(JNIEnv*, jobject, jlong handle, jboolean enabled) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetHqDownscale(JNIEnv*, jobject, jlong handle, jboolean enabled) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setHqDownscale(enabled == JNI_TRUE);
 }
 
 // Composable AMD CAS sharpen (layers on top of any scaling mode, runs at native res).
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetCas(JNIEnv*, jobject, jlong handle, jboolean enabled, jint sharpness) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetCas(JNIEnv*, jobject, jlong handle, jboolean enabled, jint sharpness) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setCas(enabled == JNI_TRUE, (int)sharpness);
 }
 
 // Composable fake-HDR (binary on/off).
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetHdr(JNIEnv*, jobject, jlong handle, jboolean enabled) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetHdr(JNIEnv*, jobject, jlong handle, jboolean enabled) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setHdr(enabled == JNI_TRUE);
 }
 
 // Terminal debanding / dither pass (TPDF/IGN). strength 0..200 -> strength/100 LSBs.
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetDeband(JNIEnv*, jobject, jlong handle, jboolean enabled, jint strength) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetDeband(JNIEnv*, jobject, jlong handle, jboolean enabled, jint strength) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setDeband(enabled == JNI_TRUE, (int)strength);
 }
 
 // Real upscaler sharpness (RCAS stops + SGSR EdgeSharpness) from a 0..100 slider.
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetUpscaleSharpness(JNIEnv*, jobject, jlong handle, jint sharpness) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetUpscaleSharpness(JNIEnv*, jobject, jlong handle, jint sharpness) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setUpscaleSharpness((int)sharpness);
 }
 
 // --- Phase 2 composable screen effects (GL EffectComposer parity) ---
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetFxaa(JNIEnv*, jobject, jlong handle, jboolean enabled) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetFxaa(JNIEnv*, jobject, jlong handle, jboolean enabled) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setFxaa(enabled == JNI_TRUE);
 }
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetToon(JNIEnv*, jobject, jlong handle, jboolean enabled) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetToon(JNIEnv*, jobject, jlong handle, jboolean enabled) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setToon(enabled == JNI_TRUE);
 }
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetCrt(JNIEnv*, jobject, jlong handle, jboolean enabled) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetCrt(JNIEnv*, jobject, jlong handle, jboolean enabled) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setCrt(enabled == JNI_TRUE);
 }
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetNtsc(JNIEnv*, jobject, jlong handle, jboolean enabled) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetNtsc(JNIEnv*, jobject, jlong handle, jboolean enabled) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setNtsc(enabled == JNI_TRUE);
 }
 // Color grade: brightness/contrast as the raw -100..100 sliders, gamma 0.5..3.0,
 // saturation as the raw 0..200 percent slider (100 = neutral).
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetColorGrade(JNIEnv*, jobject, jlong handle, jfloat brightness, jfloat contrast, jfloat gamma, jfloat saturation) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetColorGrade(JNIEnv*, jobject, jlong handle, jfloat brightness, jfloat contrast, jfloat gamma, jfloat saturation) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setColorGrade((float)brightness, (float)contrast, (float)gamma, (float)saturation);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetPresentMode(JNIEnv*, jobject, jlong handle, jint mode) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetPresentMode(JNIEnv*, jobject, jlong handle, jint mode) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setPresentMode((VkPresentModeKHR)mode);
 }
 
 extern "C" JNIEXPORT jintArray JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeGetSupportedPresentModes(JNIEnv* env, jobject, jlong handle) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeGetSupportedPresentModes(JNIEnv* env, jobject, jlong handle) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (!r) return env->NewIntArray(0);
     auto modes = r->getSupportedPresentModes();
@@ -345,13 +345,13 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeGetSupportedPresentM
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeDetachSurface(JNIEnv*, jobject, jlong handle) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeDetachSurface(JNIEnv*, jobject, jlong handle) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->detachSurface();
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeReattachSurface(JNIEnv* env, jobject, jlong handle, jobject surface) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeReattachSurface(JNIEnv* env, jobject, jlong handle, jobject surface) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (!r || !surface) return JNI_FALSE;
     ANativeWindow* win = ANativeWindow_fromSurface(env, surface);
@@ -371,13 +371,13 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeReattachSurface(JNIE
 // the caller treats an absent renderer as "unknown" rather than "unsupported".
 // ---------------------------------------------------------------------------
 extern "C" JNIEXPORT jboolean JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeLsfgSupported(JNIEnv*, jobject, jlong handle) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeLsfgSupported(JNIEnv*, jobject, jlong handle) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     return (jboolean)(r && r->lsfgCaps().supported());
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeLsfgCapsReason(JNIEnv* env, jobject, jlong handle) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeLsfgCapsReason(JNIEnv* env, jobject, jlong handle) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (!r) return nullptr;
     return env->NewStringUTF(r->lsfgCaps().reason);
@@ -386,21 +386,21 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeLsfgCapsReason(JNIEn
 // Why native frame gen cannot run: -1 unknown yet, 0 fine, 1 driver lacks what the
 // selected engine needs, 2 the engine failed to start. See frameGenProblem().
 extern "C" JNIEXPORT jint JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeFrameGenProblem(JNIEnv*, jobject, jlong handle) {
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeFrameGenProblem(JNIEnv*, jobject, jlong handle) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     return r ? (jint)r->frameGenProblem() : (jint)-1;
 }
 
 // --- Native LSFG frame generation: arming and tuning ------------------------
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetFrameGenArmed(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetFrameGenArmed(
         JNIEnv*, jobject, jlong handle, jboolean armed, jint multiplier) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setFrameGenArmed(armed == JNI_TRUE, (int)multiplier);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetLsfgCachePath(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetLsfgCachePath(
         JNIEnv* env, jobject, jlong handle, jstring path) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (!r) return;
@@ -411,7 +411,7 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetLsfgCachePath(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetFrameGenTuning(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetFrameGenTuning(
         JNIEnv*, jobject, jlong handle, jfloat flowScale, jfloat refreshHz,
         jint captureHeight) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
@@ -422,14 +422,14 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetFrameGenTuning(
 
 // Which native engine generates (0 = LSFG, 1 = win-fg) and win-fg's own knobs.
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetFrameGenEngine(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetFrameGenEngine(
         JNIEnv*, jobject, jlong handle, jint kind) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setFrameGenEngine((int)kind);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetWinFgTuning(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeSetWinFgTuning(
         JNIEnv*, jobject, jlong handle, jint model, jint perfPreset) {
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);
     if (r) r->setWinFgTuning((int)model, (int)perfPreset);
@@ -437,7 +437,7 @@ Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeSetWinFgTuning(
 
 // Live frame-gen telemetry: {accepted, planned, sourceFps, presentedFps, thermal, chainMsPerGen}
 extern "C" JNIEXPORT jfloatArray JNICALL
-Java_com_winlator_star_renderer_vulkan_VulkanRenderer_nativeFrameGenStats(
+Java_com_winhub_hernandez_renderer_vulkan_VulkanRenderer_nativeFrameGenStats(
         JNIEnv* env, jobject, jlong handle) {
     float stats[6] = {0.f, 0.f, 0.f, 0.f, -1.f, -1.f};
     auto* r = reinterpret_cast<VulkanRendererContext*>(handle);

@@ -12,7 +12,7 @@
 #include <adrenotools/driver.h>
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_perf_PerfGpuTurbo_nativeSetTurbo(JNIEnv *env, jclass clazz, jboolean on) {
+Java_com_winhub_hernandez_perf_PerfGpuTurbo_nativeSetTurbo(JNIEnv *env, jclass clazz, jboolean on) {
     (void) env;
     (void) clazz;
     adrenotools_set_turbo(on == JNI_TRUE);

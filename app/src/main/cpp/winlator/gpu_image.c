@@ -71,7 +71,7 @@ static EGLImageKHR create_image_khr(AHardwareBuffer *hardwareBuffer, int texture
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_winlator_star_renderer_GPUImage_hardwareBufferFromSocket(JNIEnv *env, jclass obj, jint fd) {
+Java_com_winhub_hernandez_renderer_GPUImage_hardwareBufferFromSocket(JNIEnv *env, jclass obj, jint fd) {
     AHardwareBuffer *ahb;
     uint8_t buf = 1;
     if (write(fd, &buf, 1) == -1) {
@@ -86,7 +86,7 @@ Java_com_winlator_star_renderer_GPUImage_hardwareBufferFromSocket(JNIEnv *env, j
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_winlator_star_renderer_GPUImage_createHardwareBuffer(JNIEnv *env, jclass obj, jshort width, jshort height) {
+Java_com_winhub_hernandez_renderer_GPUImage_createHardwareBuffer(JNIEnv *env, jclass obj, jshort width, jshort height) {
     AHardwareBuffer_Desc desc = {
         .width  = (uint32_t)width,
         .height = (uint32_t)height,
@@ -104,7 +104,7 @@ Java_com_winlator_star_renderer_GPUImage_createHardwareBuffer(JNIEnv *env, jclas
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_winlator_star_renderer_GPUImage_createImageKHR(JNIEnv *env, jclass obj, jlong hardwareBufferPtr, jint textureId) {
+Java_com_winhub_hernandez_renderer_GPUImage_createImageKHR(JNIEnv *env, jclass obj, jlong hardwareBufferPtr, jint textureId) {
     AHardwareBuffer *hardwareBuffer = (AHardwareBuffer *)hardwareBufferPtr;
     if (!hardwareBuffer) {
         LOGE("createImageKHR: invalid AHardwareBuffer pointer");
@@ -114,7 +114,7 @@ Java_com_winlator_star_renderer_GPUImage_createImageKHR(JNIEnv *env, jclass obj,
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_GPUImage_destroyImageKHR(JNIEnv *env, jclass obj, jlong imageKHRPtr) {
+Java_com_winhub_hernandez_renderer_GPUImage_destroyImageKHR(JNIEnv *env, jclass obj, jlong imageKHRPtr) {
     EGLImageKHR imageKHR = (EGLImageKHR)imageKHRPtr;
     if (imageKHR) {
         EGLDisplay eglDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY);
@@ -123,7 +123,7 @@ Java_com_winlator_star_renderer_GPUImage_destroyImageKHR(JNIEnv *env, jclass obj
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_renderer_GPUImage_destroyHardwareBuffer(JNIEnv *env, jclass obj, jlong ptr) {
+Java_com_winhub_hernandez_renderer_GPUImage_destroyHardwareBuffer(JNIEnv *env, jclass obj, jlong ptr) {
     AHardwareBuffer *ahb = (AHardwareBuffer *)ptr;
     if (ahb) {
         AHardwareBuffer_unlock(ahb, NULL);
@@ -132,7 +132,7 @@ Java_com_winlator_star_renderer_GPUImage_destroyHardwareBuffer(JNIEnv *env, jcla
 }
 
 JNIEXPORT jint JNICALL
-Java_com_winlator_star_renderer_GPUImage_unlockHardwareBuffer(JNIEnv *env, jclass obj, jlong ptr) {
+Java_com_winhub_hernandez_renderer_GPUImage_unlockHardwareBuffer(JNIEnv *env, jclass obj, jlong ptr) {
     AHardwareBuffer *ahb = (AHardwareBuffer *)ptr;
     if (!ahb) return -1;
     int fence_fd = -1;
@@ -141,7 +141,7 @@ Java_com_winlator_star_renderer_GPUImage_unlockHardwareBuffer(JNIEnv *env, jclas
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_winlator_star_renderer_GPUImage_lockHardwareBuffer(JNIEnv *env, jobject obj, jlong ptr) {
+Java_com_winhub_hernandez_renderer_GPUImage_lockHardwareBuffer(JNIEnv *env, jobject obj, jlong ptr) {
     AHardwareBuffer *ahb = (AHardwareBuffer *)ptr;
     if (!ahb) {
         LOGE("lockHardwareBuffer: null pointer");

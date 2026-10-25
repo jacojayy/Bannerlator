@@ -15,7 +15,7 @@
 //! - [`plan`] — install-tag selection, unique-chunk plan, chunk paths / CDN URLs.
 //! - [`chunk`] — chunk header parse, zlib inflate, SHA-1 verify, cache write.
 //! - [`driver`] — plan → `FetchItem`s → `fetch_core::run_fetch` with the chunk-cache sink.
-//! - [`jni`] — `Java_com_winlator_star_store_blsteam_BlEpicDownload_native*` exports.
+//! - [`jni`] — `Java_com_winhub_hernandez_store_blsteam_BlEpicDownload_native*` exports.
 //!
 //! The selective-install-tag, delta/resume and chunk verification rules mirrored here were ported
 //! into the Java manager from GameNative (`service/epic/EpicDownloadManager.kt`,

@@ -129,7 +129,7 @@ jobs:
           --arg lud "Bannerlator-${N}-ludashi.apk" \
           --arg pbg "Bannerlator-${N}-pubg.apk" \
           '{versionCode:$vc, versionName:$vn, notes:$notes, minSupported:1,
-            apk:{"com.winlator.banner":$std,"com.ludashi.benchmark":$lud,"com.tencent.ig":$pbg}}' \
+            apk:{"com.winhub.hernandez":$std,"com.ludashi.benchmark":$lud,"com.tencent.ig":$pbg}}' \
           > update.json
         echo "Generated update.json:"; cat update.json
 

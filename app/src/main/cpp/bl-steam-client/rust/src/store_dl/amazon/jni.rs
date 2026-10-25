@@ -1,6 +1,6 @@
 //! JNI facade for the Amazon download adapter.
 //!
-//! Kotlin side: `com.winlator.star.store.blsteam.BlAmazonDownload` (`nativeStart` /
+//! Kotlin side: `com.winhub.hernandez.store.blsteam.BlAmazonDownload` (`nativeStart` /
 //! `nativeCancel` / `nativeRelease`) with a `BlAmazonDownloadListener`
 //! (`onProgress(JJJJ)V`, `onLog(String)V`, `onComplete(ZString;J)V`). Mirrors the shape of
 //! `BlSteamSession.nativeDownloadApp` in `crate::jni`: the run happens on a spawned native
@@ -130,7 +130,7 @@ fn with_attached_env(listener: &GlobalRef, f: impl FnOnce(&mut JNIEnv, &JObject)
 /// processWorkers, listener) -> handle`. Returns 0 (and fires `onComplete(false, …)`) when the
 /// inputs are unusable. The run itself happens on a spawned thread.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlAmazonDownload_nativeStart(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlAmazonDownload_nativeStart(
     mut env: JNIEnv,
     _class: JClass,
     plan_json: JString,
@@ -202,7 +202,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlAmazonDownload_nat
 /// `BlAmazonDownload.nativeCancel(handle)` — flips the run's cancel flag; the core stops
 /// issuing requests, in-flight bodies are dropped, `onComplete(false, "cancelled", …)` follows.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlAmazonDownload_nativeCancel(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlAmazonDownload_nativeCancel(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -215,7 +215,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlAmazonDownload_nat
 /// `BlAmazonDownload.nativeRelease(handle)` — frees the handle. Safe at any time: the worker
 /// thread owns its own `Arc` of the cancel flag and the listener `GlobalRef`.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlAmazonDownload_nativeRelease(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlAmazonDownload_nativeRelease(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,

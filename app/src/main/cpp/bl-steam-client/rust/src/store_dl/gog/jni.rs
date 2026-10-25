@@ -1,5 +1,5 @@
 //! JNI facade for the GOG Rust download engine — the native half of
-//! `com.winlator.star.store.blsteam.BlGogDownload` (Kotlin). Symbol names are bound to that
+//! `com.winhub.hernandez.store.blsteam.BlGogDownload` (Kotlin). Symbol names are bound to that
 //! package/class; the `@JvmStatic external` declarations there are the other side of this file.
 //!
 //! Shape mirrors the Steam download JNI (`jni.rs` `nativeDownloadApp`): `nativeStart` validates
@@ -194,7 +194,7 @@ unsafe fn handle_ref(handle: jlong) -> Option<&'static Arc<GogRunHandle>> {
 
 /// Symbol-binding probe (see `BlGogDownload.isAvailable`). Returns 1.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlGogDownload_nativeProbe(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlGogDownload_nativeProbe(
     _env: JNIEnv,
     _class: JClass,
 ) -> jint {
@@ -206,7 +206,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlGogDownload_native
 /// manifest + secure-link resolution — see `GogRequest`.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlGogDownload_nativeStart(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlGogDownload_nativeStart(
     mut env: JNIEnv,
     _class: JClass,
     kind: jint,
@@ -275,7 +275,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlGogDownload_native
 /// Requests cancellation; the run stops at its next scheduling point and `onComplete` fires with
 /// `cancelled = true`. Idempotent.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlGogDownload_nativeCancel(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlGogDownload_nativeCancel(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -288,7 +288,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlGogDownload_native
 /// Drops the Java side's reference. Call once, after `onComplete` (or after cancelling — the worker
 /// keeps the run alive until it exits either way).
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlGogDownload_nativeRelease(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlGogDownload_nativeRelease(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,

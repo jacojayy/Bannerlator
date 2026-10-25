@@ -7,7 +7,7 @@
 #include <string.h>
 
 JNIEXPORT jobject JNICALL
-Java_com_winlator_star_xserver_DrawableBufferPool_nativeAlloc(JNIEnv *env, jclass clazz, jint capacity) {
+Java_com_winhub_hernandez_xserver_DrawableBufferPool_nativeAlloc(JNIEnv *env, jclass clazz, jint capacity) {
     (void) clazz;
     if (capacity <= 0) return NULL;
     void *mem = calloc(1, (size_t) capacity);
@@ -18,7 +18,7 @@ Java_com_winlator_star_xserver_DrawableBufferPool_nativeAlloc(JNIEnv *env, jclas
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_star_xserver_DrawableBufferPool_nativeFree(JNIEnv *env, jclass clazz, jobject buffer) {
+Java_com_winhub_hernandez_xserver_DrawableBufferPool_nativeFree(JNIEnv *env, jclass clazz, jobject buffer) {
     (void) clazz;
     if (buffer == NULL) return;
     void *mem = (*env)->GetDirectBufferAddress(env, buffer);
@@ -30,7 +30,7 @@ Java_com_winlator_star_xserver_DrawableBufferPool_nativeFree(JNIEnv *env, jclass
 // pool hit just to memcpy it in through JNI's GetByteArrayRegion, which was both
 // wasteful and, in one build, the exact SIGSEGV crash frame in a captured tombstone.
 JNIEXPORT void JNICALL
-Java_com_winlator_star_xserver_DrawableBufferPool_nativeZero(JNIEnv *env, jclass clazz, jobject buffer, jint capacity) {
+Java_com_winhub_hernandez_xserver_DrawableBufferPool_nativeZero(JNIEnv *env, jclass clazz, jobject buffer, jint capacity) {
     (void) clazz;
     if (buffer == NULL || capacity <= 0) return;
     void *mem = (*env)->GetDirectBufferAddress(env, buffer);

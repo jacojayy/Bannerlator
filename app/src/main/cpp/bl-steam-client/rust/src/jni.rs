@@ -269,7 +269,7 @@ fn ensure_auth_result_class(env: &mut JNIEnv) -> Option<&'static GlobalRef> {
     if let Some(class) = AUTH_RESULT_CLASS.get() {
         return Some(class);
     }
-    let Ok(class) = env.find_class("com/winlator/star/store/blsteam/BlAuthResult")
+    let Ok(class) = env.find_class("com/winhub/hernandez/store/blsteam/BlAuthResult")
     else {
         clear_pending_exception(env);
         return None;
@@ -437,7 +437,7 @@ fn dispatch_connection_message(observer: &GlobalRef, bytes: &[u8]) {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamClient_nativeVersion(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamClient_nativeVersion(
     mut env: JNIEnv,
     _class: JClass,
 ) -> jstring {
@@ -445,7 +445,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamClient_native
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlConnection_nativeCreate(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlConnection_nativeCreate(
     _env: JNIEnv,
     _class: JClass,
 ) -> jlong {
@@ -453,7 +453,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlConnection_nativeC
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlConnection_nativeDestroy(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlConnection_nativeDestroy(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -462,7 +462,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlConnection_nativeD
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlConnection_nativeSetCaBundlePath(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlConnection_nativeSetCaBundlePath(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -478,7 +478,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlConnection_nativeS
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlConnection_nativeSetObserver(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlConnection_nativeSetObserver(
     env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -518,7 +518,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlConnection_nativeS
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlConnection_nativeConnect(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlConnection_nativeConnect(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -538,7 +538,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlConnection_nativeC
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlConnection_nativeDisconnect(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlConnection_nativeDisconnect(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -549,7 +549,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlConnection_nativeD
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlConnection_nativeSend(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlConnection_nativeSend(
     env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -733,7 +733,7 @@ fn call_auth_result_failure(env: &mut JNIEnv, callback: &JObject, code: jint, me
     let _ = env.call_method(
         callback,
         "onAuthResult",
-        "(Lcom/winlator/star/store/blsteam/BlAuthResult;)V",
+        "(Lcom/winhub/hernandez/store/blsteam/BlAuthResult;)V",
         &[JValue::Object(&result)],
     );
     clear_pending_exception(env);
@@ -814,7 +814,7 @@ fn call_auth_result(env: &mut JNIEnv, callback: &JObject, result: &AuthSessionRe
     let _ = env.call_method(
         callback,
         "onAuthResult",
-        "(Lcom/winlator/star/store/blsteam/BlAuthResult;)V",
+        "(Lcom/winhub/hernandez/store/blsteam/BlAuthResult;)V",
         &[JValue::Object(&auth_result)],
     );
     clear_pending_exception(env);
@@ -1855,7 +1855,7 @@ fn dispatch_download_complete(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativePickCmUrl(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativePickCmUrl(
     mut env: JNIEnv,
     _class: JClass,
     ca_bundle_path: JString,
@@ -1890,7 +1890,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeCreate(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeCreate(
     mut env: JNIEnv,
     _class: JClass,
 ) -> jlong {
@@ -1899,7 +1899,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeDestroy(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeDestroy(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -1908,7 +1908,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSetCaBundlePath(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSetCaBundlePath(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -1923,7 +1923,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSetAutoPopulateLibrary(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSetAutoPopulateLibrary(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -1935,7 +1935,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSetAutoPersonaOnline(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSetAutoPersonaOnline(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -1957,7 +1957,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeConnect(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeConnect(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -1980,7 +1980,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeDisconnect(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeDisconnect(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2001,7 +2001,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeLogOffAndDisconnect(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeLogOffAndDisconnect(
     env: JNIEnv,
     class: JClass,
     handle: jlong,
@@ -2017,13 +2017,13 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
             thread::sleep(flush);
         }
     }
-    Java_com_winlator_star_store_blsteam_BlSteamSession_nativeDisconnect(
+    Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeDisconnect(
         env, class, handle,
     );
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeIsPlayingBlocked(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeIsPlayingBlocked(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2039,7 +2039,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeMarkPlayingBlocked(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeMarkPlayingBlocked(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2050,7 +2050,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeState(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeState(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2062,7 +2062,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSteamId(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSteamId(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2074,7 +2074,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeFamilyGroupId(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeFamilyGroupId(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2086,7 +2086,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetLibrarySnapshot(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetLibrarySnapshot(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2098,7 +2098,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeStartWineBridge(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeStartWineBridge(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2123,7 +2123,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeStopWineBridge(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeStopWineBridge(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2134,7 +2134,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeWineBridgeLastError(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeWineBridgeLastError(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2146,7 +2146,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetAppOwnershipTicket(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetAppOwnershipTicket(
     env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2165,7 +2165,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetLicenseList(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetLicenseList(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2198,7 +2198,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetFriendsList(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetFriendsList(
     env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2222,7 +2222,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetFriendPersonas(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetFriendPersonas(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2262,7 +2262,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 /// Every known relationship as `[{"sid","rel"}]` (EFriendRelationship values) — the roster's
 /// friend / incoming-invite / outgoing-invite buckets. Cheap: a cached map, no network.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetFriendRelationships(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetFriendRelationships(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2281,7 +2281,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetSelfPersona(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetSelfPersona(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2305,7 +2305,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSendFriendMessage(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSendFriendMessage(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2346,7 +2346,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetRecentMessages(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetRecentMessages(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2388,7 +2388,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeDrainFriendMessages(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeDrainFriendMessages(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2414,7 +2414,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSendChatImage(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSendChatImage(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2489,7 +2489,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 
 /// Blocking typing notification (`FriendMessages.SendMessage`, chat_entry_type 2).
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSendFriendTyping(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSendFriendTyping(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2520,7 +2520,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 /// Fire-and-forget `CMsgClientAddFriend` — by SteamID64 (`steam_id` != 0) or by account name /
 /// e-mail. The verdict arrives as `CMsgClientAddFriendResponse` (EMsg 792) on the firehose.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeAddFriend(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeAddFriend(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2540,7 +2540,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 
 /// Fire-and-forget `CMsgClientRemoveFriend` (remove / decline / cancel an invite).
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeRemoveFriend(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeRemoveFriend(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2558,7 +2558,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 
 /// Blocking friend profile lookup (`CMsgClientFriendProfileInfo`); JSON or null.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetFriendProfileInfo(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetFriendProfileInfo(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2597,7 +2597,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 
 /// Blocking `UserAccount.CreateFriendInviteToken#1`; the raw invite token or null.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeCreateFriendInviteToken(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeCreateFriendInviteToken(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2630,7 +2630,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 /// renewal) for the community `steamLoginSecure` cookie (chat image upload, user search). The
 /// refresh token only travels to Steam; it is never logged.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGenerateWebAccessToken(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGenerateWebAccessToken(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2683,7 +2683,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSetPersonaState(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSetPersonaState(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2695,7 +2695,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSetPersonaName(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSetPersonaName(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2717,7 +2717,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeRequestUserPersona(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeRequestUserPersona(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2728,7 +2728,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeRequestFriendPersonas(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeRequestFriendPersonas(
     env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2755,7 +2755,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeNotifyGamesPlayed(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeNotifyGamesPlayed(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2834,7 +2834,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 /// Blocking `Player.SetRichPresence#1` for [app_id] with the key/values in [kv_json] (a JSON
 /// object of strings; an empty object clears the presence). True when Steam acknowledged.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSetRichPresence(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSetRichPresence(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2876,7 +2876,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeKickPlayingSession(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeKickPlayingSession(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2892,7 +2892,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeStoreUserStats(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeStoreUserStats(
     env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2935,7 +2935,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSetStateObserver(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSetStateObserver(
     env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2956,7 +2956,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSetLibraryObserver(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSetLibraryObserver(
     env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -2977,7 +2977,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeRenewRefreshToken(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeRenewRefreshToken(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -3047,7 +3047,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeStartLoginWithCredentials(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeStartLoginWithCredentials(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -3381,7 +3381,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeStartLoginWithQr(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeStartLoginWithQr(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -3504,7 +3504,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeCancelLogin(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeCancelLogin(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -3515,7 +3515,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeLogonWithRefreshToken(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeLogonWithRefreshToken(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -3545,7 +3545,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativePrepareApp(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativePrepareApp(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -3600,7 +3600,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeDownloadApp(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeDownloadApp(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -3857,7 +3857,7 @@ fn dispatch_download_progress(
 /// decrypts `depots/<id>/encryptedmanifests/<branch>/gid` (AES-256-ECB, PKCS7) into the manifest id.
 /// The password itself is never logged.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeCheckAppBetaPassword(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeCheckAppBetaPassword(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -3910,7 +3910,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 /// `{"uncompressed":u64,"compressed":u64,"disk":u64,"files":n}` or null (not logged on, request
 /// code refused, CDN failure). Blocking; call off the main thread.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeFetchManifestSizes(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeFetchManifestSizes(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -3993,7 +3993,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSetCdnPreference(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSetCdnPreference(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4011,7 +4011,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeCancelDownload(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeCancelDownload(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4022,7 +4022,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeRequestEncryptedAppTicket(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeRequestEncryptedAppTicket(
     env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4077,7 +4077,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetUserStatsSchema(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetUserStatsSchema(
     env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4101,7 +4101,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetUserStatsFull(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetUserStatsFull(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4137,7 +4137,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 /// (`stats`, the achievement bitfields) and the per-block unlock timestamps. Null when the
 /// session is not logged on or Steam did not answer within 30 s.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetUserStatsJson(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetUserStatsJson(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4182,7 +4182,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 /// (1 = OK), 0 when no response arrived in `timeout_ms` (or the session is not logged on). Stat ids
 /// the server refused are logged under `BL_STEAM_ACHV`.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeStoreUserStatsBlocking(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeStoreUserStatsBlocking(
     env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4251,7 +4251,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetItemDefArchive(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetItemDefArchive(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4280,7 +4280,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetSubscribedWorkshopItems(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetSubscribedWorkshopItems(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4335,7 +4335,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeDownloadWorkshopItem(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeDownloadWorkshopItem(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4397,7 +4397,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetCloudFileList(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetCloudFileList(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4440,7 +4440,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetCloudUserQuota(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetCloudUserQuota(
     env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4472,7 +4472,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetCloudDownloadInfo(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetCloudDownloadInfo(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4522,7 +4522,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeCloudBeginUploadBatch(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeCloudBeginUploadBatch(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4572,7 +4572,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeCloudBeginFileUpload(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeCloudBeginFileUpload(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4641,7 +4641,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeCloudCommitFileUpload(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeCloudCommitFileUpload(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4690,7 +4690,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeCloudCompleteUploadBatch(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeCloudCompleteUploadBatch(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4719,7 +4719,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetPicsChangesSince(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetPicsChangesSince(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4760,7 +4760,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetPicsAppInfo(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetPicsAppInfo(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4811,7 +4811,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetPicsAccessTokens(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetPicsAccessTokens(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4866,7 +4866,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetPicsAppProductInfo(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetPicsAppProductInfo(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4920,7 +4920,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetPicsPackageInfo(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetPicsPackageInfo(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -4992,7 +4992,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetFamilyGroup(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetFamilyGroup(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -5025,7 +5025,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetOwnedGames(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetOwnedGames(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -5257,7 +5257,7 @@ fn recently_played_games(
 /// Works for the signed-in user's own id as well as friends'. Ids the CM will not answer for are
 /// omitted from the array rather than reported as level 0.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetSteamLevels(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetSteamLevels(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -5305,7 +5305,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 /// Slots with nothing equipped come back as JSON null. Equipped items are public profile
 /// decoration, so this resolves for friends as well as for the signed-in user.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetEquippedProfileItems(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetEquippedProfileItems(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -5335,7 +5335,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 /// Blocking `Player.GetFavoriteBadge#1` for any SteamID64; JSON, `null` when no badge is
 /// showcased, or null when the request never landed.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetFavoriteBadge(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetFavoriteBadge(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -5359,7 +5359,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 ///
 /// Empty for an account whose game details are private.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetRecentlyPlayedGames(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetRecentlyPlayedGames(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -5402,7 +5402,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 /// public profile. `ownedGameCount` / `playtime*` / `recentlyPlayed` need the account's *game
 /// details* to be public — `gamesPublic` says whether they were.
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeGetPlayerProfile(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeGetPlayerProfile(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -5585,7 +5585,7 @@ fn await_license_visibility(
 /// }
 /// ```
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeRequestFreeLicense(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeRequestFreeLicense(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -5665,7 +5665,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSignalAppLaunchIntent(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSignalAppLaunchIntent(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
@@ -5708,7 +5708,7 @@ pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativ
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_winlator_star_store_blsteam_BlSteamSession_nativeSignalAppExitSyncDone(
+pub extern "system" fn Java_com_winhub_hernandez_store_blsteam_BlSteamSession_nativeSignalAppExitSyncDone(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,

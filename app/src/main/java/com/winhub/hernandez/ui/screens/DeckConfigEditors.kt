@@ -4,6 +4,9 @@ package com.winhub.hernandez.ui.screens
 
 import android.app.Activity
 import android.content.Context
+import android.os.SystemClock
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -46,6 +49,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -73,6 +77,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -278,6 +283,67 @@ internal fun DeckChoiceRowWithDownload(
 }
 
 /**
+ * Controller bridge for a [Dialog] window. A Dialog owns its own window, so the Activity-level
+ * stick→D-pad rewrite and the A/B face-button rewrite never reach it. Translate both here so the
+ * popup is walkable with the same pad as the rest of the Deck shell.
+ *
+ * The listener is installed on the dialog's ComposeView (it sees generic motion before Compose's
+ * own handler) and the previous listener is restored on dispose, so closing a popup can never
+ * leave the pad dead. It always returns false, so it only observes — it never swallows input.
+ */
+@Composable
+private fun DeckDialogControllerBridge() {
+    val view = LocalView.current
+    DisposableEffect(view) {
+        val previous = view.onGenericMotionListener
+        var heldKey = 0
+        var lastMs = 0L
+        val listener = android.view.View.OnGenericMotionListener { _, event ->
+            val source = event.source
+            val pad = (source and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK ||
+                (source and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
+            if (!pad) return@OnGenericMotionListener false
+            var x = event.getAxisValue(MotionEvent.AXIS_HAT_X)
+            var y = event.getAxisValue(MotionEvent.AXIS_HAT_Y)
+            if (x == 0f && y == 0f) {
+                x = event.getAxisValue(MotionEvent.AXIS_X)
+                y = event.getAxisValue(MotionEvent.AXIS_Y)
+            }
+            val dz = 0.6f
+            val key = when {
+                x <= -dz && kotlin.math.abs(x) >= kotlin.math.abs(y) ->
+                    android.view.KeyEvent.KEYCODE_DPAD_LEFT
+                x >= dz && kotlin.math.abs(x) >= kotlin.math.abs(y) ->
+                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT
+                y <= -dz -> android.view.KeyEvent.KEYCODE_DPAD_UP
+                y >= dz -> android.view.KeyEvent.KEYCODE_DPAD_DOWN
+                else -> 0
+            }
+            val now = SystemClock.uptimeMillis()
+            if (key == 0) {
+                heldKey = 0
+                return@OnGenericMotionListener false
+            }
+            // Edge-trigger once, then auto-repeat while held (same cadence as the shell).
+            if (key != heldKey || now - lastMs > 380L) {
+                heldKey = key
+                lastMs = now
+                view.dispatchKeyEvent(
+                    android.view.KeyEvent(now, now, android.view.KeyEvent.ACTION_DOWN, key, 0)
+                )
+                view.dispatchKeyEvent(
+                    android.view.KeyEvent(now, now, android.view.KeyEvent.ACTION_UP, key, 0)
+                )
+            }
+            // Never consume: the event still reaches Compose/system handling.
+            false
+        }
+        view.setOnGenericMotionListener(listener)
+        onDispose { view.setOnGenericMotionListener(previous) }
+    }
+}
+
+/**
  * The Deck config popup. Near-fullscreen (96% × 94%) so long editors breathe, with a modern Deck
  * header + close, a hairline, and a single scroll surface. Controller-first: it owns focus on open,
  * D-pad walks every row/pill/toggle, and B closes (leaving a text field first if one is editing).
@@ -298,8 +364,12 @@ internal fun DeckConfigDialog(
     LaunchedEffect(Unit) {
         delay(50)
         runCatching { rootFocus.requestFocus() }
+        // Enter the content so the first press lands on a real control instead of the root.
+        runCatching { focusManager.moveFocusSafely(FocusDirection.Next) }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        val dialogView = LocalView.current
+        DeckDialogControllerBridge()
         Column(
             modifier = Modifier
                 .fillMaxWidth(0.96f)
@@ -311,12 +381,32 @@ internal fun DeckConfigDialog(
                 .focusable()
                 .focusGroup()
                 .onPreviewKeyEvent { e ->
-                    if (e.type == KeyEventType.KeyDown &&
-                        (e.key == Key.ButtonB || e.key == Key.Back)
-                    ) {
-                        // While a text field is editing, B leaves the field instead of closing.
-                        if (editTracker.editing) false else { onDismiss(); true }
-                    } else false
+                    when {
+                        e.type != KeyEventType.KeyDown -> false
+                        e.key == Key.ButtonB || e.key == Key.Back -> {
+                            // While a text field is editing, B leaves the field instead of closing.
+                            if (editTracker.editing) false else { onDismiss(); true }
+                        }
+                        e.key == Key.ButtonA -> {
+                            // The Activity rewrites A→DPAD_CENTER, but a Dialog window never sees
+                            // that rewrite, so activate the focused control from here.
+                            val now = SystemClock.uptimeMillis()
+                            dialogView.dispatchKeyEvent(
+                                android.view.KeyEvent(
+                                    now, now, android.view.KeyEvent.ACTION_DOWN,
+                                    android.view.KeyEvent.KEYCODE_DPAD_CENTER, 0
+                                )
+                            )
+                            dialogView.dispatchKeyEvent(
+                                android.view.KeyEvent(
+                                    now, now, android.view.KeyEvent.ACTION_UP,
+                                    android.view.KeyEvent.KEYCODE_DPAD_CENTER, 0
+                                )
+                            )
+                            true
+                        }
+                        else -> false
+                    }
                 }
                 .onKeyEvent { e ->
                     // Bubbles up from the focused child, so a focused text field keeps its own keys

@@ -175,7 +175,16 @@ internal fun Modifier.deckDragItem(key: Any): Modifier {
             val local = coords.boundsInRoot().translate(-registry.rootTopLeft.x, -registry.rootTopLeft.y)
             if (registry.bounds[key] != local) registry.bounds[key] = local
         }
-        .onFocusChanged { if (it.isFocused || it.hasFocus) registry.focusedKey = key }
+        .onFocusChanged { state ->
+            if (state.isFocused || state.hasFocus) {
+                registry.focusedKey = key
+            } else if (registry.focusedKey == key) {
+                // Focus left this item (for a non-drag control or out of the frame). Without
+                // this the frame kept its ring on the last tile while the D-pad was elsewhere,
+                // which reads as a second cursor.
+                registry.focusedKey = null
+            }
+        }
 }
 
 private fun Rect.translate(dx: Float, dy: Float): Rect =

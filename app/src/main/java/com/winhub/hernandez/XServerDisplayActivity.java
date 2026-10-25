@@ -460,10 +460,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
     private String shortcutName;
     private Handler handler;
     private Runnable savePlaytimeRunnable;
-    // Playtime is accumulated in memory and flushed periodically. One second was a disk write every
-    // second for the whole session (SharedPreferences apply → constant I/O wakeups); 30s loses at
-    // most half a minute on a hard crash and is invisible to the hub's playtime display.
-    private static final long SAVE_INTERVAL_MS = 30000;
+    private static final long SAVE_INTERVAL_MS = 1000;
 
     // Version marker for the bundled graphics_driver/extra_libs.tzst payload (vkBasalt layer +
     // shared .so's). BUMP THIS whenever app/src/main/assets/graphics_driver/extra_libs.tzst is

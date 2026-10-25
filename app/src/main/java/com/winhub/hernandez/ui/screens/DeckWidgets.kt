@@ -12,7 +12,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
@@ -60,13 +59,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.lifecycle.Lifecycle
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import kotlinx.coroutines.delay
 import com.winhub.hernandez.store.deckTileFocus
 import com.winhub.hernandez.ui.moveFocusSafely
 import androidx.compose.runtime.setValue
@@ -112,6 +107,7 @@ import com.winhub.hernandez.ui.theme.AppThemeState
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * One page row at a time (Storage sub-tabs, container editor tabs) binds itself here, so the Deck
@@ -166,60 +162,9 @@ internal class DeckDragRegistry {
 
 internal val LocalDeckDrag = compositionLocalOf<DeckDragRegistry?> { null }
 
-/** True while a Deck control is rendered as a [DeckRow] control inside a [DeckDragFrame]: the
- *  animated frame ring is the cursor, so the control must not draw a second static ring. Material
- *  descendants (e.g. DropdownMenu items) ignore this and keep their own indication. */
-internal val LocalDeckFrameControl = compositionLocalOf { false }
-
-/**
- * Ambient decorative motion (capsule wall drift, hub stroke shimmer). An infinite Compose
- * transition invalidates every vsync for as long as the screen is composed; these effects are
- * slow and purely cosmetic, so tick them at [fps] and only while the screen is STARTED. Same look,
- * a fraction of the battery.
- */
-@Composable
-internal fun rememberAmbientPhase(periodMs: Int, fps: Int = 15): androidx.compose.runtime.State<Float> {
-    val phase = remember { mutableFloatStateOf(0f) }
-    val owner = LocalLifecycleOwner.current
-    val scope = rememberCoroutineScope()
-    DisposableEffect(owner, periodMs, fps) {
-        val step = (1000 / fps).coerceAtLeast(16).toLong()
-        var job: kotlinx.coroutines.Job? = null
-        fun start() {
-            if (job?.isActive == true) return
-            job = scope.launch {
-                var elapsed = 0L
-                while (true) {
-                    delay(step)
-                    elapsed += step
-                    phase.floatValue = (elapsed % periodMs).toFloat() / periodMs
-                }
-            }
-        }
-        fun stop() {
-            job?.cancel()
-            job = null
-        }
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_START -> start()
-                Lifecycle.Event.ON_STOP -> stop()
-                else -> Unit
-            }
-        }
-        owner.lifecycle.addObserver(observer)
-        if (owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) start()
-        onDispose {
-            owner.lifecycle.removeObserver(observer)
-            stop()
-        }
-    }
-    return phase
-}
-
 /** Marks a focusable item as a member of the surrounding [DeckDragFrame]. */
 @Composable
-internal fun Modifier.deckDragItem(key: Any, selfOnly: Boolean = false): Modifier {
+internal fun Modifier.deckDragItem(key: Any): Modifier {
     val registry = LocalDeckDrag.current
     DisposableEffect(registry, key) {
         onDispose { registry?.bounds?.remove(key) }
@@ -231,10 +176,7 @@ internal fun Modifier.deckDragItem(key: Any, selfOnly: Boolean = false): Modifie
             if (registry.bounds[key] != local) registry.bounds[key] = local
         }
         .onFocusChanged { state ->
-            // selfOnly: the node is the focus stop (a button/tab). Otherwise the node is a wrapper
-            // around the real control, so a focused descendant should light it up.
-            val active = if (selfOnly) state.isFocused else (state.isFocused || state.hasFocus)
-            if (active) {
+            if (state.isFocused || state.hasFocus) {
                 registry.focusedKey = key
             } else if (registry.focusedKey == key) {
                 // Focus left this item (for a non-drag control or out of the frame). Without
@@ -593,23 +535,10 @@ internal fun DeckRow(
                 )
             }
         }
-        val drag = LocalDeckDrag.current
-        val controlKey = remember { Any() }
-        if (drag != null) {
-            // Keep the animated frame ring on the actual control (not the whole row), and suppress
-            // the control's static indication so there is exactly one cursor.
-            Box(modifier = Modifier.deckDragItem(controlKey)) {
-                CompositionLocalProvider(LocalDeckFrameControl provides true) {
-                    control()
-                }
-            }
-        } else {
-            control()
-        }
+        control()
         if (configPanel) {
             val chevronInteraction = remember { MutableInteractionSource() }
             val chevronShape = RoundedCornerShape(10.dp)
-            val chevronKey = remember { Any() }
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
@@ -623,10 +552,7 @@ internal fun DeckRow(
                                 indication = null,
                                 onClick = onConfigClick,
                             )
-                            .then(
-                                if (drag != null) Modifier.deckDragItem(chevronKey, selfOnly = true)
-                                else Modifier.deckSelfFocusStroke(chevronShape),
-                            )
+                            .deckSelfFocusStroke(chevronShape)
                         else Modifier,
                     ),
             ) {
@@ -662,20 +588,12 @@ internal fun DeckExpandableRow(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val rotation by animateFloatAsState(if (expanded) 90f else 0f, label = "deckExpandChevron")
-    val drag = LocalDeckDrag.current
-    val headerInteraction = remember { MutableInteractionSource() }
-    val headerKey = remember { Any() }
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .then(if (drag != null) Modifier.deckDragItem(headerKey, selfOnly = true) else Modifier)
-                .clickable(
-                    interactionSource = headerInteraction,
-                    indication = if (drag != null) null else LocalIndication.current,
-                    onClick = onToggle,
-                )
+                .clickable(onClick = onToggle)
                 .padding(horizontal = 14.dp, vertical = 11.dp),
         ) {
             Column(
@@ -738,17 +656,12 @@ internal fun DeckExpandableRow(
 internal fun DeckToggle(checked: Boolean, onChange: (Boolean) -> Unit) {
     val knob by animateFloatAsState(if (checked) 1f else 0f, label = "deckToggle")
     val track = if (checked) DeckPalette.secondary else DeckPalette.surfaceVariant
-    val frameControl = LocalDeckFrameControl.current
-    val interaction = remember { MutableInteractionSource() }
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .heightIn(min = 48.dp)
             .widthIn(min = 64.dp)
-            .clickable(
-                interactionSource = interaction,
-                indication = if (frameControl) null else LocalIndication.current,
-            ) { onChange(!checked) },
+            .clickable { onChange(!checked) },
     ) {
         Box(
             modifier = Modifier
@@ -777,8 +690,6 @@ internal fun DeckToggle(checked: Boolean, onChange: (Boolean) -> Unit) {
 @Composable
 internal fun DeckValueChip(text: String, open: Boolean, onClick: () -> Unit) {
     val rot by animateFloatAsState(if (open) 180f else 0f, label = "deckCaret")
-    val frameControl = LocalDeckFrameControl.current
-    val interaction = remember { MutableInteractionSource() }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -788,10 +699,7 @@ internal fun DeckValueChip(text: String, open: Boolean, onClick: () -> Unit) {
             .clip(RoundedCornerShape(10.dp))
             .background(DeckPalette.surfaceVariant)
             .border(1.dp, DeckPalette.line2, RoundedCornerShape(10.dp))
-            .clickable(
-                interactionSource = interaction,
-                indication = if (frameControl) null else LocalIndication.current,
-            ) { onClick() }
+            .clickable { onClick() }
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Text(
@@ -1280,7 +1188,6 @@ internal fun DeckButton(
     onClick: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
-    val frameControl = LocalDeckFrameControl.current
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
@@ -1292,13 +1199,10 @@ internal fun DeckButton(
                 color = if (primary) DeckPalette.primary else DeckPalette.line,
                 shape = RoundedCornerShape(12.dp),
             )
-            .then(
-                if (frameControl) Modifier
-                else Modifier.deckOuterFocusStroke(
-                    interaction = interaction,
-                    shape = RoundedCornerShape(12.dp),
-                    focusColor = if (primary) DeckPalette.onPrimary else DeckPalette.primary,
-                ),
+            .deckOuterFocusStroke(
+                interaction = interaction,
+                shape = RoundedCornerShape(12.dp),
+                focusColor = if (primary) DeckPalette.onPrimary else DeckPalette.primary,
             )
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 16.dp),

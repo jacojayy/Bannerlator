@@ -368,7 +368,10 @@ internal fun SaveManagerScreen(
         DisposableEffect(Unit) {
             deckHost.bind(deckTabs.size)
             deckHost.select(deckTabs.indexOf(selectedTab).coerceAtLeast(0))
-            onDispose { deckHost.bind(0) }
+            onDispose {
+                deckHost.bind(0)
+                deckHost.onBack = null
+            }
         }
         LaunchedEffect(deckHost.index) {
             selectedTab = deckTabs[deckHost.index.coerceIn(0, deckTabs.lastIndex)]
@@ -376,6 +379,15 @@ internal fun SaveManagerScreen(
         LaunchedEffect(selectedTab) {
             val i = deckTabs.indexOf(selectedTab).coerceAtLeast(0)
             if (deckHost.index != i) deckHost.select(i)
+        }
+        // B on an open category page returns to the page list before leaving the section.
+        val pageBack = sectionLayout == "pages" && pagesCategoryOpen
+        LaunchedEffect(pageBack) {
+            deckHost.onBack = if (pageBack) {
+                { pagesCategoryOpen = false; true }
+            } else {
+                null
+            }
         }
     }
 

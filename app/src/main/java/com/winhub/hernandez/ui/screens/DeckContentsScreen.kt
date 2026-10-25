@@ -184,16 +184,21 @@ internal fun DeckContentsScreen(vm: ContentsHubViewModel = viewModel()) {
     // B in a repository detail folds back to the repository list before it leaves the section.
     val onSourcesTab = tab == DeckContentsTab.SOURCES.ordinal
     val detailOpen = onSourcesTab && selectedSource != null
-    DisposableEffect(detailOpen) {
+    DisposableEffect(detailOpen, pagesCategoryOpen) {
         tabs.onBack = {
-            if (detailOpen) {
+            if (pagesCategoryOpen) {
+                pagesCategoryOpen = false
+                true
+            } else if (detailOpen) {
                 vm.selectSource(null)
                 true
             } else false
         }
         onDispose { tabs.onBack = null }
     }
-    BackHandler(enabled = detailOpen) { vm.selectSource(null) }
+    BackHandler(enabled = detailOpen || pagesCategoryOpen) {
+        if (pagesCategoryOpen) pagesCategoryOpen = false else vm.selectSource(null)
+    }
     // Stepping away from Sources returns to the repository list next time.
     LaunchedEffect(onSourcesTab) {
         if (!onSourcesTab && selectedSource != null) vm.selectSource(null)

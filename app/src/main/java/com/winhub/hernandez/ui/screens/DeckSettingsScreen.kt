@@ -130,6 +130,9 @@ internal fun DeckSettingsScreen() {
     // This page's own category layout ("tabs" | "rail" | "pages"). Defaults to the left rail — the
     // requested default — and is independent of the container editor's choice.
     var settingsLayout by remember { mutableStateOf(prefs.getString("settings_layout", "rail") ?: "rail") }
+    // One switch to make Save Manager and Contents follow the Settings Layout above instead of
+    // always using their top strip. Off by default so the classic Deck tabs stay untouched.
+    var universalLayout by remember { mutableStateOf(prefs.getBoolean("deck_universal_layout", false)) }
     var settingsTab by remember { mutableStateOf(0) }
     var settingsPagesCategoryOpen by remember { mutableStateOf(false) }
     val settingsTabs = remember { listOf("General", "Interface", "Appearance", "System", "Graphics") }
@@ -680,6 +683,15 @@ internal fun DeckSettingsScreen() {
                     prefs.edit().putString("settings_layout", it).apply()
                 },
             )
+            DeckRow(
+                label = "Apply Settings layout everywhere",
+                hint = "Save Manager and Contents use the Settings Layout choice above",
+            ) {
+                DeckToggle(universalLayout) {
+                    universalLayout = it
+                    prefs.edit().putBoolean("deck_universal_layout", it).apply()
+                }
+            }
         }
 
         }

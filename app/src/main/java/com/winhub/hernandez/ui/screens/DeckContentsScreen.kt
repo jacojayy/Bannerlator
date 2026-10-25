@@ -42,6 +42,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
@@ -107,6 +108,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.preference.PreferenceManager
 import com.winhub.hernandez.contents.AdrenotoolsManager
 import com.winhub.hernandez.contents.ContentProfile
 import com.winhub.hernandez.contents.ContentsManager
@@ -161,6 +163,19 @@ internal fun DeckContentsScreen(vm: ContentsHubViewModel = viewModel()) {
     val tab = tabs.index
     LaunchedEffect(tabs) { tabs.bind(DeckContentsTab.values().size) }
 
+    // "Apply Settings layout everywhere" makes Contents follow the Settings page's own choice
+    // (top tabs / side rail / category pages) instead of always using the top strip.
+    val context = LocalContext.current
+    val prefs = remember { PreferenceManager.getDefaultSharedPreferences(context) }
+    val universalLayout = prefs.getBoolean("deck_universal_layout", false)
+    val layout = if (universalLayout) {
+        prefs.getString("settings_layout", "rail") ?: "rail"
+    } else {
+        "tabs"
+    }
+    var pagesCategoryOpen by remember { mutableStateOf(false) }
+    val tabLabels = DeckContentsTab.values().map { it.label }
+
     val installedKeys by vm.installedKeys.collectAsState()
     val folders by vm.savedFolders.collectAsState()
     val selectedSource by vm.selected.collectAsState()
@@ -207,38 +222,86 @@ internal fun DeckContentsScreen(vm: ContentsHubViewModel = viewModel()) {
                     vm.refreshSelected()
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            DeckStretchyTabs(
-                labels = DeckContentsTab.values().map { it.label },
-                selected = tab,
-                onSelect = { tabs.select(it) },
-                focusable = true,
-                selectOnFocus = true,
-            )
-            Spacer(Modifier.height(12.dp))
-            AnimatedContent(
-                targetState = tab,
-                transitionSpec = {
-                    val forward = targetState >= initialState
-                    (fadeIn(tween(300, delayMillis = 60, easing = DeckEase)) +
-                        slideInHorizontally(tween(420, delayMillis = 60, easing = DeckEase)) {
-                            if (forward) it / 24 else -it / 24
-                        })
-                        .togetherWith(
-                            fadeOut(tween(170, easing = DeckEase)) +
-                                slideOutHorizontally(tween(170, easing = DeckEase)) {
-                                    if (forward) -it / 40 else it / 40
-                                },
+            if (layout == "tabs") {
+                Spacer(Modifier.height(12.dp))
+                DeckStretchyTabs(
+                    labels = tabLabels,
+                    selected = tab,
+                    onSelect = { tabs.select(it) },
+                    focusable = true,
+                    selectOnFocus = true,
+                )
+                Spacer(Modifier.height(12.dp))
+            }
+            if (layout == "pages" && !pagesCategoryOpen) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    tabLabels.forEachIndexed { i, label ->
+                        DeckEditorCategoryRow(
+                            label = label,
+                            selected = i == tab,
+                            onClick = {
+                                tabs.select(i)
+                                pagesCategoryOpen = true
+                            },
                         )
-                },
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                label = "contentsTab",
-            ) { which ->
-                when (which) {
-                    0 -> DeckContentsBrowseTab(vm)
-                    1 -> DeckContentsSourcesTab(vm)
-                    2 -> DeckContentsFilesTab(vm)
-                    else -> DeckContentsInstalledTab(vm)
+                    }
+                    Spacer(Modifier.height(16.dp))
+                }
+            } else {
+                Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    if (layout == "rail") {
+                        DeckEditorCategoryRail(
+                            labels = tabLabels,
+                            selected = tab,
+                            onSelect = { tabs.select(it) },
+                            modifier = Modifier
+                                .width(200.dp)
+                                .fillMaxHeight()
+                                .padding(end = 12.dp),
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                        if (layout == "pages" && pagesCategoryOpen) {
+                            DeckRow(
+                                label = "← All categories",
+                                hint = "Back to the category list",
+                                onConfigClick = { pagesCategoryOpen = false },
+                                control = {},
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        AnimatedContent(
+                            targetState = tab,
+                            transitionSpec = {
+                                val forward = targetState >= initialState
+                                (fadeIn(tween(300, delayMillis = 60, easing = DeckEase)) +
+                                    slideInHorizontally(tween(420, delayMillis = 60, easing = DeckEase)) {
+                                        if (forward) it / 24 else -it / 24
+                                    })
+                                    .togetherWith(
+                                        fadeOut(tween(170, easing = DeckEase)) +
+                                            slideOutHorizontally(tween(170, easing = DeckEase)) {
+                                                if (forward) -it / 40 else it / 40
+                                            },
+                                    )
+                            },
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                            label = "contentsTab",
+                        ) { which ->
+                            when (which) {
+                                0 -> DeckContentsBrowseTab(vm)
+                                1 -> DeckContentsSourcesTab(vm)
+                                2 -> DeckContentsFilesTab(vm)
+                                else -> DeckContentsInstalledTab(vm)
+                            }
+                        }
+                    }
                 }
             }
         }

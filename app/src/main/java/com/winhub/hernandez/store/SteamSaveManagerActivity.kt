@@ -11,6 +11,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -27,8 +28,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Cloud
@@ -73,10 +76,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.preference.PreferenceManager
 import coil.compose.AsyncImage
+import com.winhub.hernandez.ui.screens.DeckEditorCategoryRail
+import com.winhub.hernandez.ui.screens.DeckEditorCategoryRow
 import com.winhub.hernandez.ui.screens.DeckPalette
 import com.winhub.hernandez.ui.screens.DeckDragFrame
 import com.winhub.hernandez.ui.screens.deckDragItem
+import com.winhub.hernandez.ui.screens.DeckRow
 import com.winhub.hernandez.ui.screens.DeckStretchyTabs
 import com.winhub.hernandez.ui.screens.LocalDeckTabs
 import com.winhub.hernandez.container.Container
@@ -238,6 +245,17 @@ internal fun SaveManagerScreen(
     // rememberSaveable so the active section survives process death (the manifest now also carries
     // orientation in configChanges, so rotation no longer recreates the Activity and drops it).
     var selectedTab by rememberSaveable { mutableStateOf(0) }
+    // "Apply Settings layout everywhere": in Deck mode the sections can follow the Settings
+    // page's tabs / side rail / category pages instead of always using the top strip.
+    val deckPrefs = remember { PreferenceManager.getDefaultSharedPreferences(context) }
+    val universalLayout = remember { deckPrefs.getBoolean("deck_universal_layout", false) }
+    val sectionLayout = if (deckMode && universalLayout) {
+        deckPrefs.getString("settings_layout", "rail") ?: "rail"
+    } else {
+        "tabs"
+    }
+    var pagesCategoryOpen by rememberSaveable { mutableStateOf(false) }
+    val deckTabLabels = remember { listOf("Steam", "Custom", "Epic", "GOG", "Settings") }
     // appIds with an in-flight quick action (Download/Upload) — disables that row's buttons.
     var busyAppIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
     // Live per-row progress line for a running (or just-finished) quick action, keyed by appId.
@@ -467,10 +485,10 @@ internal fun SaveManagerScreen(
             else -> "Settings"
         }
 
-        if (deckMode) {
+        if (deckMode && sectionLayout == "tabs") {
             // Deck sections, same language as the Stores strip: landing on a pill selects its tab.
             DeckStretchyTabs(
-                labels = listOf("Steam", "Custom", "Epic", "GOG", "Settings"),
+                labels = deckTabLabels,
                 dots = listOf(
                     Color(0xFF1A9FFF),
                     DeckPalette.onSurfaceVariant,
@@ -488,6 +506,28 @@ internal fun SaveManagerScreen(
             Spacer(Modifier.height(10.dp))
         }
 
+        if (deckMode && sectionLayout == "pages" && !pagesCategoryOpen) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                deckTabLabels.forEachIndexed { i, label ->
+                    DeckEditorCategoryRow(
+                        label = label,
+                        selected = deckTabs[i] == selectedTab,
+                        onClick = {
+                            selectedTab = deckTabs[i]
+                            pagesCategoryOpen = true
+                        },
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+        } else {
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             if (!deckMode) CollapsibleRail(
                 state = railState,
@@ -504,10 +544,29 @@ internal fun SaveManagerScreen(
                         ),
                     ),
                 ),
-            )
+            ) else if (deckMode && sectionLayout == "rail") {
+                DeckEditorCategoryRail(
+                    labels = deckTabLabels,
+                    selected = deckTabs.indexOf(selectedTab).coerceAtLeast(0),
+                    onSelect = { selectedTab = deckTabs[it] },
+                    modifier = Modifier
+                        .width(200.dp)
+                        .fillMaxHeight()
+                        .padding(start = 16.dp),
+                )
+            }
 
             // ── Content: full height beside the rail ─────────────────────────────────────────────
             Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                if (deckMode && sectionLayout == "pages" && pagesCategoryOpen) {
+                    DeckRow(
+                        label = "← All categories",
+                        hint = "Back to the category list",
+                        onConfigClick = { pagesCategoryOpen = false },
+                        control = {},
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
                 // Collapsed rail hides the section labels, so surface the active one over the content
                 // (matches ContainerDetailScreen) — the user never loses their place.
                 if (!deckMode && railState.collapsed) {
@@ -644,6 +703,7 @@ internal fun SaveManagerScreen(
                   }
                 }
             }
+        }
         }
     }
         // Themed, auto-dismiss status feedback routed here from the cloud/backup tabs (replaces the

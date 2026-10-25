@@ -318,9 +318,16 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         else if (tabs.onBack?.invoke() == true) true
                         else { goBack(); true }
                     }
-                    // Shoulders are just wide horizontal steps. They never change the rail or a tab.
-                    Key.ButtonL1 -> focusManager.moveFocusSafely(FocusDirection.Left)
-                    Key.ButtonR1 -> focusManager.moveFocusSafely(FocusDirection.Right)
+                    // Shoulders walk the active tab strip when the page has tabs bound (container
+                    // detail, Save Manager, Contents), so switching a category no longer means
+                    // walking focus all the way Up to the strip first. Pages without tabs keep the
+                    // old wide horizontal focus step.
+                    Key.ButtonL1 ->
+                        if (tabs.count > 1) { tabs.step(-1); true }
+                        else focusManager.moveFocusSafely(FocusDirection.Left)
+                    Key.ButtonR1 ->
+                        if (tabs.count > 1) { tabs.step(1); true }
+                        else focusManager.moveFocusSafely(FocusDirection.Right)
                     else -> false
                 }
             },

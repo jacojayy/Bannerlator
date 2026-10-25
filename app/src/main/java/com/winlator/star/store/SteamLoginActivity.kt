@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -39,8 +40,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import com.winlator.star.ui.screens.DeckButton
+import com.winlator.star.ui.screens.DeckConfigDialog
+import com.winlator.star.ui.screens.DeckConfigTextField
+import com.winlator.star.ui.screens.DeckGroup
+import com.winlator.star.ui.screens.DeckPalette
 import com.winlator.star.ui.theme.WinlatorTheme
 
 class SteamLoginActivity : ComponentActivity(), SteamAuthManager.AuthListener {
@@ -77,6 +85,12 @@ class SteamLoginActivity : ComponentActivity(), SteamAuthManager.AuthListener {
         // manifest and never asked. Applied before any content so the first frame is already in the
         // requested orientation. The game's XServerDisplayActivity is deliberately NOT touched.
         com.winlator.star.core.AppOrientation.apply(this)
+        // The sign-in flow waits on the Steam CM "Connected" event, and that connection is owned by
+        // SteamForegroundService. SteamMainActivity used to be the only entry point that started it;
+        // opening sign-in directly (Deck Stores / the preflight "Sign in") left the repository
+        // offline, so every login timed out with "Could not reach Steam servers". Start it here so
+        // the screen works no matter who launches it.
+        SteamForegroundService.start(this)
         setContent {
             WinlatorTheme {
                 DeckStoreTheme {
@@ -136,6 +150,7 @@ class SteamLoginActivity : ComponentActivity(), SteamAuthManager.AuthListener {
     }
 
     private fun onLoginClicked() {
+        if (isLoading) return
         val u = username.trim()
         val p = password
         if (u.isEmpty()) { statusText = "Enter your username."; isStatusError = true; return }
@@ -186,9 +201,8 @@ class SteamLoginActivity : ComponentActivity(), SteamAuthManager.AuthListener {
         isLoading = false
         statusText = ""
         guardDialog = GuardDialogData(
-            title     = if (codeWrong) "Incorrect code — try again" else "Steam Guard",
-            message   = "Enter the code Steam sent to your email ending in \u2026$emailDomain",
-            isNumeric = false,
+            title   = if (codeWrong) "Incorrect code — try again" else "Steam Guard",
+            message = "Enter the code Steam sent to your email ending in \u2026$emailDomain",
         )
     }
 
@@ -196,9 +210,8 @@ class SteamLoginActivity : ComponentActivity(), SteamAuthManager.AuthListener {
         isLoading = false
         statusText = ""
         guardDialog = GuardDialogData(
-            title     = if (codeWrong) "Incorrect code — try again" else "Steam Guard",
-            message   = "Enter the code from your Steam Guard Mobile Authenticator app",
-            isNumeric = true,
+            title   = if (codeWrong) "Incorrect code — try again" else "Steam Guard",
+            message = "Enter the code from your Steam Guard Mobile Authenticator app",
         )
     }
 
@@ -239,7 +252,6 @@ class SteamLoginActivity : ComponentActivity(), SteamAuthManager.AuthListener {
 private data class GuardDialogData(
     val title: String,
     val message: String,
-    val isNumeric: Boolean,
 )
 
 @Composable
@@ -251,57 +263,27 @@ private fun SteamGuardDialog(
     onCancel: () -> Unit,
 ) {
     var code by remember { mutableStateOf("") }
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surface,
+    DeckConfigDialog(title = title, onDismiss = onDismiss, subtitle = message) {
+        DeckConfigTextField(
+            label = "Code",
+            value = code,
+            onValueChange = { code = it.take(5) },
+            numeric = title.contains("Authenticator"),
+        )
+        Spacer(Modifier.height(12.dp))
+        DeckButton(
+            text = "Submit",
+            primary = true,
+            onClick = { onSubmit(code.trim()) },
             modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(16.dp))
-                OutlinedTextField(
-                    value = code,
-                    onValueChange = { code = it.take(5) },
-                    label = { Text("Code") },
-                    singleLine = true,
-                    placeholder = { Text(if (title.contains("Authenticator")) "5-digit code" else "5-character code") },
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = if (title.contains("Authenticator")) KeyboardType.Number else KeyboardType.Text,
-                        imeAction = ImeAction.Done,
-                    ),
-                    keyboardActions = KeyboardActions(onDone = { onSubmit(code.trim()) }),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                ) {
-                    TextButton(onClick = onCancel) { Text("Cancel") }
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        onClick = { onSubmit(code.trim()) },
-                        enabled = code.trim().isNotEmpty(),
-                    ) { Text("Submit") }
-                }
-            }
-        }
+        )
+        Spacer(Modifier.height(8.dp))
+        DeckButton(
+            text = "Cancel",
+            primary = false,
+            onClick = onCancel,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
@@ -320,84 +302,80 @@ private fun SteamLoginScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(DeckPalette.background)
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 32.dp, vertical = 64.dp),
+            .padding(horizontal = 24.dp, vertical = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        Spacer(Modifier.height(20.dp))
         Text(
             text = "Steam",
-            style = MaterialTheme.typography.headlineLarge,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = DeckPalette.onBackground,
+            fontSize = 34.sp,
+            fontWeight = FontWeight.Black,
         )
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
         Text(
             text = "Sign in to your account",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(32.dp))
-
-        OutlinedTextField(
-            value = username,
-            onValueChange = onUsernameChange,
-            label = { Text("Username") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(12.dp))
-
-        OutlinedTextField(
-            value = password,
-            onValueChange = onPasswordChange,
-            label = { Text("Password") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Password,
-                imeAction = ImeAction.Done,
-            ),
-            keyboardActions = KeyboardActions(onDone = { onLoginClick() }),
-            modifier = Modifier.fillMaxWidth(),
+            color = DeckPalette.onSurfaceVariant,
+            fontSize = 14.sp,
         )
         Spacer(Modifier.height(24.dp))
 
-        Button(
-            onClick = onLoginClick,
-            enabled = !isLoading,
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            shape = RoundedCornerShape(8.dp),
-        ) { Text("Sign In") }
-        Spacer(Modifier.height(12.dp))
+        Column(modifier = Modifier.widthIn(max = 520.dp).fillMaxWidth()) {
+            DeckGroup("Account") {
+                DeckConfigTextField(
+                    label = "Username",
+                    value = username,
+                    onValueChange = onUsernameChange,
+                )
+                DeckConfigTextField(
+                    label = "Password",
+                    value = password,
+                    onValueChange = onPasswordChange,
+                    password = true,
+                )
+            }
+            Spacer(Modifier.height(16.dp))
 
-        // QR sign-in re-enabled: a QR-originated session stores the same
-        // username + refresh_token as a password login (SteamQrAuthManager →
-        // saveSession), so it is recovered by the same logoff/reconnect path
-        // (SteamRepository.onLoggedOff / reconnectNow). The QR screen shows an
-        // advisory to fall back to username + password if downloads or the
-        // session keep dropping after signing in this way.
-        TextButton(onClick = onQrClick) {
-            Text("Sign in with QR Code")
-        }
-        Spacer(Modifier.height(16.dp))
-
-        if (isLoading) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(24.dp),
-                color = MaterialTheme.colorScheme.primary,
-                strokeWidth = 2.dp,
+            DeckButton(
+                text = if (isLoading) "Signing in\u2026" else "Sign In",
+                primary = true,
+                onClick = onLoginClick,
+                modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(8.dp))
-        }
 
-        if (statusText.isNotEmpty()) {
-            Text(
-                text = statusText,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (isStatusError) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
+            // QR sign-in re-enabled: a QR-originated session stores the same
+            // username + refresh_token as a password login (SteamQrAuthManager →
+            // saveSession), so it is recovered by the same logoff/reconnect path
+            // (SteamRepository.onLoggedOff / reconnectNow). The QR screen shows an
+            // advisory to fall back to username + password if downloads or the
+            // session keep dropping after signing in this way.
+            DeckButton(
+                text = "Sign in with QR Code",
+                primary = false,
+                onClick = onQrClick,
+                modifier = Modifier.fillMaxWidth(),
             )
+
+            if (isLoading) {
+                Spacer(Modifier.height(14.dp))
+                CircularProgressIndicator(
+                    modifier = Modifier.size(22.dp).align(Alignment.CenterHorizontally),
+                    color = DeckPalette.primary,
+                    strokeWidth = 2.dp,
+                )
+            }
+
+            if (statusText.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = statusText,
+                    color = if (isStatusError) DeckPalette.error else DeckPalette.onSurfaceVariant,
+                    fontSize = 13.sp,
+                )
+            }
         }
     }
 }

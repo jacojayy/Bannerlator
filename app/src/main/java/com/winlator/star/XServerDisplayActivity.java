@@ -5042,7 +5042,23 @@ public class XServerDisplayActivity extends AppCompatActivity {
                         // whatever happened above. Guarded so a torn-down activity can't crash the restart.
                         runOnUiThread(() -> {
                             try { if (preloaderDialog != null) preloaderDialog.close(); } catch (Throwable ignored) {}
-                            AppUtils.restartApplication(getApplicationContext());
+                            // A normal quit used to always restart the whole process, which replayed
+                            // the cold-start splash before the deck came back. If this session was
+                            // launched on top of the deck and nothing is waiting to resume, just
+                            // finish back to it. A pending relaunch (fail-card Retry / Goldberg) or a
+                            // component install that must resume still needs the clean restart.
+                            boolean needsRestart = false;
+                            try {
+                                needsRestart = com.winlator.star.store.SteamSessionManager.INSTANCE
+                                        .hasPendingRelaunch(getApplicationContext())
+                                        || com.winlator.star.components.ComponentInstallReturn.INSTANCE
+                                        .get(getApplicationContext()) != null;
+                            } catch (Throwable ignored) {}
+                            if (!needsRestart && !isTaskRoot()) {
+                                finish();
+                            } else {
+                                AppUtils.restartApplication(getApplicationContext());
+                            }
                         });
                     }
                 }, "BH-ExitSaveBackup").start();

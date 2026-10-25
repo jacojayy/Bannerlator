@@ -1113,11 +1113,12 @@ internal fun DeckButton(
     text: String,
     primary: Boolean = true,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val interaction = remember { MutableInteractionSource() }
     Box(
         contentAlignment = Alignment.Center,
-        modifier = Modifier
+        modifier = modifier
             .heightIn(min = 44.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(if (primary) DeckPalette.primary else DeckPalette.surface)

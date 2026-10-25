@@ -423,6 +423,17 @@ object SteamSessionManager {
         }
     }
 
+    /** True when a fresh pending relaunch is waiting. Non-destructive counterpart of [takePendingRelaunch]. */
+    fun hasPendingRelaunch(ctx: Context): Boolean {
+        return try {
+            val p = ctx.applicationContext.getSharedPreferences(RELAUNCH_PREFS, Context.MODE_PRIVATE)
+            val at = p.getLong("at", 0L)
+            p.getString("path", null) != null && System.currentTimeMillis() - at <= RELAUNCH_TTL_MS
+        } catch (t: Throwable) {
+            false
+        }
+    }
+
     /** Consume (and clear) a pending relaunch recorded within the last few minutes, if any. */
     fun takePendingRelaunch(ctx: Context): PendingRelaunch? {
         return try {

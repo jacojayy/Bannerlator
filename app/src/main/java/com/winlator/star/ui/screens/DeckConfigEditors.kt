@@ -73,6 +73,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -148,6 +150,7 @@ internal fun DeckConfigTextField(
     numeric: Boolean = false,
     minHeight: androidx.compose.ui.unit.Dp = 0.dp,
     isError: Boolean = false,
+    password: Boolean = false,
 ) {
     val edit = rememberDeckEditState()
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
@@ -164,7 +167,12 @@ internal fun DeckConfigTextField(
                 singleLine = singleLine,
                 readOnly = !edit.editing,
                 isError = isError,
-                keyboardOptions = if (numeric) KeyboardOptions(keyboardType = KeyboardType.Number) else KeyboardOptions.Default,
+                keyboardOptions = when {
+                    numeric -> KeyboardOptions(keyboardType = KeyboardType.Number)
+                    password -> KeyboardOptions(keyboardType = KeyboardType.Password)
+                    else -> KeyboardOptions.Default
+                },
+                visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
                 colors = TextFieldDefaults.colors(
                     focusedContainerColor = DeckPalette.surfaceVariant,
                     unfocusedContainerColor = DeckPalette.surfaceVariant,

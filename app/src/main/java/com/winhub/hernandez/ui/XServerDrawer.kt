@@ -151,17 +151,17 @@ fun setupComposeView(view: ComposeView) {
     }
 }
 
-/** Deck palette forced for the in-game drawer: graphite surfaces, one signal blue. */
-private val DeckDrawerScheme = darkColorScheme(
+/** Deck palette forced for the in-game drawer: graphite surfaces, one signal accent. */
+private val DeckDrawerScheme get() = darkColorScheme(
     primary = DeckPalette.primary,
     onPrimary = DeckPalette.onPrimary,
-    primaryContainer = Color(0xFF0F2940),
-    onPrimaryContainer = Color(0xFFD3ECFF),
+    primaryContainer = DeckPalette.drawerContainer,
+    onPrimaryContainer = DeckPalette.drawerOnContainer,
     secondary = DeckPalette.onSurfaceVariant,
     onSecondary = DeckPalette.onPrimary,
     secondaryContainer = DeckPalette.surfaceVariant,
     onSecondaryContainer = DeckPalette.onBackground,
-    tertiary = Color(0xFF9ED8FF),
+    tertiary = DeckPalette.drawerTertiary,
     onTertiary = DeckPalette.onPrimary,
     background = DeckPalette.background,
     onBackground = DeckPalette.onBackground,
@@ -187,7 +187,7 @@ private val DeckDrawerScheme = darkColorScheme(
 )
 
 /** Deck's dim accent rides in LocalAccentDim, which most drawer controls use for fills/tracks. */
-private val DeckDrawerAccentDim = Color(0xFF0E3D63)
+private val DeckDrawerAccentDim get() = DeckPalette.drawerDim
 
 @Composable
 fun XServerDrawer() {

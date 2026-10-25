@@ -419,6 +419,10 @@ internal object DeckPalette {
     val secondary get() = p.secondary
     val onSecondary get() = p.onSecondary
     val secondaryDim get() = p.secondaryDim
+    val drawerDim get() = p.drawerDim
+    val drawerContainer get() = p.drawerContainer
+    val drawerOnContainer get() = p.drawerOnContainer
+    val drawerTertiary get() = p.drawerTertiary
     val good get() = p.success
     val error = Color(0xFFFF8A80)
 

@@ -26,6 +26,12 @@ data class ThemePreset(
     val secondary: Color = primary,
     val onSecondary: Color = onPrimary,
     val secondaryDim: Color = accentDim,
+    // In-game drawer accent ramps. Defaults derive from the primary; Marcescence pins the
+    // original blue values so the default drawer stays byte-identical.
+    val drawerDim: Color = lerp(primary, Color(0xFF000000), 0.62f),
+    val drawerContainer: Color = lerp(primary, background, 0.80f),
+    val drawerOnContainer: Color = lerp(primary, Color(0xFFFFFFFF), 0.80f),
+    val drawerTertiary: Color = lerp(primary, Color(0xFFFFFFFF), 0.58f),
     // Deck Mode hairline tokens. Defaults derive from surface -> onSurface; Marcescence pins
     // the original graphite values so its look is byte-identical.
     val line: Color = lerp(surface, onSurface, 0.10f),
@@ -140,6 +146,10 @@ val themePresets: List<ThemePreset> = listOf(
         onSurfaceVariant = Color(0xFF9AA3AF),
         line             = Color(0xFF262A31),
         line2            = Color(0xFF343A43),
+        drawerDim        = Color(0xFF0E3D63),
+        drawerContainer  = Color(0xFF0F2940),
+        drawerOnContainer = Color(0xFFD3ECFF),
+        drawerTertiary   = Color(0xFF9ED8FF),
     ),
     ThemePreset(
         name             = "Purple",

@@ -98,6 +98,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import com.winhub.hernandez.R
 import com.winhub.hernandez.XServerDisplayActivity
 import com.winhub.hernandez.container.Container
@@ -257,7 +258,12 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     // Back from a detail re-parks focus on the rail item we came from. Opening a detail parks
     // focus on its own Back button (see DeckContainerDetailScreen), never on an invisible node.
     LaunchedEffect(deckDetail) {
-        if (deckDetail == null && introDone) runCatching { railFocus.requestFocus() }
+        if (deckDetail == null && introDone) {
+            // Wait one frame: the closing detail is still animating out and owns focus, so an
+            // immediate request can be dropped and the D-pad is left with nowhere to go.
+            withFrameNanos { }
+            runCatching { railFocus.requestFocus() }
+        }
     }
 
     // Truly full screen: the system status/nav bars go with the top bar, restored on leaving.

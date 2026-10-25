@@ -953,6 +953,9 @@ internal fun DeckStretchyTabs(
 
     val targetLeft = lefts.getOrNull(selected)
     val targetRight = rights.getOrNull(selected)
+    // A different label set means the old pixel positions are meaningless; snap instead of
+    // sliding the pill in from wherever the previous strip left it.
+    LaunchedEffect(labels.size) { lastSelected = -1 }
     LaunchedEffect(selected, targetLeft, targetRight) {
         val l = targetLeft ?: return@LaunchedEffect
         val r = targetRight ?: return@LaunchedEffect
@@ -968,19 +971,22 @@ internal fun DeckStretchyTabs(
                     end.snapTo(r)
                 }
             }
-            l >= start.value -> {
-                coroutineScope {
-                    launch { end.animateTo(r, tween(280, easing = DeckEase)) }
-                    launch { start.animateTo(l, tween(240, delayMillis = 100, easing = DeckEase)) }
-                }
-                lastSelected = selected
-            }
             else -> {
-                coroutineScope {
-                    launch { start.animateTo(l, tween(280, easing = DeckEase)) }
-                    launch { end.animateTo(r, tween(240, delayMillis = 100, easing = DeckEase)) }
-                }
+                // Remember the requested tab before animating: if the player flips back before the
+                // stretch finishes, the cancelled run must not leave `lastSelected` on the old tab
+                // (that stale value made the pill snap instead of gliding back).
                 lastSelected = selected
+                if (l >= start.value) {
+                    coroutineScope {
+                        launch { end.animateTo(r, tween(280, easing = DeckEase)) }
+                        launch { start.animateTo(l, tween(240, delayMillis = 100, easing = DeckEase)) }
+                    }
+                } else {
+                    coroutineScope {
+                        launch { start.animateTo(l, tween(280, easing = DeckEase)) }
+                        launch { end.animateTo(r, tween(240, delayMillis = 100, easing = DeckEase)) }
+                    }
+                }
             }
         }
     }

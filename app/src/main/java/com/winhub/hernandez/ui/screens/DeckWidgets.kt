@@ -175,16 +175,7 @@ internal fun Modifier.deckDragItem(key: Any): Modifier {
             val local = coords.boundsInRoot().translate(-registry.rootTopLeft.x, -registry.rootTopLeft.y)
             if (registry.bounds[key] != local) registry.bounds[key] = local
         }
-        .onFocusChanged { state ->
-            if (state.isFocused || state.hasFocus) {
-                registry.focusedKey = key
-            } else if (registry.focusedKey == key) {
-                // Focus left this item (for a non-drag control or out of the frame). Without
-                // this the frame kept its ring on the last tile while the D-pad was elsewhere,
-                // which reads as a second cursor.
-                registry.focusedKey = null
-            }
-        }
+        .onFocusChanged { if (it.isFocused || it.hasFocus) registry.focusedKey = key }
 }
 
 private fun Rect.translate(dx: Float, dy: Float): Rect =
@@ -243,7 +234,15 @@ internal fun DeckDragFrame(
     Box(
         modifier = modifier
             .onGloballyPositioned { registry.rootTopLeft = it.positionInRoot() }
-            .onFocusChanged { hasFocus = it.isFocused || it.hasFocus }
+            .onFocusChanged { state ->
+                hasFocus = state.isFocused || state.hasFocus
+                if (!hasFocus) {
+                    // Focus left this surface (tab/page swap, or a control outside the frame).
+                    // Drop the last item so its stroke cannot remain painted on the new page;
+                    // keep `armed` so returning to the frame still stretches instead of snapping.
+                    registry.focusedKey = null
+                }
+            }
             .drawWithContent {
                 drawContent()
                 if (hasFocus && armed && right.value > left.value) {

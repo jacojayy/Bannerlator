@@ -101,7 +101,6 @@ import com.winhub.hernandez.ui.findActivity
 import com.winhub.hernandez.ui.moveFocusSafely
 import com.winhub.hernandez.util.InAppFilePicker
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -355,21 +354,24 @@ internal fun DeckConfigDialog(
     subtitle: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val focusManager = LocalFocusManager.current
-    val editTracker = LocalDeckEditTracker.current
-    val rootFocus = remember { FocusRequester() }
-    // Controller-first: the popup owns focus on open so the very first D-pad press walks it.
-    // Requesting focus in the first composition happens before the dialog window is attached and
-    // silently fails, leaving the D-pad walking the screen behind the popup — wait a frame.
-    LaunchedEffect(Unit) {
-        delay(50)
-        runCatching { rootFocus.requestFocus() }
-        // Enter the content so the first press lands on a real control instead of the root.
-        runCatching { focusManager.moveFocusSafely(FocusDirection.Next) }
-    }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        // These must come from the dialog's own composition. Reading them outside the Dialog
+        // captured the *screen behind* focus manager, so a D-pad press inside the popup walked
+        // the container tab underneath it ("popup jumps to another page").
+        val focusManager = LocalFocusManager.current
+        val editTracker = LocalDeckEditTracker.current
         val dialogView = LocalView.current
+        val rootFocus = remember { FocusRequester() }
         DeckDialogControllerBridge()
+        // post() runs after the dialog window is attached; requestFocus before that silently
+        // fails and leaves the D-pad on the screen behind.
+        LaunchedEffect(dialogView) {
+            dialogView.post {
+                runCatching { rootFocus.requestFocus() }
+                // Enter the content so the first press lands on a real control, not the root.
+                runCatching { focusManager.moveFocusSafely(FocusDirection.Next) }
+            }
+        }
         Column(
             modifier = Modifier
                 .fillMaxWidth(0.96f)

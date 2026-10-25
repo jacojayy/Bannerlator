@@ -1112,8 +1112,8 @@ internal fun DeckTextRow(
 internal fun DeckButton(
     text: String,
     primary: Boolean = true,
-    onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onClick: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     Box(

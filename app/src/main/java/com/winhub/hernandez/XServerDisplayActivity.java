@@ -650,6 +650,10 @@ public class XServerDisplayActivity extends AppCompatActivity {
     // is which d3d module the game has mapped in — we scan /proc/<pid>/maps (the app's own wine
     // processes are the only ones visible under our uid).
     private Thread dxApiThread;
+    // Game pid resolved by findRunningGamePid, cached across polls so the dx-api-detect thread does
+    // not re-walk /proc and re-read every cmdline every 2 s. Cleared when the pid dies or no longer
+    // looks like the launched game.
+    private String dxApiCachedPid;
 
     /**
      * Resolve the game's ACTUAL graphics API from the modules the guest wine processes have mapped,
@@ -680,20 +684,20 @@ public class XServerDisplayActivity extends AppCompatActivity {
                     new java.io.FileReader(new java.io.File(p, "maps")))) {
                 String line;
                 while ((line = r.readLine()) != null) {
-                    line = line.toLowerCase();   // module names can differ in case; match case-insensitively
-                    if (line.indexOf(".dll") < 0) continue;
+                    // Case-insensitive matching without allocating a lowercased copy of every maps line.
+                    if (indexOfIgnoreCase(line, ".dll") < 0) continue;
                     // NOTE: do NOT break on the d3d12 hit — a dual-API build maps d3d12core.dll for a
                     // startup probe yet renders on d3d11 (both resident), so we must keep scanning this
                     // process to learn whether d3d11 is ALSO mapped (resolved below via the engine log).
-                    if (line.indexOf("d3d12core.dll") >= 0 || line.indexOf("d3d12.dll") >= 0) { d3d12 = true; pHasD3d12 = true; }
-                    else if (line.indexOf("d3d11.dll") >= 0) d3d11 = true;
-                    else if (line.indexOf("d3d10.dll") >= 0) d3d10 = true;
-                    else if (line.indexOf("d3d9.dll") >= 0)  d3d9  = true;
+                    if (indexOfIgnoreCase(line, "d3d12core.dll") >= 0 || indexOfIgnoreCase(line, "d3d12.dll") >= 0) { d3d12 = true; pHasD3d12 = true; }
+                    else if (indexOfIgnoreCase(line, "d3d11.dll") >= 0) d3d11 = true;
+                    else if (indexOfIgnoreCase(line, "d3d10.dll") >= 0) d3d10 = true;
+                    else if (indexOfIgnoreCase(line, "d3d9.dll") >= 0)  d3d9  = true;
                     // Wine PE names: winevulkan.dll (the Wine Vulkan driver) and vulkan-1.dll (the
                     // loader apps link against); opengl32.dll is Wine's GL. DXVK/VKD3D also pull in
                     // vulkan-1.dll, hence the D3D-first ordering below.
-                    else if (line.indexOf("winevulkan.dll") >= 0 || line.indexOf("vulkan-1.dll") >= 0) vulkan = true;
-                    else if (line.indexOf("opengl32.dll") >= 0) opengl = true;
+                    else if (indexOfIgnoreCase(line, "winevulkan.dll") >= 0 || indexOfIgnoreCase(line, "vulkan-1.dll") >= 0) vulkan = true;
+                    else if (indexOfIgnoreCase(line, "opengl32.dll") >= 0) opengl = true;
                     // Once BOTH top ranks are seen we have everything the ambiguous dual-API case needs;
                     // stop scanning this process early (perf parity with the old break-on-d3d12).
                     if (d3d12 && d3d11) break;
@@ -731,6 +735,15 @@ public class XServerDisplayActivity extends AppCompatActivity {
         if (opengl) return guestGlIsZink() ? "Zink" : "OpenGL";
         // 3. Nothing graphics-related mapped yet — keep polling (unchanged behaviour).
         return null;
+    }
+
+    /** Case-insensitive indexOf without allocating a lowercased copy of the haystack. */
+    private static int indexOfIgnoreCase(String haystack, String needle) {
+        final int max = haystack.length() - needle.length();
+        for (int i = 0; i <= max; i++) {
+            if (haystack.regionMatches(true, i, needle, 0, needle.length())) return i;
+        }
+        return -1;
     }
 
     // Cache for resolveDualApiFromEngineLog: Player.log is near-static once the device is created,
@@ -1095,18 +1108,37 @@ public class XServerDisplayActivity extends AppCompatActivity {
      * polling). Never throws.
      */
     private String findRunningGamePid() {
+        String wanted = shortcutExeBasename();     // preferred match; may be null
+
+        // Reuse the last resolved pid while it still names the game. This turns the steady-state poll
+        // into ONE /proc/<pid>/cmdline read instead of a full /proc walk.
+        if (dxApiCachedPid != null) {
+            String cachedExe = readArgv0Exe(dxApiCachedPid);
+            if (cachedExe != null) {
+                String cachedBase = cachedExe.substring(cachedExe.lastIndexOf('/') + 1);
+                boolean stillGame = wanted != null
+                        ? wanted.equals(cachedBase)
+                        : looksLikeGameExe(cachedExe, cachedBase);
+                if (stillGame) return dxApiCachedPid;
+            }
+            dxApiCachedPid = null;
+        }
+
         java.io.File[] pids = new java.io.File("/proc").listFiles();
         if (pids == null) return null;
-        String wanted = shortcutExeBasename();     // preferred match; may be null
         String fallbackPid = null;
         for (java.io.File p : pids) {
             if (!p.isDirectory() || !android.text.TextUtils.isDigitsOnly(p.getName())) continue;
             String exe = readArgv0Exe(p.getName());
             if (exe == null) continue;
             String base = exe.substring(exe.lastIndexOf('/') + 1);
-            if (wanted != null && wanted.equals(base)) return p.getName();       // exact shortcut match wins
+            if (wanted != null && wanted.equals(base)) {                         // exact shortcut match wins
+                dxApiCachedPid = p.getName();
+                return dxApiCachedPid;
+            }
             if (fallbackPid == null && looksLikeGameExe(exe, base)) fallbackPid = p.getName();
         }
+        dxApiCachedPid = fallbackPid;
         return fallbackPid;
     }
 
@@ -1311,7 +1343,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
     /**
      * Continuously track the active graphics API and keep EVERY HUD's label live, like the other
      * metrics. Runs on a background thread at a ~2s cadence (off the render path, so it never stalls a
-     * frame). We only push to the HUDs when the API actually CHANGES — the label is near-static — and
+     * frame), backing off to 15 s once the result is stable. We only push to the HUDs when the API
+     * actually CHANGES — the label is near-static — and
      * {@link #detectActiveDxApi} early-exits its /proc/maps scan on the top-priority hit, so the cost
      * is negligible even on weak devices.
      *
@@ -1319,11 +1352,17 @@ public class XServerDisplayActivity extends AppCompatActivity {
      * GL before loading d3d12core.dll) used to freeze on "Zink"; now the label upgrades to the real API
      * ("D3D12 · VKD3D") as soon as it loads. It never downgrades, because closed API DLLs stay resident
      * (the multi-API AIO test therefore shows the highest API loaded — a known limit of module scanning).
+     *
+     * <p>Once a D3D API is proven the thread stops: that result is terminal (it can never downgrade),
+     * and keeping the /proc/maps walk alive just burns CPU for the rest of the session. A native
+     * (Vulkan/OpenGL/Zink) label is still allowed to upgrade, but after five identical polls the
+     * cadence drops from 2 s to 15 s.
      */
     private void startDxApiDetection(final String rendererMode, final String fallback) {
         stopDxApiDetection();
         dxApiThread = new Thread(() -> {
             String lastApi = null;
+            int stablePolls = 0;
             while (!Thread.currentThread().isInterrupted()) {
                 // HUD off -> don't do the /proc/maps API scan or push a label; idle-sleep and re-check.
                 // Keeps the thread alive so the label resumes when "Show HUD" is turned back on, and
@@ -1344,6 +1383,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
                 if (api == null) api = resolveApiFromEngineLogTopLevel(fallback);   // P2
                 if (api == null) api = resolveApiFromWrapperLogs(fallback);         // P3
                 if (api == null) api = detectActiveDxApi(fallback);                  // P4
+                if (api != null && api.equals(lastApi)) stablePolls++;
+                else stablePolls = 0;
                 if (api != null && !api.equals(lastApi)) {
                     lastApi = api;
                     // Classic FrameRating renderer line = "<host renderer> | <api>". Skip the prefix
@@ -1362,7 +1403,10 @@ public class XServerDisplayActivity extends AppCompatActivity {
                         if (fusionHud != null) fusionHud.setEngineLabel(apiFinal);
                     });
                 }
-                try { Thread.sleep(2000); } catch (InterruptedException e) { return; }
+                // A proven D3D API is terminal — stop walking /proc for the rest of the session.
+                if (api != null && api.startsWith("D3D")) return;
+                long delayMs = (api != null && stablePolls >= 5) ? 15000L : 2000L;
+                try { Thread.sleep(delayMs); } catch (InterruptedException e) { return; }
             }
         }, "dx-api-detect");
         dxApiThread.start();
@@ -7325,9 +7369,10 @@ public class XServerDisplayActivity extends AppCompatActivity {
                     envVars.put("LSFG_PROCESS", "bannerlator-lsfg");
                     // Publish the display vsync clock so the layer phase-locks its pacing instead of
                     // free-running and over-queuing the host compositor (the black-frame flicker root
-                    // cause). Runs from launch so it's live the instant FG is toggled on in-game; the
-                    // toggle path stops/restarts it, and onDestroy stops it.
-                    startVsyncClock();
+                    // cause). Only when this launch actually generates from frame one: a passthrough
+                    // launch has no layer pacing to feed, and the toggle path starts the clock the
+                    // instant FG is enabled in-game. onDestroy stops it.
+                    if (lsfgLaunchMult >= 2) startVsyncClock();
                     // Baseline the FG-reset tracker to the launch level so the first in-game change
                     // fires the presentation reset. Auto-enable containers already generate from frame
                     // one (lsfgLaunchMult >= 2), so a passthrough launch is level 0.

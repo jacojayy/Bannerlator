@@ -172,14 +172,24 @@ public abstract class ProcessHelper {
         resumeAllWineProcesses();
         terminateAllWineProcesses();
         long start = System.currentTimeMillis();
-        while (!listRunningWineProcesses().isEmpty()) {
+        while (true) {
+            // One scan per poll (the old loop scanned /proc with no sleep at all, so a stubborn
+            // process pegged a core and hammered the kernel for the whole grace period).
+            ArrayList<String> running = listRunningWineProcesses();
+            if (running.isEmpty()) return;
             if (System.currentTimeMillis() - start >= graceMs) {
-                break;
+                if (forceKill) {
+                    for (String process : running) {
+                        killProcess(Integer.parseInt(process));
+                    }
+                }
+                return;
             }
-        }
-        if (forceKill) {
-            for (String process : listRunningWineProcesses()) {
-                killProcess(Integer.parseInt(process));
+            try {
+                Thread.sleep(50L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
             }
         }
     }
@@ -403,12 +413,14 @@ public abstract class ProcessHelper {
             }
         });
 
+        if (allPids == null) return filteredPids;
+
         for (int index = 0; index < allPids.length; index++){
             String data = "";
-            try {
-                FileInputStream fr = new FileInputStream(proc + "/" + allPids[index] + "/stat");
-                BufferedReader br = new BufferedReader(new InputStreamReader(fr));
-                data = br.readLine();
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(
+                    new FileInputStream(proc + "/" + allPids[index] + "/stat")))) {
+                String line = br.readLine();
+                if (line != null) data = line;
             }
             catch (IOException e) {}
             // The comm field in /proc/<pid>/stat is truncated to 15 chars (TASK_COMM_LEN), so a game whose
@@ -417,15 +429,20 @@ public abstract class ProcessHelper {
             // manually paused. Also match the FULL, untruncated argv from /proc/<pid>/cmdline (same source
             // findLinuxPidByExe already uses) so the game engine is caught too. Additive: a pid the stat
             // check already matched is still matched — we only ever ADD the previously-missed process.
-            if (data == null) data = "";
-            String cmdline = readCmdline(proc, allPids[index]);
-            String haystack = data + " " + cmdline;
+            // Read cmdline only when stat did not already match, so the common system process costs one
+            // small read instead of two.
+            boolean matched = false;
             for (String filter : filterList) {
-                if (haystack.contains(filter)) {
-                    filteredPids.add(allPids[index]);
-                    break;   // add each pid at most once (avoids the double-add when it matches both filters)
+                if (data.contains(filter)) { matched = true; break; }
+            }
+            if (!matched) {
+                String cmdline = readCmdline(proc, allPids[index]);
+                data = data + " " + cmdline;
+                for (String filter : filterList) {
+                    if (data.contains(filter)) { matched = true; break; }
                 }
             }
+            if (matched) filteredPids.add(allPids[index]);
         }
         return filteredPids;
     }

@@ -1272,9 +1272,10 @@ public class XServerDisplayActivity extends AppCompatActivity {
             glZinkHealedWindowId = wid;
         }
         fpsCounter.tick();
-        if (frameRating != null) frameRating.update();
-        if (frameRatingHorizontal != null) frameRatingHorizontal.update();
-        if (perfHud != null) perfHud.update();
+        if (frameRating != null && frameRating.getVisibility() == View.VISIBLE) frameRating.update();
+        if (frameRatingHorizontal != null && frameRatingHorizontal.getVisibility() == View.VISIBLE)
+            frameRatingHorizontal.update();
+        if (perfHud != null && perfHud.getVisibility() == View.VISIBLE) perfHud.update();
     }
 
     /**

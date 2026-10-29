@@ -504,7 +504,7 @@ internal fun DeckGroup(title: String, content: @Composable ColumnScope.() -> Uni
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 16.dp, bottom = 6.dp),
+            .padding(top = 10.dp, bottom = 4.dp),
     ) {
         Text(
             text = title.uppercase(),
@@ -559,7 +559,7 @@ internal fun DeckRow(
                     .clickable(interactionSource = rowInteraction, indication = null, onClick = onConfigClick)
                 else Modifier,
             )
-            .padding(horizontal = 14.dp, vertical = 11.dp),
+            .padding(horizontal = 12.dp, vertical = 7.dp),
     ) {
         Column(
             modifier = Modifier
@@ -568,14 +568,14 @@ internal fun DeckRow(
         ) {
             Text(
                 text = label,
-                fontSize = 15.sp,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = DeckPalette.onBackground,
             )
             if (hint != null) {
                 Text(
                     text = hint,
-                    fontSize = 12.5.sp,
+                    fontSize = 12.sp,
                     color = DeckPalette.onSurfaceVariant,
                     modifier = Modifier.padding(top = 2.dp),
                     maxLines = 2,
@@ -744,13 +744,13 @@ internal fun DeckValueChip(text: String, open: Boolean, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
         modifier = Modifier
-            .widthIn(min = 120.dp)
-            .heightIn(min = 44.dp)
+            .widthIn(min = 100.dp)
+            .heightIn(min = 40.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(DeckPalette.surfaceVariant)
             .border(1.dp, DeckPalette.line2, RoundedCornerShape(10.dp))
             .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
         Text(
             text = text,

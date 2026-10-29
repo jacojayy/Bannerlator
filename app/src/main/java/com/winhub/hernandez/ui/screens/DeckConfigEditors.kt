@@ -283,17 +283,29 @@ internal fun DeckChoiceRowWithDownload(
 
 /**
  * Controller bridge for a [Dialog] window. A Dialog owns its own window, so the Activity-level
- * stick→D-pad rewrite and the A/B face-button rewrite never reach it. Translate both here so the
- * popup is walkable with the same pad as the rest of the Deck shell.
- *
- * The listener is installed on the dialog's ComposeView (it sees generic motion before Compose's
- * own handler). The view belongs to this dialog and is discarded when it closes, so there is no
- * shared listener to restore. It always returns false, so it only observes — never swallows input.
+ * stick→D-pad rewrite and the A/B face-button rewrite never reach it. The Compose focus system can
+ * also fail to take focus before the window is attached, leaving D-pad dead. Both listeners sit on
+ * the dialog's decor view as a fallback: they only run when Compose did not handle the event.
  */
 @Composable
-private fun DeckDialogControllerBridge() {
+private fun DeckDialogControllerBridge(
+    rootFocus: FocusRequester,
+    editTracker: DeckEditTracker,
+    onDismiss: () -> Unit,
+) {
     val view = LocalView.current
-    val listener = remember(view) {
+    val focusManager = LocalFocusManager.current
+
+    fun walk(dir: FocusDirection): Boolean {
+        if (focusManager.moveFocusSafely(dir)) return true
+        // Nothing in the dialog owns Compose focus yet: give the root focus, then walk.
+        runCatching { view.requestFocus() }
+        runCatching { rootFocus.requestFocus() }
+        return focusManager.moveFocusSafely(dir) ||
+            focusManager.moveFocusSafely(FocusDirection.Next)
+    }
+
+    val motion = remember(view, focusManager, rootFocus) {
         var heldKey = 0
         var lastMs = 0L
         android.view.View.OnGenericMotionListener { _, event ->
@@ -308,35 +320,76 @@ private fun DeckDialogControllerBridge() {
                     y = event.getAxisValue(MotionEvent.AXIS_Y)
                 }
                 val dz = 0.6f
-                val key = when {
-                    x <= -dz && kotlin.math.abs(x) >= kotlin.math.abs(y) ->
-                        android.view.KeyEvent.KEYCODE_DPAD_LEFT
-                    x >= dz && kotlin.math.abs(x) >= kotlin.math.abs(y) ->
-                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT
-                    y <= -dz -> android.view.KeyEvent.KEYCODE_DPAD_UP
-                    y >= dz -> android.view.KeyEvent.KEYCODE_DPAD_DOWN
+                val dir = when {
+                    x <= -dz && kotlin.math.abs(x) >= kotlin.math.abs(y) -> 1 // left
+                    x >= dz && kotlin.math.abs(x) >= kotlin.math.abs(y) -> 2 // right
+                    y <= -dz -> 3 // up
+                    y >= dz -> 4 // down
                     else -> 0
                 }
                 val now = SystemClock.uptimeMillis()
-                if (key == 0) {
+                if (dir == 0) {
                     heldKey = 0
-                } else if (key != heldKey || now - lastMs > 380L) {
-                    // Edge-trigger once, then auto-repeat while held (same cadence as the shell).
-                    heldKey = key
+                } else if (dir != heldKey || now - lastMs > 380L) {
+                    heldKey = dir
                     lastMs = now
-                    view.dispatchKeyEvent(
-                        android.view.KeyEvent(now, now, android.view.KeyEvent.ACTION_DOWN, key, 0)
-                    )
-                    view.dispatchKeyEvent(
-                        android.view.KeyEvent(now, now, android.view.KeyEvent.ACTION_UP, key, 0)
+                    walk(
+                        when (dir) {
+                            1 -> FocusDirection.Left
+                            2 -> FocusDirection.Right
+                            3 -> FocusDirection.Up
+                            else -> FocusDirection.Down
+                        }
                     )
                 }
             }
-            // Never consume: the event still reaches Compose/system handling.
+            // Never consume: Compose/system still gets the event.
             false
         }
     }
-    SideEffect { view.setOnGenericMotionListener(listener) }
+
+    val keys = remember(view, focusManager, rootFocus) {
+        android.view.View.OnKeyListener { _, keyCode, event ->
+            if (event.action != android.view.KeyEvent.ACTION_DOWN) return@OnKeyListener false
+            when (keyCode) {
+                android.view.KeyEvent.KEYCODE_DPAD_UP -> { walk(FocusDirection.Up); true }
+                android.view.KeyEvent.KEYCODE_DPAD_DOWN -> { walk(FocusDirection.Down); true }
+                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> { walk(FocusDirection.Left); true }
+                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> { walk(FocusDirection.Right); true }
+                android.view.KeyEvent.KEYCODE_BUTTON_A -> {
+                    // No Compose node handled A: focus the first control, then activate it.
+                    runCatching { view.requestFocus() }
+                    runCatching { rootFocus.requestFocus() }
+                    focusManager.moveFocusSafely(FocusDirection.Next)
+                    val now = SystemClock.uptimeMillis()
+                    view.dispatchKeyEvent(
+                        android.view.KeyEvent(
+                            now, now, android.view.KeyEvent.ACTION_DOWN,
+                            android.view.KeyEvent.KEYCODE_DPAD_CENTER, 0
+                        )
+                    )
+                    view.dispatchKeyEvent(
+                        android.view.KeyEvent(
+                            now, now, android.view.KeyEvent.ACTION_UP,
+                            android.view.KeyEvent.KEYCODE_DPAD_CENTER, 0
+                        )
+                    )
+                    true
+                }
+                android.view.KeyEvent.KEYCODE_BUTTON_B,
+                android.view.KeyEvent.KEYCODE_BACK -> {
+                    if (editTracker.editing) false else { onDismiss(); true }
+                }
+                else -> false
+            }
+        }
+    }
+
+    SideEffect {
+        val root = view.rootView
+        root.setOnGenericMotionListener(motion)
+        root.setOnKeyListener(keys)
+    }
 }
 
 /**
@@ -359,7 +412,7 @@ internal fun DeckConfigDialog(
         val editTracker = LocalDeckEditTracker.current
         val dialogView = LocalView.current
         val rootFocus = remember { FocusRequester() }
-        DeckDialogControllerBridge()
+        DeckDialogControllerBridge(rootFocus, editTracker, onDismiss)
         // post() runs after the dialog window is attached; requestFocus before that silently
         // fails and leaves the D-pad on the screen behind.
         LaunchedEffect(dialogView) {
@@ -427,14 +480,14 @@ internal fun DeckConfigDialog(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 22.dp, end = 10.dp, top = 14.dp, bottom = 12.dp),
+                    .padding(start = 16.dp, end = 6.dp, top = 10.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                     Text(
                         text = title,
                         color = DeckPalette.onBackground,
-                        fontSize = 20.sp,
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.Black,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -443,7 +496,7 @@ internal fun DeckConfigDialog(
                         Text(
                             text = subtitle,
                             color = DeckPalette.onSurfaceVariant,
-                            fontSize = 12.5.sp,
+                            fontSize = 12.sp,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(top = 2.dp),
@@ -460,7 +513,7 @@ internal fun DeckConfigDialog(
                     .fillMaxWidth()
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 22.dp, vertical = 14.dp),
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
                 content = content,
             )
         }

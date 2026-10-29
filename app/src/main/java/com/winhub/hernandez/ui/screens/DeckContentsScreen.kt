@@ -553,9 +553,9 @@ private fun DeckContentsBrowseTab(vm: ContentsHubViewModel) {
             else -> {
                 DeckDragFrame(modifier = Modifier.fillMaxSize()) {
                     LazyVerticalGrid(
-                        columns = GridCells.Adaptive(190.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        columns = GridCells.Adaptive(170.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         gridItemsIndexed(
@@ -661,27 +661,27 @@ private fun DeckCategoryCard(category: DeckContentCategory, onClick: () -> Unit)
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 96.dp)
+            .heightIn(min = 72.dp)
             .clip(shape)
             .background(DeckPalette.surface)
             .border(1.dp, DeckPalette.line, shape)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(14.dp),
+            .padding(10.dp),
     ) {
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .size(36.dp)
+                .clip(RoundedCornerShape(10.dp))
                 .background(DeckPalette.primary.copy(alpha = 0.14f)),
         ) {
-            Icon(category.icon, contentDescription = null, tint = DeckPalette.primary, modifier = Modifier.size(23.dp))
+            Icon(category.icon, contentDescription = null, tint = DeckPalette.primary, modifier = Modifier.size(19.dp))
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 text = category.title,
-                fontSize = 15.sp,
+                fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = DeckPalette.onBackground,
                 maxLines = 1,
@@ -735,14 +735,14 @@ private fun DeckCatalogCard(
             .clip(RoundedCornerShape(14.dp))
             .background(DeckPalette.surface)
             .border(1.dp, DeckPalette.line, RoundedCornerShape(14.dp))
-            .padding(14.dp),
+            .padding(10.dp),
     ) {
         Row(verticalAlignment = Alignment.Top) {
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .size(42.dp)
-                    .clip(RoundedCornerShape(11.dp))
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(9.dp))
                     .background(
                         if (item.isDriver) DeckPalette.primary.copy(alpha = 0.14f)
                         else DeckPalette.surfaceVariant,
@@ -752,7 +752,7 @@ private fun DeckCatalogCard(
                     deckContentTypeIcon(item.type),
                     contentDescription = null,
                     tint = if (item.isDriver) DeckPalette.primary else DeckPalette.onSurfaceVariant,
-                    modifier = Modifier.size(21.dp),
+                    modifier = Modifier.size(18.dp),
                 )
             }
             Spacer(Modifier.width(12.dp))
@@ -963,23 +963,23 @@ private fun DeckSourceCard(
             .background(DeckPalette.surface)
             .border(1.dp, DeckPalette.line, shape)
             .clickable(interactionSource = interaction, indication = null, onClick = onOpen)
-            .padding(14.dp),
+            .padding(10.dp),
     ) {
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(42.dp)
-                .clip(RoundedCornerShape(11.dp))
+                .size(34.dp)
+                .clip(RoundedCornerShape(9.dp))
                 .background(DeckPalette.primary.copy(alpha = 0.12f)),
         ) {
             Icon(
                 if (source.driverOnly) Icons.Filled.Memory else Icons.Filled.Folder,
                 contentDescription = null,
                 tint = DeckPalette.primary,
-                modifier = Modifier.size(21.dp),
+                modifier = Modifier.size(18.dp),
             )
         }
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(

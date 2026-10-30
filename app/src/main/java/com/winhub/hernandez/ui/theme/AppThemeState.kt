@@ -49,6 +49,10 @@ object AppThemeState {
     private val _fontScale = MutableStateFlow(0.9f)
     val fontScale: StateFlow<Float> = _fontScale
 
+    /** General tab style for Deck Mode: "horizontal" (top strip, default) or "vertical" (left rail). */
+    private val _generalTabStyle = MutableStateFlow("horizontal")
+    val generalTabStyle: StateFlow<String> = _generalTabStyle
+
     // The preset whose background/surface colors back the custom accent
     private val _customBaseIndex = MutableStateFlow(0)
 
@@ -133,6 +137,7 @@ object AppThemeState {
         _showSdStorage.value = themePrefs.getBoolean("show_sd_storage", true)
         _uiScale.value = themePrefs.getFloat("ui_scale", 0.9f).coerceIn(0.5f, 1.5f)
         _fontScale.value = themePrefs.getFloat("font_scale", 0.9f).coerceIn(0.5f, 1.5f)
+        _generalTabStyle.value = if (themePrefs.getBoolean("general_tab_style_horizontal", true)) "horizontal" else "vertical"
         refreshDeckPreset()
     }
 
@@ -164,6 +169,13 @@ object AppThemeState {
         val clamped = scale.coerceIn(0.5f, 1.5f)
         _fontScale.value = clamped
         themePrefs.edit().putFloat("font_scale", clamped).apply()
+    }
+
+    /** Deck Mode general tab style: "horizontal" (top strip, default) or "vertical" (left rail). */
+    fun setGeneralTabStyle(style: String) {
+        val s = if (style == "vertical") "vertical" else "horizontal"
+        _generalTabStyle.value = s
+        themePrefs.edit().putBoolean("general_tab_style_horizontal", s == "horizontal").apply()
     }
 
     fun setPreset(index: Int) {

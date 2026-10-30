@@ -84,6 +84,7 @@ import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.Text
@@ -91,6 +92,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -160,6 +162,7 @@ import java.io.FileOutputStream
 import com.winhub.hernandez.ui.ControllerFocusIndication
 import com.winhub.hernandez.ui.SocialContent
 import com.winhub.hernandez.ui.moveFocusSafely
+import com.winhub.hernandez.ui.theme.AppThemeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -226,6 +229,10 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     var section by remember { mutableStateOf("home") }
     var graphicPane by remember { mutableStateOf("gpu") }
     var deckDetail by remember { mutableStateOf<Int?>(null) }
+    // General tab style: "horizontal" (top strip, default) or "vertical" (left rail).
+    val tabStyle by AppThemeState.generalTabStyle.collectAsState()
+    val horizontalRail = tabStyle != "vertical"
+    val railSections = remember { deckSections() }
 
     // Controller-first back stack: B (or system Back) closes the container editor, then returns to
     // Home from any tab, then leaves Deck Mode.
@@ -310,6 +317,55 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
             LocalDeckEditTracker provides editTracker,
             LocalDeckMode provides true,
         ) {
+    // Horizontal style puts the sections in a top strip (L1/R1 switch them); vertical keeps the
+    // left rail. Both host the same pane content below/right of the nav.
+    if (horizontalRail) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Deck.background)
+                .onPreviewKeyEvent { e ->
+                    if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (e.key) {
+                        Key.ButtonB -> {
+                            if (editTracker.editing) false
+                            else if (backLayer.onBack?.invoke() == true) true
+                            else if (tabs.onBack?.invoke() == true) true
+                            else { goBack(); true }
+                        }
+                        // L1/R1 switch the top-strip sections.
+                        Key.ButtonL1 -> { stepSection(railSections, section, -1) { section = it; deckDetail = null }; true }
+                        Key.ButtonR1 -> { stepSection(railSections, section, 1) { section = it; deckDetail = null }; true }
+                        else -> false
+                    }
+                },
+        ) {
+            DeckTopTabs(
+                sections = railSections,
+                selected = section,
+                onSelect = { next -> section = next; deckDetail = null },
+            )
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clipToBounds(),
+            ) {
+                DeckPaneContent(
+                    section = section,
+                    deckDetail = deckDetail,
+                    graphicPane = graphicPane,
+                    onEditContainer = { id -> section = "containers"; deckDetail = id },
+                    onDetailBack = { deckDetail = null },
+                    onDetailOpen = { id -> deckDetail = id },
+                    onGraphicPane = { graphicPane = it },
+                    homeFocus = homeHeroFocus,
+                )
+                DeckLegend(Modifier.align(Alignment.BottomEnd))
+                DeckCornerGlow()
+            }
+        }
+    } else {
     Row(
         modifier = Modifier
             .fillMaxSize()
@@ -354,108 +410,20 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 .fillMaxHeight()
                 .clipToBounds(),
         ) {
-            // Every tab switch slides the incoming pane up from the bottom while the outgoing one
-            // drops away — one motion for the whole shell.
-            AnimatedContent(
-                targetState = section,
-                transitionSpec = {
-                    (fadeIn(tween(300, delayMillis = 80, easing = DeckEase)) +
-                        slideInVertically(tween(420, delayMillis = 80, easing = DeckEase)) { it / 24 })
-                        .togetherWith(
-                            fadeOut(tween(170, easing = DeckEase)) +
-                                slideOutVertically(tween(170, easing = DeckEase)) { -it / 40 },
-                        )
-                },
-                modifier = Modifier.fillMaxSize(),
-                label = "deckSection",
-            ) { currentSection ->
-                when (currentSection) {
-                    "home" -> DeckHome(heroFocus = homeHeroFocus, onEditContainer = { id -> section = "containers"; deckDetail = id })
-                    "containers" -> AnimatedContent(
-                        targetState = deckDetail,
-                        transitionSpec = {
-                            (fadeIn(tween(300, delayMillis = 80, easing = DeckEase)) +
-                                slideInVertically(tween(420, delayMillis = 80, easing = DeckEase)) { it / 24 })
-                                .togetherWith(
-                                    fadeOut(tween(170, easing = DeckEase)) +
-                                        slideOutVertically(tween(170, easing = DeckEase)) { -it / 40 },
-                                )
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                        label = "deckDetail",
-                    ) { detailId ->
-                        if (detailId != null) {
-                            // Per-id key: the screen's remembered sections/focus must not survive a
-                            // switch from one container (or New / Defaults) to another.
-                            key(detailId) {
-                                DeckContainerDetailScreen(
-                                    containerId = detailId,
-                                    onNavigateBack = { deckDetail = null },
-                                )
-                            }
-                        } else {
-                            DeckContainersScreen(onEditContainer = { id -> deckDetail = id })
-                        }
-                    }
-                    "stores" -> DeckStoresScreen()
-                    "file_manager" -> FileManagerScreen(deckMode = true)
-                    "graphics" -> DeckGraphicsPane(
-                        pane = graphicPane,
-                        onSelect = { graphicPane = it },
-                    )
-                    "input_controls" -> InputControlsScreen()
-                    "contents" -> DeckContentsScreen()
-                    // The full Save Manager (Steam / Custom / Epic / GOG / Settings), in Deck chrome.
-                    "saves" -> SaveManagerScreen(deckMode = true)
-                    "social_hub" -> SocialContent()
-                    "settings" -> DeckSettingsScreen()
-                    // Defensive fallback only; never composes alongside the "home" branch, so it
-                    // gets its own requester instead of sharing the rail's homeHeroFocus.
-                    else -> DeckHome(onEditContainer = { id -> section = "containers"; deckDetail = id })
-                }
-            }
-
-            // Controller legend: the one place a player can look to know what L1/R1 do here.
-            // Draw-only text, so it never becomes a focus stop.
-            Text(
-                text = "A Select   B Back   L1/R1 Move   Stick / D-pad Move",
-                color = Deck.onSurfaceVariant.copy(alpha = 0.75f),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.6.sp,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 14.dp, bottom = 8.dp),
+            DeckPaneContent(
+                section = section,
+                deckDetail = deckDetail,
+                graphicPane = graphicPane,
+                onEditContainer = { id -> section = "containers"; deckDetail = id },
+                onDetailBack = { deckDetail = null },
+                onDetailOpen = { id -> deckDetail = id },
+                onGraphicPane = { graphicPane = it },
+                homeFocus = homeHeroFocus,
             )
-
-            // DroidDeck's corner light — one circular accent glow just inside the top right of
-            // every pane. Draw-only, so it never intercepts touches meant for the screen
-            // underneath, and anchored so it stops short of the pane's content instead of washing
-            // across it. The accent is read in composition so a theme change invalidates the draw.
-            val cornerAccent = Deck.primary
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .drawBehind {
-                        val radius = 460.dp.toPx()
-                        val center = Offset(size.width - radius * 0.35f, radius * 0.35f)
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    cornerAccent.copy(alpha = 0.24f),
-                                    cornerAccent.copy(alpha = 0.10f),
-                                    cornerAccent.copy(alpha = 0.04f),
-                                    Color.Transparent,
-                                ),
-                                center = center,
-                                radius = radius,
-                            ),
-                            radius = radius,
-                            center = center,
-                        )
-                    },
-            )
+            DeckLegend(Modifier.align(Alignment.BottomEnd))
+            DeckCornerGlow()
         }
+    }
     }
         if (!introDone) {
             DeckIntro(onDone = { introDone = true })
@@ -1151,6 +1119,197 @@ private fun DeckWordmark() {
                 .background(Deck.primary),
         )
     }
+}
+
+/** Move the section selection forward/back, wrapping at the ends. */
+private fun stepSection(
+    sections: List<DeckSection>,
+    current: String,
+    delta: Int,
+    onSelect: (String) -> Unit,
+) {
+    if (sections.isEmpty()) return
+    val idx = sections.indexOfFirst { it.key == current }.coerceAtLeast(0)
+    val next = ((idx + delta) % sections.size + sections.size) % sections.size
+    onSelect(sections[next].key)
+}
+
+/** The pane body shared by both rail styles: section switch + the per-section screens. */
+@Composable
+private fun DeckPaneContent(
+    section: String,
+    deckDetail: Int?,
+    graphicPane: String,
+    onEditContainer: (Int) -> Unit,
+    onDetailBack: () -> Unit,
+    onDetailOpen: (Int) -> Unit,
+    onGraphicPane: (String) -> Unit,
+    homeFocus: FocusRequester,
+) {
+    // Every tab switch slides the incoming pane up from the bottom while the outgoing one
+    // drops away — one motion for the whole shell.
+    AnimatedContent(
+        targetState = section,
+        transitionSpec = {
+            (fadeIn(tween(300, delayMillis = 80, easing = DeckEase)) +
+                slideInVertically(tween(420, delayMillis = 80, easing = DeckEase)) { it / 24 })
+                .togetherWith(
+                    fadeOut(tween(170, easing = DeckEase)) +
+                        slideOutVertically(tween(170, easing = DeckEase)) { -it / 40 },
+                )
+        },
+        modifier = Modifier.fillMaxSize(),
+        label = "deckSection",
+    ) { currentSection ->
+        when (currentSection) {
+            "home" -> DeckHome(heroFocus = homeFocus, onEditContainer = onEditContainer)
+            "containers" -> AnimatedContent(
+                targetState = deckDetail,
+                transitionSpec = {
+                    (fadeIn(tween(300, delayMillis = 80, easing = DeckEase)) +
+                        slideInVertically(tween(420, delayMillis = 80, easing = DeckEase)) { it / 24 })
+                        .togetherWith(
+                            fadeOut(tween(170, easing = DeckEase)) +
+                                slideOutVertically(tween(170, easing = DeckEase)) { -it / 40 },
+                        )
+                },
+                modifier = Modifier.fillMaxSize(),
+                label = "deckDetail",
+            ) { detailId ->
+                if (detailId != null) {
+                    // Per-id key: the screen's remembered sections/focus must not survive a
+                    // switch from one container (or New / Defaults) to another.
+                    key(detailId) {
+                        DeckContainerDetailScreen(
+                            containerId = detailId,
+                            onNavigateBack = onDetailBack,
+                        )
+                    }
+                } else {
+                    DeckContainersScreen(onEditContainer = onDetailOpen)
+                }
+            }
+            "stores" -> DeckStoresScreen()
+            "file_manager" -> FileManagerScreen(deckMode = true)
+            "graphics" -> DeckGraphicsPane(
+                pane = graphicPane,
+                onSelect = onGraphicPane,
+            )
+            "input_controls" -> InputControlsScreen()
+            "contents" -> DeckContentsScreen()
+            // The full Save Manager (Steam / Custom / Epic / GOG / Settings), in Deck chrome.
+            "saves" -> SaveManagerScreen(deckMode = true)
+            "social_hub" -> SocialContent()
+            "settings" -> DeckSettingsScreen()
+            // Defensive fallback only; never composes alongside the "home" branch, so it
+            // gets its own requester instead of sharing the rail's homeHeroFocus.
+            else -> DeckHome(onEditContainer = onEditContainer)
+        }
+    }
+}
+
+/** Controller legend: the one place a player can look to know what L1/R1 do here.
+ *  Draw-only text, so it never becomes a focus stop. */
+@Composable
+private fun DeckLegend(modifier: Modifier = Modifier) {
+    Text(
+        text = "A Select   B Back   L1/R1 Switch   Stick / D-pad Move",
+        color = Deck.onSurfaceVariant.copy(alpha = 0.75f),
+        fontSize = 10.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = 0.6.sp,
+        modifier = modifier.padding(end = 14.dp, bottom = 8.dp),
+    )
+}
+
+/** DroidDeck's corner light — one circular accent glow just inside the top right of every pane.
+ *  Draw-only, so it never intercepts touches meant for the screen underneath. */
+@Composable
+private fun DeckCornerGlow() {
+    val cornerAccent = Deck.primary
+    Box(
+        modifier = Modifier
+            .matchParentSize()
+            .drawBehind {
+                val radius = 460.dp.toPx()
+                val center = Offset(size.width - radius * 0.35f, radius * 0.35f)
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            cornerAccent.copy(alpha = 0.24f),
+                            cornerAccent.copy(alpha = 0.10f),
+                            cornerAccent.copy(alpha = 0.04f),
+                            Color.Transparent,
+                        ),
+                        center = center,
+                        radius = radius,
+                    ),
+                    radius = radius,
+                    center = center,
+                )
+            },
+    )
+}
+
+/**
+ * The horizontal top strip: every section's blue icon across the top. The selected one shows its
+ * name to the right of the icon; unselected ones are just the icon. L1/R1 (handled by the shell)
+ * switch sections, so this strip itself is not a focus target.
+ */
+@Composable
+private fun DeckTopTabs(
+    sections: List<DeckSection>,
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Deck.surface)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        sections.forEach { item ->
+            val current = selected == item.key
+            val interaction = remember { MutableInteractionSource() }
+            val focused by interaction.collectIsFocusedAsState()
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        when {
+                            current -> Deck.primary.copy(alpha = 0.16f)
+                            focused -> Deck.surfaceVariant
+                            else -> Color.Transparent
+                        }
+                    )
+                    .focusable()
+                    .onFocusChanged { if (it.isFocused && !current) onSelect(item.key) }
+                    .clickable(interactionSource = interaction, indication = null) { onSelect(item.key) }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            ) {
+                Icon(
+                    imageVector = item.icon,
+                    contentDescription = item.label,
+                    tint = Deck.primary,
+                    modifier = Modifier.size(22.dp),
+                )
+                if (current) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = item.label,
+                        color = Deck.primary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+    }
+    HorizontalDivider(color = Deck.line)
 }
 
 /**

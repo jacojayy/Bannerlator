@@ -102,7 +102,52 @@ fun AppearanceScreen() {
             onColorChanged = { AppThemeState.setCustomAccent(it) }
         )
 
+        Spacer(Modifier.height(4.dp))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Divider))
+
+        // ── General tab style (Deck Mode navigation) ────────────────
+        SectionLabel("General Tab Style")
+        Text(
+            text = "How the main Home / Storage / Controls tabs are laid out in Deck Mode",
+            color = OnSurfaceVariant,
+            fontSize = 12.sp
+        )
+        Spacer(Modifier.height(4.dp))
+        val tabStyle by AppThemeState.generalTabStyle.collectAsState()
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            TabStyleChoice("Horizontal", tabStyle == "horizontal", Modifier.weight(1f)) {
+                AppThemeState.setGeneralTabStyle("horizontal")
+            }
+            TabStyleChoice("Vertical", tabStyle == "vertical", Modifier.weight(1f)) {
+                AppThemeState.setGeneralTabStyle("vertical")
+            }
+        }
+
         Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun TabStyleChoice(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val bg = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+    val border = if (selected) MaterialTheme.colorScheme.primary else Divider
+    val textColor = if (selected) MaterialTheme.colorScheme.primary else OnSurfaceVariant
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(bg)
+            .border(1.dp, border, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 14.dp),
+    ) {
+        Text(label, color = textColor, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
     }
 }
 

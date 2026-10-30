@@ -562,6 +562,8 @@ class MainActivity : AppCompatActivity() {
             controllerTestFeedKeyEvent(event)
             return true
         }
+        if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&
+            com.winhub.hernandez.ui.screens.DeckHardKeys.handler?.invoke(event.keyCode) == true) return true
         // Compose only activates components on DPAD_CENTER/ENTER, and never reads a pad's B as
         // back — rewrite the face buttons for the launcher so the whole UI is walkable. The Wine
         // session runs in XServerDisplayActivity, which keeps the raw key codes.

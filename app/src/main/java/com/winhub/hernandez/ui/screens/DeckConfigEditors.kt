@@ -288,6 +288,20 @@ internal fun DeckChoiceRowWithDownload(
  * also fail to take focus before the window is attached, leaving D-pad dead. Both listeners sit on
  * the dialog's decor view as a fallback: they only run when Compose did not handle the event.
  */
+private var lastStepDir: FocusDirection? = null
+private var lastStepMs = 0L
+
+/**
+ * A pad's hat reaches the popup as BOTH a D-pad key and a hat-axis motion; walking on each moved the
+ * focus twice per press (1 - skip - 2). The same direction twice inside 40 ms is one press.
+ */
+private fun deckStepIsDuplicate(dir: FocusDirection): Boolean {
+    val now = SystemClock.uptimeMillis()
+    val dup = dir == lastStepDir && now - lastStepMs < 40L
+    if (!dup) { lastStepDir = dir; lastStepMs = now }
+    return dup
+}
+
 @Composable
 private fun DeckDialogControllerBridge(
     rootFocus: FocusRequester,
@@ -298,6 +312,7 @@ private fun DeckDialogControllerBridge(
     val focusManager = LocalFocusManager.current
 
     fun walk(dir: FocusDirection): Boolean {
+        if (deckStepIsDuplicate(dir)) return true
         if (focusManager.moveFocusOrStep(dir)) return true
         // Nothing in the dialog owns Compose focus yet: give the root focus, then walk.
         runCatching { view.requestFocus() }
@@ -473,7 +488,7 @@ internal fun DeckConfigDialog(
                     } ?: return@onKeyEvent false
                     // A direction with no geometric target (the root just took focus, or the
                     // content is a single column) falls back to Next so the popup still walks.
-                    focusManager.moveFocusOrStep(dir)
+                    deckStepIsDuplicate(dir) || focusManager.moveFocusOrStep(dir)
                 },
         ) {
             // Header

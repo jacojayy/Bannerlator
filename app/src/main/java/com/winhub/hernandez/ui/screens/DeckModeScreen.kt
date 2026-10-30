@@ -131,6 +131,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import com.winhub.hernandez.R
@@ -157,7 +158,9 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import com.winhub.hernandez.ui.moveFocusOrStep
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.InputModeManager
@@ -292,6 +295,22 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     }
     val backLayer = remember { DeckBackLayer() }
     val editTracker = remember { DeckEditTracker() }
+    // L1/R1 (sections) and L2/R2 (sub-tabs) are taken at the Activity, so they work whether or not
+    // anything holds Compose focus - no "press A first to lock focus" step.
+    val sectionNow by rememberUpdatedState(section)
+    DisposableEffect(Unit) {
+        DeckHardKeys.handler = handler@{ code ->
+            if (editTracker.editing) return@handler false
+            when (code) {
+                android.view.KeyEvent.KEYCODE_BUTTON_L1 -> { stepSection(railSections, sectionNow, -1) { section = it; deckDetail = null }; true }
+                android.view.KeyEvent.KEYCODE_BUTTON_R1 -> { stepSection(railSections, sectionNow, 1) { section = it; deckDetail = null }; true }
+                android.view.KeyEvent.KEYCODE_BUTTON_L2 -> if (tabs.count > 1) { tabs.step(-1); true } else false
+                android.view.KeyEvent.KEYCODE_BUTTON_R2 -> if (tabs.count > 1) { tabs.step(1); true } else false
+                else -> false
+            }
+        }
+        onDispose { DeckHardKeys.handler = null }
+    }
     LaunchedEffect(section, deckDetail) { tabs.bind(0) }
     // Park on the rail ONCE when the shell opens. Keying this on `section` re-parked the rail on
     // every section change, including changes triggered from inside the content, which is what
@@ -700,9 +719,22 @@ private fun DeckHome(
         }
     }
 
+    val closeSettings: () -> Unit = {
+        shortcutSettingsFor = null
+        // The editor can rename the game / swap its cover, so re-read the store to keep
+        // the carousel tile in sync.
+        scope.launch(Dispatchers.IO) {
+            val refreshed = HubGamesStore.load(context).map { g ->
+                HubEntry(g.name, g.coverPath?.let { BitmapFactory.decodeFile(it) }, g)
+            }
+            withContext(Dispatchers.Main) { entries = refreshed }
+        }
+    }
     val backLayer = LocalDeckBack.current
-    DisposableEffect(homeMode) {
-        backLayer.onBack = if (homeMode != HomeMode.GAMES) {
+    DisposableEffect(homeMode, shortcutSettingsFor) {
+        backLayer.onBack = if (shortcutSettingsFor != null) {
+            { closeSettings(); true }
+        } else if (homeMode != HomeMode.GAMES) {
             { homeMode = HomeMode.GAMES; true }
         } else {
             null
@@ -733,12 +765,6 @@ private fun DeckHome(
 
     // The per-game editor is drawn inline: the carousel gives up focus, then focus moves into the editor.
     val settingsFocus = LocalFocusManager.current
-    LaunchedEffect(shortcutSettingsFor != null) {
-        if (shortcutSettingsFor != null) {
-            delay(250)
-            settingsFocus.moveFocusSafely(FocusDirection.Next)
-        }
-    }
 
     // Hand focus back to the carousel once any dialog/overlay opened from Home goes away.
     val overlayOpen = pending != null || launchRequest != null || launchMethodFor != null ||
@@ -845,20 +871,34 @@ private fun DeckHome(
         }
 
         shortcutSettingsFor?.let { sc ->
-            DeckShortcutSettingsScreen(
-                shortcut = sc,
-                onDismiss = {
-                    shortcutSettingsFor = null
-                    // The editor can rename the game / swap its cover, so re-read the store to keep
-                    // the carousel tile in sync.
-                    scope.launch(Dispatchers.IO) {
-                        val refreshed = HubGamesStore.load(context).map { g ->
-                            HubEntry(g.name, g.coverPath?.let { BitmapFactory.decodeFile(it) }, g)
-                        }
-                        withContext(Dispatchers.Main) { entries = refreshed }
-                    }
-                },
-            )
+            // The editor is inline, so it needs its own focus owner: the wrapper takes focus when it
+            // opens and walks the D-pad itself, like the config popups do.
+            val editorRoot = remember { FocusRequester() }
+            val editTracker = LocalDeckEditTracker.current
+            LaunchedEffect(Unit) {
+                withFrameNanos { }
+                runCatching { editorRoot.requestFocus() }
+                settingsFocus.moveFocusSafely(FocusDirection.Next)
+            }
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .focusRequester(editorRoot)
+                    .focusable()
+                    .onKeyEvent { e ->
+                        if (e.type != KeyEventType.KeyDown || editTracker.editing) return@onKeyEvent false
+                        val dir = when (e.key) {
+                            Key.DirectionUp -> FocusDirection.Up
+                            Key.DirectionDown -> FocusDirection.Down
+                            Key.DirectionLeft -> FocusDirection.Left
+                            Key.DirectionRight -> FocusDirection.Right
+                            else -> null
+                        } ?: return@onKeyEvent false
+                        settingsFocus.moveFocusOrStep(dir)
+                    },
+            ) {
+                DeckShortcutSettingsScreen(shortcut = sc, onDismiss = closeSettings)
+            }
         }
 
         cronosReviewFor?.let { c ->

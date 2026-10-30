@@ -447,6 +447,11 @@ internal fun Modifier.deckFocusBorder(
 }
 
 /** DroidDeck's own ease: quick off the mark, then a long glide — the "dragged" feel. */
+/** Activity-level hook for the Deck's shoulder/trigger buttons, so they never depend on Compose focus. */
+internal object DeckHardKeys {
+    @Volatile var handler: ((Int) -> Boolean)? = null
+}
+
 /** DroidDeck's ChipGlide springs: the leading edge snaps ahead, the trailing edge follows 40 ms later. */
 internal val DeckLead = androidx.compose.animation.core.spring<Float>(0.62f, 700f)
 internal val DeckTrail = androidx.compose.animation.core.spring<Float>(0.78f, 360f)

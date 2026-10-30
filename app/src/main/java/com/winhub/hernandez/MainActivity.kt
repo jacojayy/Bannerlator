@@ -469,6 +469,11 @@ class MainActivity : AppCompatActivity() {
 
     private val padAxisHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var padAxisHeldKey = 0
+    // L2/R2 as analog triggers become key presses (edge-triggered) so the Deck can use them as
+    // sub-tab buttons; pads that also send real L2/R2 keys are left to those keys.
+    private var padL2Down = false
+    private var padR2Down = false
+    private var padTriggerKeySeen = false
     private var padAxisLastEventMs = 0L
     private val padAxisRepeater = object : Runnable {
         override fun run() {
@@ -510,6 +515,21 @@ class MainActivity : AppCompatActivity() {
         // injecting a synthetic direction would walk (or crash) the screen behind it.
         if (!hasWindowFocus()) return false
 
+        val l2 = maxOf(
+            event.getAxisValue(android.view.MotionEvent.AXIS_LTRIGGER),
+            event.getAxisValue(android.view.MotionEvent.AXIS_BRAKE),
+        ) > 0.6f
+        val r2 = maxOf(
+            event.getAxisValue(android.view.MotionEvent.AXIS_RTRIGGER),
+            event.getAxisValue(android.view.MotionEvent.AXIS_GAS),
+        ) > 0.6f
+        if (!padTriggerKeySeen) {
+            if (l2 && !padL2Down) dispatchSyntheticKey(android.view.KeyEvent.KEYCODE_BUTTON_L2)
+            if (r2 && !padR2Down) dispatchSyntheticKey(android.view.KeyEvent.KEYCODE_BUTTON_R2)
+        }
+        padL2Down = l2
+        padR2Down = r2
+
         var x = event.getAxisValue(android.view.MotionEvent.AXIS_HAT_X)
         var y = event.getAxisValue(android.view.MotionEvent.AXIS_HAT_Y)
         if (x == 0f && y == 0f) {
@@ -545,6 +565,8 @@ class MainActivity : AppCompatActivity() {
         // Compose only activates components on DPAD_CENTER/ENTER, and never reads a pad's B as
         // back — rewrite the face buttons for the launcher so the whole UI is walkable. The Wine
         // session runs in XServerDisplayActivity, which keeps the raw key codes.
+        if (event.keyCode == android.view.KeyEvent.KEYCODE_BUTTON_L2 ||
+            event.keyCode == android.view.KeyEvent.KEYCODE_BUTTON_R2) padTriggerKeySeen = true
         val keyCode = when (event.keyCode) {
             android.view.KeyEvent.KEYCODE_BUTTON_A -> android.view.KeyEvent.KEYCODE_DPAD_CENTER
             android.view.KeyEvent.KEYCODE_BUTTON_B -> android.view.KeyEvent.KEYCODE_BACK

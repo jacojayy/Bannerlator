@@ -1098,7 +1098,7 @@ fun SettingsScreen(onSaved: () -> Unit = {}) {
                 label = "Top Bar Opacity",
                 value = topBarOpacity,
                 onValueChange = { AppThemeState.setTopBarOpacity(it) },
-                min = 0.2f,
+                min = 0f,
                 max = 1f,
             )
             Spacer(Modifier.height(10.dp))

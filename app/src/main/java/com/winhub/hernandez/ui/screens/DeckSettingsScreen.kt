@@ -646,7 +646,7 @@ internal fun DeckSettingsScreen() {
                 label = "Top Bar Opacity",
                 hint = "Background of the tab bar across the top of Deck Mode",
                 value = topBarOpacity,
-                range = 0.2f..1f,
+                range = 0f..1f,
                 format = { "${(it * 100).toInt()}%" },
                 onChange = {
                     topBarOpacity = it

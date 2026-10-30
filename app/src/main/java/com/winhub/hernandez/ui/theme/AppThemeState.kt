@@ -53,7 +53,7 @@ object AppThemeState {
     private val _generalTabStyle = MutableStateFlow("horizontal")
     val generalTabStyle: StateFlow<String> = _generalTabStyle
 
-    /** Opacity of the Deck Mode top tab bar's background, 0.2..1.0 (1.0 = solid, the old look). */
+    /** Opacity of the Deck Mode top tab bar's background, 0..1.0 (1.0 = solid, the old look). */
     private val _topBarOpacity = MutableStateFlow(1f)
     val topBarOpacity: StateFlow<Float> = _topBarOpacity
 
@@ -142,7 +142,7 @@ object AppThemeState {
         _uiScale.value = themePrefs.getFloat("ui_scale", 0.9f).coerceIn(0.5f, 1.5f)
         _fontScale.value = themePrefs.getFloat("font_scale", 0.9f).coerceIn(0.5f, 1.5f)
         _generalTabStyle.value = if (themePrefs.getBoolean("general_tab_style_horizontal", true)) "horizontal" else "vertical"
-        _topBarOpacity.value = themePrefs.getFloat("top_bar_opacity", 1f).coerceIn(0.2f, 1f)
+        _topBarOpacity.value = themePrefs.getFloat("top_bar_opacity", 1f).coerceIn(0f, 1f)
         refreshDeckPreset()
     }
 
@@ -184,7 +184,7 @@ object AppThemeState {
     }
 
     fun setTopBarOpacity(opacity: Float) {
-        val clamped = opacity.coerceIn(0.2f, 1f)
+        val clamped = opacity.coerceIn(0f, 1f)
         _topBarOpacity.value = clamped
         themePrefs.edit().putFloat("top_bar_opacity", clamped).apply()
     }

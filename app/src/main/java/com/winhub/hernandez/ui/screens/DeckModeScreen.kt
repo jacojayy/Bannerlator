@@ -97,6 +97,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
+import com.winhub.hernandez.ui.moveFocusSafely
+import kotlinx.coroutines.delay
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -249,6 +255,15 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     // Y band, so the geometric search picked it first and the banner looked unreachable.
     val homeHeroFocus = remember { FocusRequester() }
     val tabs = remember { DeckTabHost() }
+    // Top-strip style: the strip is not focusable, so after a section switch park focus on the
+    // page's first control (unless the page already took focus itself).
+    val focusManager = LocalFocusManager.current
+    var contentFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(section, horizontalRail) {
+        if (!horizontalRail) return@LaunchedEffect
+        delay(450)
+        if (!contentFocused) focusManager.moveFocusSafely(FocusDirection.Next)
+    }
     val backLayer = remember { DeckBackLayer() }
     val editTracker = remember { DeckEditTracker() }
     LaunchedEffect(section, deckDetail) { tabs.bind(0) }
@@ -320,6 +335,8 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .background(Deck.background)
+                // Behind the bar too, so a see-through top bar shows the page glow.
+                .drawBehind { drawDeckCornerGlow(Deck.primary) }
                 .onPreviewKeyEvent { e ->
                     if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (e.key) {
@@ -348,6 +365,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
+                    .onFocusChanged { contentFocused = it.hasFocus }
                     .clipToBounds(),
             ) {
                 DeckPaneContent(
@@ -1224,27 +1242,25 @@ private fun DeckLegend(modifier: Modifier = Modifier) {
 @Composable
 private fun DeckCornerGlow() {
     val cornerAccent = Deck.primary
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .drawBehind {
-                val radius = 460.dp.toPx()
-                val center = Offset(size.width - radius * 0.35f, radius * 0.35f)
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            cornerAccent.copy(alpha = 0.24f),
-                            cornerAccent.copy(alpha = 0.10f),
-                            cornerAccent.copy(alpha = 0.04f),
-                            Color.Transparent,
-                        ),
-                        center = center,
-                        radius = radius,
-                    ),
-                    radius = radius,
-                    center = center,
-                )
-            },
+    Box(modifier = Modifier.fillMaxSize().drawBehind { drawDeckCornerGlow(cornerAccent) })
+}
+
+private fun DrawScope.drawDeckCornerGlow(cornerAccent: Color) {
+    val radius = 460.dp.toPx()
+    val center = Offset(size.width - radius * 0.35f, radius * 0.35f)
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(
+                cornerAccent.copy(alpha = 0.24f),
+                cornerAccent.copy(alpha = 0.10f),
+                cornerAccent.copy(alpha = 0.04f),
+                Color.Transparent,
+            ),
+            center = center,
+            radius = radius,
+        ),
+        radius = radius,
+        center = center,
     )
 }
 
@@ -1260,62 +1276,92 @@ private fun DeckTopTabs(
     onSelect: (String) -> Unit,
 ) {
     val barOpacity by AppThemeState.topBarOpacity.collectAsState()
-    // The accent ring stretches from tab to tab like on the side rail ("dragged" look).
-    DeckDragFrame(
-        modifier = Modifier.fillMaxWidth().background(Deck.surface.copy(alpha = barOpacity)),
-        shape = RoundedCornerShape(12.dp),
-        strokeWidth = 2.dp,
-        gap = 1.dp,
-    ) {
-    Row(
+    // The selection pill glides between tabs (its trailing edge leads, then the leading edge
+    // catches up) — the same "dragged" motion as the side rail. The strip is NOT a focus target:
+    // L1/R1 switch sections, so D-pad focus stays in the page instead of bouncing up to the bar.
+    val lefts = remember { mutableStateMapOf<String, Float>() }
+    val rights = remember { mutableStateMapOf<String, Float>() }
+    val start = remember { Animatable(0f) }
+    val end = remember { Animatable(0f) }
+    val selLeft = lefts[selected]
+    val selRight = rights[selected]
+    LaunchedEffect(selected, selLeft, selRight) {
+        val l = selLeft ?: return@LaunchedEffect
+        val r = selRight ?: return@LaunchedEffect
+        if (end.value <= start.value) {
+            start.snapTo(l); end.snapTo(r)
+            return@LaunchedEffect
+        }
+        coroutineScope {
+            if (l >= start.value) {
+                launch { end.animateTo(r, tween(280, easing = DeckEase)) }
+                launch { start.animateTo(l, tween(240, delayMillis = 100, easing = DeckEase)) }
+            } else {
+                launch { start.animateTo(l, tween(280, easing = DeckEase)) }
+                launch { end.animateTo(r, tween(240, delayMillis = 100, easing = DeckEase)) }
+            }
+        }
+    }
+    val accent = Deck.primary
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .background(Deck.surface.copy(alpha = barOpacity))
+            .drawBehind {
+                if (end.value > start.value) {
+                    val top = 6.dp.toPx()
+                    val corner = CornerRadius(12.dp.toPx())
+                    val pill = Size(end.value - start.value, size.height - top * 2f)
+                    drawRoundRect(accent.copy(alpha = 0.16f), Offset(start.value, top), pill, corner)
+                    drawRoundRect(accent, Offset(start.value, top), pill, corner, style = Stroke(2.dp.toPx()))
+                }
+            },
     ) {
-        sections.forEach { item ->
-            val current = selected == item.key
-            val interaction = remember { MutableInteractionSource() }
-            val focused by interaction.collectIsFocusedAsState()
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(
-                        when {
-                            current -> Deck.primary.copy(alpha = 0.16f)
-                            focused -> Deck.surfaceVariant
-                            else -> Color.Transparent
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            sections.forEach { item ->
+                val current = selected == item.key
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .onGloballyPositioned {
+                            val x = it.positionInParent().x
+                            lefts[item.key] = x
+                            rights[item.key] = x + it.size.width
                         }
+                        .focusProperties { canFocus = false }
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                            onSelect(item.key)
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Icon(
+                        imageVector = item.icon,
+                        contentDescription = item.label,
+                        tint = Deck.primary,
+                        modifier = Modifier.size(22.dp),
                     )
-                    .focusable()
-                    .deckDragItem("top:${item.key}")
-                    .onFocusChanged { if (it.isFocused && !current) onSelect(item.key) }
-                    .clickable(interactionSource = interaction, indication = null) { onSelect(item.key) }
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-            ) {
-                Icon(
-                    imageVector = item.icon,
-                    contentDescription = item.label,
-                    tint = Deck.primary,
-                    modifier = Modifier.size(22.dp),
-                )
-                if (current) {
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = item.label,
-                        color = Deck.primary,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                    )
+                    if (current) {
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = item.label,
+                            color = Deck.primary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                        )
+                    }
                 }
             }
         }
     }
-    }
-    HorizontalDivider(color = Deck.line)
+    HorizontalDivider(color = Deck.line.copy(alpha = barOpacity))
 }
 
 /**

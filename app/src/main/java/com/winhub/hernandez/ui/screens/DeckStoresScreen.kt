@@ -50,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import com.winhub.hernandez.store.GogGame
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
@@ -657,7 +658,16 @@ internal fun DeckStoresScreen() {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    val signedInByStore = remember(resumeTick) {
+    // The login Activity can hand back before its session is written, so re-read a few times after
+    // every resume instead of trusting the single read at that instant.
+    var pollTick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(resumeTick) {
+        repeat(20) {
+            delay(1500)
+            pollTick++
+        }
+    }
+    val signedInByStore = remember(resumeTick, pollTick) {
         deckStores.associate { it.screen to deckSignedIn(context, it.screen) }
     }
     val dlEntries by DownloadRegistry.entries.collectAsState()

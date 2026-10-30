@@ -253,6 +253,8 @@ internal fun DeckStoreHeader(
     accent: Color,
     signedIn: Boolean,
     modifier: Modifier = Modifier,
+    logo: Int? = null,
+    brand: List<Color>? = null,
 ) {
     val shape = RoundedCornerShape(16.dp)
     Row(
@@ -264,7 +266,25 @@ internal fun DeckStoreHeader(
             .border(1.dp, Deck.line, shape)
             .padding(10.dp),
     ) {
-        DeckStoreLogo(name.take(1).uppercase(), fill, ink, 36.dp)
+        val logoBmp = logo?.let { rememberDeckLogo(it) }
+        if (logoBmp != null && brand != null) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Brush.verticalGradient(brand)),
+            ) {
+                Image(
+                    bitmap = logoBmp,
+                    contentDescription = name,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(0.72f),
+                )
+            }
+        } else {
+            DeckStoreLogo(name.take(1).uppercase(), fill, ink, 36.dp)
+        }
         Spacer(Modifier.width(10.dp))
         Column {
             Text(name, color = Deck.onBackground, fontSize = 17.sp, fontWeight = FontWeight.Black, maxLines = 1)

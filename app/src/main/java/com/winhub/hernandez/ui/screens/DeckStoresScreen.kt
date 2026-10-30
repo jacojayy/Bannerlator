@@ -1020,6 +1020,8 @@ internal fun DeckStoresScreen() {
                             ink = active.ink,
                             accent = active.dot,
                             signedIn = signed,
+                            logo = deckStoreLogo(active.screen),
+                            brand = deckStoreBrand(active.screen),
                         )
                         if (signed) {
                             // Store/Library/Settings, plus Friends/Profile on Steam alone.

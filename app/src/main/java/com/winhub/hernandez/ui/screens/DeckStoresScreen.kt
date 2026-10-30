@@ -114,6 +114,7 @@ import com.winhub.hernandez.store.GogLoginActivity
 import com.winhub.hernandez.store.GogUserData
 import com.winhub.hernandez.store.SteamLoginActivity
 import com.winhub.hernandez.store.SteamSessionManager
+import com.winhub.hernandez.R
 import com.winhub.hernandez.ui.Screen
 import com.winhub.hernandez.ui.theme.AppThemeState
 
@@ -148,6 +149,21 @@ private val deckStores = listOf(
     DeckStoreTile(Screen.Amazon, "Amazon", Color(0xFF3A2A0A), Color(0xFFFFC266), Color(0xFFFF9900)),
     DeckStoreTile(Screen.Steam, "Steam", Color(0xFF16293D), Color(0xFF7CC4FF), Color(0xFF1A9FFF)),
 )
+
+/** Each store's logo and the brand colours it sits on in the picker tiles. */
+private fun deckStoreLogo(screen: Screen): Int = when (screen) {
+    Screen.Steam -> R.drawable.store_logo_steam
+    Screen.Epic -> R.drawable.store_logo_epic
+    Screen.Gog -> R.drawable.store_logo_gog
+    else -> R.drawable.store_logo_amazon
+}
+
+private fun deckStoreBrand(screen: Screen): List<Color> = when (screen) {
+    Screen.Steam -> listOf(Color(0xFF1B2838), Color(0xFF171A21))
+    Screen.Epic -> listOf(Color(0xFF202020), Color(0xFF121212))
+    Screen.Gog -> listOf(Color(0xFF5C2D91), Color(0xFF3B1C60))
+    else -> listOf(Color(0xFF232F3E), Color(0xFF131A22))
+}
 
 /** WinHub's real per-store login Activities (what each store's Sign in opens). */
 private fun launchDeckLogin(context: Context, screen: Screen) {
@@ -712,10 +728,10 @@ private fun DeckBrowseCard(item: DeckBrowseItem, onClick: () -> Unit) {
 }
 
 @Composable
-internal fun DeckStoresScreen(initialStore: Screen? = null) {
+internal fun DeckStoresScreen() {
     val context = LocalContext.current
     val showStores by AppThemeState.showStores.collectAsState()
-    var selected by remember { mutableStateOf<Screen>(initialStore ?: Screen.Gog) }
+    var selected by remember { mutableStateOf<Screen>(Screen.Gog) }
     var gogInstall by remember { mutableStateOf<GogGame?>(null) }
     var epicInstall by remember { mutableStateOf<EpicGame?>(null) }
     var amazonInstall by remember { mutableStateOf<AmazonGame?>(null) }
@@ -753,7 +769,7 @@ internal fun DeckStoresScreen(initialStore: Screen? = null) {
 
     // Two levels: the store picker (tiles), and inside a store its page tabs down the left edge.
     // L2/R2 switch the store on the picker and the page tab inside a store; B leaves a store.
-    var inStore by remember { mutableStateOf(initialStore != null) }
+    var inStore by remember { mutableStateOf(false) }
     var storeTab by remember(active.screen) { mutableIntStateOf(0) }
     val storeTabCount = if (active.screen == Screen.Steam) 5 else 3
     val tabFocus = remember { FocusRequester() }
@@ -980,6 +996,8 @@ internal fun DeckStoresScreen(initialStore: Screen? = null) {
                 DeckStorePicker(
                     names = deckStores.map { it.chip },
                     accents = deckStores.map { it.dot },
+                    logos = deckStores.map { deckStoreLogo(it.screen) },
+                    brands = deckStores.map { deckStoreBrand(it.screen) },
                     signedIn = deckStores.map { signedInByStore[it.screen] == true },
                     selected = deckStores.indexOfFirst { it.screen == selected }.coerceAtLeast(0),
                     onSelect = { selected = deckStores[it].screen },

@@ -42,7 +42,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -51,7 +54,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -163,6 +165,8 @@ internal fun DeckStoreLogo(initial: String, fill: Color, ink: Color, size: andro
 internal fun DeckStorePicker(
     names: List<String>,
     accents: List<Color>,
+    logos: List<Int>,
+    brands: List<List<Color>>,
     signedIn: List<Boolean>,
     selected: Int,
     onSelect: (Int) -> Unit,
@@ -182,10 +186,10 @@ internal fun DeckStorePicker(
     ) {
         names.forEachIndexed { i, name ->
             val isSel = i == selected
-            val accent = accents[i]
-            val ink = if (accent.luminance() > 0.6f) Color(0xFF111111) else Color.White
+            // The logos sit on the store's brand colours, so the text is always light.
+            val ink = Color.White
             val height by animateDpAsState(if (isSel) 200.dp else 148.dp, tween(220, easing = DeckEase), label = "storeTileH")
-            val tint = if (isSel) accent else accent.copy(alpha = 0.72f)
+            val brand = brands[i]
             val shape = RoundedCornerShape(22.dp)
             Box(
                 modifier = Modifier
@@ -204,13 +208,21 @@ internal fun DeckStorePicker(
                         .fillMaxSize()
                         .padding(3.dp)
                         .clip(RoundedCornerShape(19.dp))
-                        .background(Brush.verticalGradient(listOf(tint, tint.copy(alpha = tint.alpha * 0.75f)))),
+                        .alpha(if (isSel) 1f else 0.82f)
+                        .background(Brush.verticalGradient(brand)),
                 ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.size(60.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.18f)),
-                    ) {
-                        Text(name.take(1).uppercase(), color = ink, fontSize = 30.sp, fontWeight = FontWeight.Black)
+                    val logo = rememberDeckLogo(logos[i])
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(72.dp)) {
+                        if (logo != null) {
+                            Image(
+                                bitmap = logo,
+                                contentDescription = name,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize(0.86f),
+                            )
+                        } else {
+                            Text(name.take(1).uppercase(), color = ink, fontSize = 30.sp, fontWeight = FontWeight.Black)
+                        }
                     }
                     Spacer(Modifier.height(10.dp))
                     Text(name, color = ink, fontSize = 20.sp, fontWeight = FontWeight.Black, maxLines = 1)

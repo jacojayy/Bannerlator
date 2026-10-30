@@ -22,7 +22,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.ImageBitmap
-import com.winhub.hernandez.ui.Screen
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.exp
 import kotlinx.coroutines.Job
@@ -259,10 +258,6 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     var section by remember { mutableStateOf("home") }
     var graphicPane by remember { mutableStateOf("gpu") }
     var deckDetail by remember { mutableStateOf<Int?>(null) }
-    // A store card on Home opens that store in the Stores section; the request dies when the section is left.
-    var storeRequest by remember { mutableStateOf<Screen?>(null) }
-    val openStore: (Screen) -> Unit = { target -> storeRequest = target; deckDetail = null; section = "stores" }
-    LaunchedEffect(section) { if (section != "stores") storeRequest = null }
     // General tab style: "horizontal" (top strip, default) or "vertical" (left rail).
     val tabStyle by AppThemeState.generalTabStyle.collectAsState()
     val horizontalRail = tabStyle != "vertical"
@@ -408,8 +403,6 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                     onDetailOpen = { id -> deckDetail = id },
                     onGraphicPane = { graphicPane = it },
                     homeFocus = homeHeroFocus,
-                    storeRequest = storeRequest,
-                    onOpenStore = openStore,
                 )
                 DeckLegend(Modifier.align(Alignment.BottomEnd))
                 DeckCornerGlow()
@@ -467,8 +460,6 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 onDetailOpen = { id -> deckDetail = id },
                 onGraphicPane = { graphicPane = it },
                 homeFocus = homeHeroFocus,
-                storeRequest = storeRequest,
-                onOpenStore = openStore,
             )
             DeckLegend(Modifier.align(Alignment.BottomEnd))
             DeckCornerGlow()
@@ -531,7 +522,6 @@ internal fun decodeCover(context: Context, asset: String): Bitmap? = runCatching
 private fun DeckHome(
     heroFocus: FocusRequester = remember { FocusRequester() },
     onEditContainer: (Int) -> Unit = {},
-    onOpenStore: (Screen) -> Unit = {},
 ) {
     val context = LocalContext.current
     val activity = context as Activity
@@ -733,24 +723,8 @@ private fun DeckHome(
         )
     }.orEmpty()
 
-    // The row above the games: each store (its logo on its brand colours) and the glass Add game card.
-    fun storeSub(label: String): String {
-        val owned = entries.orEmpty().count { hubOriginLabel(it).equals(label, ignoreCase = true) }
-        return when (owned) {
-            0 -> "No games yet"
-            1 -> "1 game"
-            else -> "$owned games"
-        }
-    }
+    // The row above the games holds the glass Add game card.
     val cards = listOf(
-        DeckHomeCard("Steam", storeSub("Steam"), Icons.Filled.Storefront,
-            listOf(Color(0xFF171A21), Color(0xFF1B2838)), R.drawable.store_logo_steam) { onOpenStore(Screen.Steam) },
-        DeckHomeCard("Epic", storeSub("Epic"), Icons.Filled.Storefront,
-            listOf(Color(0xFF121212), Color(0xFF202020)), R.drawable.store_logo_epic) { onOpenStore(Screen.Epic) },
-        DeckHomeCard("GOG", storeSub("GOG"), Icons.Filled.Storefront,
-            listOf(Color(0xFF5C2D91), Color(0xFF3B1C60)), R.drawable.store_logo_gog) { onOpenStore(Screen.Gog) },
-        DeckHomeCard("Amazon", storeSub("Amazon"), Icons.Filled.Storefront,
-            listOf(Color(0xFF232F3E), Color(0xFF131A22)), R.drawable.store_logo_amazon) { onOpenStore(Screen.Amazon) },
         DeckHomeCard("Add game", "Add games to your library", Icons.Filled.Add,
             listOf(Color(0xFF1B1F2A), Color(0xFF0E1016)), glass = true) { addModeMenu = true },
     )
@@ -1088,8 +1062,6 @@ private fun DeckPaneContent(
     onDetailOpen: (Int) -> Unit,
     onGraphicPane: (String) -> Unit,
     homeFocus: FocusRequester,
-    storeRequest: Screen?,
-    onOpenStore: (Screen) -> Unit,
 ) {
     // Every tab switch slides the incoming pane up from the bottom while the outgoing one
     // drops away — one motion for the whole shell.
@@ -1107,7 +1079,7 @@ private fun DeckPaneContent(
         label = "deckSection",
     ) { currentSection ->
         when (currentSection) {
-            "home" -> DeckHome(heroFocus = homeFocus, onEditContainer = onEditContainer, onOpenStore = onOpenStore)
+            "home" -> DeckHome(heroFocus = homeFocus, onEditContainer = onEditContainer)
             "containers" -> AnimatedContent(
                 targetState = deckDetail,
                 transitionSpec = {
@@ -1134,7 +1106,7 @@ private fun DeckPaneContent(
                     DeckContainersScreen(onEditContainer = onDetailOpen)
                 }
             }
-            "stores" -> DeckStoresScreen(initialStore = storeRequest)
+            "stores" -> DeckStoresScreen()
             "file_manager" -> FileManagerScreen(deckMode = true)
             "graphics" -> DeckGraphicsPane(
                 pane = graphicPane,
@@ -1648,7 +1620,7 @@ private val deckLogoCache = ConcurrentHashMap<Int, ImageBitmap>()
 
 /** A bundled logo decoded off the main thread (the PNGs are large); instant on later visits. */
 @Composable
-private fun rememberDeckLogo(res: Int): ImageBitmap? {
+internal fun rememberDeckLogo(res: Int): ImageBitmap? {
     val resources = LocalContext.current.resources
     return produceState<ImageBitmap?>(deckLogoCache[res], res) {
         if (value == null) {
@@ -2237,8 +2209,8 @@ private fun DeckHomeCarousel(
                 text = when {
                     n == 0 -> if (loaded) "A  Add a game" else ""
                     mode == HomeMode.OPTIONS -> "A  Select      B  Back"
-                    mode == HomeMode.STORES -> "A  Open      ◀ ▶  Browse      B  Back"
-                    else -> "A  Play      ↑  Stores      ↓  Options"
+                    mode == HomeMode.STORES -> "A  Add game      B  Back"
+                    else -> "A  Play      ↑  Add game      ↓  Options"
                 },
                 color = Deck.onSurfaceVariant,
                 fontSize = 12.sp,

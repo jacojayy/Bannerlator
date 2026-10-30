@@ -712,10 +712,10 @@ private fun DeckBrowseCard(item: DeckBrowseItem, onClick: () -> Unit) {
 }
 
 @Composable
-internal fun DeckStoresScreen() {
+internal fun DeckStoresScreen(initialStore: Screen? = null) {
     val context = LocalContext.current
     val showStores by AppThemeState.showStores.collectAsState()
-    var selected by remember { mutableStateOf<Screen>(Screen.Gog) }
+    var selected by remember { mutableStateOf<Screen>(initialStore ?: Screen.Gog) }
     var gogInstall by remember { mutableStateOf<GogGame?>(null) }
     var epicInstall by remember { mutableStateOf<EpicGame?>(null) }
     var amazonInstall by remember { mutableStateOf<AmazonGame?>(null) }
@@ -753,7 +753,7 @@ internal fun DeckStoresScreen() {
 
     // Two levels: the store picker (tiles), and inside a store its page tabs down the left edge.
     // L2/R2 switch the store on the picker and the page tab inside a store; B leaves a store.
-    var inStore by remember { mutableStateOf(false) }
+    var inStore by remember { mutableStateOf(initialStore != null) }
     var storeTab by remember(active.screen) { mutableIntStateOf(0) }
     val storeTabCount = if (active.screen == Screen.Steam) 5 else 3
     val tabFocus = remember { FocusRequester() }

@@ -10,9 +10,22 @@ import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
 import android.graphics.drawable.Icon
 import android.widget.Toast
-import android.os.Build
-import android.view.WindowManager
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.graphics.ImageBitmap
+import com.winhub.hernandez.ui.Screen
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.exp
+import kotlinx.coroutines.Job
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.filled.Delete
@@ -20,12 +33,9 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.window.DialogWindowProvider
 import kotlin.math.abs
 import android.widget.VideoView
 
@@ -249,6 +259,10 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     var section by remember { mutableStateOf("home") }
     var graphicPane by remember { mutableStateOf("gpu") }
     var deckDetail by remember { mutableStateOf<Int?>(null) }
+    // A store card on Home opens that store in the Stores section; the request dies when the section is left.
+    var storeRequest by remember { mutableStateOf<Screen?>(null) }
+    val openStore: (Screen) -> Unit = { target -> storeRequest = target; deckDetail = null; section = "stores" }
+    LaunchedEffect(section) { if (section != "stores") storeRequest = null }
     // General tab style: "horizontal" (top strip, default) or "vertical" (left rail).
     val tabStyle by AppThemeState.generalTabStyle.collectAsState()
     val horizontalRail = tabStyle != "vertical"
@@ -394,6 +408,8 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                     onDetailOpen = { id -> deckDetail = id },
                     onGraphicPane = { graphicPane = it },
                     homeFocus = homeHeroFocus,
+                    storeRequest = storeRequest,
+                    onOpenStore = openStore,
                 )
                 DeckLegend(Modifier.align(Alignment.BottomEnd))
                 DeckCornerGlow()
@@ -451,6 +467,8 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 onDetailOpen = { id -> deckDetail = id },
                 onGraphicPane = { graphicPane = it },
                 homeFocus = homeHeroFocus,
+                storeRequest = storeRequest,
+                onOpenStore = openStore,
             )
             DeckLegend(Modifier.align(Alignment.BottomEnd))
             DeckCornerGlow()
@@ -513,6 +531,7 @@ internal fun decodeCover(context: Context, asset: String): Bitmap? = runCatching
 private fun DeckHome(
     heroFocus: FocusRequester = remember { FocusRequester() },
     onEditContainer: (Int) -> Unit = {},
+    onOpenStore: (Screen) -> Unit = {},
 ) {
     val context = LocalContext.current
     val activity = context as Activity
@@ -530,7 +549,7 @@ private fun DeckHome(
     var addMode by remember { mutableStateOf(HubAddMode.MASTER) }
     var cronosBusy by remember { mutableStateOf(false) }
     var cronosName by remember { mutableStateOf("") }
-    var menuOpen by remember { mutableStateOf(false) }
+    var homeMode by remember { mutableStateOf(HomeMode.GAMES) }
     var propertiesFor by remember { mutableStateOf<Container?>(null) }
     var cronosReviewFor by remember { mutableStateOf<Container?>(null) }
     // A game added via Master Containers is a SHORTCUT inside a container you already have, so its
@@ -690,9 +709,9 @@ private fun DeckHome(
     }
 
     val backLayer = LocalDeckBack.current
-    DisposableEffect(menuOpen) {
-        backLayer.onBack = if (menuOpen) {
-            { menuOpen = false; true }
+    DisposableEffect(homeMode) {
+        backLayer.onBack = if (homeMode != HomeMode.GAMES) {
+            { homeMode = HomeMode.GAMES; true }
         } else {
             null
         }
@@ -713,6 +732,28 @@ private fun DeckHome(
             DeckMenuAction("Delete", Icons.Filled.Delete, danger = true) { deleteEntry(entry) },
         )
     }.orEmpty()
+
+    // The row above the games: each store (its logo on its brand colours) and the glass Add game card.
+    fun storeSub(label: String): String {
+        val owned = entries.orEmpty().count { hubOriginLabel(it).equals(label, ignoreCase = true) }
+        return when (owned) {
+            0 -> "No games yet"
+            1 -> "1 game"
+            else -> "$owned games"
+        }
+    }
+    val cards = listOf(
+        DeckHomeCard("Steam", storeSub("Steam"), Icons.Filled.Storefront,
+            listOf(Color(0xFF171A21), Color(0xFF1B2838)), R.drawable.store_logo_steam) { onOpenStore(Screen.Steam) },
+        DeckHomeCard("Epic", storeSub("Epic"), Icons.Filled.Storefront,
+            listOf(Color(0xFF121212), Color(0xFF202020)), R.drawable.store_logo_epic) { onOpenStore(Screen.Epic) },
+        DeckHomeCard("GOG", storeSub("GOG"), Icons.Filled.Storefront,
+            listOf(Color(0xFF5C2D91), Color(0xFF3B1C60)), R.drawable.store_logo_gog) { onOpenStore(Screen.Gog) },
+        DeckHomeCard("Amazon", storeSub("Amazon"), Icons.Filled.Storefront,
+            listOf(Color(0xFF232F3E), Color(0xFF131A22)), R.drawable.store_logo_amazon) { onOpenStore(Screen.Amazon) },
+        DeckHomeCard("Add game", "Add games to your library", Icons.Filled.Add,
+            listOf(Color(0xFF1B1F2A), Color(0xFF0E1016)), glass = true) { addModeMenu = true },
+    )
 
     // Hand focus back to the carousel once any dialog/overlay opened from Home goes away.
     val overlayOpen = pending != null || launchRequest != null || launchMethodFor != null ||
@@ -740,11 +781,14 @@ private fun DeckHome(
 
         DeckHomeCarousel(
             entries = entries.orEmpty(),
+            loaded = entries != null,
             selected = selected,
             onSelect = { selected = it },
-            menuOpen = menuOpen,
-            onMenuOpen = { menuOpen = it },
+            mode = homeMode,
+            onMode = { homeMode = it },
             actions = actions,
+            cards = cards,
+            onAdd = { addModeMenu = true },
             focus = heroFocus,
         )
         if (entries == null) {
@@ -752,42 +796,10 @@ private fun DeckHome(
                 color = DeckPalette.primary,
                 modifier = Modifier.align(Alignment.Center),
             )
-        } else if (entries.orEmpty().isEmpty()) {
-            Text(
-                "No games yet — tap +",
-                color = DeckPalette.onSurfaceVariant,
-                fontSize = 14.sp,
-                modifier = Modifier.align(Alignment.Center),
-            )
-        }
-
-        // Add Games: a glass + in the corner.
-        val addInteraction = remember { MutableInteractionSource() }
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(start = 20.dp, top = 18.dp)
-                .size(46.dp)
-                .clip(CircleShape)
-                .deckGlass(CircleShape)
-                .deckFocusBorder(addInteraction, CircleShape, base = Color.Transparent)
-                .deckBringIntoView()
-                .clickable(
-                    interactionSource = addInteraction,
-                    indication = null,
-                ) { addModeMenu = true },
-        ) {
-            Icon(
-                Icons.Filled.Add,
-                contentDescription = "Add games",
-                tint = Deck.onBackground,
-                modifier = Modifier.size(22.dp),
-            )
         }
 
         if (addModeMenu) {
-            DeckGlassAddMenu(
+            DeckAddModeMenu(
                 onPick = { mode ->
                     addMode = mode
                     addModeMenu = false
@@ -1076,6 +1088,8 @@ private fun DeckPaneContent(
     onDetailOpen: (Int) -> Unit,
     onGraphicPane: (String) -> Unit,
     homeFocus: FocusRequester,
+    storeRequest: Screen?,
+    onOpenStore: (Screen) -> Unit,
 ) {
     // Every tab switch slides the incoming pane up from the bottom while the outgoing one
     // drops away — one motion for the whole shell.
@@ -1093,7 +1107,7 @@ private fun DeckPaneContent(
         label = "deckSection",
     ) { currentSection ->
         when (currentSection) {
-            "home" -> DeckHome(heroFocus = homeFocus, onEditContainer = onEditContainer)
+            "home" -> DeckHome(heroFocus = homeFocus, onEditContainer = onEditContainer, onOpenStore = onOpenStore)
             "containers" -> AnimatedContent(
                 targetState = deckDetail,
                 transitionSpec = {
@@ -1120,7 +1134,7 @@ private fun DeckPaneContent(
                     DeckContainersScreen(onEditContainer = onDetailOpen)
                 }
             }
-            "stores" -> DeckStoresScreen()
+            "stores" -> DeckStoresScreen(initialStore = storeRequest)
             "file_manager" -> FileManagerScreen(deckMode = true)
             "graphics" -> DeckGraphicsPane(
                 pane = graphicPane,
@@ -1192,31 +1206,38 @@ private fun DeckTopTabs(
     onSelect: (String) -> Unit,
 ) {
     val barOpacity by AppThemeState.topBarOpacity.collectAsState()
-    // The selection pill glides between tabs (its trailing edge leads, then the leading edge
-    // catches up) — the same "dragged" motion as the side rail. The strip is NOT a focus target:
-    // L1/R1 switch sections, so D-pad focus stays in the page instead of bouncing up to the bar.
+    // The selection pill always ends up exactly on the selected tab's live bounds: each edge eases toward
+    // them every frame (the leading edge faster, so it still stretches then settles), and the tab's label
+    // opens and closes with an animated width, so the pill can never disagree with the layout under it.
+    // The strip is NOT a focus target: L1/R1 switch sections, so D-pad focus stays in the page.
     val lefts = remember { mutableStateMapOf<String, Float>() }
     val rights = remember { mutableStateMapOf<String, Float>() }
-    val start = remember { Animatable(0f) }
-    val end = remember { Animatable(0f) }
+    val start = remember { mutableFloatStateOf(0f) }
+    val end = remember { mutableFloatStateOf(0f) }
+    var lastFrame by remember { mutableLongStateOf(0L) }
     val selLeft = lefts[selected]
     val selRight = rights[selected]
     LaunchedEffect(selected, selLeft, selRight) {
         val l = selLeft ?: return@LaunchedEffect
         val r = selRight ?: return@LaunchedEffect
-        if (end.value <= start.value) {
-            start.snapTo(l); end.snapTo(r)
+        if (end.floatValue <= start.floatValue) {
+            start.floatValue = l
+            end.floatValue = r
             return@LaunchedEffect
         }
-        coroutineScope {
-            if (l >= start.value) {
-                launch { end.animateTo(r, tween(280, easing = DeckEase)) }
-                launch { start.animateTo(l, tween(240, delayMillis = 100, easing = DeckEase)) }
-            } else {
-                launch { start.animateTo(l, tween(280, easing = DeckEase)) }
-                launch { end.animateTo(r, tween(240, delayMillis = 100, easing = DeckEase)) }
-            }
+        while (abs(start.floatValue - l) > 0.5f || abs(end.floatValue - r) > 0.5f) {
+            val now = withFrameNanos { it }
+            val dt = if (lastFrame == 0L) 0.016f else ((now - lastFrame).coerceIn(1_000_000L, 50_000_000L)) / 1e9f
+            lastFrame = now
+            val lead = 1f - exp(-34f * dt)
+            val trail = 1f - exp(-20f * dt)
+            val movingRight = l >= start.floatValue
+            end.floatValue += (r - end.floatValue) * (if (movingRight) lead else trail)
+            start.floatValue += (l - start.floatValue) * (if (movingRight) trail else lead)
         }
+        start.floatValue = l
+        end.floatValue = r
+        lastFrame = 0L
     }
     val accent = Deck.primary
     Box(
@@ -1224,20 +1245,20 @@ private fun DeckTopTabs(
             .fillMaxWidth()
             .background(Deck.surface.copy(alpha = barOpacity))
             .drawBehind {
-                if (end.value > start.value) {
-                    val top = 6.dp.toPx()
-                    val corner = CornerRadius(12.dp.toPx())
-                    val pill = Size(end.value - start.value, size.height - top * 2f)
-                    drawRoundRect(accent.copy(alpha = 0.16f), Offset(start.value, top), pill, corner)
-                    drawRoundRect(accent, Offset(start.value, top), pill, corner, style = Stroke(2.dp.toPx()))
+                if (end.floatValue > start.floatValue) {
+                    val top = 4.dp.toPx()
+                    val corner = CornerRadius(10.dp.toPx())
+                    val pill = Size(end.floatValue - start.floatValue, size.height - top * 2f)
+                    drawRoundRect(accent.copy(alpha = 0.14f), Offset(start.floatValue, top), pill, corner)
+                    drawRoundRect(accent, Offset(start.floatValue, top), pill, corner, style = Stroke(1.5.dp.toPx()))
                 }
             },
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             sections.forEach { item ->
@@ -1245,32 +1266,37 @@ private fun DeckTopTabs(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(10.dp))
                         .onGloballyPositioned {
                             val x = it.positionInParent().x
-                            lefts[item.key] = x
-                            rights[item.key] = x + it.size.width
+                            val right = x + it.size.width
+                            if (lefts[item.key] != x) lefts[item.key] = x
+                            if (rights[item.key] != right) rights[item.key] = right
                         }
                         .focusProperties { canFocus = false }
                         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
                             onSelect(item.key)
                         }
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                 ) {
                     Icon(
                         imageVector = item.icon,
                         contentDescription = item.label,
                         tint = Deck.primary,
-                        modifier = Modifier.size(22.dp),
+                        modifier = Modifier.size(20.dp),
                     )
-                    if (current) {
-                        Spacer(Modifier.width(6.dp))
+                    AnimatedVisibility(
+                        visible = current,
+                        enter = expandHorizontally(tween(200, easing = DeckEase)) + fadeIn(tween(160)),
+                        exit = shrinkHorizontally(tween(200, easing = DeckEase)) + fadeOut(tween(100)),
+                    ) {
                         Text(
                             text = item.label,
                             color = Deck.primary,
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
+                            modifier = Modifier.padding(start = 6.dp),
                         )
                     }
                 }
@@ -1596,13 +1622,43 @@ private fun DeckIntro(onDone: () -> Unit) {
     }
 }
 
-/** One XMB row of the game's quick menu. */
+/** Which layer of the XMB home is up: the games, one game's quick menu, or the store cards. */
+private enum class HomeMode { GAMES, OPTIONS, STORES }
+
+/** One row of the game's quick menu. */
 private class DeckMenuAction(
     val label: String,
     val icon: ImageVector,
     val danger: Boolean = false,
-    val run: () -> Unit,
+    val onClick: () -> Unit,
 )
+
+/** A card of the row above the games: a store's logo on its colours, or the glass Add game card. */
+private class DeckHomeCard(
+    val label: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val colors: List<Color>,
+    val logo: Int? = null,
+    val glass: Boolean = false,
+    val onClick: () -> Unit,
+)
+
+private val deckLogoCache = ConcurrentHashMap<Int, ImageBitmap>()
+
+/** A bundled logo decoded off the main thread (the PNGs are large); instant on later visits. */
+@Composable
+private fun rememberDeckLogo(res: Int): ImageBitmap? {
+    val resources = LocalContext.current.resources
+    return produceState<ImageBitmap?>(deckLogoCache[res], res) {
+        if (value == null) {
+            value = withContext(Dispatchers.IO) {
+                BitmapFactory.decodeResource(resources, res, BitmapFactory.Options().apply { inSampleSize = 2 })
+                    ?.asImageBitmap()?.also { deckLogoCache[res] = it }
+            }
+        }
+    }.value
+}
 
 /** Frosted-glass surface: a light vertical sheen, a soft specular glow and a bright rim. */
 private fun Modifier.deckGlass(shape: Shape, strength: Float = 1f): Modifier = this
@@ -1632,58 +1688,218 @@ private fun Modifier.deckGlass(shape: Shape, strength: Float = 1f): Modifier = t
         shape,
     )
 
+/** Soft colour blobs under the glass, so the frost has something to refract. */
+private fun Modifier.deckGlassBlobs(accent: Color): Modifier = this.drawBehind {
+    val a = Offset(size.width * 0.15f, size.height * 0.2f)
+    val b = Offset(size.width * 0.9f, size.height * 0.85f)
+    val ra = size.width * 0.8f
+    val rb = size.width * 0.9f
+    drawCircle(Brush.radialGradient(listOf(accent.copy(alpha = 0.8f), Color.Transparent), a, ra), ra, a)
+    drawCircle(Brush.radialGradient(listOf(Color(0xFF8E5BFF).copy(alpha = 0.7f), Color.Transparent), b, rb), rb, b)
+}
+
+/** The liquid-glass face of the Add game card. */
+@Composable
+private fun DeckGlassAddFace(accent: Color) {
+    val shape = RoundedCornerShape(10.dp)
+    Box(Modifier.fillMaxSize().deckGlassBlobs(accent), contentAlignment = Alignment.Center) {
+        Box(Modifier.matchParentSize().deckGlass(shape, 1.4f))
+        // A diagonal specular streak across the frost.
+        Box(
+            Modifier.matchParentSize().background(
+                Brush.linearGradient(
+                    0f to Color.Transparent,
+                    0.30f to Color.Transparent,
+                    0.42f to Color.White.copy(alpha = 0.26f),
+                    0.54f to Color.Transparent,
+                    1f to Color.Transparent,
+                ),
+            ),
+        )
+        Icon(
+            Icons.Filled.Add,
+            contentDescription = "Add game",
+            tint = Color.White,
+            modifier = Modifier.fillMaxSize(0.36f),
+        )
+    }
+}
+
+/** The empty library's Add a game button, in the same glass. */
+@Composable
+private fun DeckGlassPill(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(percent = 50)
+    Box(
+        modifier = modifier
+            .height(52.dp)
+            .clip(shape)
+            .deckGlassBlobs(Deck.primary)
+            .deckGlass(shape, 1.2f)
+            .pointerInput(onClick) { detectTapGestures { onClick() } }
+            .padding(horizontal = 26.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.Filled.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+            Text(label, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        }
+    }
+}
+
 /**
- * Home carousel: covers glide along a row anchored top-left, the selected one grows and gets the
- * accent stroke. D-pad Down folds the row up and opens the XMB quick menu under the cover.
- * Left/Right browse, A plays, Up/B close the menu. The whole pane is ONE focus target so the
- * controller never fights per-tile focus; touch taps and swipes drive the same state.
+ * Places one item of a row (games or cards) from the row's fractional position: the item at [pos] grows
+ * about its left edge and the later ones make room, the earlier ones slide off to the left and fade.
+ * Everything is read in the graphics layer, so a swipe or a mode change re-draws without recomposing.
+ */
+private fun Modifier.deckRowLayer(
+    index: Int,
+    pos: () -> Float,
+    scale: () -> Float,
+    centerY: () -> Float,
+    grow: () -> Float,
+    rowAlpha: () -> Float,
+    dimOthers: () -> Float,
+    baseWPx: Float,
+    baseHPx: Float,
+    x0Px: Float,
+    gapPx: Float,
+): Modifier = graphicsLayer {
+    val s0 = scale()
+    val bw = baseWPx * s0
+    val step = bw + gapPx * s0
+    val d = index - pos()
+    val near = (1f - abs(d)).coerceIn(0f, 1f)
+    val g = grow()
+    val s = s0 * (1f + 0.35f * near * g)
+    translationX = x0Px + step * d + 0.35f * bw * d.coerceIn(0f, 1f) * g
+    translationY = centerY() - baseHPx / 2f
+    scaleX = s
+    scaleY = s
+    transformOrigin = TransformOrigin(0f, 0.5f)
+    alpha = (1f + d).coerceIn(0f, 1f) * rowAlpha() * (0.78f + 0.22f * near) * (1f - 0.88f * dimOthers() * (1f - near))
+}
+
+/**
+ * The XMB home (after the AbuNashmi Deck): the games run along a row with the chosen one enlarged; Down folds
+ * the row up under a quick menu, Up lifts the store cards (and the glass Add game card) above the games.
+ * The whole pane is ONE focus target so the controller never fights per-tile focus; touch swipes, flings and
+ * taps drive the same state.
  */
 @Composable
 private fun DeckHomeCarousel(
     entries: List<HubEntry>,
+    loaded: Boolean,
     selected: Int,
     onSelect: (Int) -> Unit,
-    menuOpen: Boolean,
-    onMenuOpen: (Boolean) -> Unit,
+    mode: HomeMode,
+    onMode: (HomeMode) -> Unit,
     actions: List<DeckMenuAction>,
+    cards: List<DeckHomeCard>,
+    onAdd: () -> Unit,
     focus: FocusRequester,
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
     val accent = Deck.primary
-    val pos = remember { Animatable(selected.toFloat()) }
+    val n = entries.size
+    val settle = spring<Float>(dampingRatio = 0.9f, stiffness = 420f)
+    val gPos = remember { mutableFloatStateOf(selected.toFloat()) }
+    val cPos = remember { mutableFloatStateOf(0f) }
+    var cSel by remember { mutableIntStateOf(0) }
+    var gJob by remember { mutableStateOf<Job?>(null) }
+    var cJob by remember { mutableStateOf<Job?>(null) }
+    var dragging by remember { mutableStateOf(false) }
+    var vAcc by remember { mutableFloatStateOf(0f) }
     val menuT = remember { Animatable(0f) }
+    val upT = remember { Animatable(0f) }
     val menuPos = remember { Animatable(0f) }
     var menuIdx by remember { mutableIntStateOf(0) }
     var menuVisible by remember { mutableStateOf(false) }
-    val selNow by rememberUpdatedState(selected)
-    val countNow by rememberUpdatedState(entries.size)
-    val menuNow by rememberUpdatedState(menuOpen)
 
-    LaunchedEffect(selected) { pos.animateTo(selected.toFloat(), tween(300, easing = DeckEase)) }
-    LaunchedEffect(menuOpen) {
-        if (menuOpen) {
+    fun settleGames(i: Int) {
+        val t = i.coerceIn(0, (n - 1).coerceAtLeast(0))
+        if (t != selected) onSelect(t)
+        gJob?.cancel()
+        gJob = scope.launch { animate(gPos.floatValue, t.toFloat(), animationSpec = settle) { v, _ -> gPos.floatValue = v } }
+    }
+
+    fun settleCards(i: Int) {
+        val t = i.coerceIn(0, (cards.size - 1).coerceAtLeast(0))
+        cSel = t
+        cJob?.cancel()
+        cJob = scope.launch { animate(cPos.floatValue, t.toFloat(), animationSpec = settle) { v, _ -> cPos.floatValue = v } }
+    }
+
+    // The selection moved from outside (list loaded, game added or removed): glide to it.
+    LaunchedEffect(selected, n) {
+        if (!dragging && gJob?.isActive != true && abs(gPos.floatValue - selected) > 0.01f) {
+            animate(gPos.floatValue, selected.toFloat(), animationSpec = settle) { v, _ -> gPos.floatValue = v }
+        }
+    }
+    LaunchedEffect(mode) {
+        if (mode == HomeMode.OPTIONS) {
             menuIdx = 0
             menuPos.snapTo(0f)
             menuVisible = true
-            menuT.animateTo(1f, tween(220, easing = DeckEase))
-        } else {
-            menuT.animateTo(0f, tween(180, easing = DeckEase))
-            menuVisible = false
         }
+        // Up always lands on the first card, and the peeking row eases back to its start when it closes.
+        if (mode != HomeMode.STORES) {
+            cJob?.cancel()
+            cSel = 0
+            cJob = launch { animate(cPos.floatValue, 0f, animationSpec = settle) { v, _ -> cPos.floatValue = v } }
+        }
+        launch { upT.animateTo(if (mode == HomeMode.STORES) 1f else 0f, tween(300, easing = DeckEase)) }
+        menuT.animateTo(if (mode == HomeMode.OPTIONS) 1f else 0f, tween(300, easing = DeckEase))
+        if (mode != HomeMode.OPTIONS) menuVisible = false
     }
     LaunchedEffect(menuIdx) { menuPos.animateTo(menuIdx.toFloat(), tween(180, easing = DeckEase)) }
 
-    val n = entries.size
-    val current = entries.getOrNull(selected)
-    val coverShape = RoundedCornerShape(14.dp)
-
+    val cardShape = RoundedCornerShape(10.dp)
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val top = 76.dp
-        val x0 = 28.dp
-        // Room for the grown cover (x1.35) plus the title line under it.
-        val baseH = ((maxHeight - top - 72.dp) / 1.35f).coerceIn(100.dp, 180.dp)
+        val baseH = (maxHeight * 0.34f).coerceIn(96.dp, 168.dp)
         val baseW = baseH * 2f / 3f
+        val x0 = 28.dp
         val rowH = 40.dp
+        val hPx = with(density) { maxHeight.toPx() }
+        val baseWPx = with(density) { baseW.toPx() }
+        val baseHPx = with(density) { baseH.toPx() }
+        val x0Px = with(density) { x0.toPx() }
+        val gapPx = with(density) { 14.dp.toPx() }
+        // Quick menu layout: the row folds to half size at the top, the menu hangs under the chosen cover.
+        val optsY = baseHPx * 0.3375f + with(density) { 14.dp.toPx() }
+        val menuTopPx = optsY + baseHPx * 0.3375f + with(density) { 12.dp.toPx() }
+        val titleMax = (maxWidth - x0 - baseW * 1.35f - 40.dp).coerceAtLeast(120.dp)
+
+        val gScale = { 1f - 0.5f * menuT.value - 0.45f * upT.value }
+        val gCenter = { hPx / 2f + (optsY - hPx / 2f) * menuT.value + (hPx / 2f) * upT.value }
+        val gGrow = { 1f - upT.value }
+        val gAlpha = { 1f - 0.4f * upT.value }
+        val gDim = { menuT.value }
+        val gPosNow = { gPos.floatValue }
+        val cScale = { 0.55f + 0.45f * upT.value }
+        val cCenter = { 2f + (hPx / 2f - 2f) * upT.value }
+        val cAlpha = { (0.5f + 0.5f * upT.value) * (1f - menuT.value) }
+        val cGrow = { upT.value }
+        val noDim = { 0f }
+        val cPosNow = { cPos.floatValue }
+
+        val hDrag = rememberDraggableState { delta ->
+            if (mode == HomeMode.STORES) {
+                cJob?.cancel()
+                val p = (cPos.floatValue - delta / ((baseWPx + gapPx) * cScale()))
+                    .coerceIn(-0.45f, cards.size - 1 + 0.45f)
+                cPos.floatValue = p
+                cSel = p.roundToInt().coerceIn(0, cards.size - 1)
+            } else if (mode == HomeMode.GAMES && n > 0) {
+                gJob?.cancel()
+                val p = (gPos.floatValue - delta / ((baseWPx + gapPx) * gScale())).coerceIn(-0.45f, n - 1 + 0.45f)
+                gPos.floatValue = p
+                val r = p.roundToInt().coerceIn(0, n - 1)
+                if (r != selected) onSelect(r)
+            }
+        }
+        val vDrag = rememberDraggableState { d -> vAcc += d }
 
         Box(
             Modifier
@@ -1691,105 +1907,168 @@ private fun DeckHomeCarousel(
                 .focusProperties { canFocus = true }
                 .focusRequester(focus)
                 .onPreviewKeyEvent { e ->
-                    if (e.type != KeyEventType.KeyDown || countNow == 0) return@onPreviewKeyEvent false
+                    if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     val fresh = e.nativeKeyEvent.repeatCount == 0
-                    if (menuOpen) {
-                        when (e.key) {
-                            Key.DirectionUp -> { if (menuIdx > 0) menuIdx-- else onMenuOpen(false); true }
-                            Key.DirectionDown -> { if (menuIdx < actions.lastIndex) menuIdx++; true }
-                            Key.DirectionLeft, Key.DirectionRight -> true
-                            Key.ButtonA, Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> {
+                    val confirm = e.key == Key.ButtonA || e.key == Key.Enter ||
+                        e.key == Key.NumPadEnter || e.key == Key.DirectionCenter
+                    if (n == 0) {
+                        if (confirm && loaded) {
+                            if (fresh) onAdd()
+                            return@onPreviewKeyEvent true
+                        }
+                        return@onPreviewKeyEvent false
+                    }
+                    when (mode) {
+                        HomeMode.GAMES -> when {
+                            e.key == Key.DirectionLeft -> if (selected > 0) { settleGames(selected - 1); true } else false
+                            e.key == Key.DirectionRight -> { if (selected < n - 1) settleGames(selected + 1); true }
+                            e.key == Key.DirectionDown -> { onMode(HomeMode.OPTIONS); true }
+                            e.key == Key.DirectionUp -> { onMode(HomeMode.STORES); true }
+                            confirm -> { if (fresh) actions.firstOrNull()?.onClick?.invoke(); true }
+                            else -> false
+                        }
+                        HomeMode.OPTIONS -> when {
+                            e.key == Key.DirectionUp -> { if (menuIdx > 0) menuIdx-- else onMode(HomeMode.GAMES); true }
+                            e.key == Key.DirectionDown -> { if (menuIdx < actions.lastIndex) menuIdx++; true }
+                            e.key == Key.DirectionLeft || e.key == Key.DirectionRight -> true
+                            confirm -> {
                                 if (fresh) {
                                     val action = actions.getOrNull(menuIdx)
-                                    onMenuOpen(false)
-                                    action?.run?.invoke()
+                                    onMode(HomeMode.GAMES)
+                                    action?.onClick?.invoke()
                                 }
                                 true
                             }
-                            Key.Escape -> { onMenuOpen(false); true }
+                            e.key == Key.Escape -> { onMode(HomeMode.GAMES); true }
                             else -> false
                         }
-                    } else {
-                        when (e.key) {
-                            Key.DirectionLeft -> if (selected > 0) { onSelect(selected - 1); true } else false
-                            Key.DirectionRight -> { if (selected < n - 1) onSelect(selected + 1); true }
-                            Key.DirectionDown -> { onMenuOpen(true); true }
-                            Key.ButtonA, Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> {
-                                if (fresh) actions.firstOrNull()?.run?.invoke()
-                                true
-                            }
+                        HomeMode.STORES -> when {
+                            e.key == Key.DirectionLeft -> { settleCards(cSel - 1); true }
+                            e.key == Key.DirectionRight -> { settleCards(cSel + 1); true }
+                            e.key == Key.DirectionDown || e.key == Key.Escape -> { onMode(HomeMode.GAMES); true }
+                            e.key == Key.DirectionUp -> true
+                            confirm -> { if (fresh) cards.getOrNull(cSel)?.onClick?.invoke(); true }
                             else -> false
                         }
                     }
                 }
                 .focusable()
-                .pointerInput(Unit) {
-                    var acc = 0f
-                    detectHorizontalDragGestures(
-                        onDragStart = { acc = 0f },
-                        onDragEnd = { acc = 0f },
-                        onDragCancel = { acc = 0f },
-                    ) { change, dx ->
-                        if (menuNow) return@detectHorizontalDragGestures
-                        change.consume()
-                        acc += dx
-                        val threshold = 56.dp.toPx()
-                        if (acc <= -threshold && selNow < countNow - 1) {
-                            onSelect(selNow + 1)
-                            acc = 0f
-                        } else if (acc >= threshold && selNow > 0) {
-                            onSelect(selNow - 1)
-                            acc = 0f
+                .draggable(
+                    hDrag, Orientation.Horizontal,
+                    onDragStarted = { dragging = true },
+                    onDragStopped = { velocity ->
+                        dragging = false
+                        if (mode == HomeMode.STORES) {
+                            settleCards((cPos.floatValue - velocity / ((baseWPx + gapPx) * cScale()) * 0.14f).roundToInt())
+                        } else if (mode == HomeMode.GAMES && n > 0) {
+                            settleGames((gPos.floatValue - velocity / ((baseWPx + gapPx) * gScale()) * 0.14f).roundToInt())
+                        }
+                    },
+                )
+                .draggable(
+                    vDrag, Orientation.Vertical,
+                    onDragStarted = { vAcc = 0f },
+                    onDragStopped = {
+                        val th = with(density) { 40.dp.toPx() }
+                        if (vAcc < -th) {
+                            if (mode == HomeMode.GAMES && n > 0) onMode(HomeMode.STORES)
+                            else if (mode == HomeMode.OPTIONS) onMode(HomeMode.GAMES)
+                        } else if (vAcc > th) {
+                            if (mode == HomeMode.GAMES && n > 0) onMode(HomeMode.OPTIONS)
+                            else if (mode == HomeMode.STORES) onMode(HomeMode.GAMES)
+                        }
+                    },
+                )
+                .pointerInput(mode) { detectTapGestures { if (mode != HomeMode.GAMES) onMode(HomeMode.GAMES) } },
+        ) {
+            // The store cards (and Add game) above the games: small and half-hidden until Up lifts them.
+            if (n > 0) {
+                cards.forEachIndexed { i, card ->
+                    key(card.label) {
+                        Box(
+                            Modifier
+                                .size(baseW, baseH)
+                                .deckRowLayer(i, cPosNow, cScale, cCenter, cGrow, cAlpha, noDim, baseWPx, baseHPx, x0Px, gapPx)
+                                .clip(cardShape)
+                                .background(Brush.linearGradient(card.colors))
+                                .drawWithContent {
+                                    drawContent()
+                                    val w = (1f - abs(i - cPos.floatValue)).coerceIn(0f, 1f) * upT.value
+                                    val sw = 1.dp.toPx() + 1.5.dp.toPx() * w
+                                    drawRoundRect(
+                                        color = if (w > 0.02f) accent.copy(alpha = w) else Color.White.copy(alpha = 0.14f),
+                                        topLeft = Offset(sw / 2f, sw / 2f),
+                                        size = Size(size.width - sw, size.height - sw),
+                                        cornerRadius = CornerRadius(10.dp.toPx()),
+                                        style = Stroke(width = sw),
+                                    )
+                                }
+                                .pointerInput(i, mode, cSel) {
+                                    detectTapGestures {
+                                        when (mode) {
+                                            HomeMode.GAMES -> onMode(HomeMode.STORES)
+                                            HomeMode.STORES -> if (i != cSel) settleCards(i) else card.onClick()
+                                            HomeMode.OPTIONS -> onMode(HomeMode.GAMES)
+                                        }
+                                    }
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            val logo = card.logo?.let { rememberDeckLogo(it) }
+                            when {
+                                card.glass -> DeckGlassAddFace(accent)
+                                logo != null -> Image(
+                                    bitmap = logo,
+                                    contentDescription = card.label,
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier.fillMaxSize(0.62f),
+                                )
+                                else -> Icon(
+                                    card.icon,
+                                    contentDescription = card.label,
+                                    tint = Color.White,
+                                    modifier = Modifier.fillMaxSize(0.44f),
+                                )
+                            }
                         }
                     }
                 }
-                .pointerInput(Unit) { detectTapGestures { if (menuNow) onMenuOpen(false) } },
-        ) {
-            val lo = (selected - 8).coerceAtLeast(0)
-            val hi = (selected + 8).coerceAtMost(n - 1)
+            }
+
+            val lo = (selected - 2).coerceAtLeast(0)
+            val hi = (selected + 12).coerceAtMost(n - 1)
             for (i in lo..hi) {
                 val entry = entries[i]
                 key(i) {
                     Box(
                         Modifier
                             .size(baseW, baseH)
-                            .graphicsLayer {
-                                val t = menuT.value
-                                val m = 1f - 0.5f * t
-                                val bw = baseW.toPx() * m
-                                val step = bw + 14.dp.toPx() * m
-                                val d = i - pos.value
-                                val grow = (1f - abs(d)).coerceIn(0f, 1f)
-                                val s = m * (1f + 0.35f * grow)
-                                translationX = x0.toPx() + step * d + 0.35f * bw * d.coerceIn(0f, 1f)
-                                translationY = top.toPx()
-                                scaleX = s
-                                scaleY = s
-                                transformOrigin = TransformOrigin(0f, 0f)
-                                // Left of the selection fades out; behind an open menu the rest dims.
-                                alpha = (1f + d).coerceIn(0f, 1f) * (1f - 0.7f * t * (1f - grow))
-                            }
-                            .clip(coverShape)
+                            .deckRowLayer(i, gPosNow, gScale, gCenter, gGrow, gAlpha, gDim, baseWPx, baseHPx, x0Px, gapPx)
+                            .clip(cardShape)
                             .background(Deck.surface)
                             .drawWithContent {
                                 drawContent()
-                                val w = (1f - abs(i - pos.value)).coerceIn(0f, 1f)
+                                val w = (1f - abs(i - gPos.floatValue)).coerceIn(0f, 1f) * (1f - upT.value)
                                 if (w > 0.02f) {
-                                    val sw = 3.dp.toPx()
+                                    val sw = 2.5.dp.toPx()
                                     drawRoundRect(
                                         color = accent.copy(alpha = w),
                                         topLeft = Offset(sw / 2f, sw / 2f),
                                         size = Size(size.width - sw, size.height - sw),
-                                        cornerRadius = CornerRadius(14.dp.toPx()),
+                                        cornerRadius = CornerRadius(10.dp.toPx()),
                                         style = Stroke(width = sw),
                                     )
                                 }
                             }
-                            .pointerInput(i, selected, menuOpen) {
+                            .pointerInput(i, selected, mode) {
                                 detectTapGestures {
                                     when {
-                                        i != selected -> onSelect(i)
-                                        else -> onMenuOpen(!menuOpen)
+                                        i != selected -> {
+                                            if (mode != HomeMode.GAMES) onMode(HomeMode.GAMES)
+                                            settleGames(i)
+                                        }
+                                        mode == HomeMode.GAMES -> onMode(HomeMode.OPTIONS)
+                                        else -> onMode(HomeMode.GAMES)
                                     }
                                 }
                             },
@@ -1818,45 +2097,89 @@ private fun DeckHomeCarousel(
                 }
             }
 
-            if (current != null) {
-                val playtime = remember(current) { hubPlaytimeLabel(context, current.title) }
-                Column(
-                    Modifier
+            if (n > 0) {
+                // The chosen game's name, right of its cover under the rest of the row; beside the cover in the menu.
+                AnimatedContent(
+                    targetState = selected.coerceIn(0, n - 1),
+                    transitionSpec = { (fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 6 }) togetherWith fadeOut(tween(90)) },
+                    label = "homeGameTitle",
+                    modifier = Modifier
                         .offset {
-                            val t = menuT.value
-                            val selW = baseW.toPx() * 1.35f * (1f - 0.5f * t)
-                            val closedY = top.toPx() + baseH.toPx() * 1.35f + 10.dp.toPx()
-                            val openX = x0.toPx() + selW + 16.dp.toPx()
-                            val openY = top.toPx() + 2.dp.toPx()
+                            val below = gCenter() + baseHPx * gScale() * 0.5f + 8.dp.toPx()
                             IntOffset(
-                                (x0.toPx() + (openX - x0.toPx()) * t).roundToInt(),
-                                (closedY + (openY - closedY) * t).roundToInt(),
+                                (x0Px + baseWPx * 1.35f * gScale() + 16.dp.toPx()).roundToInt(),
+                                (below + (gCenter() - 22.dp.toPx() - below) * menuT.value).roundToInt(),
                             )
                         }
-                        .widthIn(max = 300.dp),
-                ) {
-                    Text(
-                        current.title,
-                        color = Color.White,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Black,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        hubOriginLabel(current).uppercase() + "  ·  " +
-                            if (playtime == "not played yet") playtime else "$playtime played",
-                        color = Deck.onSurfaceVariant,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 1.sp,
-                        maxLines = 1,
-                    )
+                        .widthIn(max = titleMax)
+                        .graphicsLayer { alpha = 1f - upT.value },
+                ) { idx ->
+                    val entry = entries.getOrNull(idx)
+                    if (entry != null) {
+                        val playtime = remember(entry) { hubPlaytimeLabel(context, entry.title) }
+                        Column {
+                            Text(
+                                entry.title,
+                                color = Color.White,
+                                fontSize = 22.sp,
+                                lineHeight = 25.sp,
+                                fontWeight = FontWeight.Black,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                hubOriginLabel(entry).uppercase() + "  ·  " +
+                                    if (playtime == "not played yet") playtime else "$playtime played",
+                                color = Deck.onSurfaceVariant,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 1.sp,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+
+                // The chosen card's name and details, the same way, once the cards are up.
+                AnimatedContent(
+                    targetState = cSel,
+                    transitionSpec = { (fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 6 }) togetherWith fadeOut(tween(90)) },
+                    label = "homeCardTitle",
+                    modifier = Modifier
+                        .offset {
+                            IntOffset(
+                                (x0Px + baseWPx * 1.35f * cScale() + 16.dp.toPx()).roundToInt(),
+                                (cCenter() + baseHPx * cScale() * 0.5f + 8.dp.toPx()).roundToInt(),
+                            )
+                        }
+                        .widthIn(max = titleMax)
+                        .graphicsLayer { alpha = upT.value },
+                ) { idx ->
+                    val card = cards.getOrNull(idx)
+                    if (card != null) {
+                        Column {
+                            Text(
+                                card.label,
+                                color = Color.White,
+                                fontSize = 22.sp,
+                                lineHeight = 25.sp,
+                                fontWeight = FontWeight.Black,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                card.subtitle,
+                                color = Deck.onSurfaceVariant,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
             }
 
             if (menuVisible) {
-                val menuTop = top + baseH * 0.675f + 12.dp
                 actions.forEachIndexed { idx, action ->
                     val focused = idx == menuIdx
                     val tint = if (action.danger) DeckPalette.error else Deck.onSurfaceVariant
@@ -1865,19 +2188,18 @@ private fun DeckHomeCarousel(
                         modifier = Modifier
                             .graphicsLayer {
                                 val rel = idx - menuPos.value
-                                translationX = x0.toPx() - (1f - menuT.value) * 12.dp.toPx()
-                                translationY = menuTop.toPx() + rel * rowH.toPx()
+                                translationX = x0Px - (1f - menuT.value) * 12.dp.toPx()
+                                translationY = menuTopPx + rel * rowH.toPx()
                                 // Rows already passed fade out above the focused one, like the XMB.
                                 alpha = menuT.value * (1f + rel).coerceIn(0f, 1f)
                             }
                             .height(rowH)
                             .clip(CircleShape)
-                            .then(if (focused) Modifier.deckGlass(CircleShape) else Modifier)
                             .pointerInput(idx) {
                                 detectTapGestures {
                                     menuIdx = idx
-                                    onMenuOpen(false)
-                                    action.run()
+                                    onMode(HomeMode.GAMES)
+                                    action.onClick()
                                 }
                             }
                             .padding(horizontal = 8.dp),
@@ -1909,97 +2231,21 @@ private fun DeckHomeCarousel(
                 }
             }
 
+            if (loaded && n == 0) DeckGlassPill("Add a game", onAdd, Modifier.align(Alignment.Center))
+
             Text(
-                text = if (menuOpen) "A  Select      B  Back" else "A  Play      ↓  Options      ◀ ▶  Browse",
+                text = when {
+                    n == 0 -> if (loaded) "A  Add a game" else ""
+                    mode == HomeMode.OPTIONS -> "A  Select      B  Back"
+                    mode == HomeMode.STORES -> "A  Open      ◀ ▶  Browse      B  Back"
+                    else -> "A  Play      ↑  Stores      ↓  Options"
+                },
                 color = Deck.onSurfaceVariant,
                 fontSize = 12.sp,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = 20.dp, bottom = 12.dp),
             )
-        }
-    }
-}
-
-/** The Add Games chooser in liquid glass: frosted panel (real backdrop blur on Android 12+). */
-@Composable
-private fun DeckGlassAddMenu(onPick: (HubAddMode) -> Unit, onDismiss: () -> Unit) {
-    val view = LocalView.current
-    SideEffect {
-        val window = (view.parent as? DialogWindowProvider)?.window ?: return@SideEffect
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
-            window.attributes = window.attributes.also { it.blurBehindRadius = 40 }
-        }
-    }
-    val panel = RoundedCornerShape(28.dp)
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(
-            Modifier
-                .fillMaxWidth(0.8f)
-                .widthIn(max = 520.dp)
-                .clip(panel)
-                .deckGlass(panel)
-                .deckDialogNav(onDismiss)
-                .padding(22.dp),
-        ) {
-            Text("Add games", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Text(
-                "Where should it live?",
-                color = Deck.onSurfaceVariant,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(top = 2.dp, bottom = 16.dp),
-            )
-            DeckGlassChoice(
-                "Master Containers",
-                "Add it as a shortcut inside a container you already have.",
-                Icons.Filled.Layers,
-            ) { onPick(HubAddMode.MASTER) }
-            Spacer(Modifier.height(10.dp))
-            DeckGlassChoice(
-                "Cronos",
-                "A fresh dedicated container built just for this game.",
-                Icons.Filled.SportsEsports,
-            ) { onPick(HubAddMode.CRONOS) }
-            Text(
-                "B  Back",
-                color = Deck.onSurfaceVariant,
-                fontSize = 12.sp,
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(top = 14.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun DeckGlassChoice(title: String, desc: String, icon: ImageVector, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(18.dp)
-    val interaction = remember { MutableInteractionSource() }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .deckGlass(shape, 0.8f)
-            .deckFocusBorder(interaction, shape, base = Color.Transparent)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(14.dp),
-    ) {
-        Box(
-            Modifier
-                .size(42.dp)
-                .clip(CircleShape)
-                .background(Deck.primary.copy(alpha = 0.28f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
-        }
-        Spacer(Modifier.width(14.dp))
-        Column {
-            Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Text(desc, color = Deck.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
         }
     }
 }

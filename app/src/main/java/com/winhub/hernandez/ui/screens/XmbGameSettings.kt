@@ -353,15 +353,9 @@ private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<Xmb
         subtitle = "Versions, frame rate, filtering…") { xmbDxConfigMenu(xmb, s) }
 
     val rendId = p.ex("renderer", c.renderer).lowercase()
-    val rend = if (rendId == "surfaceflinger") "SurfaceFlinger" else "Vulkan"
-    rows += XmbRow.Choice("renderer", "Renderer", Icons.Filled.DesktopWindows, listOf("Vulkan", "SurfaceFlinger"), rend,
-        confirm = { v -> if (v == "SurfaceFlinger") XmbConfirm("SurfaceFlinger renderer", "SurfaceFlinger renderer — experimental. Use it for this game?", "Use SurfaceFlinger") else null }) { v ->
+    val rend = "Vulkan"
+    rows += XmbRow.Choice("renderer", "Renderer", Icons.Filled.DesktopWindows, listOf("Vulkan"), rend) { v ->
         xmb.set(p, "renderer", v.lowercase())
-    }
-    if (rend == "SurfaceFlinger") {
-        rows += XmbRow.Toggle("sfCompat", "Correct SurfaceFlinger colours", Icons.Filled.Image,
-            p.ex("sfCompatMode", if (c.getRendererSfCompatMode()) "1" else "0") == "1",
-            subtitle = "Fixes swapped red/blue (BGRA→RGBA)") { xmb.set(p, "sfCompatMode", if (it) "1" else "0") }
     }
     if (rend == "Vulkan") {
         val native = p.ex("native", if (c.isRendererNative()) "true" else "false") == "true"
@@ -375,14 +369,6 @@ private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<Xmb
         val pm = p.ex("presentMode", c.getRendererPresentMode())
         rows += XmbRow.Choice("vkPresent", "Present mode", Icons.Filled.Speed, pmLabels, pmLabels[pmValues.indexOf(pm).coerceAtLeast(0)],
             disabledReason = if (native) "Set by the native renderer" else null) { v -> xmb.set(p, "presentMode", pmValues[pmLabels.indexOf(v)]) }
-        if (native) {
-            val nbValues = listOf("auto", "asr", "flip")
-            val nbLabels = listOf(p.str(R.string.renderer_native_backend_auto), p.str(R.string.renderer_native_backend_asr), p.str(R.string.renderer_native_backend_flip))
-            val nb = p.ex("nativeBackend", c.getRendererNativeBackend())
-            rows += XmbRow.Choice("vkBackend", "Native backend", Icons.Filled.Layers, nbLabels, nbLabels[nbValues.indexOf(nb).coerceAtLeast(0)]) { v ->
-                xmb.set(p, "nativeBackend", nbValues[nbLabels.indexOf(v)])
-            }
-        }
         val drivers = (listOf("system") + runCatching { com.winhub.hernandez.contents.AdrenotoolsManager(p.context).enumarateInstalledDrivers().toList() }.getOrDefault(emptyList())).distinct()
         val rd = p.ex("rendererDriverId", c.getRendererDriverId())
         rows += XmbRow.Choice("vkDriver", "Renderer driver", Icons.Filled.Memory, drivers, if (rd in drivers) rd else "system",

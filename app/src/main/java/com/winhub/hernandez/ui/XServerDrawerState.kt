@@ -113,7 +113,7 @@ object XServerDrawerState {
     // multiplying the activity forces "mailbox" (effectivePresentMode()) and sets presentModeLocked =
     // true; the drawer keeps the chips interactive but BLOCKS FIFO/Immediate taps (Mailbox is required
     // for FG's extra presents) WITHOUT touching the user's saved preference — so presentMode snaps back
-    // to their mode when FG turns off. rendererIsVulkan gates the whole section (SurfaceFlinger
+    // to their mode when FG turns off. rendererIsVulkan gates the whole section (only
     // has no present-mode control). onPresentModeChange persists + applies the user's pick live.
     private val _presentMode = MutableStateFlow("fifo")
     val presentMode: StateFlow<String> = _presentMode
@@ -410,7 +410,7 @@ object XServerDrawerState {
     @JvmField var onDisableMouse:           Runnable? = null
     @JvmField var onNativeRenderingToggle: Runnable? = null
     // Whether the active renderer supports Native Rendering (direct scanout). True for Vulkan;
-    // false for SurfaceFlinger (it scans out directly and bypasses the compositor pass).
+    // false when the compositor post pass is bypassed or unavailable.
     // Set once at launch from the renderer type; drives whether the drawer shows the toggle.
     private val _nativeRenderingSupported = MutableStateFlow(true)
     @get:JvmName("getNativeRenderingSupportedState")

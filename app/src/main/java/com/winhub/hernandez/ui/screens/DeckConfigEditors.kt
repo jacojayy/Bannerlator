@@ -967,8 +967,6 @@ internal fun DeckVulkanConfigEditor(
     var driverId by remember { mutableStateOf(cfg["driverId"] ?: "system") }
     val filterMode = remember { cfg["filterMode"]?.toIntOrNull() ?: 0 }
     var swapRB by remember { mutableStateOf(cfg["swapRB"] == "true") }
-    val sfCompatMode = remember { cfg["sfCompatMode"] != "false" }
-    var nativeBackend by remember { mutableStateOf(cfg["nativeBackend"] ?: "auto") }
 
     val rendererDriverOptions = remember {
         val installed = try {
@@ -980,21 +978,9 @@ internal fun DeckVulkanConfigEditor(
     DeckConfigPanel("Renderer Configuration") {
         DeckRow(
             label = "Native Rendering",
-            hint = "Direct scanout straight to SurfaceFlinger",
+            hint = "Direct scanout straight to the display",
             control = { DeckToggle(nativeRender) { nativeRender = it } },
         )
-        if (nativeRender) {
-            DeckChoiceRow(
-                label = "Native Backend",
-                options = listOf(
-                    "auto" to "Auto",
-                    "asr" to "SurfaceFlinger (ASR)",
-                    "flip" to "Vulkan FLIP",
-                ),
-                selected = nativeBackend,
-                onPick = { nativeBackend = it },
-            )
-        }
         DeckChoiceRow(
             label = "Present Mode",
             hint = if (nativeRender) "Ignored under native rendering" else null,
@@ -1025,7 +1011,7 @@ internal fun DeckVulkanConfigEditor(
         )
     }
     fun buildConfig(): String =
-        "native=$nativeRender;presentMode=$presentMode;driverId=$driverId;filterMode=$filterMode;swapRB=$swapRB;sfCompatMode=$sfCompatMode;nativeBackend=$nativeBackend"
+        "native=$nativeRender;presentMode=$presentMode;driverId=$driverId;filterMode=$filterMode;swapRB=$swapRB"
 
     // Live commit: every change reaches the host immediately, so the screen's own Save button is
     // enough. "Done" only collapses the panel (it never gates the edit).

@@ -17,7 +17,7 @@ import android.view.Display;
  * the device. Plugging a monitor into USB-C gives the app a second {@link Display} with a different
  * answer, and the game can be moved onto it ({@link ExternalDisplayController}). The build-time
  * property {@code ro.surface_flinger.has_HDR_display} is a different thing again and can disagree
- * with this; the runtime per-display answer is the one that decides what SurfaceFlinger does.
+ * with this; the runtime per-display answer is the one that decides what the compositor does.
  *
  * <p>Every API above the module's minimum (26) is version-guarded and every call is wrapped: an
  * older device, or a vendor framework that throws here, must fall back to "unknown", never crash a

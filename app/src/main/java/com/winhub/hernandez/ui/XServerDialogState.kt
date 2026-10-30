@@ -76,8 +76,7 @@ object XServerDialogState {
     val upscalerMode: StateFlow<Int> = _upscalerMode
     fun setUpscalerMode(v: Int) { _upscalerMode.value = v }
 
-    // The spatial upscaler lives on the Vulkan renderer only. False on the SurfaceFlinger
-    // renderer -> grays the picker.
+    // The spatial upscaler lives on the Vulkan renderer only; false grays the picker.
     private val _vulkanSupported = MutableStateFlow(false)
     val vulkanSupported: StateFlow<Boolean> = _vulkanSupported
     fun setVulkanSupported(v: Boolean) { _vulkanSupported.value = v }

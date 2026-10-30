@@ -287,25 +287,7 @@ public class PresentExtension implements Extension {
         synchronized (content.renderLock) {
             boolean isNative = vr != null && vr.isNativeMode();
 
-            if (xr instanceof com.winhub.hernandez.renderer.ASurfaceRenderer) {
-                // SurfaceFlinger (ASR): hand the pixmap's AHB to the window's own SurfaceControl
-                // layer (no GL/Vulkan compositor). Additive branch — leaves the Vulkan paths below
-                // untouched. Falls back to copyArea for non-AHB (SHM) pixmaps.
-                final com.winhub.hernandez.renderer.ASurfaceRenderer asr =
-                    (com.winhub.hernandez.renderer.ASurfaceRenderer) xr;
-                if (window.attributes.isMapped()
-                        && pixmap.drawable.getTexture() instanceof GPUImage
-                        && ((GPUImage) pixmap.drawable.getTexture()).getHardwareBufferPtr() != 0) {
-                    content.setTexture(pixmap.drawable.getTexture());
-                    content.setDirectScanout(true);
-                    sendCompleteNotify(window, serial, Kind.PIXMAP, Mode.FLIP, ust, msc);
-                    asr.presentWindow(window, content);
-                } else {
-                    content.copyArea((short)0, (short)0, xOff, yOff, pixmap.drawable.width, pixmap.drawable.height, pixmap.drawable);
-                    sendCompleteNotify(window, serial, Kind.PIXMAP, Mode.COPY, ust, msc);
-                }
-                emitIdleNotify(window, pixmap, serial, idleFence, targetFps, null);
-            } else if (isNative && pixmap.drawable.isDirectScanout()) {
+            if (isNative && pixmap.drawable.isDirectScanout()) {
                 content.setTexture(pixmap.drawable.getTexture());
                 content.setDirectScanout(true);
                 sendCompleteNotify(window, serial, Kind.PIXMAP, Mode.FLIP, ust, msc);

@@ -36,7 +36,7 @@ object CommunityConfigApply {
         "dxwrapper", "dxwrapperConfig", "graphicsDriver", "graphicsDriverConfig",
         "emulator", "fexcoreVersion", "fexcorePreset", "box64Version", "box64Preset",
         "audioDriver", "cpuList", "envVars", "screenSize", "wincomponents", "renderer",
-        "fpsLimiter", "frameGenEngine", "sfCompatMode", "inputType", "execArgs",
+        "fpsLimiter", "frameGenEngine", "inputType", "execArgs",
         // bl_ext overlay additions:
         "renderScale", "fullscreenMode", "sharpnessEffect", "sharpnessLevel", "sharpnessDenoise",
         "reshadeLoadout", "reshadeMode", "reshadeParams", "reshadeEffect", "startupSelection",

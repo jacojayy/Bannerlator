@@ -9,7 +9,6 @@ import android.view.SurfaceView;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
-import com.winhub.hernandez.renderer.ASurfaceRenderer;
 import com.winhub.hernandez.renderer.HostRenderer;
 import com.winhub.hernandez.renderer.vulkan.VulkanRenderer;
 import com.winhub.hernandez.xserver.XServer;
@@ -42,54 +41,26 @@ public class XServerView extends FrameLayout {
     }
 
     public void initRenderer(String rendererType) {
-        boolean surfaceFlinger = "surfaceflinger".equalsIgnoreCase(rendererType);
-        // ASR needs every Drawable backed by a composer-compatible AHardwareBuffer. Global flag —
-        // set before any window content Drawable is created (and cleared for Vulkan).
-        com.winhub.hernandez.xserver.Drawable.setAsrMode(surfaceFlinger);
-        if (surfaceFlinger) {
-            vulkanSurfaceView = new SurfaceView(getContext());
-            vulkanSurfaceView.setLayoutParams(new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            addView(vulkanSurfaceView);
-            final ASurfaceRenderer asrRenderer = new ASurfaceRenderer(this, xServer);
-            renderer = asrRenderer;
-            vulkanSurfaceView.getHolder().addCallback(new SurfaceHolder.Callback() {
-                @Override
-                public void surfaceCreated(SurfaceHolder holder) {
-                    asrRenderer.onSurfaceCreated(holder.getSurface());
-                }
-                @Override
-                public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-                    asrRenderer.onSurfaceChanged(holder.getSurface(), width, height);
-                    reassertFrameRate();
-                }
-                @Override
-                public void surfaceDestroyed(SurfaceHolder holder) {
-                    asrRenderer.onSurfaceDestroyed();
-                }
-            });
-        } else {
-            vulkanSurfaceView = new SurfaceView(getContext());
-            vulkanSurfaceView.setLayoutParams(new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            addView(vulkanSurfaceView);
-            renderer = new VulkanRenderer(this, xServer);
-            vulkanSurfaceView.getHolder().addCallback(new SurfaceHolder.Callback() {
-                @Override
-                public void surfaceCreated(SurfaceHolder holder) {
-                    ((VulkanRenderer)renderer).onSurfaceCreated(holder.getSurface());
-                }
-                @Override
-                public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-                    ((VulkanRenderer)renderer).onSurfaceChanged(width, height);
-                    reassertFrameRate();
-                }
-                @Override
-                public void surfaceDestroyed(SurfaceHolder holder) {
-                    ((VulkanRenderer)renderer).onSurfaceDestroyed();
-                }
-            });
-        }
+        vulkanSurfaceView = new SurfaceView(getContext());
+        vulkanSurfaceView.setLayoutParams(new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        addView(vulkanSurfaceView);
+        renderer = new VulkanRenderer(this, xServer);
+        vulkanSurfaceView.getHolder().addCallback(new SurfaceHolder.Callback() {
+            @Override
+            public void surfaceCreated(SurfaceHolder holder) {
+                ((VulkanRenderer)renderer).onSurfaceCreated(holder.getSurface());
+            }
+            @Override
+            public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+                ((VulkanRenderer)renderer).onSurfaceChanged(width, height);
+                reassertFrameRate();
+            }
+            @Override
+            public void surfaceDestroyed(SurfaceHolder holder) {
+                ((VulkanRenderer)renderer).onSurfaceDestroyed();
+            }
+        });
     }
 
     public HostRenderer getRenderer() {
@@ -114,14 +85,14 @@ public class XServerView extends FrameLayout {
     public void onResume() {
     }
 
-    /** True if this renderer uses a SurfaceView we can fully tear down + rebuild (Vulkan / ASR). */
+    /** True if this renderer uses a SurfaceView we can fully tear down + rebuild (Vulkan). */
     public boolean canRecreateSurface() {
         return vulkanSurfaceView != null;
     }
 
     // Force a REAL Android surface teardown by hiding the game SurfaceView. GONE removes it from the
     // layout, which destroys its underlying android.view.Surface and fires SurfaceHolder.Callback
-    // surfaceDestroyed -> renderer.onSurfaceDestroyed() (Vulkan: nativeDetachSurface; ASR/native:
+    // surfaceDestroyed -> renderer.onSurfaceDestroyed() (Vulkan: nativeDetachSurface; full
     // full destroy). This is the load-bearing difference vs a swapchain-only recreate on the same
     // surface: it replicates what a background/foreground cycle does to the window surface, which is
     // the ONLY thing device-proven to clear the LSFG black-frame flicker. Paired with rebuildSurface().
@@ -150,7 +121,7 @@ public class XServerView extends FrameLayout {
     // Vote a target display refresh rate for the active host renderer's window (VRR / refresh-rate
     // matching). ONE Surface-level vote covers both renderers: SurfaceFlinger aggregates
     // frame-rate votes over a layer subtree, so a vote on the parent SurfaceView also covers the
-    // Vulkan/ASR native child SurfaceControls. fps == 0f clears the vote (lets the panel run free).
+    // Vulkan native child SurfaceControls. fps == 0f clears the vote (lets the panel run free).
     // The request is remembered and re-asserted in surfaceChanged() (see reassertFrameRate()).
     // Safe to call before the surface exists. Surface.setFrameRate is API 30+, so it is a no-op
     // below that (minSdk is 26).

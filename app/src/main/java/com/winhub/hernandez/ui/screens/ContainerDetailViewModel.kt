@@ -178,15 +178,10 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
     // Advanced Vulkan present options — backed by the container's dedicated renderer* fields
     // (NOT graphicsDriverConfig, whose KeyValueSet/semicolon mismatch made these never apply).
     var rendererNative      by mutableStateOf(false)
-    // Native backend for Native Rendering: "auto"/"asr" -> hardened SurfaceFlinger (ASR) reroute;
-    // "flip" -> force the leaner Vulkan FLIP direct-scanout. Default "auto" = unchanged behaviour.
-    var rendererNativeBackend by mutableStateOf("auto")
     var rendererPresentMode by mutableStateOf("fifo")
     var rendererDriverId    by mutableStateOf("system")
     var rendererFilterMode  by mutableStateOf(0)
     var rendererSwapRB      by mutableStateOf(false)
-    // SurfaceFlinger (ASR) BGRA->RGBA colour correction (GN #1620). Default ON = correct colours.
-    var rendererSfCompatMode by mutableStateOf(true)
 
     // Display backend: always X11.
     var displayBackend by mutableStateOf(Container.DISPLAY_BACKEND_X11)
@@ -313,8 +308,8 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
     // ── Renderer ──────────────────────────────────────────────────────────────
     var rendererEntries by mutableStateOf(emptyList<String>()); private set
     var selectedRenderer by mutableStateOf("Vulkan")
-    // False when the device has no hardware Vulkan: the Vulkan/SurfaceFlinger renderers and the
-    // Frame Generation row are then hidden, since they can only run on the Vulkan compositor.
+    // False when the device has no hardware Vulkan: the renderer and Frame Generation rows are
+    // then hidden, since they can only run on the Vulkan compositor.
     var vulkanSupported by mutableStateOf(true); private set
 
     var lcAll by mutableStateOf("")
@@ -497,8 +492,7 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
         audioDriverEntries = res.getStringArray(R.array.audio_driver_entries).toList()
         emulatorEntries   = res.getStringArray(R.array.emulator_entries).toList()
         vulkanSupported = GPUInformation.isVulkanSupported(context)
-        rendererEntries = if (vulkanSupported) listOf("Vulkan", "SurfaceFlinger")
-                          else listOf("SurfaceFlinger")
+        rendererEntries = if (vulkanSupported) listOf("Vulkan") else emptyList()
         lcAllEntries      = res.getStringArray(R.array.some_lc_all).toList()
         startupSelectionEntries = res.getStringArray(R.array.startup_selection_entries).toList()
         mouseWarpEntries  = listOf(
@@ -605,12 +599,10 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
         selectedGraphicsDriver   = identifierToDisplay(seed?.graphicsDriver ?: defaultGraphicsDriverForNewContainer(), graphicsDriverEntries)
         graphicsDriverConfig     = seed?.graphicsDriverConfig ?: Container.DEFAULT_GRAPHICSDRIVERCONFIG
         rendererNative           = seed?.isRendererNative() ?: false
-        rendererNativeBackend    = seed?.getRendererNativeBackend() ?: "auto"
         rendererPresentMode      = seed?.getRendererPresentMode() ?: "fifo"
         rendererDriverId         = seed?.getRendererDriverId() ?: "system"
         rendererFilterMode       = seed?.getRendererFilterMode() ?: 0
         rendererSwapRB           = seed?.getRendererSwapRB() ?: false
-        rendererSfCompatMode     = seed?.getRendererSfCompatMode() ?: true
         displayBackend           = Container.DISPLAY_BACKEND_X11
         unrealHdr                = seed?.getUnrealHdr() ?: com.winhub.hernandez.core.UnrealHdr.OFF
         renderScale              = seed?.getExtra("renderScale", "1.0") ?: "1.0"
@@ -654,11 +646,7 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
             seed?.getReshadeLoadout(), seed?.getReshadeMode(), seed?.getReshadeParams(), seed?.getReshadeEffect()
         )
 
-        // Renderer
-        // Map the stored identifier ("vulkan"/"surfaceflinger") to its display label so the dropdown
-        // shows the proper case AND the Vulkan-settings gear (gated on == "Vulkan") shows on load —
-        // not only after the user re-picks from the list. Legacy "opengl" ids degrade to the first
-        // entry (Vulkan), since the OpenGL renderer no longer exists.
+        // Renderer: Vulkan is the only host renderer. Legacy ids (opengl/surfaceflinger) degrade to it.
         selectedRenderer = identifierToDisplay(seed?.renderer ?: "vulkan", rendererEntries)
 
         val locale = java.util.Locale.getDefault()
@@ -1152,12 +1140,10 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
         c.setGyroInvertY(gyroInvertY)
         c.setRenderer(StringUtils.parseIdentifier(selectedRenderer))
         c.setRendererNative(rendererNative)
-        c.setRendererNativeBackend(rendererNativeBackend)
         c.setRendererPresentMode(rendererPresentMode)
         c.setRendererDriverId(rendererDriverId)
         c.setRendererFilterMode(rendererFilterMode)
         c.setRendererSwapRB(rendererSwapRB)
-        c.setRendererSfCompatMode(rendererSfCompatMode)
         c.setDisplayBackend(Container.DISPLAY_BACKEND_X11)
         c.setUnrealHdr(unrealHdr)                   // off clears the extra
         c.putExtra("renderScale", if (renderScale == "1.0") null else renderScale)

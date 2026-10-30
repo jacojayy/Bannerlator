@@ -158,52 +158,6 @@ target_link_libraries(vulkan_renderer
         atomic
 )
 
-# SurfaceFlinger (ASurfaceRenderer / ASR) host renderer — ported from
-# GameNative PR #1582 (André Vito), built on StevenMX's scanout work.
-# Self-contained: standard NDK + dlsym'd ASurfaceControl/ASurfaceTransaction
-# (gated to API>=29 at runtime); the scanout AHB arrives via JNI.
-add_library(asurface_renderer SHARED
-        asurfacerenderer/asurface_jni.cpp
-        asurfacerenderer/ASurfaceRendererContext.cpp
-        asurfacerenderer/blit_converter.cpp
-)
-
-target_compile_options(asurface_renderer PRIVATE
-        -Wall -Wextra -fvisibility=hidden -std=c++17
-)
-
-# EGL + GLESv3: the BGRA->RGBA GPU converter (blit_converter.cpp, GN #1620) owns a
-# private EGL context + GLES3.1 compute / GLES3.0 fragment blit on a dedicated thread.
-target_link_libraries(asurface_renderer
-        log
-        android
-        dl
-        atomic
-        EGL
-        GLESv3
-)
-
-# AHBImage native (GN #1620): the fenced 3-buffer CPU scanout swapchain used by the
-# ASR renderer for CPU-drawn window chrome. Kept as its own .so (mirrors GN) so it
-# is not dragged onto the GL/Vulkan path; AHBImage.java does loadLibrary("ahbimage").
-add_library(ahbimage SHARED
-        asurfacerenderer/ahbimage.c
-)
-
-target_compile_definitions(ahbimage PRIVATE
-        EGL_EGLEXT_PROTOTYPES
-        GL_GLEXT_PROTOTYPES
-)
-
-target_compile_options(ahbimage PRIVATE -Wall -Wextra)
-
-target_link_libraries(ahbimage
-        log
-        android
-        EGL
-        GLESv2
-)
-
 # pasink — tiny PulseAudio client (dlopen-based) to suspend/resume the guest audio sink and recover
 # the output route after backgrounding / HDMI route changes. No pulse link deps (pure dlopen/dlsym).
 add_library(pasink SHARED

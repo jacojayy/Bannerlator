@@ -125,8 +125,6 @@ internal fun DeckContainerDetailScreen(
         viewModel.rendererDriverId = m["driverId"] ?: "system"
         viewModel.rendererFilterMode = m["filterMode"]?.toIntOrNull() ?: 0
         viewModel.rendererSwapRB = m["swapRB"] == "true"
-        viewModel.rendererSfCompatMode = m["sfCompatMode"] != "false"
-        viewModel.rendererNativeBackend = m["nativeBackend"] ?: "auto"
     }
 
     // Category-navigation layout — a setting (Settings → Appearance → Container Editor Layout).
@@ -414,9 +412,7 @@ internal fun DeckContainerDetailScreen(
                                     ";presentMode=${viewModel.rendererPresentMode}" +
                                     ";driverId=${viewModel.rendererDriverId}" +
                                     ";filterMode=${viewModel.rendererFilterMode}" +
-                                    ";swapRB=${viewModel.rendererSwapRB}" +
-                                    ";sfCompatMode=${viewModel.rendererSfCompatMode}" +
-                                    ";nativeBackend=${viewModel.rendererNativeBackend}",
+                                    ";swapRB=${viewModel.rendererSwapRB}",
                                 frameGenSelected = viewModel.frameGenEngine != "off",
                                 onConfirm = { newConfig ->
                                     applyRendererConfig(newConfig)
@@ -474,9 +470,6 @@ internal fun DeckContainerDetailScreen(
                                 viewModel.frameGenEngine = it
                                 if (BuildConfig.DEBUG)
                                     android.util.Log.d("FrameGen", "container editor picked [" + it + "] -> form frameGenEngine=[" + viewModel.frameGenEngine + "]")
-                                // LSFG Native runs in our Vulkan compositor; arming it on
-                                // SurfaceFlinger silently did nothing. The classic editor forbids
-                                // the combo, so switching the renderer is the only workable pick.
                                 if (it != "off" && viewModel.selectedRenderer != "Vulkan")
                                     viewModel.selectedRenderer = "Vulkan"
                             },

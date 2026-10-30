@@ -119,18 +119,10 @@ public class Container {
     private String basePrefix = "";
     private boolean showFPS;
     private boolean rendererNative = false;
-    // Which native backend a Native-Rendering Vulkan container routes to: "auto"/"asr" -> hardened
-    // SurfaceFlinger (ASR) renderer when eligible (default reroute); "flip" -> force the leaner inline
-    // Vulkan FLIP direct-scanout (skip the reroute). Default "auto" preserves existing behaviour.
-    private String rendererNativeBackend = "auto";
     private String rendererPresentMode = "fifo";
     private String rendererDriverId = "system";
     private int rendererFilterMode = 0;
     private boolean rendererSwapRB = false;
-    // SurfaceFlinger (ASR) BGRA->RGBA colour correction (GN #1620). Default TRUE = correct colours
-    // (native GPU converter blits BGRA->RGBA before present); false = present BGRA directly, for
-    // displays that scan out BGRA natively. ASR-only — independent of rendererSwapRB (Vulkan).
-    private boolean rendererSfCompatMode = true;
     // Fullscreen aspect-ratio mode (issue #71). Replaces the old fullscreenStretched boolean.
     public static final int FULLSCREEN_OFF = 0;      // windowed, letterboxed (preserve aspect)
     public static final int FULLSCREEN_FIT = 1;      // fullscreen-immersive, letterboxed (preserve aspect)
@@ -1168,8 +1160,6 @@ public class Container {
 
     public boolean isRendererNative() { return rendererNative; }
     public void setRendererNative(boolean v) { this.rendererNative = v; }
-    public String getRendererNativeBackend() { return (rendererNativeBackend == null || rendererNativeBackend.isEmpty()) ? "auto" : rendererNativeBackend; }
-    public void setRendererNativeBackend(String v) { this.rendererNativeBackend = (v == null || v.isEmpty()) ? "auto" : v; }
     public String getRendererPresentMode() { return rendererPresentMode; }
     public void setRendererPresentMode(String v) { this.rendererPresentMode = v != null ? v : "fifo"; }
     public String getRendererDriverId() { return rendererDriverId; }
@@ -1178,11 +1168,9 @@ public class Container {
     public void setRendererFilterMode(int v) { this.rendererFilterMode = v; }
     public boolean getRendererSwapRB() { return rendererSwapRB; }
     public void setRendererSwapRB(boolean v) { this.rendererSwapRB = v; }
-    public boolean getRendererSfCompatMode() { return rendererSfCompatMode; }
-    public void setRendererSfCompatMode(boolean v) { this.rendererSfCompatMode = v; }
 
     public static String getDefaultVulkanConfig() {
-        return "native=false;presentMode=fifo;driverId=system;filterMode=0;swapRB=false;sfCompatMode=true";
+        return "native=false;presentMode=fifo;driverId=system;filterMode=0;swapRB=false";
     }
 
     public Iterable<String[]> drivesIterator() {
@@ -1269,13 +1257,10 @@ public class Container {
             data.put("exclusiveXInput", exclusiveXInput);
             data.put("renderer", renderer);
             data.put("rendererNative", rendererNative);
-            data.put("rendererNativeBackend", rendererNativeBackend);
             data.put("rendererPresentMode", rendererPresentMode);
             if (!rendererDriverId.isEmpty()) data.put("rendererDriverId", rendererDriverId);
             if (rendererFilterMode != 0) data.put("rendererFilterMode", rendererFilterMode);
             if (rendererSwapRB) data.put("rendererSwapRB", true);
-            // Default is TRUE, so only persist the off state (absent token => correct colours).
-            if (!rendererSfCompatMode) data.put("rendererSfCompatMode", false);
             if (!WineInfo.isMainWineVersion(wineVersion)) data.put("wineVersion", wineVersion);
             if (!getBasePrefix().isEmpty()) data.put("basePrefix", basePrefix);
         }
@@ -1286,8 +1271,6 @@ public class Container {
     public void loadData(JSONObject data) throws JSONException {
         wineVersion = WineInfo.MAIN_WINE_VERSION.identifier();
         dxwrapperConfig = "";
-        // Default TRUE (correct colours); an old config without the token must resolve to on.
-        rendererSfCompatMode = true;
         checkObsoleteOrMissingProperties(data);
 
         for (Iterator<String> it = data.keys(); it.hasNext(); ) {
@@ -1413,9 +1396,6 @@ public class Container {
                 case "rendererNative" :
                     rendererNative = data.getBoolean(key);
                     break;
-                case "rendererNativeBackend" :
-                    rendererNativeBackend = data.getString(key);
-                    break;
                 case "rendererPresentMode" :
                     rendererPresentMode = data.getString(key);
                     break;
@@ -1427,9 +1407,6 @@ public class Container {
                     break;
                 case "rendererSwapRB":
                     rendererSwapRB = data.getBoolean(key);
-                    break;
-                case "rendererSfCompatMode":
-                    rendererSfCompatMode = data.getBoolean(key);
                     break;
             }
         }

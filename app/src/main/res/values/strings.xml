@@ -522,7 +522,7 @@
     ]]></string>
     <string name="help_renderer"><![CDATA[
         <b>Renderer</b><br /><br />
-        How the game\'s image is delivered to your screen. <i><b>Vulkan</b></i> is the default and best for most games. <i><b>SurfaceFlinger</b></i> is experimental and can misbehave on some devices.
+        How the game\'s image is delivered to your screen. <i><b>Vulkan</b></i> is the default and best for most games.
     ]]></string>
     <string name="renderer_present_mode_help_content"><![CDATA[
         <b>Present Mode</b> controls how finished frames are handed to your screen — a trade-off between tearing, input lag and battery.<br /><br />
@@ -647,19 +647,11 @@
         <b>Native Renderer</b><br /><br />
         Sends the game\'s image straight to the screen instead of through WinHub\'s compositor. This lowers latency and can improve performance, but disables features that need the compositor — colour swapping (RGBA) and the present-mode control. Turn it off if a game shows the wrong colours or won\'t display correctly.
     ]]></string>
-    <string name="help_renderer_native_backend"><![CDATA[
-        <b>Native backend</b><br /><br />
-        <b>Auto</b> and <b>SurfaceFlinger</b> use the hardened SurfaceFlinger renderer (acquire-fence wait, colour correction, and safer teardown). <b>Vulkan direct-scanout</b> is the leaner legacy path (lower overhead, with an FPS-cap refresh-rate vote) for devices where it works better. Falls back automatically below Android 10.
-    ]]></string>
-    <string name="help_renderer_sf_compat"><![CDATA[
-        <b>Correct SurfaceFlinger colours</b><br /><br />
-        On the SurfaceFlinger renderer, a game\'s red and blue channels can come out swapped. This fixes that (BGRA→RGBA). Leave it <b>ON</b> — turn it off only if a game\'s colours already look correct without it, or look wrong with it on.
-    ]]></string>
     <string name="help_renderer_driver"><![CDATA[
         <b>Renderer Driver</b><br /><br />
         Which Vulkan driver the on-screen <b>compositor</b> runs on — the layer that takes your game\'s finished frame and puts it on screen. This is <b>not</b> where your game renders; that\'s the top-level <b>Graphics Driver</b>.<br /><br />
         <b>System</b> (default) uses Android\'s own Vulkan driver — the safe, always-compatible choice. Picking an installed <b>Turnip</b> points the compositor at that build instead. It mostly affects present/compatibility behaviour, not your game\'s FPS (the compositor isn\'t where rendering happens).<br /><br />
-        Leave it on <b>System</b> unless you know you need otherwise: a Turnip compositor can black-screen on builds whose window-system support doesn\'t match your device. Vulkan renderer only — has no effect on SurfaceFlinger.
+        Leave it on <b>System</b> unless you know you need otherwise: a Turnip compositor can black-screen on builds whose window-system support doesn\'t match your device.
     ]]></string>
     <string name="help_scaling_mode"><![CDATA[
         <b>Scaling mode</b><br /><br />
@@ -1543,17 +1535,11 @@ E.g. <b>META</b> for <i>META key</i>, \n
     <string name="vkbasalt_sharpness_denoise">Sharpeness Denoise</string>
     <string name="vulkan_settings">Vulkan Settings</string>
     <string name="renderer_native">Native Renderer</string>
-    <string name="renderer_native_backend">Native backend</string>
-    <string name="renderer_native_backend_auto">Auto (recommended)</string>
-    <string name="renderer_native_backend_asr">SurfaceFlinger</string>
-    <string name="renderer_native_backend_flip">Vulkan direct-scanout</string>
     <string name="renderer_present_mode">Present Mode</string>
     <string name="renderer_driver_id">Renderer Driver</string>
     <string name="renderer_filter_mode">Filter Mode</string>
     <string name="renderer_swap_rb">Swap R/B</string>
     <string name="renderer_colors">Colors</string>
-    <string name="renderer_sf_compat">Correct SurfaceFlinger colours</string>
-    <string name="renderer_sf_compat_hint">Fixes swapped red/blue on the SurfaceFlinger renderer (BGRA→RGBA). Turn off only if colours look correct without it.</string>
     <string name="renderer_present_mode_fifo">FIFO</string>
     <string name="renderer_present_mode_mailbox">Mailbox</string>
     <string name="renderer_present_mode_immediate">Immediate</string>

@@ -87,7 +87,7 @@ internal sealed class XmbRow {
         val subtitle: String? = null, val disabledReason: String? = null,
         /** Options shown but not pickable (e.g. DirectAudio on an unsupported layer). */
         val disabledOptions: Set<String> = emptySet(),
-        /** Non-null → ask first (e.g. "SurfaceFlinger renderer — experimental"). */
+        /** Non-null → ask first before applying the choice. */
         val confirm: ((String) -> XmbConfirm?)? = null,
         val onSelect: (String) -> Unit,
     ) : XmbRow()

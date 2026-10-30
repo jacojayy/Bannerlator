@@ -891,8 +891,7 @@ private fun GraphicsContent(state: XServerDrawerState) {
 
     // Renderer-specific graphics controls. Each host renderer has its own set, so
     // show ONLY the set that applies to the active renderer instead of packing the
-    // tab with disabled rows: Scaling mode on Vulkan, and nothing on SurfaceFlinger
-    // (frames are scanned out directly, bypassing the compositor post-process pass).
+    // tab with disabled rows: Scaling mode on Vulkan (the only host renderer).
     val vulkanSupported  by XServerDialogState.vulkanSupported.collectAsState()  // Vulkan renderer
 
     val nativeRenderingEnabled by state.nativeRenderingEnabled.collectAsState()
@@ -1087,10 +1086,8 @@ private fun GraphicsContent(state: XServerDrawerState) {
     }
 
     if (!vulkanSupported) {
-        // ---- SurfaceFlinger: direct scanout bypasses the compositor, so no
-        //      post-process / scaling controls apply. ----
         Text(
-            "No graphics enhancements are available with the SurfaceFlinger renderer.",
+            "No graphics enhancements are available without Vulkan support.",
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
             fontSize = 12.sp,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)

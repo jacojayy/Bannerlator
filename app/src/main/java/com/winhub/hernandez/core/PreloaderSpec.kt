@@ -8,7 +8,7 @@ package com.winhub.hernandez.core
  */
 data class PreloaderSpec(
     val meta: String = "",            // "P11 ARM · 1280x720" (container name · resolution)
-    val rendererLabel: String = "",   // Vulkan / SurfaceFlinger
+    val rendererLabel: String = "",   // Vulkan
     val dxvkVersion: String = "",     // e.g. "3.0.2-1-gplasync-0"
     val frameGenLabel: String = "",   // Bionic-FG / LSFG-VK (empty when off)
     val driverLabel: String = "",     // e.g. "Mesa Turnip v26.3.0-20260715-r2"

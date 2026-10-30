@@ -387,9 +387,7 @@ fun ContainerDetailScreen(
                 ";presentMode=${viewModel.rendererPresentMode}" +
                 ";driverId=${viewModel.rendererDriverId}" +
                 ";filterMode=${viewModel.rendererFilterMode}" +
-                ";swapRB=${viewModel.rendererSwapRB}" +
-                ";sfCompatMode=${viewModel.rendererSfCompatMode}" +
-                ";nativeBackend=${viewModel.rendererNativeBackend}",
+                ";swapRB=${viewModel.rendererSwapRB}",
             onConfirm = { newConfig ->
                 val m = parseVulkanConfig(newConfig)
                 viewModel.rendererNative      = m["native"] == "true"
@@ -397,10 +395,6 @@ fun ContainerDetailScreen(
                 viewModel.rendererDriverId    = m["driverId"] ?: "system"
                 viewModel.rendererFilterMode  = m["filterMode"]?.toIntOrNull() ?: 0
                 viewModel.rendererSwapRB      = m["swapRB"] == "true"
-                // Default ON: absent token (old config) resolves to true (correct colours).
-                viewModel.rendererSfCompatMode = m["sfCompatMode"] != "false"
-                // Default "auto": absent token (old config) preserves the current reroute behaviour.
-                viewModel.rendererNativeBackend = m["nativeBackend"] ?: "auto"
                 showVulkanConfig = false
             },
             onDismiss = { showVulkanConfig = false },
@@ -618,13 +612,6 @@ internal fun VulkanSettingsDialog(
     // persisted value round-trips through this dialog and still seeds the launch default.
     val filterMode = remember { cfg["filterMode"]?.toIntOrNull() ?: 0 }
     var swapRB by remember { mutableStateOf(cfg["swapRB"] == "true") }
-    // SurfaceFlinger (ASR) BGRA->RGBA colour correction (GN #1620). Default ON — an absent token
-    // (old config) resolves to true. ASR-only; independent of swapRB (Vulkan).
-    var sfCompatMode by remember { mutableStateOf(cfg["sfCompatMode"] != "false") }
-    // Native backend for Native Rendering: "auto"/"asr" -> hardened SurfaceFlinger (ASR) reroute;
-    // "flip" -> force the leaner Vulkan FLIP direct-scanout. Default "auto" — an absent token (old
-    // config) resolves to auto (unchanged behaviour). Only meaningful while Native Rendering is on.
-    var nativeBackend by remember { mutableStateOf(cfg["nativeBackend"] ?: "auto") }
 
     // Per-field "?" help — this dialog is its own composable, so it carries its own helpRes.
     // HelpDialog renders as a Dialog on top of this AlertDialog (fine — same pattern as elsewhere).
@@ -654,31 +641,6 @@ internal fun VulkanSettingsDialog(
                     Switch(checked = nativeRender, onCheckedChange = { nativeRender = it })
                 }
 
-                // Native backend picker — only meaningful while Native Rendering is on, so it's shown
-                // only then. "auto"/"asr" route to the hardened SurfaceFlinger (ASR) renderer when
-                // eligible; "flip" forces the leaner legacy Vulkan direct-scanout path.
-                if (nativeRender) {
-                    val nativeBackends = listOf("auto", "asr", "flip")
-                    val nativeBackendLabels = listOf(
-                        stringResource(R.string.renderer_native_backend_auto),
-                        stringResource(R.string.renderer_native_backend_asr),
-                        stringResource(R.string.renderer_native_backend_flip)
-                    )
-                    val selectedBackendIdx = nativeBackends.indexOf(nativeBackend).coerceAtLeast(0)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        LabeledDropdown(
-                            label = stringResource(R.string.renderer_native_backend),
-                            options = nativeBackendLabels,
-                            selectedOption = nativeBackendLabels[selectedBackendIdx],
-                            onSelect = { nativeBackend = nativeBackends[nativeBackendLabels.indexOf(it)] },
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(onClick = { helpRes = R.string.help_renderer_native_backend }) {
-                            Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                        }
-                    }
-                }
-
                 val presentModes = listOf("fifo", "mailbox", "immediate")
                 val presentModeLabels = listOf(
                     stringResource(R.string.renderer_present_mode_fifo),
@@ -686,8 +648,8 @@ internal fun VulkanSettingsDialog(
                     stringResource(R.string.renderer_present_mode_immediate)
                 )
                 val selectedPresentIdx = presentModes.indexOf(presentMode).coerceAtLeast(0)
-                // Present mode is ignored under Native Rendering (direct scanout goes straight to
-                // SurfaceFlinger, bypassing the swapchain), so grey it out while native is on.
+                // Present mode is ignored under Native Rendering (direct scanout bypasses the
+                // swapchain), so grey it out while native is on.
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     LabeledDropdown(
                         label = stringResource(R.string.renderer_present_mode),
@@ -714,7 +676,7 @@ internal fun VulkanSettingsDialog(
                 // "System" (Android's own driver, the safe default) or an installed Turnip. This is the
                 // compositor, NOT where your game renders (that's the top-level Graphics Driver). Applied
                 // at launch by XServerDisplayActivity (VulkanRenderer.setDriverInfo before nativeInit).
-                // Vulkan-renderer only; a no-op on SurfaceFlinger. Options = System + installed
+                // Options = System + installed
                 // adrenotools drivers; default stays System because a Turnip compositor can black-screen
                 // on builds whose WSI doesn't support the surface.
                 val vkCtx = androidx.compose.ui.platform.LocalContext.current
@@ -762,16 +724,11 @@ internal fun VulkanSettingsDialog(
                         Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
                     }
                 }
-                // NOTE: "Correct SurfaceFlinger colours" (sfCompatMode) is NOT shown here — this
-                // dialog only opens for the Vulkan renderer, and that toggle only affects
-                // SurfaceFlinger. It's surfaced inline under the Renderer dropdown instead (see
-                // below). sfCompatMode is still round-tripped through this dialog's config so a
-                // Vulkan user hitting OK never drops the stored value.
             }
         },
         confirmButton = {
             TextButton(onClick = {
-                val config = "native=$nativeRender;presentMode=$presentMode;driverId=$driverId;filterMode=$filterMode;swapRB=$swapRB;sfCompatMode=$sfCompatMode;nativeBackend=$nativeBackend"
+                val config = "native=$nativeRender;presentMode=$presentMode;driverId=$driverId;filterMode=$filterMode;swapRB=$swapRB"
                 onConfirm(config)
             }) {
                 Text(stringResource(android.R.string.ok))
@@ -965,57 +922,20 @@ private fun TopLevelFields(
         }
         Spacer(Modifier.height(8.dp))
 
-        // Renderer — the X11-side compositor stage.
-        var showSfWarning by remember { mutableStateOf(false) }
+        // Renderer — the X11-side compositor stage. Vulkan is the only host renderer.
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             LabeledDropdown(
                 label = stringResource(R.string.renderer),
                 options = viewModel.rendererEntries,
                 selectedOption = viewModel.selectedRenderer,
-                onSelect = {
-                    // SurfaceFlinger is experimental and can reboot some devices — require opt-in.
-                    if (it == "SurfaceFlinger" && viewModel.selectedRenderer != "SurfaceFlinger") showSfWarning = true
-                    else viewModel.selectedRenderer = it
-                },
+                onSelect = { viewModel.selectedRenderer = it },
                 modifier = Modifier.weight(1f)
             )
             IconButton(onClick = { helpRes = R.string.help_renderer }) {
                 Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
             }
-            if (viewModel.selectedRenderer == "Vulkan") {
-                IconButton(onClick = onShowVulkanConfig) {
-                    Icon(Icons.Default.Settings, contentDescription = null)
-                }
-            }
-        }
-        if (showSfWarning) {
-            SurfaceFlingerWarningDialog(
-                onConfirm = { viewModel.selectedRenderer = "SurfaceFlinger"; showSfWarning = false },
-                onDismiss = { showSfWarning = false }
-            )
-        }
-        // SurfaceFlinger colour correction (ASR-only, GN #1620) — surfaced inline under the renderer
-        // choice, only when SurfaceFlinger is selected (mirrors the per-game shortcut editor). The
-        // renderer-settings gear only appears for Vulkan, so this toggle would otherwise be
-        // unreachable for the very renderer it applies to.
-        if (viewModel.selectedRenderer == "SurfaceFlinger") {
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.renderer_sf_compat))
-                    Text(
-                        stringResource(R.string.renderer_sf_compat_hint),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(onClick = { helpRes = R.string.help_renderer_sf_compat }) {
-                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                }
-                Switch(
-                    checked = viewModel.rendererSfCompatMode,
-                    onCheckedChange = { viewModel.rendererSfCompatMode = it }
-                )
+            IconButton(onClick = onShowVulkanConfig) {
+                Icon(Icons.Default.Settings, contentDescription = null)
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -1270,9 +1190,8 @@ private fun TopLevelFields(
             if (viewModel.frameGenEngine == "bionic" || viewModel.frameGenEngine == "lsfg") "lsfg-native"
             else viewModel.frameGenEngine
         val fgSelIdx = fgEngines.indexOf(fgSelectedEngine).coerceAtLeast(0)
-        // FG's present-mode/mailbox delivery only exists on the Vulkan host renderer; SurfaceFlinger (ASR)
-        // has no present-mode control, so FG is unsupported there — gate the
-        // whole dropdown on Vulkan and grey it out otherwise (combined with the lsfg-DLL option gate).
+        // FG's present-mode/mailbox delivery only exists on the Vulkan host renderer, so gate the
+        // whole dropdown on it (combined with the lsfg-DLL option gate).
         val fgVulkan = viewModel.vulkanSupported && viewModel.selectedRenderer == "Vulkan"
         val fgShown = fgEngineLabels[fgSelIdx]
         // Per-engine paragraphs used to print inline under this row (and under the model picker);

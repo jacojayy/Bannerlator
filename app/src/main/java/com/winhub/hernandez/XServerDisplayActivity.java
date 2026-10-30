@@ -1228,8 +1228,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
 
     /**
      * Drive every perf-HUD overlay for one presented frame on window {@code wid}. Single entry point
-     * for all four present/tick paths (SHM copyArea content-update, Vulkan AHB copy, GL/Vulkan native
-     * scanout, and ASR) so FPS counting behaves identically however a game presents.
+     * for all present/tick paths (SHM copyArea content-update, Vulkan AHB copy, Vulkan native
+     * scanout) so FPS counting behaves identically however a game presents.
      *
      * <p>Normally only the window the HUD is bound to counts — {@code frameRatingWindowId}, seeded from
      * the guest {@code _MESA_DRV} property. But under Zink (GL-on-Vulkan) that {@code _MESA_DRV} window
@@ -1287,9 +1287,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
         hudCounterEnabled = fpsConfig.get("hudEnabled", "1").equals("1");
         String hudStyle = fpsConfig.get("hudStyle", "fusion");
 
-        // Host renderer side, read from the container's configured renderer.
-        String resolvedR = resolvedRenderer();
-        String rendererMode = "surfaceflinger".equals(resolvedR) ? "SurfaceFlinger" : "Vulkan";
+        // Host renderer is Vulkan (the only host renderer).
+        String rendererMode = "Vulkan";
         // The configured wrapper NAMES what a D3D game would load here — it is not evidence that THIS
         // game loads one: a native OpenGL or Vulkan title never touches DXVK. It stays the tag for a
         // D3D API the resolvers actually prove (startDxApiDetection's fallback arg) and the
@@ -1747,13 +1746,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
             if (inputControlsView != null) inputControlsView.invalidate();
         };
         state.onNativeRenderingToggle   = () -> {
-            // ASR (SurfaceFlinger renderer) is inherently native/passthrough and can't be live-switched to
-            // a compositor mode — keep the flag on and no-op the toggle (change it via the container setting).
-            if (xServerView.getRenderer() instanceof com.winhub.hernandez.renderer.ASurfaceRenderer) {
-                XServerDrawerState.INSTANCE.setNativeRenderingEnabled(true);
-                showToast(this, "Native Rendering is always on under the SurfaceFlinger renderer");
-                return;
-            }
             boolean next = !XServerDrawerState.INSTANCE.getNativeRenderingEnabled();
             XServerDrawerState.INSTANCE.setNativeRenderingEnabled(next);
             // Native (direct scanout) puts one opaque game SurfaceControl on top; secondary guest
@@ -7298,11 +7290,9 @@ public class XServerDisplayActivity extends AppCompatActivity {
             // applied to the renderer (see renderer.setFpsLimit below), independent of frame gen.
             //
             // Runtime safety gate: FG's mailbox/present-mode delivery only exists on the Vulkan host
-            // renderer — SurfaceFlinger (ASR) has no present-mode control, so
-            // loading the FG layer there is inert/broken. The editors now forbid FG unless the renderer
-            // is Vulkan; honor the same rule here so a stale "FG on + non-Vulkan renderer" config simply
-            // doesn't run FG (no broken layer). Conservative: a SurfaceFlinger config that would fall
-            // back to Vulkan (ASR unsupported) also skips FG — safe, and the editor prevents that combo.
+            // renderer, so loading the FG layer on any other renderer is inert/broken. The editors
+            // now forbid FG unless the renderer is Vulkan; honor the same rule here so a stale
+            // "FG on + non-Vulkan renderer" config simply doesn't run FG (no broken layer).
             boolean fgRendererVulkan = "vulkan".equalsIgnoreCase(resolvedRenderer());
             if (fgRendererVulkan) {
             if (resolvedFrameGenEngine().equals("lsfg-native")) {
@@ -7690,37 +7680,11 @@ public class XServerDisplayActivity extends AppCompatActivity {
     private void setupUI() {
         FrameLayout rootView = findViewById(R.id.FLXServerDisplay);
         xServerView = new XServerView(this, xServer);
-        String rendererType = container != null ? resolvedRenderer() : "vulkan";
-        // Native Rendering now routes to the hardened SurfaceFlinger (ASR) renderer instead of the
-        // leaner inline Vulkan FLIP scanout. ASR carries the full GN #1582/#1620 hardening the FLIP
-        // path lacks: acquire-fence wait + BGRA->RGBA colour correction + release-fence recycling
-        // (OnComplete) + ordered shutdown (anti-ANR) + reparent-to-null layer-leak guard. Reroute a
-        // Vulkan container to ASR when Native Rendering is on, no compositor-bound preset upscaler is
-        // active (>=3 lives in the compositor pass ASR bypasses), Colors=RGBA (swapRB) is off (the
-        // FLIP path's swapRB fallback is preserved as-is for now), and ASR is available (API 29+). If
-        // ASR is unsupported we fall through to the old Vulkan FLIP native path (nativeOn) below.
-        // The user-facing "Native backend" pref gates the reroute: "auto"/"asr" reroute (as above),
-        // while "flip" opts out and keeps the leaner Vulkan FLIP direct-scanout path.
-        if ("vulkan".equalsIgnoreCase(rendererType)
-                && resolvedRendererNative()
-                && resolveScalingMode() < 3
-                && !resolvedRendererSwapRB()
-                && !"flip".equalsIgnoreCase(resolvedNativeBackend())
-                && com.winhub.hernandez.renderer.ASurfaceRenderer.isSupported()) {
-            rendererType = "surfaceflinger";
-        }
-        // SurfaceFlinger (ASR) requires API 29+; fall back to Vulkan if unsupported.
-        if ("surfaceflinger".equalsIgnoreCase(rendererType)
-                && !com.winhub.hernandez.renderer.ASurfaceRenderer.isSupported()) {
-            rendererType = "vulkan";
-        }
-        // Any legacy/unknown renderer id (e.g. the removed OpenGL option) degrades to Vulkan.
-        boolean useVulkan = !"surfaceflinger".equalsIgnoreCase(rendererType);
-        if (useVulkan) rendererType = "vulkan";
-        // Gate the drawer's live Present Mode selector: it only exists on the Vulkan host renderer
-        // (SurfaceFlinger has no present-mode control).
-        XServerDrawerState.INSTANCE.setRendererIsVulkan(useVulkan);
-        xServerView.initRenderer(rendererType);
+        // Vulkan is the only host renderer; any legacy/unknown id (e.g. the removed OpenGL or
+        // SurfaceFlinger options) degrades to Vulkan.
+        xServerView.initRenderer("vulkan");
+        // Gate the drawer's live Present Mode selector: it only exists on the Vulkan host renderer.
+        XServerDrawerState.INSTANCE.setRendererIsVulkan(true);
         final HostRenderer renderer = xServerView.getRenderer();
         renderer.setCursorVisible(false);
 
@@ -7753,7 +7717,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // code parsed these out of graphicsDriverConfig via KeyValueSet, but that splits on COMMA
         // while graphicsDriverConfig is SEMICOLON-separated -> every value silently fell to default,
         // so these options never applied. These are container-level (not per-game shortcut extras).
-        if (useVulkan && renderer instanceof com.winhub.hernandez.renderer.vulkan.VulkanRenderer) {
+        if (renderer instanceof com.winhub.hernandez.renderer.vulkan.VulkanRenderer) {
             com.winhub.hernandez.renderer.vulkan.VulkanRenderer vkRenderer =
                 (com.winhub.hernandez.renderer.vulkan.VulkanRenderer) renderer;
             // Experimental (FeatureFlags.LSFG_NATIVE_EXPERIMENTS_ENABLED): let the LSFG probe accept
@@ -7767,8 +7731,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
                     && "lsfg-native".equals(resolvedFrameGenEngine()));
             // Compositor (present-layer) Vulkan driver. "system"/empty => leave driverPath null so
             // nativeInit falls back to the system libvulkan (the safe default). An installed Turnip =>
-            // point the compositor at it. Vulkan-renderer only (SurfaceFlinger composites through
-            // the system path and have no ICD to swap). MUST run before the async surface nativeInit.
+            // point the compositor at it. MUST run before the async surface nativeInit.
             if (rendererDriverId != null && !rendererDriverId.isEmpty()
                     && !rendererDriverId.equalsIgnoreCase("system")) {
                 try {
@@ -7849,24 +7812,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
             // drives it). driveHudFrameTick gates on the FPS window (self-healing onto the real
             // presenting window for GL/Zink) so we only count game frames.
             vkRenderer.setHudFrameTick(this::driveHudFrameTick);
-        }
-
-        // ASR has no compositor copyArea path either, so drive the perf HUD per present (same as
-        // the Vulkan tick above) — otherwise the HUD shows no FPS under the SurfaceFlinger renderer.
-        if (renderer instanceof com.winhub.hernandez.renderer.ASurfaceRenderer) {
-            com.winhub.hernandez.renderer.ASurfaceRenderer asr =
-                    (com.winhub.hernandez.renderer.ASurfaceRenderer) renderer;
-            // BGRA->RGBA colour correction (GN #1620): apply the resolved per-game/container flag before
-            // the surface is created. Mirrors the Vulkan setSwapRB launch seed; ASR-only, independent
-            // of swapRB. Default TRUE = correct colours.
-            asr.setSfCompatMode(resolvedSfCompatMode());
-            asr.setHudFrameTick(this::driveHudFrameTick);
-            // ASR IS the native/passthrough path (a per-window SurfaceControl SurfaceFlinger composites);
-            // there is no non-native mode to switch to, and the renderer can't be swapped mid-session. So
-            // reflect Native Rendering as ON and hide the in-game live toggle (turning it "off" would need
-            // a renderer re-init) — changing it is a container setting + relaunch, like any renderer choice.
-            XServerDrawerState.INSTANCE.setNativeRenderingEnabled(true);
-            XServerDrawerState.INSTANCE.setNativeRenderingSupported(false);
         }
 
         if (shortcut != null) {
@@ -8412,8 +8357,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
      *  repeated toast) when native is already off, since screen-effect sliders fire continuously. */
     private void disableNativeRenderingForPreset() {
         if (!XServerDrawerState.INSTANCE.getNativeRenderingEnabled()) return;
-        // ASR bypasses the compositor entirely and can't be switched to a preset mode live; leave it on.
-        if (xServerView.getRenderer() instanceof com.winhub.hernandez.renderer.ASurfaceRenderer) return;
         HostRenderer r = xServerView.getRenderer();
         if (r instanceof com.winhub.hernandez.renderer.vulkan.VulkanRenderer)
             ((com.winhub.hernandez.renderer.vulkan.VulkanRenderer) r).setNativeMode(false);
@@ -8833,7 +8776,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // before any renderer-specific early return — otherwise the ds.onTm* callbacks stay null
         // and the drawer's `onTm...?.invoke()` is a silent no-op, so End Process / Bring to Front
         // "do nothing" (the process list still populates because startTmPolling() registers its own
-        // listener). This was the root cause of the Vulkan/ASR Task Manager bug.
+        // listener). This was the root cause of the Vulkan Task Manager bug.
         setupTmCallbacks();
 
         // NOTE: setupTmCallbacks() is intentionally called earlier so the Task Manager actions
@@ -10442,25 +10385,12 @@ return true;
     }
 
     private String resolvedRenderer() {
-        if (container == null) return "vulkan";
-        String r = shortcut != null ? shortcut.getExtra("renderer", container.getRenderer()) : container.getRenderer();
-        if (r != null && "surfaceflinger".equalsIgnoreCase(r)) return "surfaceflinger";
         return "vulkan";
     }
 
-    // Per-game override for the SurfaceFlinger (ASR) BGRA->RGBA colour correction (GN #1620). Default
-    // TRUE (correct colours). Read-only, same discipline as resolvedRenderer() — never written back.
-    private boolean resolvedSfCompatMode() {
-        if (container == null) return true;
-        return shortcut != null
-                ? shortcut.getExtra("sfCompatMode", container.getRendererSfCompatMode() ? "1" : "0").equals("1")
-                : container.getRendererSfCompatMode();
-    }
-
-    // Per-game overrides for the Vulkan-settings block (native / Colors=swapRB / present mode). Same
-    // discipline as resolvedRenderer()/resolvedSfCompatMode(): shortcut extra wins, container is the
-    // fallback, read-only (never written back). Lets a shortcut set e.g. Colors=RGBA without touching
-    // the container or its other games.
+    // Per-game overrides for the Vulkan-settings block (native / Colors=swapRB / present mode).
+    // Shortcut extra wins, container is the fallback, read-only (never written back). Lets a
+    // shortcut set e.g. Colors=RGBA without touching the container or its other games.
     private boolean resolvedRendererNative() {
         if (container == null) return false;
         return shortcut != null
@@ -10472,15 +10402,6 @@ return true;
         return shortcut != null
                 ? shortcut.getExtra("swapRB", container.getRendererSwapRB() ? "true" : "false").equals("true")
                 : container.getRendererSwapRB();
-    }
-    // Native backend pref: "auto"/"asr" -> hardened SurfaceFlinger (ASR) reroute when eligible;
-    // "flip" -> force the leaner inline Vulkan FLIP direct-scanout (opt out of the reroute). Same
-    // read-only shortcut-extra-then-container discipline as the siblings above.
-    private String resolvedNativeBackend() {
-        if (container == null) return "auto";
-        String def = container.getRendererNativeBackend();
-        if (def == null || def.isEmpty()) def = "auto";
-        return shortcut != null ? shortcut.getExtra("nativeBackend", def) : def;
     }
     private String resolvedRendererPresentMode() {
         if (container == null) return "fifo";
@@ -12211,7 +12132,7 @@ return true;
 
     private void showMagnifierOverlay() {
         // Drive the magnifier through the HostRenderer interface (declares get/setMagnifierZoom,
-        // implemented by Vulkan and ASR). The old code cast to the removed GL renderer and no-op'd
+        // implemented by Vulkan). The old code cast to the removed GL renderer and no-op'd
         // for any other renderer, so on the default Vulkan renderer the overlay opened stuck at 100%
         // and the +/- buttons did nothing (issue #22). VulkanRenderer.setMagnifierZoom applies
         // the zoom live via updateTransform().
@@ -12372,14 +12293,14 @@ return true;
         ds.onTmDismissed = () -> stopTmPolling();
 
         // Show the Compose New Task dialog instead of the native ContentDialog.prompt — the native
-        // prompt is invisible over the Vulkan/ASR fullscreen SurfaceView (same class of bug that
+        // prompt is invisible over the Vulkan fullscreen SurfaceView (same class of bug that
         // killed the old Task Manager confirm). The submit path is unchanged: OK runs winHandler.exec.
         ds.onTmNewTask = () -> ds.show(XServerDialogState.ActiveDialog.NEW_TASK);
         ds.onTmNewTaskSubmit = command -> { if (winHandler != null) winHandler.exec(command); };
 
         // Bring to Front: drive it host-side (renderer-agnostic). Look up the real X window for the
         // target Windows pid, set X-server input focus on it, and send bringToFront with the REAL
-        // window handle (not 0). On native-rendering Vulkan/ASR a UDP-only restack may have no
+        // window handle (not 0). On native-rendering Vulkan a UDP-only restack may have no
         // visible effect, so we also raise + redraw via the host window manager (mirrors
         // DesktopHelper.setFocusedWindow / GameNative). Falls back to a plain by-name UDP send if
         // we can't resolve the window.
@@ -12398,7 +12319,7 @@ return true;
                         parentIsRoot ? WindowManager.FocusRevertTo.POINTER_ROOT : WindowManager.FocusRevertTo.PARENT);
                 } catch (Exception ignored) {}
                 winHandler.bringToFront(window.getClassName(), window.getHandle());
-                // Force a recomposite so the restack is visible on the native Vulkan/ASR path too.
+                // Force a recomposite so the restack is visible on the native Vulkan path too.
                 try { xServerView.requestRender(); } catch (Exception ignored) {}
             } else {
                 // Couldn't resolve the window host-side; fall back to a plain by-name UDP raise.
@@ -12408,9 +12329,9 @@ return true;
 
         // End Process runs the same renderer-agnostic winhandler command the rest of the app uses.
         // It used to be wrapped in a native ContentDialog.confirm, but that dialog does not display
-        // over the Vulkan/ASR fullscreen SurfaceView, so End Process silently did nothing there (the
+        // over the Vulkan fullscreen SurfaceView, so End Process silently did nothing there (the
         // confirm never appeared). Run the command directly so it works on every renderer. (The deeper
-        // cause of the Vulkan/ASR breakage was this whole method bailing before the callbacks were
+        // cause of the Vulkan breakage was this whole method bailing before the callbacks were
         // wired — now fixed by calling setupTmCallbacks() earlier.)
         ds.onTmKillProcess = name -> {
             if (winHandler != null) winHandler.killProcess(name);

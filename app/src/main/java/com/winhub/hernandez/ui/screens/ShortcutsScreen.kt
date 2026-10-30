@@ -6272,23 +6272,9 @@ internal fun ShortcutSettingsDialogScreen(
         mutableStateOf(shortcut.getExtra("dxwrapperConfig", shortcut.container.getDXWrapperConfig()))
     }
 
-    // Renderer (host: Vulkan / SurfaceFlinger) — per-game override, defaults to the container's value.
-    var selectedRenderer by remember {
-        val id = shortcut.getExtra("renderer", shortcut.container.renderer)
-        mutableStateOf(
-            when {
-                id.equals("surfaceflinger", ignoreCase = true) -> "SurfaceFlinger"
-                else -> "Vulkan"
-            }
-        )
-    }
+    // Renderer (host) — Vulkan is the only host renderer.
+    var selectedRenderer by remember { mutableStateOf("Vulkan") }
 
-    // SurfaceFlinger colour correction (ASR-only, GN #1620) — per-game override, defaults to the
-    // container's value. Stored via the shortcut "sfCompatMode" extra ("1"/"0"). Default ON.
-    var sfCompatMode by remember {
-        mutableStateOf(shortcut.getExtra("sfCompatMode",
-            if (shortcut.container.getRendererSfCompatMode()) "1" else "0") == "1")
-    }
 
     // Deck mode is only turned on through a warning that says what it breaks.
     // Unreal Engine HDR override (per-game, same extra name as the container's): "" = the container's,
@@ -6375,12 +6361,6 @@ internal fun ShortcutSettingsDialogScreen(
     }
     var vkPresentMode by remember {
         mutableStateOf(shortcut.getExtra("presentMode", shortcut.container.getRendererPresentMode()))
-    }
-    // Native backend (Auto / SurfaceFlinger / Vulkan direct-scanout) — per-game override, defaults to
-    // the container's value. Stored via the "nativeBackend" extra the launch resolver reads; only
-    // relevant when Native Rendering is on.
-    var vkNativeBackend by remember {
-        mutableStateOf(shortcut.getExtra("nativeBackend", shortcut.container.getRendererNativeBackend()))
     }
     // Compositor (present-layer) Vulkan driver — per-game override, defaults to the container's value.
     // This is the driver the present layer runs on (System or an installed Turnip), NOT the guest
@@ -6823,7 +6803,6 @@ internal fun ShortcutSettingsDialogScreen(
             putExtra(com.winhub.hernandez.display.ExternalDisplay.EXTRA_MODE_ID, tvModeId.toString())
             putExtra(com.winhub.hernandez.display.ExternalDisplay.EXTRA_MATCH_RES, if (tvMatchRes) "1" else "0")
             putExtra("renderer", StringUtils.parseIdentifier(selectedRenderer))
-            putExtra("sfCompatMode", if (sfCompatMode) "1" else "0")
             // Gyro per-game overrides (read by the launch resolver in XServerDisplayActivity).
             putExtra("gyroEnabled", if (gyroEnabled) "1" else "0")
             putExtra("gyroTarget", gyroTarget.toString())
@@ -6837,7 +6816,6 @@ internal fun ShortcutSettingsDialogScreen(
             putExtra("native", if (vkNative) "true" else "false")
             putExtra("swapRB", if (vkSwapRB) "true" else "false")
             putExtra("presentMode", vkPresentMode)
-            putExtra("nativeBackend", vkNativeBackend)
             putExtra("rendererDriverId", vkRendererDriverId)
             putExtra("renderScale", if (renderScale == "1.0") null else renderScale)
             // "In-game refresh rate" per-game override: both extras written together, "" = inherit the
@@ -6954,8 +6932,7 @@ internal fun ShortcutSettingsDialogScreen(
                 if (!isLinuxEntry) add("gfxWrapper")
                 if (!isLinuxEntry) {
                     add("dxWrapper"); add("dxConfig"); add("renderer")
-                    if (selectedRenderer == "SurfaceFlinger") add("sfCompat")
-                    if (selectedRenderer == "Vulkan") { add("vkNative"); add("vkColors"); add("vkPresent"); if (vkNative) add("vkBackend"); add("vkDriver") }
+                    if (selectedRenderer == "Vulkan") { add("vkNative"); add("vkColors"); add("vkPresent"); add("vkDriver") }
                     add("renderScale")
                 }
             }
@@ -7118,48 +7095,18 @@ internal fun ShortcutSettingsDialogScreen(
                         ) { Text("DX Wrapper Config") }
                     }
 
-                    // Renderer (host) — per-game override of the container's Vulkan/SurfaceFlinger choice.
-                    var showSfWarning by remember { mutableStateOf(false) }
+                    // Renderer (host) — Vulkan is the only host renderer.
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         DpDrop(
                             dp, "renderer",
                             label = stringResource(R.string.renderer),
-                            options = listOf("Vulkan", "SurfaceFlinger"),
+                            options = listOf("Vulkan"),
                             selected = selectedRenderer,
-                            onSelect = {
-                                // SurfaceFlinger is experimental and can reboot some devices — require opt-in.
-                                if (it == "SurfaceFlinger" && selectedRenderer != "SurfaceFlinger") showSfWarning = true
-                                else selectedRenderer = it
-                            },
+                            onSelect = { selectedRenderer = it },
                             modifier = Modifier.weight(1f)
                         )
                         IconButton(onClick = { helpRes = R.string.help_renderer }) {
                             Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                        }
-                    }
-                    if (showSfWarning) {
-                        SurfaceFlingerWarningDialog(
-                            onConfirm = { selectedRenderer = "SurfaceFlinger"; showSfWarning = false },
-                            onDismiss = { showSfWarning = false }
-                        )
-                    }
-
-                    // SurfaceFlinger colour correction (ASR-only, GN #1620) — only relevant when this
-                    // game runs on the SurfaceFlinger renderer, so surface it under that choice.
-                    if (selectedRenderer == "SurfaceFlinger") {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(stringResource(R.string.renderer_sf_compat))
-                                Text(
-                                    stringResource(R.string.renderer_sf_compat_hint),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(onClick = { helpRes = R.string.help_renderer_sf_compat }) {
-                                Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                            }
-                            DpSwitch(dp, "sfCompat", checked = sfCompatMode, onCheckedChange = { sfCompatMode = it })
                         }
                     }
 
@@ -7209,30 +7156,6 @@ internal fun ShortcutSettingsDialogScreen(
                             )
                             IconButton(onClick = { helpRes = R.string.renderer_present_mode_help_content }) {
                                 Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                            }
-                        }
-                        // Native backend — which native path Native Rendering uses. Only meaningful when
-                        // Native Rendering is on (matches the container Vulkan cog), so gate on vkNative.
-                        if (vkNative) {
-                            val vkBackendValues = listOf("auto", "asr", "flip")
-                            val vkBackendLabels = listOf(
-                                stringResource(R.string.renderer_native_backend_auto),
-                                stringResource(R.string.renderer_native_backend_asr),
-                                stringResource(R.string.renderer_native_backend_flip)
-                            )
-                            val vkBackendIdx = vkBackendValues.indexOf(vkNativeBackend).coerceAtLeast(0)
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                DpDrop(
-                                    dp, "vkBackend",
-                                    label = stringResource(R.string.renderer_native_backend),
-                                    options = vkBackendLabels,
-                                    selected = vkBackendLabels[vkBackendIdx],
-                                    onSelect = { vkNativeBackend = vkBackendValues[vkBackendLabels.indexOf(it)] },
-                                    modifier = Modifier.weight(1f)
-                                )
-                                IconButton(onClick = { helpRes = R.string.help_renderer_native_backend }) {
-                                    Icon(Icons.Default.Help, contentDescription = "What is this?", modifier = Modifier.size(18.dp))
-                                }
                             }
                         }
                         // Compositor (present-layer) Vulkan driver: System or an installed Turnip. Applies
@@ -8466,16 +8389,7 @@ internal fun DeckShortcutSettingsScreen(
 
     var selectedRenderer by remember {
         val id = shortcut.getExtra("renderer", shortcut.container.renderer)
-        mutableStateOf(
-            when {
-                id.equals("surfaceflinger", ignoreCase = true) -> "SurfaceFlinger"
-                else -> "Vulkan"
-            }
-        )
-    }
-    var sfCompatMode by remember {
-        mutableStateOf(shortcut.getExtra("sfCompatMode",
-            if (shortcut.container.getRendererSfCompatMode()) "1" else "0") == "1")
+        mutableStateOf("Vulkan")
     }
     var unrealHdrOverride by remember { mutableStateOf(com.winhub.hernandez.core.UnrealHdr.shortcutChoice(shortcut)) }
 
@@ -8489,9 +8403,6 @@ internal fun DeckShortcutSettingsScreen(
     }
     var vkPresentMode by remember {
         mutableStateOf(shortcut.getExtra("presentMode", shortcut.container.getRendererPresentMode()))
-    }
-    var vkNativeBackend by remember {
-        mutableStateOf(shortcut.getExtra("nativeBackend", shortcut.container.getRendererNativeBackend()))
     }
     var vkRendererDriverId by remember {
         mutableStateOf(shortcut.getExtra("rendererDriverId", shortcut.container.getRendererDriverId()))
@@ -8683,7 +8594,6 @@ internal fun DeckShortcutSettingsScreen(
     var showDxvkDownloadSheet by remember { mutableStateOf(false) }
     var showVkd3dDownloadSheet by remember { mutableStateOf(false) }
     var showD7vkDownloadSheet by remember { mutableStateOf(false) }
-    var showSfWarning by remember { mutableStateOf(false) }
     var showPerfDialog by remember { mutableStateOf(false) }
     var showIconPickMenu by remember { mutableStateOf(false) }
     var dxvkRefreshKey by remember { mutableStateOf(0) }
@@ -8856,7 +8766,6 @@ internal fun DeckShortcutSettingsScreen(
             putExtra(com.winhub.hernandez.display.ExternalDisplay.EXTRA_MODE_ID, tvModeId.toString())
             putExtra(com.winhub.hernandez.display.ExternalDisplay.EXTRA_MATCH_RES, if (tvMatchRes) "1" else "0")
             putExtra("renderer", StringUtils.parseIdentifier(selectedRenderer))
-            putExtra("sfCompatMode", if (sfCompatMode) "1" else "0")
             putExtra("gyroEnabled", if (gyroEnabled) "1" else "0")
             putExtra("gyroTarget", gyroTarget.toString())
             putExtra("gyroActivator", gyroActivator.toString())
@@ -8868,7 +8777,6 @@ internal fun DeckShortcutSettingsScreen(
             putExtra("native", if (vkNative) "true" else "false")
             putExtra("swapRB", if (vkSwapRB) "true" else "false")
             putExtra("presentMode", vkPresentMode)
-            putExtra("nativeBackend", vkNativeBackend)
             putExtra("rendererDriverId", vkRendererDriverId)
             putExtra("renderScale", if (renderScale == "1.0") null else renderScale)
             putExtra("maxGameRefreshRate", maxGameRefreshRate.ifEmpty { null })
@@ -9376,18 +9284,10 @@ internal fun DeckShortcutSettingsScreen(
                                     }
                                     DeckChoiceRow(
                                         label = stringResource(R.string.renderer),
-                                        options = listOf("Vulkan", "SurfaceFlinger").map { it to it },
+                                        options = listOf("Vulkan" to "Vulkan"),
                                         selected = selectedRenderer,
-                                        onPick = {
-                                            if (it == "SurfaceFlinger" && selectedRenderer != "SurfaceFlinger") showSfWarning = true
-                                            else selectedRenderer = it
-                                        },
+                                        onPick = { selectedRenderer = it },
                                     )
-                                    if (selectedRenderer == "SurfaceFlinger") {
-                                        DeckRow(stringResource(R.string.renderer_sf_compat), hint = stringResource(R.string.renderer_sf_compat_hint)) {
-                                            DeckToggle(checked = sfCompatMode, onChange = { sfCompatMode = it })
-                                        }
-                                    }
                                     if (selectedRenderer == "Vulkan") {
                                         DeckRow(stringResource(R.string.renderer_native)) {
                                             DeckToggle(checked = vkNative, onChange = { vkNative = it })
@@ -9410,20 +9310,6 @@ internal fun DeckShortcutSettingsScreen(
                                                 options = vkPmValues.zip(vkPmLabels),
                                                 selected = vkPresentMode,
                                                 onPick = { vkPresentMode = it },
-                                            )
-                                        }
-                                        if (vkNative) {
-                                            val vkBackendValues = listOf("auto", "asr", "flip")
-                                            val vkBackendLabels = listOf(
-                                                stringResource(R.string.renderer_native_backend_auto),
-                                                stringResource(R.string.renderer_native_backend_asr),
-                                                stringResource(R.string.renderer_native_backend_flip),
-                                            )
-                                            DeckChoiceRow(
-                                                label = stringResource(R.string.renderer_native_backend),
-                                                options = vkBackendValues.zip(vkBackendLabels),
-                                                selected = vkNativeBackend,
-                                                onPick = { vkNativeBackend = it },
                                             )
                                         }
                                         val vkDriverOptions = remember {
@@ -9772,20 +9658,6 @@ internal fun DeckShortcutSettingsScreen(
             contentTypes = listOf(ContentProfile.ContentType.CONTENT_TYPE_D7VK),
             onDismiss = { showD7vkDownloadSheet = false },
             onContentChanged = {},
-        )
-    }
-    if (showSfWarning) {
-        DeckWarningDialog(
-            title = "SurfaceFlinger renderer — Experimental",
-            message = "The SurfaceFlinger renderer composites game frames directly through your device's " +
-                "display hardware, bypassing the GL/Vulkan compositor.\n\n" +
-                "On some devices and SoCs this can fault the display/GPU driver and REBOOT your device — " +
-                "possibly losing unsaved game progress or corrupting the container. It is validated only " +
-                "on recent Adreno GPUs.\n\n" +
-                "Use at your own risk.",
-            confirmLabel = "I understand, use it",
-            onConfirm = { selectedRenderer = "SurfaceFlinger"; showSfWarning = false },
-            onDismiss = { showSfWarning = false },
         )
     }
     if (showScAudioSettings) {

@@ -76,10 +76,8 @@ object ShortcutExporter {
         put(effective, "reshadeParams", orDefault(shortcut, "reshadeParams", container?.getReshadeParams()))
         put(effective, "reshadeEffect", orDefault(shortcut, "reshadeEffect", container?.getReshadeEffect()))
         // No clean/matching container getter for these — read shortcut-scoped only (getExtra). e.g.
-        // sfCompatMode's container form is getRendererSfCompatMode() (a boolean, not the extra's string),
-        // and startupSelection's is a byte — neither cleanly matches the extra's string, so getExtra-only.
+        // startupSelection's container form is a byte, which does not match the extra's string.
         put(effective, "renderScale", shortcut.getExtra("renderScale"))
-        put(effective, "sfCompatMode", shortcut.getExtra("sfCompatMode"))
         put(effective, "fpsLimiterEnabled", shortcut.getExtra("fpsLimiterEnabled"))
         put(effective, "sharpnessEffect", shortcut.getExtra("sharpnessEffect"))
         put(effective, "sharpnessLevel", shortcut.getExtra("sharpnessLevel"))

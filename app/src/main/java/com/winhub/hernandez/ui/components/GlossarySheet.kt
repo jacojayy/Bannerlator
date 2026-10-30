@@ -136,8 +136,6 @@ internal val CONTAINER_GLOSSARY: List<GlossarySection> = listOf(
             "'Fast vsync': the screen always takes the newest finished frame and never makes the game wait. Tear-free like FIFO but with lower lag — and the right choice for frame generation, because its extra generated frames actually get through. Uses a little more battery."),
         GlossaryEntry("Immediate (present mode)",
             "'Vsync off': frames go to the screen the instant they're ready. Lowest input lag, but you can see tearing (parts of two frames at once). Usually not worth it on a high-refresh phone screen."),
-        GlossaryEntry("SurfaceFlinger (renderer)",
-            "An experimental renderer that hands frames straight to Android's display system. Sometimes faster, but it can misbehave (or even reboot) some devices — Vulkan is the safe default."),
         GlossaryEntry("Shader stutter & cache",
             "The first time you play, the game compiles its shaders, which can cause brief stutters. DXVK's shader (state) cache saves them so later sessions run smoothly."),
     )),

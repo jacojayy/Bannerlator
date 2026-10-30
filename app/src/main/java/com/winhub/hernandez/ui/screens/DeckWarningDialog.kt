@@ -10,7 +10,7 @@ import androidx.compose.ui.unit.dp
 
 /**
  * Deck-native confirm/warning popup used wherever the Deck UI would otherwise fall back to the classic
- * [SurfaceFlingerWarningDialog]. Generic so other Deck flows can reuse it.
+ * [the renderer warning dialog]. Generic so other Deck flows can reuse it.
  */
 @Composable
 internal fun DeckWarningDialog(

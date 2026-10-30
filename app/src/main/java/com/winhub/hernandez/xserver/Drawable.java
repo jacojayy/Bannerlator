@@ -4,7 +4,6 @@ import android.graphics.Bitmap;
 
 import com.winhub.hernandez.core.Callback;
 import com.winhub.hernandez.math.Mathf;
-import com.winhub.hernandez.renderer.AHBImage;
 import com.winhub.hernandez.renderer.GPUImage;
 import com.winhub.hernandez.renderer.NativeTexture;
 import com.winhub.hernandez.renderer.Texture;
@@ -23,16 +22,6 @@ public class Drawable extends XResource {
     public final Object renderLock = new Object();
     private boolean directScanout = false;
 
-    // SurfaceFlinger (ASR) renderer mode: when enabled, every CPU-drawn Drawable is backed by an
-    // AHBImage — a fenced three-buffer scanout swapchain (GN #1620) — and its CPU `data` IS the
-    // AHB's mapped memory, so the X server draws straight into a buffer SurfaceFlinger can scan
-    // out (with acquire/release fences, which prevents the SurfaceFlinger CPU-image crash/tearing).
-    // Global static (footgun): MUST default false and only flip true while ASR is the active
-    // renderer — GL/Vulkan keep the plain ByteBuffer + GPUImage path unchanged.
-    private static boolean DRAWABLE_FOR_ASR = false;
-    public static void setAsrMode(boolean value) { DRAWABLE_FOR_ASR = value; }
-    public static boolean IS_ASR() { return DRAWABLE_FOR_ASR; }
-
     static {
         System.loadLibrary("winlator");
     }
@@ -42,19 +31,7 @@ public class Drawable extends XResource {
         this.width = (short)width;
         this.height = (short)height;
         this.visual = visual;
-        if (DRAWABLE_FOR_ASR && width > 0 && height > 0) {
-            AHBImage g = new AHBImage((short)width, (short)height);
-            ByteBuffer vd = g.getHardwareBufferPtr() != 0 ? g.getVirtualData() : null;
-            if (vd != null) {
-                this.texture = g;
-                this.data = vd;
-            } else {
-                g.destroy();
-            }
-        }
-        if (this.data == null) {
-            this.data = DrawableBufferPool.obtain(width * height * 4);
-        }
+        this.data = DrawableBufferPool.obtain(width * height * 4);
         if (this.data == null) {
             throw new IllegalStateException("Drawable.data initialized as null!");
         }
@@ -64,13 +41,13 @@ public class Drawable extends XResource {
     // removeDrawable() calls (direct + onFreeResource listener path) could otherwise both
     // observe non-null data and both release the same buffer into two pool slots.
     // The NativeTexture guard is issue #4: once data has been repointed at a NativeTexture's
-    // (GPUImage/AHBImage) AHardwareBuffer memory, it was never pool-allocated — releasing it
+    // (GPUImage) AHardwareBuffer memory, it was never pool-allocated — releasing it
     // to the pool hands live hardware-buffer memory back out of obtain() for something
     // unrelated (the "10000x10000"/instant-crash pattern on several D3D9 titles).
     public void releaseBuffer() {
         synchronized (renderLock) {
             if (data != null) {
-                if (!DRAWABLE_FOR_ASR && !(texture instanceof NativeTexture)) {
+                if (!(texture instanceof NativeTexture)) {
                     DrawableBufferPool.release(data);
                 }
                 data = null;
@@ -94,11 +71,11 @@ public class Drawable extends XResource {
             if (vd != null) {
                 // ERL bug report #8: on the FIRST transition from a pool-owned buffer to a
                 // NativeTexture's virtual data, release the old pool buffer instead of orphaning
-                // it. The guard fires only when data is genuinely still pool-owned (not ASR, and
-                // this.texture not already a NativeTexture) — otherwise we'd pool-release
+                // it. The guard fires only when data is genuinely still pool-owned
+                // (this.texture not already a NativeTexture) — otherwise we'd pool-release
                 // hardware-buffer memory (the issue #4 bug in reverse).
                 synchronized (renderLock) {
-                    if (data != null && !DRAWABLE_FOR_ASR && !(this.texture instanceof NativeTexture)) {
+                    if (data != null && !(this.texture instanceof NativeTexture)) {
                         DrawableBufferPool.release(data);
                     }
                     data = vd;

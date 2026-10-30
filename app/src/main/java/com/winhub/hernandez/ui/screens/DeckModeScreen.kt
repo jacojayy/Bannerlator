@@ -380,7 +380,8 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         Key.ButtonR2 -> if (tabs.count > 1) { tabs.step(1); true } else false
                         else -> false
                     }
-                },
+                }
+                .focusable(),
         ) {
             DeckTopTabs(
                 sections = railSections,
@@ -433,7 +434,8 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                     Key.ButtonR2 -> if (tabs.count > 1) { tabs.step(1); true } else false
                     else -> false
                 }
-            },
+            }
+            .focusable(),
     ) {
         DeckSideRail(
             selected = section,
@@ -729,6 +731,15 @@ private fun DeckHome(
             listOf(Color(0xFF1B1F2A), Color(0xFF0E1016)), glass = true) { addModeMenu = true },
     )
 
+    // The per-game editor is drawn inline: the carousel gives up focus, then focus moves into the editor.
+    val settingsFocus = LocalFocusManager.current
+    LaunchedEffect(shortcutSettingsFor != null) {
+        if (shortcutSettingsFor != null) {
+            delay(250)
+            settingsFocus.moveFocusSafely(FocusDirection.Next)
+        }
+    }
+
     // Hand focus back to the carousel once any dialog/overlay opened from Home goes away.
     val overlayOpen = pending != null || launchRequest != null || launchMethodFor != null ||
         propertiesFor != null || cronosReviewFor != null || shortcutSettingsFor != null || addModeMenu
@@ -764,6 +775,7 @@ private fun DeckHome(
             cards = cards,
             onAdd = { addModeMenu = true },
             focus = heroFocus,
+            enabled = shortcutSettingsFor == null,
         )
         if (entries == null) {
             CircularProgressIndicator(
@@ -1178,97 +1190,91 @@ private fun DeckTopTabs(
     onSelect: (String) -> Unit,
 ) {
     val barOpacity by AppThemeState.topBarOpacity.collectAsState()
-    // The selection pill always ends up exactly on the selected tab's live bounds: each edge eases toward
-    // them every frame (the leading edge faster, so it still stretches then settles), and the tab's label
-    // opens and closes with an animated width, so the pill can never disagree with the layout under it.
+    val density = LocalDensity.current
+    // Every tab owns an equal, fixed cell, so the pill's target is exact and never moves while it
+    // glides (no label popping in and re-flowing the strip). The glide is DroidDeck's ChipGlide: the
+    // leading edge springs ahead, the trailing edge follows 40 ms later.
     // The strip is NOT a focus target: L1/R1 switch sections, so D-pad focus stays in the page.
-    val lefts = remember { mutableStateMapOf<String, Float>() }
-    val rights = remember { mutableStateMapOf<String, Float>() }
-    val start = remember { mutableFloatStateOf(0f) }
-    val end = remember { mutableFloatStateOf(0f) }
-    var lastFrame by remember { mutableLongStateOf(0L) }
-    val selLeft = lefts[selected]
-    val selRight = rights[selected]
-    LaunchedEffect(selected, selLeft, selRight) {
-        val l = selLeft ?: return@LaunchedEffect
-        val r = selRight ?: return@LaunchedEffect
-        if (end.floatValue <= start.floatValue) {
-            start.floatValue = l
-            end.floatValue = r
-            return@LaunchedEffect
-        }
-        while (abs(start.floatValue - l) > 0.5f || abs(end.floatValue - r) > 0.5f) {
-            val now = withFrameNanos { it }
-            val dt = if (lastFrame == 0L) 0.016f else ((now - lastFrame).coerceIn(1_000_000L, 50_000_000L)) / 1e9f
-            lastFrame = now
-            val lead = 1f - exp(-34f * dt)
-            val trail = 1f - exp(-20f * dt)
-            val movingRight = l >= start.floatValue
-            end.floatValue += (r - end.floatValue) * (if (movingRight) lead else trail)
-            start.floatValue += (l - start.floatValue) * (if (movingRight) trail else lead)
-        }
-        start.floatValue = l
-        end.floatValue = r
-        lastFrame = 0L
-    }
+    val start = remember { Animatable(0f) }
+    val end = remember { Animatable(0f) }
+    var placedAt by remember { mutableStateOf(Float.NaN) }
+    var lastIndex by remember { mutableIntStateOf(-1) }
     val accent = Deck.primary
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Deck.surface.copy(alpha = barOpacity))
-            .drawBehind {
-                if (end.floatValue > start.floatValue) {
-                    val top = 4.dp.toPx()
-                    val corner = CornerRadius(10.dp.toPx())
-                    val pill = Size(end.floatValue - start.floatValue, size.height - top * 2f)
-                    drawRoundRect(accent.copy(alpha = 0.14f), Offset(start.floatValue, top), pill, corner)
-                    drawRoundRect(accent, Offset(start.floatValue, top), pill, corner, style = Stroke(1.5.dp.toPx()))
-                }
-            },
+            .background(Deck.surface.copy(alpha = barOpacity)),
     ) {
+        val index = sections.indexOfFirst { it.key == selected }.coerceAtLeast(0)
+        val padPx = with(density) { 8.dp.toPx() }
+        val cellPx = (with(density) { maxWidth.toPx() } - padPx * 2f) / sections.size
+        val showLabels = maxWidth / sections.size >= 84.dp
+        LaunchedEffect(index, cellPx) {
+            val s0 = padPx + index * cellPx
+            val e0 = s0 + cellPx
+            val from = lastIndex
+            lastIndex = index
+            if (from < 0 || from == index || placedAt != cellPx) {
+                placedAt = cellPx
+                start.snapTo(s0)
+                end.snapTo(e0)
+                return@LaunchedEffect
+            }
+            coroutineScope {
+                val forward = index > from
+                val lead = if (forward) end else start
+                val trail = if (forward) start else end
+                launch { lead.animateTo(if (forward) e0 else s0, DeckLead) }
+                launch { delay(40); trail.animateTo(if (forward) s0 else e0, DeckTrail) }
+            }
+        }
+        Box(
+            Modifier
+                .matchParentSize()
+                .drawBehind {
+                    if (end.value > start.value) {
+                        val top = 4.dp.toPx()
+                        val corner = CornerRadius(10.dp.toPx())
+                        val pill = Size(end.value - start.value, size.height - top * 2f)
+                        drawRoundRect(accent.copy(alpha = 0.14f), Offset(start.value, top), pill, corner)
+                        drawRoundRect(accent, Offset(start.value, top), pill, corner, style = Stroke(1.5.dp.toPx()))
+                    }
+                },
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             sections.forEach { item ->
                 val current = selected == item.key
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
                     modifier = Modifier
+                        .weight(1f)
                         .clip(RoundedCornerShape(10.dp))
-                        .onGloballyPositioned {
-                            val x = it.positionInParent().x
-                            val right = x + it.size.width
-                            if (lefts[item.key] != x) lefts[item.key] = x
-                            if (rights[item.key] != right) rights[item.key] = right
-                        }
                         .focusProperties { canFocus = false }
                         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
                             onSelect(item.key)
                         }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                        .padding(vertical = 6.dp),
                 ) {
                     Icon(
                         imageVector = item.icon,
                         contentDescription = item.label,
-                        tint = Deck.primary,
+                        tint = if (current) Deck.primary else Deck.onSurfaceVariant,
                         modifier = Modifier.size(20.dp),
                     )
-                    AnimatedVisibility(
-                        visible = current,
-                        enter = expandHorizontally(tween(200, easing = DeckEase)) + fadeIn(tween(160)),
-                        exit = shrinkHorizontally(tween(200, easing = DeckEase)) + fadeOut(tween(100)),
-                    ) {
+                    if (showLabels) {
                         Text(
                             text = item.label,
-                            color = Deck.primary,
+                            color = if (current) Deck.primary else Deck.onSurfaceVariant,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = if (current) FontWeight.SemiBold else FontWeight.Medium,
                             maxLines = 1,
-                            modifier = Modifier.padding(start = 6.dp),
+                            modifier = Modifier.padding(start = 5.dp),
                         )
                     }
                 }
@@ -1769,6 +1775,7 @@ private fun DeckHomeCarousel(
     cards: List<DeckHomeCard>,
     onAdd: () -> Unit,
     focus: FocusRequester,
+    enabled: Boolean,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -1876,10 +1883,10 @@ private fun DeckHomeCarousel(
         Box(
             Modifier
                 .fillMaxSize()
-                .focusProperties { canFocus = true }
+                .focusProperties { canFocus = enabled }
                 .focusRequester(focus)
                 .onPreviewKeyEvent { e ->
-                    if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    if (!enabled || e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     val fresh = e.nativeKeyEvent.repeatCount == 0
                     val confirm = e.key == Key.ButtonA || e.key == Key.Enter ||
                         e.key == Key.NumPadEnter || e.key == Key.DirectionCenter

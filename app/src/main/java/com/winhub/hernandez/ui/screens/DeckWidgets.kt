@@ -108,6 +108,7 @@ import com.winhub.hernandez.ui.theme.AppThemeState
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -265,18 +266,18 @@ internal fun DeckDragFrame(
         val movingDown = t.top >= top.value
         coroutineScope {
             if (movingRight) {
-                launch { right.animateTo(t.right, tween(280, easing = DeckEase)) }
-                launch { left.animateTo(t.left, tween(240, delayMillis = 100, easing = DeckEase)) }
+                launch { right.animateTo(t.right, DeckLead) }
+                launch { delay(40); left.animateTo(t.left, DeckTrail) }
             } else {
-                launch { left.animateTo(t.left, tween(280, easing = DeckEase)) }
-                launch { right.animateTo(t.right, tween(240, delayMillis = 100, easing = DeckEase)) }
+                launch { left.animateTo(t.left, DeckLead) }
+                launch { delay(40); right.animateTo(t.right, DeckTrail) }
             }
             if (movingDown) {
-                launch { bottom.animateTo(t.bottom, tween(280, easing = DeckEase)) }
-                launch { top.animateTo(t.top, tween(240, delayMillis = 100, easing = DeckEase)) }
+                launch { bottom.animateTo(t.bottom, DeckLead) }
+                launch { delay(40); top.animateTo(t.top, DeckTrail) }
             } else {
-                launch { top.animateTo(t.top, tween(280, easing = DeckEase)) }
-                launch { bottom.animateTo(t.bottom, tween(240, delayMillis = 100, easing = DeckEase)) }
+                launch { top.animateTo(t.top, DeckLead) }
+                launch { delay(40); bottom.animateTo(t.bottom, DeckTrail) }
             }
         }
     }
@@ -446,6 +447,10 @@ internal fun Modifier.deckFocusBorder(
 }
 
 /** DroidDeck's own ease: quick off the mark, then a long glide — the "dragged" feel. */
+/** DroidDeck's ChipGlide springs: the leading edge snaps ahead, the trailing edge follows 40 ms later. */
+internal val DeckLead = androidx.compose.animation.core.spring<Float>(0.62f, 700f)
+internal val DeckTrail = androidx.compose.animation.core.spring<Float>(0.78f, 360f)
+
 internal val DeckEase = androidx.compose.animation.core.CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
 
 /**
@@ -1036,13 +1041,13 @@ internal fun DeckStretchyTabs(
                 lastSelected = selected
                 if (l >= start.value) {
                     coroutineScope {
-                        launch { end.animateTo(r, tween(280, easing = DeckEase)) }
-                        launch { start.animateTo(l, tween(240, delayMillis = 100, easing = DeckEase)) }
+                        launch { end.animateTo(r, DeckLead) }
+                        launch { delay(40); start.animateTo(l, DeckTrail) }
                     }
                 } else {
                     coroutineScope {
-                        launch { start.animateTo(l, tween(280, easing = DeckEase)) }
-                        launch { end.animateTo(r, tween(240, delayMillis = 100, easing = DeckEase)) }
+                        launch { start.animateTo(l, DeckLead) }
+                        launch { delay(40); end.animateTo(r, DeckTrail) }
                     }
                 }
             }

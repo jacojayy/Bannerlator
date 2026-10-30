@@ -53,6 +53,10 @@ object AppThemeState {
     private val _generalTabStyle = MutableStateFlow("horizontal")
     val generalTabStyle: StateFlow<String> = _generalTabStyle
 
+    /** Opacity of the Deck Mode top tab bar's background, 0.2..1.0 (1.0 = solid, the old look). */
+    private val _topBarOpacity = MutableStateFlow(1f)
+    val topBarOpacity: StateFlow<Float> = _topBarOpacity
+
     // The preset whose background/surface colors back the custom accent
     private val _customBaseIndex = MutableStateFlow(0)
 
@@ -138,6 +142,7 @@ object AppThemeState {
         _uiScale.value = themePrefs.getFloat("ui_scale", 0.9f).coerceIn(0.5f, 1.5f)
         _fontScale.value = themePrefs.getFloat("font_scale", 0.9f).coerceIn(0.5f, 1.5f)
         _generalTabStyle.value = if (themePrefs.getBoolean("general_tab_style_horizontal", true)) "horizontal" else "vertical"
+        _topBarOpacity.value = themePrefs.getFloat("top_bar_opacity", 1f).coerceIn(0.2f, 1f)
         refreshDeckPreset()
     }
 
@@ -176,6 +181,12 @@ object AppThemeState {
         val s = if (style == "vertical") "vertical" else "horizontal"
         _generalTabStyle.value = s
         themePrefs.edit().putBoolean("general_tab_style_horizontal", s == "horizontal").apply()
+    }
+
+    fun setTopBarOpacity(opacity: Float) {
+        val clamped = opacity.coerceIn(0.2f, 1f)
+        _topBarOpacity.value = clamped
+        themePrefs.edit().putFloat("top_bar_opacity", clamped).apply()
     }
 
     fun setPreset(index: Int) {

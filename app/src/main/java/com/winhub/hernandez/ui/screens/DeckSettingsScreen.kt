@@ -124,12 +124,13 @@ internal fun DeckSettingsScreen() {
     var orientation by remember { mutableStateOf(AppOrientation.mode(context)) }
     var uiScale by remember { mutableStateOf(AppThemeState.uiScale.value) }
     var fontScale by remember { mutableStateOf(AppThemeState.fontScale.value) }
+    var topBarOpacity by remember { mutableStateOf(AppThemeState.topBarOpacity.value) }
     // Container editor category layout ("tabs" | "rail" | "pages") — immediate-write, read by
     // DeckContainerDetailScreen on open.
-    var editorLayout by remember { mutableStateOf(prefs.getString("container_editor_layout", "tabs") ?: "tabs") }
+    var editorLayout by remember { mutableStateOf(prefs.getString("container_editor_layout", "rail")?.takeIf { it != "tabs" } ?: "rail") }
     // This page's own category layout ("tabs" | "rail" | "pages"). Defaults to the left rail — the
     // requested default — and is independent of the container editor's choice.
-    var settingsLayout by remember { mutableStateOf(prefs.getString("settings_layout", "rail") ?: "rail") }
+    var settingsLayout by remember { mutableStateOf(prefs.getString("settings_layout", "rail")?.takeIf { it != "tabs" } ?: "rail") }
     // One switch to make Save Manager and Contents follow the Settings Layout above instead of
     // always using their top strip. Off by default so the classic Deck tabs stay untouched.
     var universalLayout by remember { mutableStateOf(prefs.getBoolean("deck_universal_layout", false)) }
@@ -639,6 +640,21 @@ internal fun DeckSettingsScreen() {
             )
         }
 
+        // ── Top Bar ──
+        DeckGroup(title = "Top Bar") {
+            DeckSliderRow(
+                label = "Top Bar Opacity",
+                hint = "Background of the tab bar across the top of Deck Mode",
+                value = topBarOpacity,
+                range = 0.2f..1f,
+                format = { "${(it * 100).toInt()}%" },
+                onChange = {
+                    topBarOpacity = it
+                    AppThemeState.setTopBarOpacity(it)
+                },
+            )
+        }
+
         // ── Editors ──
         DeckGroup(title = "Editors") {
             DeckChoiceRow(
@@ -658,8 +674,7 @@ internal fun DeckSettingsScreen() {
                 label = "Container Editor Layout",
                 hint = "How the container editor arranges its categories",
                 options = listOf(
-                    "tabs" to "Top Tabs (animated)",
-                    "rail" to "Side Rail (animated)",
+                    "rail" to "Side Rail",
                     "pages" to "Category Pages",
                 ),
                 selected = editorLayout,
@@ -672,8 +687,7 @@ internal fun DeckSettingsScreen() {
                 label = "Settings Layout",
                 hint = "How this Settings page arranges its categories",
                 options = listOf(
-                    "tabs" to "Top Tabs (animated)",
-                    "rail" to "Side Rail (animated)",
+                    "rail" to "Side Rail",
                     "pages" to "Category Pages",
                 ),
                 selected = settingsLayout,

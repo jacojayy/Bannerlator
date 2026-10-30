@@ -1093,15 +1093,23 @@ fun SettingsScreen(onSaved: () -> Unit = {}) {
         // ── Appearance ────────────────────────────────────────────────
         FieldSetLabel("Appearance")
         FieldSet {
+            val topBarOpacity by AppThemeState.topBarOpacity.collectAsState()
+            ScaleSlider(
+                label = "Top Bar Opacity",
+                value = topBarOpacity,
+                onValueChange = { AppThemeState.setTopBarOpacity(it) },
+                min = 0.2f,
+                max = 1f,
+            )
+            Spacer(Modifier.height(10.dp))
             Text(
                 "How the Deck container editor arranges its categories.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 12.sp,
             )
             Spacer(Modifier.height(6.dp))
-            var editorLayout by remember { mutableStateOf(prefs.getString("container_editor_layout", "tabs") ?: "tabs") }
+            var editorLayout by remember { mutableStateOf(prefs.getString("container_editor_layout", "rail")?.takeIf { it != "tabs" } ?: "rail") }
             val editorLayoutOptions = listOf(
-                "tabs" to "Top Tabs",
                 "rail" to "Side Rail",
                 "pages" to "Pages",
             )
@@ -1465,6 +1473,9 @@ private fun ScaleSlider(
     label: String,
     value: Float,
     onValueChange: (Float) -> Unit,
+    min: Float = SCALE_MIN,
+    max: Float = SCALE_MAX,
+    step: Float = SCALE_STEP,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -1492,20 +1503,20 @@ private fun ScaleSlider(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(
-                onClick = { onValueChange((value - SCALE_STEP).coerceIn(SCALE_MIN, SCALE_MAX)) },
-                enabled = value > SCALE_MIN,
+                onClick = { onValueChange((value - step).coerceIn(min, max)) },
+                enabled = value > min,
             ) {
                 Icon(Icons.Filled.Remove, contentDescription = "Decrease $label", tint = OnSurface)
             }
             Slider(
                 value = value,
                 onValueChange = onValueChange,
-                valueRange = SCALE_MIN..SCALE_MAX,
+                valueRange = min..max,
                 modifier = Modifier.weight(1f),
             )
             IconButton(
-                onClick = { onValueChange((value + SCALE_STEP).coerceIn(SCALE_MIN, SCALE_MAX)) },
-                enabled = value < SCALE_MAX,
+                onClick = { onValueChange((value + step).coerceIn(min, max)) },
+                enabled = value < max,
             ) {
                 Icon(Icons.Filled.Add, contentDescription = "Increase $label", tint = OnSurface)
             }

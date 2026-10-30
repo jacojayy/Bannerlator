@@ -113,7 +113,6 @@ import com.winhub.hernandez.store.SaveManagerScreen
 import com.winhub.hernandez.store.SteamPrefs
 import com.winhub.hernandez.store.deckTileFocus
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -147,7 +146,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -161,7 +159,6 @@ import java.io.File
 import java.io.FileOutputStream
 import com.winhub.hernandez.ui.ControllerFocusIndication
 import com.winhub.hernandez.ui.SocialContent
-import com.winhub.hernandez.ui.moveFocusSafely
 import com.winhub.hernandez.ui.theme.AppThemeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -251,7 +248,6 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     // Right from the Home rail item must land on the hero. The "+" Add button shares the rail's
     // Y band, so the geometric search picked it first and the banner looked unreachable.
     val homeHeroFocus = remember { FocusRequester() }
-    val focusManager = LocalFocusManager.current
     val tabs = remember { DeckTabHost() }
     val backLayer = remember { DeckBackLayer() }
     val editTracker = remember { DeckEditTracker() }
@@ -336,6 +332,9 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         // L1/R1 switch the top-strip sections.
                         Key.ButtonL1 -> { stepSection(railSections, section, -1) { section = it; deckDetail = null }; true }
                         Key.ButtonR1 -> { stepSection(railSections, section, 1) { section = it; deckDetail = null }; true }
+                        // L2/R2 switch the sub-tabs of the current page (Storage, editors, Contents).
+                        Key.ButtonL2 -> if (tabs.count > 1) { tabs.step(-1); true } else false
+                        Key.ButtonR2 -> if (tabs.count > 1) { tabs.step(1); true } else false
                         else -> false
                     }
                 },
@@ -384,12 +383,10 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                     // detail, Save Manager, Contents), so switching a category no longer means
                     // walking focus all the way Up to the strip first. Pages without tabs keep the
                     // old wide horizontal focus step.
-                    Key.ButtonL1 ->
-                        if (tabs.count > 1) { tabs.step(-1); true }
-                        else focusManager.moveFocusSafely(FocusDirection.Left)
-                    Key.ButtonR1 ->
-                        if (tabs.count > 1) { tabs.step(1); true }
-                        else focusManager.moveFocusSafely(FocusDirection.Right)
+                    Key.ButtonL1 -> { stepSection(railSections, section, -1) { section = it; deckDetail = null }; true }
+                    Key.ButtonR1 -> { stepSection(railSections, section, 1) { section = it; deckDetail = null }; true }
+                    Key.ButtonL2 -> if (tabs.count > 1) { tabs.step(-1); true } else false
+                    Key.ButtonR2 -> if (tabs.count > 1) { tabs.step(1); true } else false
                     else -> false
                 }
             },
@@ -1213,7 +1210,7 @@ private fun DeckPaneContent(
 @Composable
 private fun DeckLegend(modifier: Modifier = Modifier) {
     Text(
-        text = "A Select   B Back   L1/R1 Switch   Stick / D-pad Move",
+        text = "A Select   B Back   L1/R1 Tabs   L2/R2 Sub-tabs   Stick / D-pad Move",
         color = Deck.onSurfaceVariant.copy(alpha = 0.75f),
         fontSize = 10.sp,
         fontWeight = FontWeight.SemiBold,
@@ -1262,10 +1259,17 @@ private fun DeckTopTabs(
     selected: String,
     onSelect: (String) -> Unit,
 ) {
+    val barOpacity by AppThemeState.topBarOpacity.collectAsState()
+    // The accent ring stretches from tab to tab like on the side rail ("dragged" look).
+    DeckDragFrame(
+        modifier = Modifier.fillMaxWidth().background(Deck.surface.copy(alpha = barOpacity)),
+        shape = RoundedCornerShape(12.dp),
+        strokeWidth = 2.dp,
+        gap = 1.dp,
+    ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Deck.surface)
             .padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1286,6 +1290,7 @@ private fun DeckTopTabs(
                         }
                     )
                     .focusable()
+                    .deckDragItem("top:${item.key}")
                     .onFocusChanged { if (it.isFocused && !current) onSelect(item.key) }
                     .clickable(interactionSource = interaction, indication = null) { onSelect(item.key) }
                     .padding(horizontal = 12.dp, vertical = 8.dp),
@@ -1308,6 +1313,7 @@ private fun DeckTopTabs(
                 }
             }
         }
+    }
     }
     HorizontalDivider(color = Deck.line)
 }

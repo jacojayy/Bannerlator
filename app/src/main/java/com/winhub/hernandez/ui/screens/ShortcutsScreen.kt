@@ -8856,7 +8856,7 @@ internal fun DeckShortcutSettingsScreen(
     // (Settings → Appearance → Container Editor Layout): "tabs" | "rail" | "pages".
     val layoutPref = remember {
         PreferenceManager.getDefaultSharedPreferences(context)
-            .getString("container_editor_layout", "tabs") ?: "tabs"
+            .getString("container_editor_layout", "rail")?.takeIf { it != "tabs" } ?: "rail"
     }
     // "pages" layout: whether a category page is open (false = the category list page).
     var pagesCategoryOpen by remember { mutableStateOf(false) }

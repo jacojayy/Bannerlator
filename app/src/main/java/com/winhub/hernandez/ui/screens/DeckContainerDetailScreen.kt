@@ -21,9 +21,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -42,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -128,11 +131,11 @@ internal fun DeckContainerDetailScreen(
     }
 
     // Category-navigation layout — a setting (Settings → Appearance → Container Editor Layout).
-    // "tabs" = animated top tabs (default), "rail" = animated left rail, "pages" = full-page list.
+    // "rail" = animated left rail (default), "pages" = full-page list.
     val context = LocalContext.current
     val layoutPref = remember {
         PreferenceManager.getDefaultSharedPreferences(context)
-            .getString("container_editor_layout", "tabs") ?: "tabs"
+            .getString("container_editor_layout", "rail")?.takeIf { it != "tabs" } ?: "rail"
     }
     // "popup" = config editors open in a DeckConfigDialog; "dropdown" = classic inline
     // DeckExpandableRow. Read once per open (the Settings screen writes it before we get here).
@@ -781,6 +784,10 @@ internal fun DeckEditorCategoryRail(
     selected: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    dots: List<Color>? = null,
+    // Landing on a row selects it (D-pad browsing), and the selected row can be refocused by L2/R2.
+    selectOnFocus: Boolean = false,
+    selectedFocus: FocusRequester? = null,
 ) {
     Column(
         // Scrollable: with many categories the tail ran off the bottom of the rail, so those
@@ -807,6 +814,8 @@ internal fun DeckEditorCategoryRail(
                     .height(48.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(bg)
+                    .then(if (isSel && selectedFocus != null) Modifier.focusRequester(selectedFocus) else Modifier)
+                    .onFocusChanged { if (it.isFocused && selectOnFocus && !isSel) onSelect(i) }
                     .clickable { onSelect(i) }
                     .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -819,6 +828,10 @@ internal fun DeckEditorCategoryRail(
                         .background(Deck.secondary),
                 )
                 Spacer(Modifier.width(10.dp))
+                dots?.getOrNull(i)?.let { dot ->
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text(
                     text = label,
                     color = if (isSel) Deck.onBackground else Deck.onSurfaceVariant,

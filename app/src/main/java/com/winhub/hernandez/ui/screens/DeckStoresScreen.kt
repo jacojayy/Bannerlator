@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,6 +31,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -658,6 +666,18 @@ internal fun DeckStoresScreen() {
     val active = deckStores.firstOrNull { it.screen == selected } ?: deckStores.first()
     val scope = rememberCoroutineScope()
 
+    // Stores are sub-tabs: L2/R2 switch the store while the rail has focus, and the store's own
+    // Store/Library/Settings tabs once focus is inside the page (D-pad Left returns to the rail).
+    var storeTab by remember(active.screen) { mutableIntStateOf(0) }
+    val storeTabCount = if (active.screen == Screen.Steam) 5 else 3
+    val railSelected = remember { FocusRequester() }
+    var railHasFocus by remember { mutableStateOf(false) }
+    var refocusRail by remember { mutableIntStateOf(0) }
+    // Bind a single page so the shell leaves L2/R2 to this screen instead of a stale tab host.
+    val deckTabs = LocalDeckTabs.current
+    LaunchedEffect(deckTabs) { deckTabs.bind(1) }
+    LaunchedEffect(refocusRail) { if (refocusRail > 0) runCatching { railSelected.requestFocus() } }
+
     // Library (owned) card tap -> in-Deck install when the store's payload is attached.
     val openOwned: (DeckOwnedGame) -> Unit = { g ->
         when {
@@ -781,6 +801,22 @@ internal fun DeckStoresScreen() {
         modifier = Modifier
             .fillMaxSize()
             .background(Deck.background)
+            .onPreviewKeyEvent { e ->
+                if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                val step = when (e.key) {
+                    Key.ButtonL2 -> -1
+                    Key.ButtonR2 -> 1
+                    else -> return@onPreviewKeyEvent false
+                }
+                if (railHasFocus) {
+                    val i = deckStores.indexOfFirst { it.screen == selected }.coerceAtLeast(0)
+                    selected = deckStores[(i + step + deckStores.size) % deckStores.size].screen
+                    refocusRail++
+                } else if (signedInByStore[active.screen] == true) {
+                    storeTab = (storeTab + step + storeTabCount) % storeTabCount
+                }
+                true
+            }
             .padding(horizontal = 24.dp, vertical = 14.dp),
     ) {
         Row(
@@ -850,26 +886,27 @@ internal fun DeckStoresScreen() {
                 }
             }
         } else {
-            // ── Store tabs: the Deck stretchy strip (stroke expands then closes), brand dot lit
-            // only while signed in. Downloads lives in the title row above.
-            DeckStretchyTabs(
+            // ── Store list: the same left rail as every other Deck screen, brand dot lit only
+            // while signed in. Downloads lives in the title row above.
+            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            DeckEditorCategoryRail(
                 labels = deckStores.map { it.chip },
                 dots = deckStores.map { tile ->
                     tile.dot.copy(alpha = if (signedInByStore[tile.screen] == true) 1f else 0.35f)
                 },
                 selected = deckStores.indexOfFirst { it.screen == selected }.coerceAtLeast(0),
                 onSelect = { selected = deckStores[it].screen },
-                focusable = true,
-                // Landing on a store pill switches to it, the same one-press behaviour the D-pad
-                // has on the side rail. Walking the strip no longer needs an extra A.
                 selectOnFocus = true,
-                height = 38.dp,
+                selectedFocus = railSelected,
+                modifier = Modifier
+                    .width(200.dp)
+                    .fillMaxHeight()
+                    .onFocusChanged { railHasFocus = it.hasFocus },
             )
-
-            Spacer(Modifier.size(16.dp))
+            Spacer(Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
 
             if (signedInByStore[active.screen] == true) {
-                var storeTab by remember(active.screen) { mutableStateOf(0) }
                 // Steam alone carries the social pair: Friends + Profile, the same composables
                 // the store front embeds, in the Deck tab strip. Every store gets Settings.
                 val tabs = if (active.screen == Screen.Steam) {
@@ -919,6 +956,8 @@ internal fun DeckStoresScreen() {
                 Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                     DeckPaneScroll { DeckSignInCard(active, context) }
                 }
+            }
+            }
             }
         }
     }

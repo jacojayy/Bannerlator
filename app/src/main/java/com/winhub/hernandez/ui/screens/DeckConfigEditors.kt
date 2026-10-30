@@ -98,6 +98,7 @@ import com.winhub.hernandez.ui.components.DllOverrides
 import com.winhub.hernandez.ui.components.EnvVarType
 import com.winhub.hernandez.ui.components.KnownEnvVars
 import com.winhub.hernandez.ui.findActivity
+import com.winhub.hernandez.ui.moveFocusOrStep
 import com.winhub.hernandez.ui.moveFocusSafely
 import com.winhub.hernandez.util.InAppFilePicker
 import kotlinx.coroutines.Dispatchers
@@ -297,12 +298,11 @@ private fun DeckDialogControllerBridge(
     val focusManager = LocalFocusManager.current
 
     fun walk(dir: FocusDirection): Boolean {
-        if (focusManager.moveFocusSafely(dir)) return true
+        if (focusManager.moveFocusOrStep(dir)) return true
         // Nothing in the dialog owns Compose focus yet: give the root focus, then walk.
         runCatching { view.requestFocus() }
         runCatching { rootFocus.requestFocus() }
-        return focusManager.moveFocusSafely(dir) ||
-            focusManager.moveFocusSafely(FocusDirection.Next)
+        return focusManager.moveFocusOrStep(dir)
     }
 
     val motion = remember(view, focusManager, rootFocus) {
@@ -473,7 +473,7 @@ internal fun DeckConfigDialog(
                     } ?: return@onKeyEvent false
                     // A direction with no geometric target (the root just took focus, or the
                     // content is a single column) falls back to Next so the popup still walks.
-                    focusManager.moveFocusSafely(dir) || focusManager.moveFocusSafely(FocusDirection.Next)
+                    focusManager.moveFocusOrStep(dir)
                 },
         ) {
             // Header

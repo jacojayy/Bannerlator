@@ -99,6 +99,18 @@ internal fun FocusManager.moveFocusSafely(direction: FocusDirection): Boolean =
     runCatching { moveFocus(direction) }.getOrDefault(false)
 
 /**
+ * [moveFocusSafely], and when the geometric search finds nothing in [direction] (a control with no
+ * neighbour in its beam) step through the focus order instead — backwards for Up/Left, forwards for
+ * Down/Right. Falling back to Next for every direction made Up jump forward, so controls above were
+ * unreachable in popups with uneven rows.
+ */
+internal fun FocusManager.moveFocusOrStep(direction: FocusDirection): Boolean =
+    moveFocusSafely(direction) || moveFocusSafely(
+        if (direction == FocusDirection.Up || direction == FocusDirection.Left) FocusDirection.Previous
+        else FocusDirection.Next,
+    )
+
+/**
  * Walks the window with the D-pad. Compose never maps direction keys onto focus movement, and a
  * key is only dispatched to modifiers when some node inside the tree holds focus — so this root
  * box holds focus when a screen change drops it, then forwards direction keys to the focus system.

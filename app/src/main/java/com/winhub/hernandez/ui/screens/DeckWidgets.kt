@@ -64,7 +64,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import com.winhub.hernandez.store.deckTileFocus
-import com.winhub.hernandez.ui.moveFocusSafely
+import com.winhub.hernandez.ui.moveFocusOrStep
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -425,7 +425,7 @@ internal fun Modifier.deckDialogNav(onBack: () -> Unit = {}): Modifier {
                     Key.DirectionRight -> FocusDirection.Right
                     else -> null
                 } ?: return@onPreviewKeyEvent false
-                focusManager.moveFocusSafely(dir) || focusManager.moveFocusSafely(FocusDirection.Next)
+                focusManager.moveFocusOrStep(dir)
             }
         }
 }

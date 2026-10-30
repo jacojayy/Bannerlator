@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -174,14 +175,15 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
             )
             Spacer(Modifier.height(10.dp))
 
-            DeckStretchyTabs(
+            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            DeckEditorCategoryRail(
                 labels = listOf("Cronos", "Containers"),
                 selected = subtab,
                 onSelect = { tabs.select(it) },
-                focusable = true,
                 selectOnFocus = true,
+                modifier = Modifier.width(200.dp).fillMaxHeight(),
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.width(16.dp))
 
             AnimatedContent(
                 targetState = subtab,
@@ -200,7 +202,7 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
                 },
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth()
+                    .fillMaxHeight()
                     .focusGroup(),
                 label = "storageTab",
             ) { which ->
@@ -239,6 +241,7 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
                         onInfo = { propertiesContainer = it },
                     )
                 }
+            }
             }
         }
     }

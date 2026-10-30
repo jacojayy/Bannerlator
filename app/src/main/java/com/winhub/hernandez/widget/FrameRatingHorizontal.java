@@ -116,7 +116,7 @@ public class FrameRatingHorizontal extends FrameLayout implements Runnable {
         sepBatteryVoltage = findViewById(R.id.SepBatteryVoltage);
         sepRenderer = findViewById(R.id.SepRenderer);
 
-        if (tvRenderer != null) tvRenderer.setText("OpenGL");
+        if (tvRenderer != null) tvRenderer.setText("Vulkan");
 
         ActivityManager am = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
         ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo();

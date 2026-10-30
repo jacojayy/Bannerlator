@@ -34,7 +34,7 @@ import com.winhub.hernandez.ui.XServerDialogState
 // (SIGCONT + clear paused).
 //
 // WHY A Dialog WINDOW (not an inline Box in the dialog-host ComposeView): the game renders into a
-// SurfaceView (Vulkan/GL, plus the ASR SurfaceControl scanout path) that composites ABOVE the host
+// SurfaceView (Vulkan, plus the ASR SurfaceControl scanout path) that composites ABOVE the host
 // ComposeView's own window, so anything drawn inline there is hidden behind the (frozen) game frame.
 // The other in-game surfaces that DO show over the game — NewTaskDialog (AlertDialog), MagnifierOverlay
 // (Dialog) — each escape into their own top-level window, which the compositor stacks above the game

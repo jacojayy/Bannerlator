@@ -353,8 +353,8 @@ private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<Xmb
         subtitle = "Versions, frame rate, filtering…") { xmbDxConfigMenu(xmb, s) }
 
     val rendId = p.ex("renderer", c.renderer).lowercase()
-    val rend = when (rendId) { "vulkan" -> "Vulkan"; "surfaceflinger" -> "SurfaceFlinger"; else -> "OpenGL" }
-    rows += XmbRow.Choice("renderer", "Renderer", Icons.Filled.DesktopWindows, listOf("OpenGL", "Vulkan", "SurfaceFlinger"), rend,
+    val rend = if (rendId == "surfaceflinger") "SurfaceFlinger" else "Vulkan"
+    rows += XmbRow.Choice("renderer", "Renderer", Icons.Filled.DesktopWindows, listOf("Vulkan", "SurfaceFlinger"), rend,
         confirm = { v -> if (v == "SurfaceFlinger") XmbConfirm("SurfaceFlinger renderer", "SurfaceFlinger renderer — experimental. Use it for this game?", "Use SurfaceFlinger") else null }) { v ->
         xmb.set(p, "renderer", v.lowercase())
     }

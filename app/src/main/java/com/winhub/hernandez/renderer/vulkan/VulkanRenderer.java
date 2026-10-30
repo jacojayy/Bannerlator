@@ -340,7 +340,7 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
         else nativeSetClipRegion(nativeHandle, rOffX, rOffY, rW, rH);
         float zoom = magnifierZoom;
         if (isStretch()) {
-            // Cursor-follow magnifier (parity with GLRenderer.drawFrame). The native compositor
+            // Cursor-follow magnifier. The native compositor
             // normalises this transform by containerWidth/Height (= the GUEST screenInfo dims; see
             // VulkanRendererContext::recordCmdBuf push constants), and the window positions it
             // composites are already in guest pixels. xServer.pointer.getX/getY are ALSO guest
@@ -390,7 +390,7 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
             float baseOy = viewTransformation.sceneOffsetY - py;
             float baseSx = viewTransformation.sceneScaleX;
             float baseSy = viewTransformation.sceneScaleY;
-            // Cursor-follow magnifier (parity with GLRenderer, which follows the cursor in
+            // Cursor-follow magnifier, which follows the cursor in
             // WINDOWED mode too — it has no fullscreen gate). Magnify in GUEST space around the
             // pointer FIRST, THEN apply the existing scene placement:
             //   d'     = zoom*d + magOff                       (magnifier, guest px)
@@ -657,7 +657,7 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
                 nativeScanoutSetCursorPos(nativeHandle, x, y, hotX, hotY);
             }
             // Vulkan is event-driven (no continuous render loop), so the magnifier transform must
-            // be recomputed on pointer motion for the zoomed region to track the cursor; GLRenderer
+            // be recomputed on pointer motion for the zoomed region to track the cursor.
             // gets this for free from its per-frame render loop. Re-transform while magnified too.
             if (screenOffsetYRelativeToCursor || magnifierZoom != 1.0f) updateTransform();
         }
@@ -866,7 +866,7 @@ public class VulkanRenderer implements WindowManager.OnWindowModificationListene
         synchronized (lock) { if (nativeHandle != 0) nativeSetUpscaleSharpness(nativeHandle, sharpness); }
     }
 
-    // Phase 2 composable screen effects (GL EffectComposer parity). Color grade takes
+    // Phase 2 composable screen effects. Color grade takes
     // the raw slider values (brightness/contrast -100..100, gamma 0.5..3.0, saturation
     // 0..200 percent); neutral (0,0,1,100) is a no-op. FXAA/Toon/CRT/NTSC are binary.
     // Drawer-only / session-live.

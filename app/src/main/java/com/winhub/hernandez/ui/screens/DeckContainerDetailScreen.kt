@@ -474,7 +474,7 @@ internal fun DeckContainerDetailScreen(
                                 viewModel.frameGenEngine = it
                                 if (BuildConfig.DEBUG)
                                     android.util.Log.d("FrameGen", "container editor picked [" + it + "] -> form frameGenEngine=[" + viewModel.frameGenEngine + "]")
-                                // LSFG Native runs in our Vulkan compositor; arming it on OpenGL or
+                                // LSFG Native runs in our Vulkan compositor; arming it on
                                 // SurfaceFlinger silently did nothing. The classic editor forbids
                                 // the combo, so switching the renderer is the only workable pick.
                                 if (it != "off" && viewModel.selectedRenderer != "Vulkan")

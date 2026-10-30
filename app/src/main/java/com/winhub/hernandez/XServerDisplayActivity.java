@@ -112,15 +112,7 @@ import com.winhub.hernandez.math.Mathf;
 import com.winhub.hernandez.math.XForm;
 import com.winhub.hernandez.midi.MidiHandler;
 import com.winhub.hernandez.midi.MidiManager;
-import com.winhub.hernandez.renderer.EffectComposer;
-import com.winhub.hernandez.renderer.GLRenderer;
 import com.winhub.hernandez.renderer.HostRenderer;
-import com.winhub.hernandez.renderer.effects.CRTEffect;
-import com.winhub.hernandez.renderer.effects.ColorEffect;
-import com.winhub.hernandez.renderer.effects.FXAAEffect;
-import com.winhub.hernandez.renderer.effects.NTSCCombinedEffect;
-import com.winhub.hernandez.renderer.effects.ToonEffect;
-import com.winhub.hernandez.renderer.effects.HDREffect;
 import com.winhub.hernandez.widget.EpicOverlayPill;
 import com.winhub.hernandez.widget.FpsCounter;
 import com.winhub.hernandez.widget.FrameRating;
@@ -1297,8 +1289,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
 
         // Host renderer side, read from the container's configured renderer.
         String resolvedR = resolvedRenderer();
-        String rendererMode = "vulkan".equals(resolvedR) ? "Vulkan"
-            : "surfaceflinger".equals(resolvedR) ? "SurfaceFlinger" : "OpenGL";
+        String rendererMode = "surfaceflinger".equals(resolvedR) ? "SurfaceFlinger" : "Vulkan";
         // The configured wrapper NAMES what a D3D game would load here — it is not evidence that THIS
         // game loads one: a native OpenGL or Vulkan title never touches DXVK. It stays the tag for a
         // D3D API the resolvers actually prove (startDxApiDetection's fallback arg) and the
@@ -1418,8 +1409,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
     }
 
     private boolean isDarkMode;
-
-    private String screenEffectProfile;
 
     private GuestProgramLauncherComponent guestProgramLauncherComponent;
     private EnvVars overrideEnvVars;
@@ -1725,7 +1714,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
         state.onClose                  = () -> runOnUiThread(() -> drawerLayout.closeDrawers());
         state.onKeyboard               = this::showGuestKeyboard;
         state.onInputControls          = () -> showInputControlsDialog();
-        state.onScreenEffects          = () -> showScreenEffectsDialog();
         state.onGraphicEngine          = () -> { XServerDrawerState.INSTANCE.selectTab(com.winhub.hernandez.ui.TabType.GRAPHICS); runOnUiThread(() -> drawerLayout.openDrawer(GravityCompat.START)); };
         state.onVibration              = () -> showVibrationDialog();
         state.onOverlayOpacityChange   = () -> {
@@ -1759,14 +1747,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
             if (inputControlsView != null) inputControlsView.invalidate();
         };
         state.onNativeRenderingToggle   = () -> {
-            // GL Native Rendering is disabled for now (bespoke GL scanout path has an unresolved
-            // brightness issue; frame-pacing fix parked on fix/gl-native-frame-pacing). Vulkan only.
-            // The drawer toggle is hidden on GL, but guard here too so it can never engage on GL.
-            if (xServerView.getRenderer() instanceof GLRenderer) {
-                XServerDrawerState.INSTANCE.setNativeRenderingEnabled(false);
-                showToast(this, "Native Rendering isn't available on the OpenGL renderer yet — use the Vulkan renderer");
-                return;
-            }
             // ASR (SurfaceFlinger renderer) is inherently native/passthrough and can't be live-switched to
             // a compositor mode — keep the flag on and no-op the toggle (change it via the container setting).
             if (xServerView.getRenderer() instanceof com.winhub.hernandez.renderer.ASurfaceRenderer) {
@@ -1795,17 +1775,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
                 // truthful (no toggles left "on" doing nothing). Only sets renderer + StateFlows —
                 // never invokes the preset apply callbacks, so there's no feedback loop.
                 if (next) resetVulkanPresets(vkr);
-            } else if (r instanceof GLRenderer) {
-                // GL Native Rendering (direct scanout) — P3 lifecycle. Builds/tears down the child
-                // game/cursor SurfaceControls under the GLSurfaceView's SC.
-                GLRenderer glr = (GLRenderer) r;
-                glr.setNativeMode(next);
-                // Direction B (P5): GL native bypasses the entire EffectComposer chain + the GL
-                // scaling/upscaler modes. Turning native ON resets every GL effect so the drawer is
-                // truthful (no toggles left "on" doing nothing). Only sets EffectComposer + StateFlows
-                // — never invokes the apply callbacks, so there's no feedback loop. While native stays
-                // on, the GraphicsContent composable greys the GL effect/scaling controls out.
-                if (next) resetGlEffectsForNative(glr);
             }
         };
         // bionic-fg live controls (frame gen multiplier/flow + fps limiter). Each in-menu slider
@@ -3091,8 +3060,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
      *
      * <p>The restore side stays where it has always been, in {@link #onResume} (which always follows
      * onStart), and stays unconditional: every call in it is idempotent — SIGCONT to a process that was
-     * never stopped, {@code GLSurfaceView.onResume} on a thread that never paused, a perf profile
-     * re-applied — and PiP relies on it running after a pause this method never saw.
+     * never stopped, a surface resume on a thread that never paused, a perf profile re-applied —
+     * and PiP relies on it running after a pause this method never saw.
      */
     private void suspendSessionForBackground() {
         // Nothing may stay held while the guest is frozen: a button still down when the game stops
@@ -4869,7 +4838,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // running-then-frozen guest, and stacking another cycle would fight the manual resume. Skip;
         // the next FG change after the user resumes will reset cleanly.
         if (isPaused) return;
-        // GL renderer owns its own EGL lifecycle (no detachable window surface to cycle) — no-op.
+        // No detachable SurfaceView (e.g. renderer not initialised yet) — nothing to cycle.
         if (xServerView == null || !xServerView.canRecreateSurface()) return;
         fgResetInProgress = true;
         environment.onPause();
@@ -7329,7 +7298,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
             // applied to the renderer (see renderer.setFpsLimit below), independent of frame gen.
             //
             // Runtime safety gate: FG's mailbox/present-mode delivery only exists on the Vulkan host
-            // renderer — OpenGL (GLRenderer) and SurfaceFlinger (ASR) have no present-mode control, so
+            // renderer — SurfaceFlinger (ASR) has no present-mode control, so
             // loading the FG layer there is inert/broken. The editors now forbid FG unless the renderer
             // is Vulkan; honor the same rule here so a stale "FG on + non-Vulkan renderer" config simply
             // doesn't run FG (no broken layer). Conservative: a SurfaceFlinger config that would fall
@@ -7745,9 +7714,11 @@ public class XServerDisplayActivity extends AppCompatActivity {
                 && !com.winhub.hernandez.renderer.ASurfaceRenderer.isSupported()) {
             rendererType = "vulkan";
         }
-        boolean useVulkan = "vulkan".equals(rendererType);
+        // Any legacy/unknown renderer id (e.g. the removed OpenGL option) degrades to Vulkan.
+        boolean useVulkan = !"surfaceflinger".equalsIgnoreCase(rendererType);
+        if (useVulkan) rendererType = "vulkan";
         // Gate the drawer's live Present Mode selector: it only exists on the Vulkan host renderer
-        // (OpenGL/SurfaceFlinger have no present-mode control).
+        // (SurfaceFlinger has no present-mode control).
         XServerDrawerState.INSTANCE.setRendererIsVulkan(useVulkan);
         xServerView.initRenderer(rendererType);
         final HostRenderer renderer = xServerView.getRenderer();
@@ -7796,7 +7767,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
                     && "lsfg-native".equals(resolvedFrameGenEngine()));
             // Compositor (present-layer) Vulkan driver. "system"/empty => leave driverPath null so
             // nativeInit falls back to the system libvulkan (the safe default). An installed Turnip =>
-            // point the compositor at it. Vulkan-renderer only (SurfaceFlinger/OpenGL composite through
+            // point the compositor at it. Vulkan-renderer only (SurfaceFlinger composites through
             // the system path and have no ICD to swap). MUST run before the async surface nativeInit.
             if (rendererDriverId != null && !rendererDriverId.isEmpty()
                     && !rendererDriverId.equalsIgnoreCase("system")) {
@@ -7847,7 +7818,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
             XServerDialogState.INSTANCE.setCasEnabled(vkCasEnabled);
             XServerDialogState.INSTANCE.setCasSharpness(vkCasSharpness);
             XServerDialogState.INSTANCE.setHdrVkEnabled(vkHdrEnabled);
-            // Phase 2 screen effects (GL parity) — drawer-only / session-live, default
+            // Phase 2 screen effects — drawer-only / session-live, default
             // off / neutral grade. Seed the renderer and mirror into the drawer state.
             vkRenderer.setScreenEffects(0f, 0f, 1.0f, 100f, false, false, false, false);
             XServerDialogState.INSTANCE.setVkBrightness(0f);
@@ -7880,44 +7851,13 @@ public class XServerDisplayActivity extends AppCompatActivity {
             vkRenderer.setHudFrameTick(this::driveHudFrameTick);
         }
 
-        // GL renderer: apply the container's filter mode to the window/content sampler. The Vulkan
-        // path above drives this through setUpscaler (modes 1/2); on GL the dedicated setFilterMode
-        // is the single source of truth. Gated to GLRenderer so it stays a no-op on Vulkan/ASR.
-        // (filterMode: 0=default -> Linear, 1=linear -> Linear, 2=nearest -> Nearest.)
-        if (renderer instanceof GLRenderer) {
-            GLRenderer glr = (GLRenderer) renderer;
-            // Per-game scaling mode restore: base sampler is Nearest for mode 2, else Linear; the
-            // spatial/preset part (modes 3-7) is seeded into the EffectComposer where the drawer
-            // callbacks are wired (see resolveScalingMode() / ds.setGlUpscalerMode below).
-            int glInitialMode = resolveScalingMode();
-            glr.setFilterMode(glInitialMode == 2 ? 2 : 1);
-            // GL Native Rendering (direct scanout) lifecycle — mirror the Vulkan launch wiring. Must
-            // run before the surface is created so GLRenderer.onSurfaceCreated builds the scanout
-            // SurfaceControls when native is on. swapRB feeds the game SC color transform.
-            glr.setSwapRB(container.getRendererSwapRB());
-            // A restored preset (>=3) lives in the composer pass native bypasses -> native off (parity
-            // with the in-game preset<->native mutual exclusion), same as the Vulkan seed above.
-            // GL Native Rendering (direct scanout) is DISABLED on the OpenGL renderer for now: the
-            // bespoke GL scanout path has an unresolved brightness/colorspace issue (the frame-pacing
-            // half is already fixed on the held branch fix/gl-native-frame-pacing). Vulkan is the
-            // supported native path. Force off so a GL container never launches into the broken mode,
-            // regardless of the saved container native flag. (was: container.isRendererNative() && glInitialMode < 3)
-            boolean glNativeOn = false;
-            glr.setInitialNativeMode(glNativeOn);
-            XServerDrawerState.INSTANCE.setNativeRenderingEnabled(glNativeOn); // keep the toggle in sync
-            XServerDrawerState.INSTANCE.setNativeRenderingSupported(false);    // hide the drawer toggle on GL
-            // GL native (FLIP/scanout) bypasses both onDrawFrame and copyArea, so drive the perf HUD
-            // per present here (same as the Vulkan/ASR ticks) — otherwise the HUD freezes in native mode.
-            glr.setHudFrameTick(this::driveHudFrameTick);
-        }
-
         // ASR has no compositor copyArea path either, so drive the perf HUD per present (same as
         // the Vulkan tick above) — otherwise the HUD shows no FPS under the SurfaceFlinger renderer.
         if (renderer instanceof com.winhub.hernandez.renderer.ASurfaceRenderer) {
             com.winhub.hernandez.renderer.ASurfaceRenderer asr =
                     (com.winhub.hernandez.renderer.ASurfaceRenderer) renderer;
             // BGRA->RGBA colour correction (GN #1620): apply the resolved per-game/container flag before
-            // the surface is created. Mirrors the Vulkan/GL setSwapRB launch seeds; ASR-only, independent
+            // the surface is created. Mirrors the Vulkan setSwapRB launch seed; ASR-only, independent
             // of swapRB. Default TRUE = correct colours.
             asr.setSfCompatMode(resolvedSfCompatMode());
             asr.setHudFrameTick(this::driveHudFrameTick);
@@ -8477,8 +8417,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
         HostRenderer r = xServerView.getRenderer();
         if (r instanceof com.winhub.hernandez.renderer.vulkan.VulkanRenderer)
             ((com.winhub.hernandez.renderer.vulkan.VulkanRenderer) r).setNativeMode(false);
-        else if (r instanceof GLRenderer)
-            ((GLRenderer) r).setNativeMode(false); // GL direct scanout bypasses the EffectComposer too
         XServerDrawerState.INSTANCE.setNativeRenderingEnabled(false); // flips the toggle UI off
         showToast(this, "Native Rendering off — needed for post-processing");
     }
@@ -8504,35 +8442,6 @@ public class XServerDisplayActivity extends AppCompatActivity {
         vkr.setScreenEffects(0f, 0f, 1.0f, 100f, false, false, false, false);
         ds.setVkBrightness(0f); ds.setVkContrast(0f); ds.setVkGamma(1.0f); ds.setVkSaturation(100f);
         ds.setVkFxaa(false); ds.setVkToon(false); ds.setVkCrt(false); ds.setVkNtsc(false);
-    }
-
-    /** Direction B (GL): GL Native Rendering (direct scanout) bypasses the entire GL EffectComposer
-     *  chain + the GL spatial upscalers/scaling modes, so enabling native resets every GL effect to
-     *  neutral so the drawer is truthful (no toggles left "on" doing nothing while bypassed). Mirrors
-     *  resetVulkanPresets(): only touches the EffectComposer + StateFlows — never the apply callbacks,
-     *  so this cannot re-enter disableNativeRenderingForPreset(). */
-    private void resetGlEffectsForNative(GLRenderer glr) {
-        XServerDialogState ds = XServerDialogState.INSTANCE;
-        EffectComposer comp = glr.getEffectComposer();
-        // Scaling mode -> None (linear base sampler), default sharpness.
-        glr.setFilterMode(1);
-        comp.setUpscaler(0);
-        ds.setGlUpscalerMode(0);
-        ds.setGlUpscaleSharpness(75);
-        // SGSR/CAS sharpen (FSREffect) + HDR off — remove the effects (mirrors onSgsrUpdate teardown).
-        com.winhub.hernandez.renderer.effects.FSREffect fsr =
-            comp.getEffect(com.winhub.hernandez.renderer.effects.FSREffect.class);
-        if (fsr != null) comp.removeEffect(fsr);
-        HDREffect hdr = comp.getEffect(HDREffect.class);
-        if (hdr != null) comp.removeEffect(hdr);
-        ds.setSgsrEnabled(false); ds.setSgsrSharpness(50); ds.setHdrEnabled(false);
-        // Screen effects: color grade neutral + FXAA/CRT/Toon/NTSC off.
-        applyScreenEffects(glr, 0f, 0f, 1.0f, 100f, false, false, false, false);
-        ds.setSeBrightness(0f); ds.setSeContrast(0f); ds.setSeGamma(1.0f); ds.setSeSaturation(100f);
-        ds.setSeFxaa(false); ds.setSeCrt(false); ds.setSeToon(false); ds.setSeNtsc(false);
-        // Terminal debanding off.
-        comp.setDeband(false, 100);
-        ds.setDebandEnabled(false); ds.setDebandStrength(100);
     }
 
     // Read-only runtime-backend HUD chip (Graphics tab header). arch + translator are known
@@ -8567,15 +8476,10 @@ public class XServerDisplayActivity extends AppCompatActivity {
     private void initInlineTabStates(HostRenderer renderer) {
         seedRuntimeBackend();
 
-        // SGSR/HDR/screen-effect shaders are GL EffectComposer features; the Vulkan renderer has no
-        // post-process pipeline, so their callbacks below are never set. Flag it so the drawer grays
-        // those toggles out instead of showing dead switches.
-        XServerDialogState.INSTANCE.setEffectsSupported(renderer instanceof GLRenderer);
         XServerDialogState ds = XServerDialogState.INSTANCE;
 
-        // Scaling mode (spatial upscaler) is a Vulkan-only control — the inverse of the GL-only
-        // effects above. Flag it for the drawer gate and wire the apply callback here, BEFORE the
-        // GL-only early return below, so it works on the Vulkan renderer. setUpscaler covers
+        // Scaling mode (spatial upscaler) is a Vulkan-only control. Flag it for the drawer gate and
+        // wire the apply callback here so it works on the Vulkan renderer. setUpscaler covers
         // modes 0..5 and drives the base sampler filter for modes 1/2 (single source of truth).
         boolean vulkanActive = renderer instanceof com.winhub.hernandez.renderer.vulkan.VulkanRenderer;
         ds.setVulkanSupported(vulkanActive);
@@ -8659,8 +8563,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
         ds.onFgResetResume = () -> runOnUiThread(this::resumeFromFgReset);
 
         // Input Controls state (renderer-independent: controller profiles + vibration work on
-        // BOTH the GL and Vulkan host renderers, so this must run before the GL-only guard below.
-        // Previously the early return for non-GL renderers left the profile dropdown empty.)
+        // both host renderers, so this runs unconditionally.)
         ArrayList<ControlsProfile> profiles = inputControlsManager.getProfiles(true);
         ArrayList<String> profileNames = new ArrayList<>();
         int selectedPosition = 0;
@@ -8927,154 +8830,14 @@ public class XServerDisplayActivity extends AppCompatActivity {
 
         // Task Manager actions (End Process / Bring to Front / New Task / Set Affinity) are
         // renderer-independent (UDP to winhandler.exe + host X-server focus). They MUST be wired
-        // before the GL-only early return below — otherwise on the Vulkan/ASR renderers the
-        // ds.onTm* callbacks stay null and the drawer's `onTm...?.invoke()` is a silent no-op,
-        // so End Process / Bring to Front "do nothing" (the process list still populates because
-        // startTmPolling() registers its own listener). This was the root cause of the Vulkan/ASR
-        // Task Manager bug.
+        // before any renderer-specific early return — otherwise the ds.onTm* callbacks stay null
+        // and the drawer's `onTm...?.invoke()` is a silent no-op, so End Process / Bring to Front
+        // "do nothing" (the process list still populates because startTmPolling() registers its own
+        // listener). This was the root cause of the Vulkan/ASR Task Manager bug.
         setupTmCallbacks();
 
-        // Screen Effects / SGSR / HDR are GL EffectComposer features; the Vulkan renderer has no
-        // post-process pipeline, so bail out here — AFTER the renderer-independent setup above.
-        if (!(renderer instanceof GLRenderer)) return;
-        GLRenderer glRenderer = (GLRenderer) renderer;
-
-        // Screen Effects state
-        ColorEffect ce   = (ColorEffect)        glRenderer.getEffectComposer().getEffect(ColorEffect.class);
-        FXAAEffect  fxaa = (FXAAEffect)         glRenderer.getEffectComposer().getEffect(FXAAEffect.class);
-        CRTEffect   crt  = (CRTEffect)          glRenderer.getEffectComposer().getEffect(CRTEffect.class);
-        ToonEffect  toon = (ToonEffect)         glRenderer.getEffectComposer().getEffect(ToonEffect.class);
-        NTSCCombinedEffect ntsc = (NTSCCombinedEffect) glRenderer.getEffectComposer().getEffect(NTSCCombinedEffect.class);
-
-        ds.setSeBrightness(ce   != null ? ce.getBrightness() * 100f : 0f);
-        ds.setSeContrast  (ce   != null ? ce.getContrast()   * 100f : 0f);
-        ds.setSeGamma     (ce   != null ? ce.getGamma()             : 1.0f);
-        ds.setSeSaturation(ce   != null ? ce.getSaturation() * 100f : 100f);
-        ds.setSeFxaa      (fxaa != null);
-        ds.setSeCrt       (crt  != null);
-        ds.setSeToon      (toon != null);
-        ds.setSeNtsc      (ntsc != null);
-
-        java.util.Set<String> rawSet = new java.util.LinkedHashSet<>(
-            preferences.getStringSet("screen_effect_profiles", new java.util.LinkedHashSet<>()));
-        final ArrayList<String> seProfileNames = new ArrayList<>();
-        for (String p : rawSet) seProfileNames.add(p.split(":")[0]);
-        ds.setSeProfiles(seProfileNames);
-        String currentProfile = getScreenEffectProfile();
-        int selIdx = 0;
-        for (int i = 0; i < seProfileNames.size(); i++) {
-            if (seProfileNames.get(i).equals(currentProfile)) { selIdx = i + 1; break; }
-        }
-        ds.setSeSelectedProfile(selIdx);
-
-        ds.onScreenEffectsApply = (brightness, contrast, gamma, saturation, fxaaEn, crtEn, toonEn, ntscEn, profileIndex) -> {
-            if (glRenderer == null) return;
-            // Direction A: any non-neutral screen effect runs in the EffectComposer, which GL native
-            // bypasses — so engaging one turns Native Rendering off (guarded; no-op when already off).
-            if (fxaaEn || crtEn || toonEn || ntscEn || brightness != 0f || contrast != 0f || gamma != 1.0f
-                    || saturation != 100f)
-                disableNativeRenderingForPreset();
-            applyScreenEffects(glRenderer, brightness, contrast, gamma, saturation, fxaaEn, crtEn, toonEn, ntscEn);
-            if (profileIndex > 0 && profileIndex - 1 < seProfileNames.size()) {
-                String name = seProfileNames.get(profileIndex - 1);
-                saveScreenEffectProfile(name, brightness, contrast, gamma, fxaaEn, crtEn, toonEn, ntscEn);
-                setScreenEffectProfile(name);
-            }
-        };
-
-        ds.onInitGraphicsTab = () -> {};
-
-        // SGSR state — the CAS-sharpen toggle + sharpness are remembered per game (#382); defaults
-        // (off @50) keep first launch unchanged. HDR presence stays derived from the live composer
-        // (GL HDR is not in this persistence pass — see follow-up note).
-        HDREffect hdr = (HDREffect) glRenderer.getEffectComposer().getEffect(HDREffect.class);
-        boolean glSgsrEnabled = resolveExtraBool("sgsrEnabled", false);
-        int glSgsrSharpness = resolveExtraInt("sgsrSharpness", 50);
-        ds.setSgsrEnabled(glSgsrEnabled);
-        ds.setSgsrSharpness(glSgsrSharpness);
-        ds.setHdrEnabled(hdr != null);
-
-        ds.onSgsrUpdate = (enabled, sharpness, hdrEn) -> {
-            if (glRenderer == null) return;
-            persistExtraBool("sgsrEnabled", enabled);   // remember per game (#382)
-            persistExtraInt("sgsrSharpness", sharpness);
-            // Direction A: CAS sharpen / HDR are EffectComposer post passes that GL native bypasses.
-            if (enabled || hdrEn) disableNativeRenderingForPreset();
-            com.winhub.hernandez.renderer.effects.FSREffect cur = (com.winhub.hernandez.renderer.effects.FSREffect) glRenderer.getEffectComposer().getEffect(com.winhub.hernandez.renderer.effects.FSREffect.class);
-            if (cur != null) glRenderer.getEffectComposer().removeEffect(cur);
-            // The drawer snaps this slider to 5 stops {0,25,50,75,100}; stop 0 = OFF (no CAS
-            // pass, passthrough), so only sharpness > 0 adds the effect.
-            if (enabled && sharpness > 0) {
-                com.winhub.hernandez.renderer.effects.FSREffect newFsr = new com.winhub.hernandez.renderer.effects.FSREffect();
-                // FSREffect level scale is inverted (level 1 = sharpest, level 5 = softest);
-                // map the 0..100 "Sharpness" slider so higher = sharper -> lower level.
-                newFsr.setLevel((100.0f - (float)sharpness) / 25.0f + 1.0f);
-                newFsr.setMode(com.winhub.hernandez.renderer.effects.FSREffect.MODE_SUPER_RESOLUTION);
-                glRenderer.getEffectComposer().addEffect(newFsr);
-            }
-            HDREffect curHdr = (HDREffect) glRenderer.getEffectComposer().getEffect(HDREffect.class);
-            if (curHdr != null) glRenderer.getEffectComposer().removeEffect(curHdr);
-            if (hdrEn) {
-                HDREffect newHdr = new HDREffect();
-                newHdr.setStrength(1.0f);
-                glRenderer.getEffectComposer().addEffect(newHdr);
-            }
-        };
-        // Restore a persisted CAS-sharpen pass on relaunch (#382): replay the apply with the seeded
-        // values so the effect is actually live, not just shown in the drawer. hdrEn stays at the
-        // live composer state so this never toggles HDR. No-op when nothing was saved (default off).
-        if (glSgsrEnabled && ds.onSgsrUpdate != null)
-            ds.onSgsrUpdate.invoke(true, glSgsrSharpness, hdr != null);
-
-        // GL "Scaling mode" (real SGSR / FSR1 spatial upscalers) — parity with the Vulkan
-        // picker; drawer-only / session-live, default None. Seed the drawer state + a default
-        // sharpness, prime the composer, and wire the apply callbacks. GL renderer only (this
-        // method already returned for non-GL above), so these never fire on Vulkan/ASR.
-        // Seed the picker to match the base sampler filter the launch already applied
-        // (container filter mode), mirroring the Vulkan seed: Nearest -> 2, else Linear (1).
-        // Restore the per-game scaling mode (0-7) into the drawer picker + composer so an in-game
-        // SGSR/FSR/etc. choice survives relaunch (not just the Linear/Nearest base filter).
-        int glSeedMode = resolveScalingMode();
-        int glUpscaleSharpness = resolveExtraInt("glUpscaleSharpness", 75); // remembered per game (#382)
-        ds.setGlUpscalerMode(glSeedMode);
-        ds.setGlUpscaleSharpness(glUpscaleSharpness);
-        glRenderer.getEffectComposer().setUpscaler(glSeedMode, glUpscaleSharpness / 100.0f);
-        ds.onGlUpscalerApply = (mode) -> {
-            if (glRenderer == null) return;
-            // Direction A: a spatial scaling mode lives in the EffectComposer low-res stage, which
-            // GL native (direct scanout) bypasses — so engaging one turns Native Rendering off.
-            // Guarded inside disableNativeRenderingForPreset(), so this no-ops when native is already
-            // off (and the drawer greys these controls out while native is on, so it rarely fires).
-            if (mode >= 3) disableNativeRenderingForPreset(); // 3=SGSR 4=FSR 5=FSR-Fit 6=Sharpen 7=NIS 8=SGSR HQ
-            // None/Linear/spatial/sharpen -> linear base sampler; Nearest -> point.
-            glRenderer.setFilterMode(mode == 2 ? 2 : 1);
-            glRenderer.getEffectComposer().setUpscaler(mode); // keeps the current sharpness
-            persistScalingMode(mode);   // remember the pick per game (#scaling-persist)
-        };
-        ds.onGlUpscaleSharpnessApply = (sharpness) -> {
-            if (glRenderer == null) return;
-            glRenderer.getEffectComposer().setUpscaleSharpness(sharpness / 100.0f);
-            persistExtraInt("glUpscaleSharpness", sharpness); // remember per game (#382)
-        };
-
-        // GL terminal debanding (TPDF dither) — remembered per game (#382); defaults off @100 so
-        // first launch is unchanged. Seed the composer too so a saved value applies on relaunch.
-        boolean glDebandEnabled = resolveExtraBool("debandEnabled", false);
-        int glDebandStrength = resolveExtraInt("debandStrength", 100);
-        ds.setDebandEnabled(glDebandEnabled);
-        ds.setDebandStrength(glDebandStrength);
-        if (glDebandEnabled) glRenderer.getEffectComposer().setDeband(true, glDebandStrength);
-        ds.onDebandApply = (enabled, strength) -> {
-            if (glRenderer == null) return;
-            // Direction A: terminal debanding is a final EffectComposer pass that GL native bypasses.
-            if (enabled) disableNativeRenderingForPreset();
-            glRenderer.getEffectComposer().setDeband(enabled, strength);
-            persistExtraBool("debandEnabled", enabled); // remember per game (#382)
-            persistExtraInt("debandStrength", strength);
-        };
-
-        // NOTE: setupTmCallbacks() is intentionally called earlier (before the GL-only early
-        // return) so the Task Manager actions work on every renderer. Do not move it back here.
+        // NOTE: setupTmCallbacks() is intentionally called earlier so the Task Manager actions
+        // work on every renderer.
     }
 
 
@@ -10680,7 +10443,9 @@ return true;
 
     private String resolvedRenderer() {
         if (container == null) return "vulkan";
-        return shortcut != null ? shortcut.getExtra("renderer", container.getRenderer()) : container.getRenderer();
+        String r = shortcut != null ? shortcut.getExtra("renderer", container.getRenderer()) : container.getRenderer();
+        if (r != null && "surfaceflinger".equalsIgnoreCase(r)) return "surfaceflinger";
+        return "vulkan";
     }
 
     // Per-game override for the SurfaceFlinger (ASR) BGRA->RGBA colour correction (GN #1620). Default
@@ -12346,14 +12111,6 @@ return true;
     }
 
 
-    public String getScreenEffectProfile() {
-        return screenEffectProfile;
-    }
-
-    public void setScreenEffectProfile(String screenEffectProfile) {
-        this.screenEffectProfile = screenEffectProfile;
-    }
-
     private void MoveCursorToTouchpoint() {
         // Toggle the preference value
         boolean currentValue = preferences.getBoolean("move_cursor_to_touchpoint", false);
@@ -12421,22 +12178,6 @@ return true;
             if (wh != null) wh.bringToFront(cls, handle);
         };
         ds.show(XServerDialogState.ActiveDialog.ACTIVE_WINDOWS);
-
-        HostRenderer _r = xServerView != null ? xServerView.getRenderer() : null;
-        GLRenderer renderer = _r instanceof GLRenderer ? (GLRenderer)_r : null;
-        if (renderer != null) {
-            float density = getResources().getDisplayMetrics().density;
-            int previewW = (int)(240 * density);
-            int previewH = (int)(160 * density);
-            for (int i = 0; i < activeWindows.size(); i++) {
-                final int idx = i;
-                final com.winhub.hernandez.xserver.Window win = activeWindows.get(i);
-                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() ->
-                    renderer.captureScreenshot(win, previewW, previewH, bitmap -> {
-                        if (bitmap != null) runOnUiThread(() -> ds.updateAwScreenshot(idx, bitmap));
-                    }), idx * 100L);
-            }
-        }
     }
 
     private void findAppWindowsForCompose(com.winhub.hernandez.xserver.Window parent,
@@ -12468,133 +12209,10 @@ return true;
         }
     }
 
-    private void showScreenEffectsDialog() {
-        HostRenderer _r = xServerView != null ? xServerView.getRenderer() : null;
-        GLRenderer r = _r instanceof GLRenderer ? (GLRenderer)_r : null;
-        XServerDialogState ds = XServerDialogState.INSTANCE;
-
-        ColorEffect ce   = r != null ? (ColorEffect)        r.getEffectComposer().getEffect(ColorEffect.class)        : null;
-        FXAAEffect  fxaa = r != null ? (FXAAEffect)         r.getEffectComposer().getEffect(FXAAEffect.class)         : null;
-        CRTEffect   crt  = r != null ? (CRTEffect)          r.getEffectComposer().getEffect(CRTEffect.class)          : null;
-        ToonEffect  toon = r != null ? (ToonEffect)         r.getEffectComposer().getEffect(ToonEffect.class)         : null;
-        NTSCCombinedEffect ntsc = r != null ? (NTSCCombinedEffect) r.getEffectComposer().getEffect(NTSCCombinedEffect.class) : null;
-
-        ds.setSeBrightness(ce   != null ? ce.getBrightness() * 100f : 0f);
-        ds.setSeContrast  (ce   != null ? ce.getContrast()   * 100f : 0f);
-        ds.setSeGamma     (ce   != null ? ce.getGamma()             : 1.0f);
-        ds.setSeSaturation(ce   != null ? ce.getSaturation() * 100f : 100f);
-        ds.setSeFxaa      (fxaa != null);
-        ds.setSeCrt       (crt  != null);
-        ds.setSeToon      (toon != null);
-        ds.setSeNtsc      (ntsc != null);
-
-        java.util.Set<String> rawSet = new java.util.LinkedHashSet<>(
-            preferences.getStringSet("screen_effect_profiles", new java.util.LinkedHashSet<>()));
-        final ArrayList<String> profileNames = new ArrayList<>();
-        for (String p : rawSet) profileNames.add(p.split(":")[0]);
-        ds.setSeProfiles(profileNames);
-
-        String currentProfile = getScreenEffectProfile();
-        int selIdx = 0;
-        for (int i = 0; i < profileNames.size(); i++) {
-            if (profileNames.get(i).equals(currentProfile)) { selIdx = i + 1; break; }
-        }
-        ds.setSeSelectedProfile(selIdx);
-
-        ds.onScreenEffectsApply = (brightness, contrast, gamma, saturation, fxaaEn, crtEn, toonEn, ntscEn, profileIndex) -> {
-            if (r == null) return;
-            applyScreenEffects(r, brightness, contrast, gamma, saturation, fxaaEn, crtEn, toonEn, ntscEn);
-            if (profileIndex > 0 && profileIndex - 1 < profileNames.size()) {
-                String name = profileNames.get(profileIndex - 1);
-                saveScreenEffectProfile(name, brightness, contrast, gamma, fxaaEn, crtEn, toonEn, ntscEn);
-                setScreenEffectProfile(name);
-            }
-        };
-
-        ds.onSeAddProfile = name -> {
-            java.util.Set<String> profiles = new java.util.LinkedHashSet<>(
-                preferences.getStringSet("screen_effect_profiles", new java.util.LinkedHashSet<>()));
-            boolean exists = false;
-            for (String p : profiles) { if (p.split(":")[0].equals(name)) { exists = true; break; } }
-            if (!exists) {
-                profiles.add(name + ":");
-                preferences.edit().putStringSet("screen_effect_profiles", profiles).apply();
-                profileNames.add(name);
-                ds.setSeProfiles(new ArrayList<>(profileNames));
-            }
-        };
-
-        ds.onSeRemoveProfile = name -> {
-            java.util.Set<String> profiles = new java.util.LinkedHashSet<>(
-                preferences.getStringSet("screen_effect_profiles", new java.util.LinkedHashSet<>()));
-            profiles.removeIf(p -> p.split(":")[0].equals(name));
-            preferences.edit().putStringSet("screen_effect_profiles", profiles).apply();
-            profileNames.removeIf(n -> n.equals(name));
-            ds.setSeProfiles(new ArrayList<>(profileNames));
-            ds.setSeSelectedProfile(0);
-        };
-
-        ds.show(XServerDialogState.ActiveDialog.SCREEN_EFFECTS);
-    }
-
-    // saturation is the 0..200 percent slider (100 = neutral), matching the Vulkan path; the
-    // ColorEffect shader takes it normalised, so it is divided by 100 alongside brightness and
-    // contrast. A fully neutral grade is (0, 0, 1.0, 100) and removes the effect entirely.
-    private void applyScreenEffects(GLRenderer r, float brightness, float contrast, float gamma,
-                                    float saturation,
-                                    boolean fxaaEn, boolean crtEn, boolean toonEn, boolean ntscEn) {
-        ColorEffect ce = (ColorEffect) r.getEffectComposer().getEffect(ColorEffect.class);
-        if (brightness == 0 && contrast == 0 && gamma == 1.0f && saturation == 100f) {
-            if (ce != null) r.getEffectComposer().removeEffect(ce);
-        } else {
-            if (ce == null) ce = new ColorEffect();
-            ce.setBrightness(brightness / 100f);
-            ce.setContrast(contrast / 100f);
-            ce.setGamma(gamma);
-            ce.setSaturation(saturation / 100f);
-            r.getEffectComposer().addEffect(ce);
-        }
-        FXAAEffect fxaa = (FXAAEffect) r.getEffectComposer().getEffect(FXAAEffect.class);
-        if (fxaaEn) { if (fxaa == null) r.getEffectComposer().addEffect(new FXAAEffect()); }
-        else if (fxaa != null) r.getEffectComposer().removeEffect(fxaa);
-
-        CRTEffect crt = (CRTEffect) r.getEffectComposer().getEffect(CRTEffect.class);
-        if (crtEn) { if (crt == null) r.getEffectComposer().addEffect(new CRTEffect()); }
-        else if (crt != null) r.getEffectComposer().removeEffect(crt);
-
-        ToonEffect toon = (ToonEffect) r.getEffectComposer().getEffect(ToonEffect.class);
-        if (toonEn) { if (toon == null) r.getEffectComposer().addEffect(new ToonEffect()); }
-        else if (toon != null) r.getEffectComposer().removeEffect(toon);
-
-        NTSCCombinedEffect ntsc = (NTSCCombinedEffect) r.getEffectComposer().getEffect(NTSCCombinedEffect.class);
-        if (ntscEn) { if (ntsc == null) r.getEffectComposer().addEffect(new NTSCCombinedEffect()); }
-        else if (ntsc != null) r.getEffectComposer().removeEffect(ntsc);
-    }
-
-    private void saveScreenEffectProfile(String name, float brightness, float contrast, float gamma,
-                                         boolean fxaa, boolean crt, boolean toon, boolean ntsc) {
-        com.winhub.hernandez.core.KeyValueSet settings = new com.winhub.hernandez.core.KeyValueSet();
-        settings.put("brightness",  brightness);
-        settings.put("contrast",    contrast);
-        settings.put("gamma",       gamma);
-        settings.put("fxaa",        fxaa);
-        settings.put("crt_shader",  crt);
-        settings.put("toon_shader", toon);
-        settings.put("ntsc_effect", ntsc);
-        java.util.Set<String> oldProfiles = new java.util.LinkedHashSet<>(
-            preferences.getStringSet("screen_effect_profiles", new java.util.LinkedHashSet<>()));
-        java.util.Set<String> newProfiles = new java.util.LinkedHashSet<>();
-        for (String p : oldProfiles) {
-            String n = p.split(":")[0];
-            newProfiles.add(n.equals(name) ? name + ":" + settings.toString() : p);
-        }
-        preferences.edit().putStringSet("screen_effect_profiles", newProfiles).apply();
-    }
-
     private void showMagnifierOverlay() {
         // Drive the magnifier through the HostRenderer interface (declares get/setMagnifierZoom,
-        // implemented by GL, Vulkan and ASR). The old code cast to GLRenderer and no-op'd for
-        // any other renderer, so on the default Vulkan renderer the overlay opened stuck at 100%
+        // implemented by Vulkan and ASR). The old code cast to the removed GL renderer and no-op'd
+        // for any other renderer, so on the default Vulkan renderer the overlay opened stuck at 100%
         // and the +/- buttons did nothing (issue #22). VulkanRenderer.setMagnifierZoom applies
         // the zoom live via updateTransform().
         HostRenderer r = xServerView != null ? xServerView.getRenderer() : null;
@@ -12793,7 +12411,7 @@ return true;
         // over the Vulkan/ASR fullscreen SurfaceView, so End Process silently did nothing there (the
         // confirm never appeared). Run the command directly so it works on every renderer. (The deeper
         // cause of the Vulkan/ASR breakage was this whole method bailing before the callbacks were
-        // wired — now fixed by calling setupTmCallbacks() ahead of the GL-only early return.)
+        // wired — now fixed by calling setupTmCallbacks() earlier.)
         ds.onTmKillProcess = name -> {
             if (winHandler != null) winHandler.killProcess(name);
         };

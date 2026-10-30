@@ -6272,14 +6272,13 @@ internal fun ShortcutSettingsDialogScreen(
         mutableStateOf(shortcut.getExtra("dxwrapperConfig", shortcut.container.getDXWrapperConfig()))
     }
 
-    // Renderer (host: OpenGL / Vulkan) — per-game override, defaults to the container's value.
+    // Renderer (host: Vulkan / SurfaceFlinger) — per-game override, defaults to the container's value.
     var selectedRenderer by remember {
         val id = shortcut.getExtra("renderer", shortcut.container.renderer)
         mutableStateOf(
             when {
-                id.equals("vulkan", ignoreCase = true) -> "Vulkan"
                 id.equals("surfaceflinger", ignoreCase = true) -> "SurfaceFlinger"
-                else -> "OpenGL"
+                else -> "Vulkan"
             }
         )
     }
@@ -7119,13 +7118,13 @@ internal fun ShortcutSettingsDialogScreen(
                         ) { Text("DX Wrapper Config") }
                     }
 
-                    // Renderer (host) — per-game override of the container's OpenGL/Vulkan choice.
+                    // Renderer (host) — per-game override of the container's Vulkan/SurfaceFlinger choice.
                     var showSfWarning by remember { mutableStateOf(false) }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         DpDrop(
                             dp, "renderer",
                             label = stringResource(R.string.renderer),
-                            options = listOf("OpenGL", "Vulkan", "SurfaceFlinger"),
+                            options = listOf("Vulkan", "SurfaceFlinger"),
                             selected = selectedRenderer,
                             onSelect = {
                                 // SurfaceFlinger is experimental and can reboot some devices — require opt-in.
@@ -8469,9 +8468,8 @@ internal fun DeckShortcutSettingsScreen(
         val id = shortcut.getExtra("renderer", shortcut.container.renderer)
         mutableStateOf(
             when {
-                id.equals("vulkan", ignoreCase = true) -> "Vulkan"
                 id.equals("surfaceflinger", ignoreCase = true) -> "SurfaceFlinger"
-                else -> "OpenGL"
+                else -> "Vulkan"
             }
         )
     }
@@ -9378,7 +9376,7 @@ internal fun DeckShortcutSettingsScreen(
                                     }
                                     DeckChoiceRow(
                                         label = stringResource(R.string.renderer),
-                                        options = listOf("OpenGL", "Vulkan", "SurfaceFlinger").map { it to it },
+                                        options = listOf("Vulkan", "SurfaceFlinger").map { it to it },
                                         selected = selectedRenderer,
                                         onPick = {
                                             if (it == "SurfaceFlinger" && selectedRenderer != "SurfaceFlinger") showSfWarning = true

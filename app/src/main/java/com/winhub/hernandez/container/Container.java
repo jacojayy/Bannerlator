@@ -129,7 +129,7 @@ public class Container {
     private boolean rendererSwapRB = false;
     // SurfaceFlinger (ASR) BGRA->RGBA colour correction (GN #1620). Default TRUE = correct colours
     // (native GPU converter blits BGRA->RGBA before present); false = present BGRA directly, for
-    // displays that scan out BGRA natively. ASR-only — independent of rendererSwapRB (Vulkan/GL).
+    // displays that scan out BGRA natively. ASR-only — independent of rendererSwapRB (Vulkan).
     private boolean rendererSfCompatMode = true;
     // Fullscreen aspect-ratio mode (issue #71). Replaces the old fullscreenStretched boolean.
     public static final int FULLSCREEN_OFF = 0;      // windowed, letterboxed (preserve aspect)

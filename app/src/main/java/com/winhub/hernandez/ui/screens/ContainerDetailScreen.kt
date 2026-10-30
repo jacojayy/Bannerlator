@@ -619,7 +619,7 @@ internal fun VulkanSettingsDialog(
     val filterMode = remember { cfg["filterMode"]?.toIntOrNull() ?: 0 }
     var swapRB by remember { mutableStateOf(cfg["swapRB"] == "true") }
     // SurfaceFlinger (ASR) BGRA->RGBA colour correction (GN #1620). Default ON — an absent token
-    // (old config) resolves to true. ASR-only; independent of swapRB (Vulkan/GL).
+    // (old config) resolves to true. ASR-only; independent of swapRB (Vulkan).
     var sfCompatMode by remember { mutableStateOf(cfg["sfCompatMode"] != "false") }
     // Native backend for Native Rendering: "auto"/"asr" -> hardened SurfaceFlinger (ASR) reroute;
     // "flip" -> force the leaner Vulkan FLIP direct-scanout. Default "auto" — an absent token (old
@@ -714,7 +714,7 @@ internal fun VulkanSettingsDialog(
                 // "System" (Android's own driver, the safe default) or an installed Turnip. This is the
                 // compositor, NOT where your game renders (that's the top-level Graphics Driver). Applied
                 // at launch by XServerDisplayActivity (VulkanRenderer.setDriverInfo before nativeInit).
-                // Vulkan-renderer only; a no-op on SurfaceFlinger/OpenGL. Options = System + installed
+                // Vulkan-renderer only; a no-op on SurfaceFlinger. Options = System + installed
                 // adrenotools drivers; default stays System because a Turnip compositor can black-screen
                 // on builds whose WSI doesn't support the surface.
                 val vkCtx = androidx.compose.ui.platform.LocalContext.current
@@ -1270,8 +1270,8 @@ private fun TopLevelFields(
             if (viewModel.frameGenEngine == "bionic" || viewModel.frameGenEngine == "lsfg") "lsfg-native"
             else viewModel.frameGenEngine
         val fgSelIdx = fgEngines.indexOf(fgSelectedEngine).coerceAtLeast(0)
-        // FG's present-mode/mailbox delivery only exists on the Vulkan host renderer; OpenGL (GLRenderer)
-        // and SurfaceFlinger (ASR) have no present-mode control, so FG is unsupported there — gate the
+        // FG's present-mode/mailbox delivery only exists on the Vulkan host renderer; SurfaceFlinger (ASR)
+        // has no present-mode control, so FG is unsupported there — gate the
         // whole dropdown on Vulkan and grey it out otherwise (combined with the lsfg-DLL option gate).
         val fgVulkan = viewModel.vulkanSupported && viewModel.selectedRenderer == "Vulkan"
         val fgShown = fgEngineLabels[fgSelIdx]

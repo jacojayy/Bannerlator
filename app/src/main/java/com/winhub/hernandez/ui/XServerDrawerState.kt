@@ -113,8 +113,8 @@ object XServerDrawerState {
     // multiplying the activity forces "mailbox" (effectivePresentMode()) and sets presentModeLocked =
     // true; the drawer keeps the chips interactive but BLOCKS FIFO/Immediate taps (Mailbox is required
     // for FG's extra presents) WITHOUT touching the user's saved preference — so presentMode snaps back
-    // to their mode when FG turns off. rendererIsVulkan gates the whole section (OpenGL/SurfaceFlinger
-    // have no present-mode control). onPresentModeChange persists + applies the user's pick live.
+    // to their mode when FG turns off. rendererIsVulkan gates the whole section (SurfaceFlinger
+    // has no present-mode control). onPresentModeChange persists + applies the user's pick live.
     private val _presentMode = MutableStateFlow("fifo")
     val presentMode: StateFlow<String> = _presentMode
     fun setPresentMode(v: String) { _presentMode.value = v }
@@ -381,7 +381,6 @@ object XServerDrawerState {
     @JvmField var onClose:                  Runnable? = null
     @JvmField var onKeyboard:               Runnable? = null
     @JvmField var onInputControls:          Runnable? = null
-    @JvmField var onScreenEffects:          Runnable? = null
     @JvmField var onGraphicEngine:          Runnable? = null
     @JvmField var onVibration:              Runnable? = null
     @JvmField var onToggleFullscreen:       Runnable? = null
@@ -411,7 +410,7 @@ object XServerDrawerState {
     @JvmField var onDisableMouse:           Runnable? = null
     @JvmField var onNativeRenderingToggle: Runnable? = null
     // Whether the active renderer supports Native Rendering (direct scanout). True for Vulkan;
-    // false for OpenGL (GL scanout is disabled for now — bespoke path, unresolved brightness).
+    // false for SurfaceFlinger (it scans out directly and bypasses the compositor pass).
     // Set once at launch from the renderer type; drives whether the drawer shows the toggle.
     private val _nativeRenderingSupported = MutableStateFlow(true)
     @get:JvmName("getNativeRenderingSupportedState")
@@ -652,7 +651,7 @@ object XServerDrawerState {
         onRootToggleChange = null; onFreeMemory = null; onDeepClean = null; onRootReadoutPoll = null
         onResetPerfKey = null; onResetAllPerf = null
         onClose = null; onKeyboard = null; onInputControls = null
-        onScreenEffects = null; onGraphicEngine = null; onVibration = null
+        onGraphicEngine = null; onVibration = null
         onToggleFullscreen = null; onSetFullscreenMode = null; onSetScreenAlignment = null; onPauseResume = null; onPipMode = null
         onSetSwipeButtons = null; onSetSwipeDpad = null; onSetSwipeSticks = null
         onActiveWindows = null; onTaskManager = null; onMagnifier = null

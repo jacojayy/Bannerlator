@@ -2,7 +2,6 @@ package com.winhub.hernandez.widget;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
-import android.opengl.GLSurfaceView;
 import android.os.Build;
 import android.view.Surface;
 import android.view.SurfaceHolder;
@@ -11,7 +10,6 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
 import com.winhub.hernandez.renderer.ASurfaceRenderer;
-import com.winhub.hernandez.renderer.GLRenderer;
 import com.winhub.hernandez.renderer.HostRenderer;
 import com.winhub.hernandez.renderer.vulkan.VulkanRenderer;
 import com.winhub.hernandez.xserver.XServer;
@@ -23,7 +21,6 @@ import java.util.concurrent.Executors;
 public class XServerView extends FrameLayout {
     private HostRenderer renderer;
     private SurfaceView vulkanSurfaceView;
-    private GLSurfaceView glSurfaceView;
     private final ExecutorService eventExecutor = Executors.newSingleThreadExecutor();
     private XServer xServer;
 
@@ -44,15 +41,10 @@ public class XServerView extends FrameLayout {
         setLayoutParams(new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
-    public void initRenderer(boolean vulkan) {
-        initRenderer(vulkan ? "vulkan" : "gl");
-    }
-
     public void initRenderer(String rendererType) {
-        boolean vulkan = "vulkan".equalsIgnoreCase(rendererType);
         boolean surfaceFlinger = "surfaceflinger".equalsIgnoreCase(rendererType);
         // ASR needs every Drawable backed by a composer-compatible AHardwareBuffer. Global flag —
-        // set before any window content Drawable is created (and clear it for GL/Vulkan).
+        // set before any window content Drawable is created (and cleared for Vulkan).
         com.winhub.hernandez.xserver.Drawable.setAsrMode(surfaceFlinger);
         if (surfaceFlinger) {
             vulkanSurfaceView = new SurfaceView(getContext());
@@ -76,7 +68,7 @@ public class XServerView extends FrameLayout {
                     asrRenderer.onSurfaceDestroyed();
                 }
             });
-        } else if (vulkan) {
+        } else {
             vulkanSurfaceView = new SurfaceView(getContext());
             vulkanSurfaceView.setLayoutParams(new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -97,34 +89,6 @@ public class XServerView extends FrameLayout {
                     ((VulkanRenderer)renderer).onSurfaceDestroyed();
                 }
             });
-        } else {
-            glSurfaceView = new GLSurfaceView(getContext());
-            glSurfaceView.setLayoutParams(new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            glSurfaceView.setEGLContextClientVersion(3);
-            glSurfaceView.setEGLConfigChooser(8, 8, 8, 8, 0, 0);
-            glSurfaceView.setPreserveEGLContextOnPause(true);
-            final GLRenderer glRenderer = new GLRenderer(this, xServer);
-            renderer = glRenderer;
-            glSurfaceView.setRenderer(glRenderer);
-            glSurfaceView.setRenderMode(GLSurfaceView.RENDERMODE_WHEN_DIRTY);
-            // GLSurfaceView manages its own SurfaceHolder.Callback for EGL; we add an extra one to
-            // re-assert the VRR frame-rate vote when the surface is (re)created, and to tear down the
-            // GL native-rendering scanout SurfaceControls when the surface goes away (rotation,
-            // app-switch). The scanout SCs are rebuilt in GLRenderer.onSurfaceCreated.
-            glSurfaceView.getHolder().addCallback(new SurfaceHolder.Callback() {
-                @Override
-                public void surfaceCreated(SurfaceHolder holder) {}
-                @Override
-                public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-                    reassertFrameRate();
-                }
-                @Override
-                public void surfaceDestroyed(SurfaceHolder holder) {
-                    glRenderer.onSurfaceDestroyed();
-                }
-            });
-            addView(glSurfaceView);
         }
     }
 
@@ -137,25 +101,20 @@ public class XServerView extends FrameLayout {
     }
 
     public void requestRender() {
-        if (glSurfaceView != null) glSurfaceView.requestRender();
-        else if (renderer != null) renderer.requestRender();
+        if (renderer != null) renderer.requestRender();
     }
 
     public void queueEvent(Runnable r) {
-        if (glSurfaceView != null) glSurfaceView.queueEvent(r);
-        else eventExecutor.execute(r);
+        eventExecutor.execute(r);
     }
 
     public void onPause() {
-        if (glSurfaceView != null) glSurfaceView.onPause();
     }
 
     public void onResume() {
-        if (glSurfaceView != null) glSurfaceView.onResume();
     }
 
-    /** True if this renderer uses a SurfaceView we can fully tear down + rebuild (Vulkan / ASR).
-     *  False for GL, whose GLSurfaceView owns its own EGL lifecycle via onPause()/onResume(). */
+    /** True if this renderer uses a SurfaceView we can fully tear down + rebuild (Vulkan / ASR). */
     public boolean canRecreateSurface() {
         return vulkanSurfaceView != null;
     }
@@ -166,7 +125,6 @@ public class XServerView extends FrameLayout {
     // full destroy). This is the load-bearing difference vs a swapchain-only recreate on the same
     // surface: it replicates what a background/foreground cycle does to the window surface, which is
     // the ONLY thing device-proven to clear the LSFG black-frame flicker. Paired with rebuildSurface().
-    // No-op for GL (canRecreateSurface() is false).
     public void teardownSurface() {
         if (vulkanSurfaceView != null && vulkanSurfaceView.getVisibility() != GONE)
             vulkanSurfaceView.setVisibility(GONE);
@@ -183,18 +141,14 @@ public class XServerView extends FrameLayout {
     }
 
     public Object getSurfaceControl() {
-        // GLSurfaceView extends SurfaceView, so it inherits getSurfaceControl() (API 29+).
-        // Returning the GL surface's SurfaceControl lets DirectScanout host child game/cursor
-        // SurfaceControls under it (GL Native Rendering, P2+). For Vulkan, unchanged.
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             if (vulkanSurfaceView != null) return vulkanSurfaceView.getSurfaceControl();
-            if (glSurfaceView != null) return glSurfaceView.getSurfaceControl();
         }
         return null;
     }
 
     // Vote a target display refresh rate for the active host renderer's window (VRR / refresh-rate
-    // matching). ONE Surface-level vote covers all three renderers: SurfaceFlinger aggregates
+    // matching). ONE Surface-level vote covers both renderers: SurfaceFlinger aggregates
     // frame-rate votes over a layer subtree, so a vote on the parent SurfaceView also covers the
     // Vulkan/ASR native child SurfaceControls. fps == 0f clears the vote (lets the panel run free).
     // The request is remembered and re-asserted in surfaceChanged() (see reassertFrameRate()).
@@ -216,7 +170,6 @@ public class XServerView extends FrameLayout {
         if (Build.VERSION.SDK_INT < 30) return;
         SurfaceHolder holder = null;
         if (vulkanSurfaceView != null) holder = vulkanSurfaceView.getHolder();
-        else if (glSurfaceView != null) holder = glSurfaceView.getHolder();
         if (holder == null) return;
         Surface surface = holder.getSurface();
         if (surface == null || !surface.isValid()) return;

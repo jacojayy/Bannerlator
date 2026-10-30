@@ -53,7 +53,7 @@ internal val CONTAINER_GLOSSARY: List<GlossarySection> = listOf(
         GlossaryEntry("DirectX (D3D9–12)",
             "The Windows graphics API games are built on — D3D9/10/11 are older, D3D12 is the newest. The wrappers above translate it into Vulkan for your phone."),
         GlossaryEntry("OpenGL",
-            "An older cross-platform graphics standard. It's the 'Renderer' fallback, and what WineD3D and Zink target when Vulkan isn't used directly."),
+            "An older cross-platform graphics standard. OpenGL games run on top of Vulkan through Zink, so no separate renderer is needed."),
         GlossaryEntry("Zink",
             "Translates OpenGL into Vulkan, so OpenGL-based games and tools still run on a phone GPU that only speaks Vulkan."),
     )),

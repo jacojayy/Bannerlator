@@ -10,7 +10,6 @@ import com.winhub.hernandez.ui.dialogs.ControllerTestDialog
 import com.winhub.hernandez.ui.dialogs.DebugDialogContent
 import com.winhub.hernandez.ui.dialogs.InputControlsDialog
 import com.winhub.hernandez.ui.dialogs.NewTaskDialog
-import com.winhub.hernandez.ui.dialogs.ScreenEffectsDialog
 import com.winhub.hernandez.ui.dialogs.VibrationDialog
 import com.winhub.hernandez.ui.overlays.AchievementPillStackOverlay
 import com.winhub.hernandez.ui.overlays.ControllerToastOverlay
@@ -43,7 +42,6 @@ fun XServerDialogHost() {
         XServerDialogState.ActiveDialog.VIBRATION      -> VibrationDialog(state)
         XServerDialogState.ActiveDialog.DEBUG          -> DebugDialogContent(state)
         XServerDialogState.ActiveDialog.INPUT_CONTROLS -> InputControlsDialog(state)
-        XServerDialogState.ActiveDialog.SCREEN_EFFECTS -> ScreenEffectsDialog(state)
         XServerDialogState.ActiveDialog.ACTIVE_WINDOWS -> ActiveWindowsDialog(state)
         XServerDialogState.ActiveDialog.NEW_TASK       -> NewTaskDialog(state)
         XServerDialogState.ActiveDialog.CAST           -> CastDialog(state)

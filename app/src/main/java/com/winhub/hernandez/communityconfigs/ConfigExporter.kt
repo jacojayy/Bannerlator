@@ -63,12 +63,10 @@ object ConfigExporter {
         // #168 custom startup service set (only consumed when startupSelection = Custom); frame-gen
         // interpolation model; dual-motor vibration; sticky per-game upscaler override.
         "startupServices", "frameGenModel", "vibrationMode", "vibrationIntensity", "scalingMode",
-        // Drawer graphics quick-settings (#382): the sharpness/CAS/HDR sliders + SGSR/deband toggles
-        // that are remembered per game alongside scalingMode. Vulkan path: upscaleSharpness, casEnabled,
-        // casSharpness, hdrEnabled. GL path: sgsrEnabled, sgsrSharpness, glUpscaleSharpness. Deband
-        // (debandEnabled/debandStrength) is shared by both renderers. Each round-trips as a scalar.
+        // Drawer graphics quick-settings (#382): the sharpness/CAS/HDR sliders + deband toggles
+        // that are remembered per game alongside scalingMode. Each round-trips as a scalar.
         "upscaleSharpness", "casEnabled", "casSharpness", "hdrEnabled",
-        "sgsrEnabled", "sgsrSharpness", "glUpscaleSharpness", "debandEnabled", "debandStrength",
+        "debandEnabled", "debandStrength",
     )
 
     /**

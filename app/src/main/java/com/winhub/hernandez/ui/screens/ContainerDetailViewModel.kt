@@ -312,7 +312,7 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
 
     // ── Renderer ──────────────────────────────────────────────────────────────
     var rendererEntries by mutableStateOf(emptyList<String>()); private set
-    var selectedRenderer by mutableStateOf("OpenGL")
+    var selectedRenderer by mutableStateOf("Vulkan")
     // False when the device has no hardware Vulkan: the Vulkan/SurfaceFlinger renderers and the
     // Frame Generation row are then hidden, since they can only run on the Vulkan compositor.
     var vulkanSupported by mutableStateOf(true); private set
@@ -497,8 +497,8 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
         audioDriverEntries = res.getStringArray(R.array.audio_driver_entries).toList()
         emulatorEntries   = res.getStringArray(R.array.emulator_entries).toList()
         vulkanSupported = GPUInformation.isVulkanSupported(context)
-        rendererEntries = if (vulkanSupported) listOf("OpenGL", "Vulkan", "SurfaceFlinger")
-                          else listOf("OpenGL")
+        rendererEntries = if (vulkanSupported) listOf("Vulkan", "SurfaceFlinger")
+                          else listOf("SurfaceFlinger")
         lcAllEntries      = res.getStringArray(R.array.some_lc_all).toList()
         startupSelectionEntries = res.getStringArray(R.array.startup_selection_entries).toList()
         mouseWarpEntries  = listOf(
@@ -655,10 +655,11 @@ class ContainerDetailViewModel(app: Application) : AndroidViewModel(app) {
         )
 
         // Renderer
-        // Map the stored identifier ("opengl"/"vulkan") to its display label ("OpenGL"/"Vulkan") so
-        // the dropdown shows the proper case AND the Vulkan-settings gear (gated on == "Vulkan") shows
-        // on load — not only after the user re-picks from the list.
-        selectedRenderer = identifierToDisplay(seed?.renderer ?: "opengl", rendererEntries)
+        // Map the stored identifier ("vulkan"/"surfaceflinger") to its display label so the dropdown
+        // shows the proper case AND the Vulkan-settings gear (gated on == "Vulkan") shows on load —
+        // not only after the user re-picks from the list. Legacy "opengl" ids degrade to the first
+        // entry (Vulkan), since the OpenGL renderer no longer exists.
+        selectedRenderer = identifierToDisplay(seed?.renderer ?: "vulkan", rendererEntries)
 
         val locale = java.util.Locale.getDefault()
         lcAll = seed?.getLC_ALL() ?: "${locale.language}_${locale.country}.UTF-8"

@@ -13,7 +13,7 @@ import kotlin.math.abs
 //  the user moves one the chip row falls back to "Custom".
 //
 //  This file is the SINGLE source of truth: both renderer paths (the OpenGL
-//  EffectComposer block and the Vulkan post-chain block in XServerDrawer.kt)
+//  Vulkan post-chain block in XServerDrawer.kt)
 //  read the same table, so a Look looks the same on either renderer.
 // ─────────────────────────────────────────────────────────────────────────────
 

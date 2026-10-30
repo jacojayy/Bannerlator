@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 object XServerDialogState {
 
     enum class ActiveDialog {
-        NONE, VIBRATION, DEBUG, INPUT_CONTROLS, SCREEN_EFFECTS, ACTIVE_WINDOWS, NEW_TASK, CAST,
+        NONE, VIBRATION, DEBUG, INPUT_CONTROLS, ACTIVE_WINDOWS, NEW_TASK, CAST,
         CONTROLLER_TEST
     }
 
@@ -67,53 +67,6 @@ object XServerDialogState {
     @JvmField var onMagnifierHide: Runnable? = null
 
     // -------------------------------------------------------------------------
-    // SGSR state
-    // -------------------------------------------------------------------------
-    private val _sgsrEnabled   = MutableStateFlow(false)
-    val sgsrEnabled: StateFlow<Boolean> = _sgsrEnabled
-
-    private val _sgsrSharpness = MutableStateFlow(50)
-    val sgsrSharpness: StateFlow<Int> = _sgsrSharpness
-
-    private val _hdrEnabled    = MutableStateFlow(false)
-    val hdrEnabled: StateFlow<Boolean> = _hdrEnabled
-
-    // SGSR/HDR are GL EffectComposer features; the Vulkan renderer has no post-process
-    // pipeline, so they do nothing there. Drives the grayed-out state in the drawer.
-    private val _effectsSupported = MutableStateFlow(true)
-    val effectsSupported: StateFlow<Boolean> = _effectsSupported
-    fun setEffectsSupported(v: Boolean) { _effectsSupported.value = v }
-
-    fun setSgsrEnabled(v: Boolean)    { _sgsrEnabled.value = v }
-    fun setSgsrSharpness(v: Int)      { _sgsrSharpness.value = v }
-    fun setHdrEnabled(v: Boolean)     { _hdrEnabled.value = v }
-
-    fun interface SgsrUpdateCallback { fun invoke(enabled: Boolean, sharpness: Int, hdr: Boolean) }
-    @JvmField var onSgsrUpdate: SgsrUpdateCallback? = null
-
-    // -------------------------------------------------------------------------
-    // Scaling mode (GL spatial upscaler) — parity with the Vulkan picker below.
-    // 0=None 1=Linear 2=Nearest 3=SGSR 4=FSR 5=FSR(Fit) 6=Sharpen(CAS). Modes 0/1/2
-    // drive GLRenderer.setFilterMode; 3/4/5 engage the EffectComposer SGSR/FSR low-res
-    // stage; 6 reuses the existing CAS post-effect. Drawer-only / session-live; gated to
-    // the GL renderer via effectsSupported.
-    // -------------------------------------------------------------------------
-    private val _glUpscalerMode = MutableStateFlow(0)
-    val glUpscalerMode: StateFlow<Int> = _glUpscalerMode
-    fun setGlUpscalerMode(v: Int) { _glUpscalerMode.value = v }
-
-    // 0..100; drives SGSR EdgeSharpness / FSR RCAS / CAS level for the GL picker.
-    private val _glUpscaleSharpness = MutableStateFlow(75)
-    val glUpscaleSharpness: StateFlow<Int> = _glUpscaleSharpness
-    fun setGlUpscaleSharpness(v: Int) { _glUpscaleSharpness.value = v }
-
-    fun interface GlUpscalerApplyCallback { fun invoke(mode: Int) }
-    @JvmField var onGlUpscalerApply: GlUpscalerApplyCallback? = null
-
-    fun interface GlUpscaleSharpnessCallback { fun invoke(sharpness: Int) }
-    @JvmField var onGlUpscaleSharpnessApply: GlUpscaleSharpnessCallback? = null
-
-    // -------------------------------------------------------------------------
     // Scaling mode (Vulkan spatial upscaler)
     // -------------------------------------------------------------------------
     // 0=none 1=linear 2=nearest 3=sgsr 4=fsr(fill) 5=fsr_fit(letterbox). Drawer-only /
@@ -123,8 +76,8 @@ object XServerDialogState {
     val upscalerMode: StateFlow<Int> = _upscalerMode
     fun setUpscalerMode(v: Int) { _upscalerMode.value = v }
 
-    // The spatial upscaler lives on the Vulkan renderer only (inverse of effectsSupported,
-    // which is GL-only). False on the OpenGL and SurfaceFlinger renderers -> grays the picker.
+    // The spatial upscaler lives on the Vulkan renderer only. False on the SurfaceFlinger
+    // renderer -> grays the picker.
     private val _vulkanSupported = MutableStateFlow(false)
     val vulkanSupported: StateFlow<Boolean> = _vulkanSupported
     fun setVulkanSupported(v: Boolean) { _vulkanSupported.value = v }
@@ -176,7 +129,7 @@ object XServerDialogState {
     @JvmField var onDebandApply: DebandApplyCallback? = null
 
     // -------------------------------------------------------------------------
-    // Vulkan Phase 2 screen effects (GL EffectComposer parity): Color grade
+    // Vulkan Phase 2 screen effects: Color grade
     // (brightness/contrast/gamma sliders) + FXAA/Toon/CRT/NTSC toggles. Drawer-only
     // / session-live, same lifecycle as the scaling mode + CAS/HDR.
     // -------------------------------------------------------------------------
@@ -214,7 +167,7 @@ object XServerDialogState {
     val vkNtsc: StateFlow<Boolean> = _vkNtsc
     fun setVkNtsc(v: Boolean) { _vkNtsc.value = v }
 
-    // Single applier mirroring the GL onScreenEffectsApply signature. `saturation` is
+    // Single applier for the Vulkan screen effects. `saturation` is
     // the 0..200 percent slider (100 = neutral), same units as vkSaturation above.
     fun interface VulkanScreenEffectsCallback {
         fun invoke(brightness: Float, contrast: Float, gamma: Float, saturation: Float,
@@ -724,65 +677,6 @@ object XServerDialogState {
     @JvmField var onInputControlsSettings: InputSettingsCallback? = null
 
     // -------------------------------------------------------------------------
-    // Screen Effects dialog
-    // -------------------------------------------------------------------------
-    private val _seBrightness      = MutableStateFlow(0f)
-    val seBrightness: StateFlow<Float> = _seBrightness
-
-    private val _seContrast        = MutableStateFlow(0f)
-    val seContrast: StateFlow<Float> = _seContrast
-
-    private val _seGamma           = MutableStateFlow(1.0f)
-    val seGamma: StateFlow<Float> = _seGamma
-
-    // 0..200 percent, 100 = neutral (see vkSaturation for the same convention on the
-    // Vulkan side). ColorEffect divides by 100 for its [0,2] luma-preserving mix.
-    private val _seSaturation      = MutableStateFlow(100f)
-    val seSaturation: StateFlow<Float> = _seSaturation
-
-    private val _seFxaa            = MutableStateFlow(false)
-    val seFxaa: StateFlow<Boolean> = _seFxaa
-
-    private val _seCrt             = MutableStateFlow(false)
-    val seCrt: StateFlow<Boolean> = _seCrt
-
-    private val _seToon            = MutableStateFlow(false)
-    val seToon: StateFlow<Boolean> = _seToon
-
-    private val _seNtsc            = MutableStateFlow(false)
-    val seNtsc: StateFlow<Boolean> = _seNtsc
-
-    private val _seProfiles        = MutableStateFlow<List<String>>(emptyList())
-    val seProfiles: StateFlow<List<String>> = _seProfiles
-
-    private val _seSelectedProfile = MutableStateFlow(0)  // 0 = default
-    val seSelectedProfile: StateFlow<Int> = _seSelectedProfile
-
-    fun setSeBrightness(v: Float)   { _seBrightness.value = v }
-    fun setSeContrast(v: Float)     { _seContrast.value = v }
-    fun setSeGamma(v: Float)        { _seGamma.value = v }
-    fun setSeSaturation(v: Float)   { _seSaturation.value = v }
-    fun setSeFxaa(v: Boolean)       { _seFxaa.value = v }
-    fun setSeCrt(v: Boolean)        { _seCrt.value = v }
-    fun setSeToon(v: Boolean)       { _seToon.value = v }
-    fun setSeNtsc(v: Boolean)       { _seNtsc.value = v }
-    fun setSeProfiles(p: List<String>) { _seProfiles.value = p }
-    fun setSeSelectedProfile(v: Int)   { _seSelectedProfile.value = v }
-
-    fun interface ScreenEffectsApplyCallback {
-        fun invoke(
-            brightness: Float, contrast: Float, gamma: Float, saturation: Float,
-            fxaa: Boolean, crt: Boolean, toon: Boolean, ntsc: Boolean,
-            profileIndex: Int
-        )
-    }
-    @JvmField var onScreenEffectsApply: ScreenEffectsApplyCallback? = null
-
-    fun interface StringCallback { fun invoke(value: String) }
-    @JvmField var onSeAddProfile: StringCallback? = null
-    @JvmField var onSeRemoveProfile: StringCallback? = null
-
-    // -------------------------------------------------------------------------
     // Active Windows dialog
     // -------------------------------------------------------------------------
     data class ActiveWindow(
@@ -906,20 +800,12 @@ object XServerDialogState {
     fun interface FpsConfigCallback { fun invoke(config: String) }
 
     // -------------------------------------------------------------------------
-    // Inline tab initialization callbacks
-    // -------------------------------------------------------------------------
-    @JvmField var onInitGraphicsTab: Runnable? = null
-
-    // -------------------------------------------------------------------------
     // Reset — call when activity is destroyed or restarted
     // -------------------------------------------------------------------------
     fun reset() {
         _activeDialog.value    = ActiveDialog.NONE
         _magnifierVisible.value = false
         _magnifierZoom.value   = 1.0f
-        _sgsrEnabled.value     = false
-        _sgsrSharpness.value   = 50
-        _hdrEnabled.value      = false
         _upscalerMode.value    = 0
         _vulkanSupported.value = false
         _casEnabled.value      = false
@@ -967,16 +853,6 @@ object XServerDialogState {
         _showTouchscreen.value = false
         _timeoutEnabled.value  = false
         _hapticsEnabled.value  = false
-        _seBrightness.value    = 0f
-        _seContrast.value      = 0f
-        _seGamma.value         = 1.0f
-        _seSaturation.value    = 100f
-        _seFxaa.value          = false
-        _seCrt.value           = false
-        _seToon.value          = false
-        _seNtsc.value          = false
-        _seProfiles.value      = emptyList()
-        _seSelectedProfile.value = 0
         _awWindows.value       = emptyList()
         _tmProcesses.value     = emptyList()
         _tmCpuCores.value      = emptyList()
@@ -985,7 +861,6 @@ object XServerDialogState {
         _tmMemInfo.value       = ""
         _tmCount.value         = 0
         onMagnifierZoom = null; onMagnifierHide = null
-        onSgsrUpdate = null
         onUpscalerApply = null
         onCasApply = null; onHdrApply = null; onUpscaleSharpnessApply = null
         onDebandApply = null
@@ -1002,11 +877,9 @@ object XServerDialogState {
         onGyroActivationModeChanged = null; onGyroModeChanged = null
         onGyroRecenterRequested = null
         onInputControlsConfirm = null; onInputControlsSettings = null
-        onScreenEffectsApply = null; onSeAddProfile = null; onSeRemoveProfile = null
         onWindowClick = null
         physicalProfileId = -1; onPhysicalProfileChanged = null; onProfilesChanged = null
         onTmRefresh = null; onTmDismissed = null; onTmNewTask = null; onTmNewTaskSubmit = null
         onTmBringToFront = null; onTmKillProcess = null; onTmSetAffinity = null; onTmQueryAffinity = null
-        onInitGraphicsTab = null
     }
 }

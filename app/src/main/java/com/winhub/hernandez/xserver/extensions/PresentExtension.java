@@ -5,7 +5,6 @@ import static com.winhub.hernandez.xserver.XClientRequestHandler.RESPONSE_CODE_S
 import android.util.SparseArray;
 
 import com.winhub.hernandez.renderer.GPUImage;
-import com.winhub.hernandez.renderer.Texture;
 import com.winhub.hernandez.xconnector.XInputStream;
 import com.winhub.hernandez.xconnector.XOutputStream;
 import com.winhub.hernandez.xconnector.XStreamLock;
@@ -283,14 +282,14 @@ public class PresentExtension implements Extension {
         //   1. Vulkan native scanout + directScanout -> FLIP: swap the content texture to the
         //      pixmap's GPUImage and scan it out directly (zero copy).
         //   2. Vulkan (non-native) -> COPY via onUpdateWindowContentDirect (nativeUpdateWindowContentAHB).
-        //   3. GL renderer / SHM pixmaps -> copyArea (the GPUImage is now CPU-locked + EGLImage-backed,
+        //   3. SHM pixmaps -> copyArea (the GPUImage is now CPU-locked + EGLImage-backed,
         //      so its real pixels are available to the CPU copy / GL texture).
         synchronized (content.renderLock) {
             boolean isNative = vr != null && vr.isNativeMode();
 
             if (xr instanceof com.winhub.hernandez.renderer.ASurfaceRenderer) {
                 // SurfaceFlinger (ASR): hand the pixmap's AHB to the window's own SurfaceControl
-                // layer (no GL/Vulkan compositor). Additive branch — leaves the Vulkan/GL paths below
+                // layer (no GL/Vulkan compositor). Additive branch — leaves the Vulkan paths below
                 // untouched. Falls back to copyArea for non-AHB (SHM) pixmaps.
                 final com.winhub.hernandez.renderer.ASurfaceRenderer asr =
                     (com.winhub.hernandez.renderer.ASurfaceRenderer) xr;
@@ -318,19 +317,6 @@ public class PresentExtension implements Extension {
                 sendCompleteNotify(window, serial, Kind.PIXMAP, Mode.COPY, ust, msc);
                 vr.onUpdateWindowContentDirect(window, pixmap.drawable, xOff, yOff);
                 emitIdleNotify(window, pixmap, serial, idleFence, targetFps, vr);
-            } else if (xr instanceof com.winhub.hernandez.renderer.GLRenderer
-                    && ((com.winhub.hernandez.renderer.GLRenderer) xr).isNativeMode()
-                    && pixmap.drawable.getTexture() instanceof GPUImage
-                    && ((GPUImage) pixmap.drawable.getTexture()).getHardwareBufferPtr() != 0) {
-                // GL Native Rendering (direct scanout): swap the content texture to the pixmap's
-                // GPUImage and scan its AHB out through the game SurfaceControl (zero copy, FLIP),
-                // mirroring the Vulkan isNative branch above. The GL effect chain + copyArea are
-                // bypassed; presentScanout drives the HUD + first-frame X-rendering pause.
-                content.setTexture(pixmap.drawable.getTexture());
-                content.setDirectScanout(true);
-                sendCompleteNotify(window, serial, Kind.PIXMAP, Mode.FLIP, ust, msc);
-                ((com.winhub.hernandez.renderer.GLRenderer) xr).presentScanout(window, content);
-                emitIdleNotify(window, pixmap, serial, idleFence, targetFps, null);
             } else {
                 content.copyArea((short)0, (short)0, xOff, yOff, pixmap.drawable.width, pixmap.drawable.height, pixmap.drawable);
                 sendCompleteNotify(window, serial, Kind.PIXMAP, Mode.COPY, ust, msc);
@@ -350,16 +336,6 @@ public class PresentExtension implements Extension {
 
         Window window = client.xServer.windowManager.getWindow(windowId);
         if (window == null) throw new BadWindow(windowId);
-
-        if (GPUImage.isSupported() && !mask.isEmpty()) {
-            com.winhub.hernandez.renderer.HostRenderer hr = client.xServer.getRenderer();
-            if (hr instanceof com.winhub.hernandez.renderer.GLRenderer) {
-                Drawable content = window.getContent();
-                final Texture oldTexture = content.getTexture();
-                ((com.winhub.hernandez.renderer.GLRenderer)hr).xServerView.queueEvent(oldTexture::destroy);
-                content.setTexture(new GPUImage(content.width, content.height));
-            }
-        }
 
         synchronized (events) {
             Event event = events.get(eventId);

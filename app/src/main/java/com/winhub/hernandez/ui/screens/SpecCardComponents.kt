@@ -48,11 +48,10 @@ internal fun parseDxwrapperConfig(cfg: String): Pair<String, String> {
     return (map["version"] ?: "") to (map["vkd3dVersion"] ?: "")
 }
 
-// Map a renderer id (vulkan/surfaceflinger/opengl) to a display label, or "" if unknown.
+// Map a renderer id to a display label, or "" if unknown. Legacy "opengl"/"gl" ids degrade to Vulkan.
 internal fun rendererLabelOf(renderer: String): String = when (renderer.lowercase()) {
-    "vulkan" -> "Vulkan (X11)"
+    "vulkan", "opengl", "gl" -> "Vulkan (X11)"
     "surfaceflinger" -> "SurfaceFlinger (X11)"
-    "opengl" -> "OpenGL (X11)"
     else -> ""
 }
 

@@ -238,7 +238,7 @@ public class FrameRating extends FrameLayout implements Runnable {
     public void reset() {
         lastRefreshTime = 0;
         lastFPS = 0;
-        if (tvRenderer != null) tvRenderer.setText("OpenGL");
+        if (tvRenderer != null) tvRenderer.setText("Vulkan");
         Object version = graphicsDriverConfig.get("version");
         if (tvGPU != null) tvGPU.setText(GPUInformation.getRenderer(version != null ? version.toString() : "", context));
     }

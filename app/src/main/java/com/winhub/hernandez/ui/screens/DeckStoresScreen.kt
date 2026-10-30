@@ -32,12 +32,17 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -63,20 +68,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.winhub.hernandez.store.AmazonLoginActivity
 import com.winhub.hernandez.store.CatalogItem
 import com.winhub.hernandez.store.DeckRise
-import com.winhub.hernandez.store.DeckTabBar
-import com.winhub.hernandez.store.DeckTabSpec
 import com.winhub.hernandez.store.EpicStoreCatalog
 import com.winhub.hernandez.store.GogStoreCatalog
 import com.winhub.hernandez.store.SteamStoreCatalog
@@ -297,27 +300,20 @@ private fun DeckLibraryPane(screen: Screen, context: Context, onGameClick: (Deck
         }
         Spacer(Modifier.height(10.dp))
         when {
-            list == null -> Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("Loading library...", color = Deck.onSurfaceVariant, fontSize = 13.sp)
-            }
+            list == null -> DeckLibrarySkeleton()
             list.isEmpty() -> Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = "No games yet. Sign in to this store and sync to fill its library.",
-                    color = Deck.onSurfaceVariant,
-                    fontSize = 13.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 24.dp),
+                DeckEmptyState(
+                    title = "No games yet",
+                    body = "Sign in to this store and sync to fill its library.",
                 )
             }
             else -> DeckDragFrame(modifier = Modifier.fillMaxSize()) {
                 LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 108.dp),
+                    contentPadding = PaddingValues(6.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxSize(),
@@ -338,12 +334,20 @@ private fun DeckLibraryPane(screen: Screen, context: Context, onGameClick: (Deck
 /** A library block: the cover fills the tile, a gradient fade grounds the title at its foot. */
 @Composable
 private fun DeckGameCard(game: DeckOwnedGame, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(12.dp)
     val interaction = remember { MutableInteractionSource() }
+    val badge = when {
+        game.gog != null -> deckStores[0].dot
+        game.epic != null -> deckStores[1].dot
+        game.amazon != null -> deckStores[2].dot
+        game.steamAppId != 0 -> deckStores[3].dot
+        else -> null
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(150.dp)
+            .aspectRatio(2f / 3f)
+            .deckFocusScale(interaction)
             .clip(shape)
             .background(Deck.surface)
             .deckOuterFocusStroke(interaction, shape)
@@ -377,6 +381,17 @@ private fun DeckGameCard(game: DeckOwnedGame, onClick: () -> Unit) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
         )
+        if (badge != null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(6.dp)
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(badge)
+                    .border(1.5.dp, Deck.background.copy(alpha = 0.8f), CircleShape),
+            )
+        }
     }
 }
 
@@ -485,7 +500,7 @@ private fun DeckStoreFront(
     }
     val raw = data
     if (raw == null) {
-        Text("Loading ${tile.screen.label} store...", color = Deck.onSurfaceVariant, fontSize = 12.sp)
+        DeckStoreSkeleton()
         return
     }
     // Mature titles stay out of the hero and rails unless the store setting shows them; Steam
@@ -498,25 +513,33 @@ private fun DeckStoreFront(
         },
     )
     if (store.hero == null && store.sections.isEmpty()) {
-        Text(
-            "No featured titles cached yet - open ${tile.screen.label} to refresh.",
-            color = Deck.onSurfaceVariant,
-            fontSize = 12.sp,
+        DeckEmptyState(
+            title = "Nothing featured yet",
+            body = "Open ${tile.screen.label} once to refresh its storefront.",
         )
         return
     }
     Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        store.hero?.let { hero -> DeckHeroCard(hero) { onCard(hero) } }
+        val heroes = (listOfNotNull(store.hero) + store.sections.firstOrNull()?.items.orEmpty().take(4))
+            .distinctBy { it.title }
+        if (heroes.isNotEmpty()) DeckHeroCarousel(heroes, onCard)
         store.sections.forEach { section ->
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = section.title,
-                    color = Deck.onBackground,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Black,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(4.dp).height(16.dp).clip(RoundedCornerShape(2.dp)).background(Deck.primary))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = section.title,
+                        color = Deck.onBackground,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Black,
+                    )
+                }
                 DeckDragFrame(modifier = Modifier.fillMaxWidth()) {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LazyRow(
+                        contentPadding = PaddingValues(vertical = 8.dp, horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
                         itemsIndexed(section.items, key = { i, it -> "$i-${it.title}" }) { index, item ->
                             DeckRise(index = index % 8) {
                                 Box(Modifier.deckDragItem("${section.title}-$index-${item.title}")) {
@@ -531,11 +554,24 @@ private fun DeckStoreFront(
     }
 }
 
-/** The hero pick: a big cover banner with the title and price over a graphite tile. */
+/**
+ * The featured carousel: the hero pick plus the first shelf's lead titles, cross-fading every few
+ * seconds (paused while the D-pad is on it) with dot indicators and a "View" pill.
+ */
 @Composable
-private fun DeckHeroCard(item: DeckBrowseItem, onClick: () -> Unit) {
+private fun DeckHeroCarousel(items: List<DeckBrowseItem>, onCard: (DeckBrowseItem) -> Unit) {
+    var index by remember(items) { mutableIntStateOf(0) }
     val interaction = remember { MutableInteractionSource() }
-    val shape = RoundedCornerShape(14.dp)
+    val focused by interaction.collectIsFocusedAsState()
+    LaunchedEffect(items, focused) {
+        if (items.size > 1 && !focused) {
+            while (true) {
+                delay(6000)
+                index = (index + 1) % items.size
+            }
+        }
+    }
+    val shape = RoundedCornerShape(16.dp)
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -543,45 +579,83 @@ private fun DeckHeroCard(item: DeckBrowseItem, onClick: () -> Unit) {
             .clip(shape)
             .background(Deck.surface)
             .deckOuterFocusStroke(interaction, shape)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+            .clickable(interactionSource = interaction, indication = null) {
+                onCard(items[index.coerceIn(0, items.lastIndex)])
+            },
     ) {
-        val art = item.art
-        if (art != null) {
-            AsyncImage(
-                model = art,
-                contentDescription = item.title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.matchParentSize(),
-            )
-        }
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color.Transparent, Deck.background.copy(alpha = 0.92f)),
-                    ),
-                ),
-        )
-        Column(
-            modifier = Modifier.align(Alignment.BottomStart).padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                text = item.title,
-                color = Deck.onBackground,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Black,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (item.price.isNotEmpty()) {
-                Text(
-                    text = item.price,
-                    color = if (item.price == "Free") Deck.primary else Deck.onSurfaceVariant,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
+        Crossfade(
+            targetState = index.coerceIn(0, items.lastIndex),
+            animationSpec = tween(450),
+            modifier = Modifier.matchParentSize(),
+            label = "heroFade",
+        ) { i ->
+            val item = items[i]
+            Box(Modifier.fillMaxSize()) {
+                val art = item.art
+                if (art != null) {
+                    AsyncImage(
+                        model = art,
+                        contentDescription = item.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Deck.background.copy(alpha = 0.94f)),
+                            ),
+                        ),
                 )
+                Column(
+                    modifier = Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = 14.dp, end = 120.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = item.title,
+                        color = Deck.onBackground,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Black,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (item.price.isNotEmpty()) {
+                        Text(
+                            text = item.price,
+                            color = if (item.price == "Free") Deck.primary else Deck.onSurfaceVariant,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+        }
+        Column(
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.align(Alignment.BottomEnd).padding(14.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(Deck.primary)
+                    .padding(horizontal = 16.dp, vertical = 7.dp),
+            ) {
+                Text("View", color = Deck.onPrimary, fontSize = 13.sp, fontWeight = FontWeight.Black)
+            }
+            if (items.size > 1) {
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    items.indices.forEach { d ->
+                        Box(
+                            Modifier
+                                .size(if (d == index) 8.dp else 6.dp)
+                                .clip(CircleShape)
+                                .background(if (d == index) Deck.primary else Deck.onSurfaceVariant.copy(alpha = 0.5f)),
+                        )
+                    }
+                }
             }
         }
     }
@@ -595,6 +669,7 @@ private fun DeckBrowseCard(item: DeckBrowseItem, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .width(150.dp)
+            .deckFocusScale(interaction)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {
         Box(
@@ -676,17 +751,26 @@ internal fun DeckStoresScreen() {
     val active = deckStores.firstOrNull { it.screen == selected } ?: deckStores.first()
     val scope = rememberCoroutineScope()
 
-    // Stores are sub-tabs: L2/R2 switch the store while the rail has focus, and the store's own
-    // Store/Library/Settings tabs once focus is inside the page (D-pad Left returns to the rail).
+    // Two levels: the store picker (tiles), and inside a store its page tabs down the left edge.
+    // L2/R2 switch the store on the picker and the page tab inside a store; B leaves a store.
+    var inStore by remember { mutableStateOf(false) }
     var storeTab by remember(active.screen) { mutableIntStateOf(0) }
     val storeTabCount = if (active.screen == Screen.Steam) 5 else 3
-    val railSelected = remember { FocusRequester() }
-    var railHasFocus by remember { mutableStateOf(false) }
-    var refocusRail by remember { mutableIntStateOf(0) }
+    val tabFocus = remember { FocusRequester() }
     // Bind a single page so the shell leaves L2/R2 to this screen instead of a stale tab host.
     val deckTabs = LocalDeckTabs.current
     LaunchedEffect(deckTabs) { deckTabs.bind(1) }
-    LaunchedEffect(refocusRail) { if (refocusRail > 0) runCatching { railSelected.requestFocus() } }
+    val canLeaveStore = inStore && !showDownloads && gogInstall == null && epicInstall == null &&
+        amazonInstall == null && steamInstall == null
+    val backLayer = LocalDeckBack.current
+    DisposableEffect(canLeaveStore) {
+        backLayer.onBack = if (canLeaveStore) {
+            { inStore = false; true }
+        } else {
+            null
+        }
+        onDispose { backLayer.onBack = null }
+    }
 
     // Library (owned) card tap -> in-Deck install when the store's payload is attached.
     val openOwned: (DeckOwnedGame) -> Unit = { g ->
@@ -813,15 +897,18 @@ internal fun DeckStoresScreen() {
             .background(Deck.background)
             .onPreviewKeyEvent { e ->
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (e.key == Key.ButtonX) {
+                    showDownloads = true
+                    return@onPreviewKeyEvent true
+                }
                 val step = when (e.key) {
                     Key.ButtonL2 -> -1
                     Key.ButtonR2 -> 1
                     else -> return@onPreviewKeyEvent false
                 }
-                if (railHasFocus) {
+                if (!inStore) {
                     val i = deckStores.indexOfFirst { it.screen == selected }.coerceAtLeast(0)
                     selected = deckStores[(i + step + deckStores.size) % deckStores.size].screen
-                    refocusRail++
                 } else if (signedInByStore[active.screen] == true) {
                     storeTab = (storeTab + step + storeTabCount) % storeTabCount
                 }
@@ -840,13 +927,6 @@ internal fun DeckStoresScreen() {
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Black,
                     maxLines = 1,
-                )
-                Spacer(Modifier.size(2.dp))
-                Text(
-                    text = "GOG, Epic Games, Amazon Games and Steam",
-                    color = Deck.onSurfaceVariant,
-                    fontSize = 12.sp,
-                    maxLines = 2,
                 )
             }
             // Shared download queue: compact graphite tile with a live count.
@@ -881,7 +961,7 @@ internal fun DeckStoresScreen() {
                 }
             }
         }
-        Spacer(Modifier.size(14.dp))
+        Spacer(Modifier.size(8.dp))
 
         if (!showStores) {
             Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
@@ -896,79 +976,83 @@ internal fun DeckStoresScreen() {
                 }
             }
         } else {
-            // ── Store list: the same left rail as every other Deck screen, brand dot lit only
-            // while signed in. Downloads lives in the title row above.
-            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            DeckEditorCategoryRail(
-                labels = deckStores.map { it.chip },
-                dots = deckStores.map { tile ->
-                    tile.dot.copy(alpha = if (signedInByStore[tile.screen] == true) 1f else 0.35f)
-                },
-                selected = deckStores.indexOfFirst { it.screen == selected }.coerceAtLeast(0),
-                onSelect = { selected = deckStores[it].screen },
-                selectOnFocus = true,
-                selectedFocus = railSelected,
-                modifier = Modifier
-                    .width(200.dp)
-                    .fillMaxHeight()
-                    .onFocusChanged { railHasFocus = it.hasFocus },
-            )
-            Spacer(Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-
-            if (signedInByStore[active.screen] == true) {
-                // Steam alone carries the social pair: Friends + Profile, the same composables
-                // the store front embeds, in the Deck tab strip. Every store gets Settings.
-                val tabs = if (active.screen == Screen.Steam) {
-                    listOf(
-                        DeckTabSpec("Store"),
-                        DeckTabSpec("Library"),
-                        DeckTabSpec("Settings"),
-                        DeckTabSpec("Friends"),
-                        DeckTabSpec("Profile"),
-                    )
-                } else {
-                    listOf(
-                        DeckTabSpec("Store"),
-                        DeckTabSpec("Library"),
-                        DeckTabSpec("Settings"),
-                    )
-                }
-                DeckTabBar(
-                    tabs = tabs,
-                    selected = storeTab,
-                    // Focus switches the pane, so Store/Library/Settings/Friends/Profile are one
-                    // D-pad step apart instead of focus-then-A.
-                    selectOnFocus = true,
-                    onSelect = { storeTab = it },
+            if (!inStore) {
+                DeckStorePicker(
+                    names = deckStores.map { it.chip },
+                    accents = deckStores.map { it.dot },
+                    signedIn = deckStores.map { signedInByStore[it.screen] == true },
+                    selected = deckStores.indexOfFirst { it.screen == selected }.coerceAtLeast(0),
+                    onSelect = { selected = deckStores[it].screen },
+                    onOpen = { selected = deckStores[it].screen; inStore = true },
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
-                Spacer(Modifier.size(12.dp))
-                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    when (storeTab) {
-                        0 -> DeckPaneScroll {
-                            DeckStoreFront(active, context, onBrowseTap, showMature)
-                        }
-                        1 -> DeckLibraryPane(active.screen, context, openOwned)
-                        2 -> DeckStoreSettingsPane(
-                            showMature = showMature,
-                            onShowMatureChange = { v ->
-                                showMature = v
-                                StoreMatureSetting.set(context, v)
-                            },
-                            onOpenDownloads = { showDownloads = true },
-                            activeDownloads = activeDownloads,
+            } else {
+                val signed = signedInByStore[active.screen] == true
+                Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier
+                            .width(190.dp)
+                            .fillMaxHeight()
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        DeckStoreHeader(
+                            name = active.screen.label,
+                            fill = active.fill,
+                            ink = active.ink,
+                            accent = active.dot,
+                            signedIn = signed,
                         )
-                        3 -> DeckSteamFriendsPane()
-                        else -> DeckSteamProfilePane(onOpenFriends = { storeTab = 3 })
+                        if (signed) {
+                            // Store/Library/Settings, plus Friends/Profile on Steam alone.
+                            val labels = if (active.screen == Screen.Steam) {
+                                listOf("Store", "Library", "Settings", "Friends", "Profile")
+                            } else {
+                                listOf("Store", "Library", "Settings")
+                            }
+                            DeckStoreSideTabs(
+                                labels = labels,
+                                selected = storeTab,
+                                onSelect = { storeTab = it },
+                                selectedFocus = tabFocus,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                        if (signed) {
+                            when (storeTab) {
+                                0 -> DeckPaneScroll {
+                                    DeckStoreFront(active, context, onBrowseTap, showMature)
+                                }
+                                1 -> DeckLibraryPane(active.screen, context, openOwned)
+                                2 -> DeckStoreSettingsPane(
+                                    showMature = showMature,
+                                    onShowMatureChange = { v ->
+                                        showMature = v
+                                        StoreMatureSetting.set(context, v)
+                                    },
+                                    onOpenDownloads = { showDownloads = true },
+                                    activeDownloads = activeDownloads,
+                                )
+                                3 -> DeckSteamFriendsPane()
+                                else -> DeckSteamProfilePane(onOpenFriends = { storeTab = 3 })
+                            }
+                        } else {
+                            DeckPaneScroll { DeckSignInCard(active, context) }
+                        }
                     }
                 }
-            } else {
-                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    DeckPaneScroll { DeckSignInCard(active, context) }
-                }
             }
-            }
-            }
+            // Skipped on short landscape screens, where the page needs the room more.
+            if (LocalConfiguration.current.screenHeightDp >= 400) DeckHintBar(
+                hints = if (!inStore) {
+                    listOf("A" to "Open", "\u25C0 \u25B6" to "Choose", "X" to "Downloads", "L2/R2" to "Switch store")
+                } else {
+                    listOf("A" to "Select", "X" to "Downloads", "L2/R2" to "Switch tab", "B" to "Stores")
+                },
+                modifier = Modifier.padding(top = 8.dp),
+            )
         }
     }
     }

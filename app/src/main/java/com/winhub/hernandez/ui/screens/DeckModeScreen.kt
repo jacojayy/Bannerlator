@@ -1229,7 +1229,7 @@ private fun DeckCornerGlow() {
     val cornerAccent = Deck.primary
     Box(
         modifier = Modifier
-            .matchParentSize()
+            .fillMaxSize()
             .drawBehind {
                 val radius = 460.dp.toPx()
                 val center = Offset(size.width - radius * 0.35f, radius * 0.35f)

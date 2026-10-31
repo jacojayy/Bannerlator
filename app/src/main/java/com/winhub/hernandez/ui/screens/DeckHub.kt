@@ -189,6 +189,20 @@ internal object HubGamesStore {
         }
     }
 
+    /** Gives [game] a new cover file, keeping its place in the list. */
+    fun setCover(context: Context, game: HubGame, coverPath: String) {
+        runCatching {
+            val file = File(context.filesDir, FILE_NAME)
+            val raw = FileUtils.readString(file) ?: return
+            val arr = JSONArray(raw)
+            (0 until arr.length()).forEach { i ->
+                val o = arr.optJSONObject(i) ?: return@forEach
+                if (o.optString("shortcutPath") == game.shortcutPath) o.put("coverPath", coverPath)
+            }
+            FileUtils.writeString(file, arr.toString())
+        }
+    }
+
     /** Points [old] at its renamed shortcut, keeping its place in the list. */
     fun replace(context: Context, old: HubGame, new: HubGame) {
         runCatching {

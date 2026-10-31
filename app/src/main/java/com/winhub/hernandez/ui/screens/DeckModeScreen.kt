@@ -149,8 +149,7 @@ import androidx.compose.runtime.withFrameNanos
 import com.winhub.hernandez.R
 import com.winhub.hernandez.XServerDisplayActivity
 import com.winhub.hernandez.container.Container
-import com.winhub.hernandez.ui.screens.deckxmb.DeckXmbView
-import com.winhub.hernandez.ui.screens.deckxmb.XmbAction as DeckXmbAction
+import com.winhub.hernandez.ui.deck.XmbKeyboardHost
 import com.winhub.hernandez.contents.ContentProfile
 import com.winhub.hernandez.contents.ContentsManager
 import com.winhub.hernandez.container.ContainerManager
@@ -616,9 +615,12 @@ private fun DeckHome(
     var cronosName by remember { mutableStateOf("") }
     var homeMode by remember { mutableStateOf(HomeMode.GAMES) }
     // XMB dropdown: Down (or a tap on the focused cover) opens the Deck XMB over Home's own background.
-    var xmbShortcuts by remember { mutableStateOf<List<Shortcut>>(emptyList()) }
-    var xmbOpen by remember { mutableStateOf(false) }
-    var xmbFocusTick by remember { mutableStateOf(0) }
+    var xmbShortcut by remember { mutableStateOf<Shortcut?>(null) }
+    val xmbNav = remember { XmbNavState() }
+    var xmbRootSel by remember { mutableStateOf(0) }
+    val xmbFocus = remember { FocusRequester() }
+    var showWrapperManager by remember { mutableStateOf(false) }
+    val xmbNested = xmbStyle && xmbNav.depth > 0
     var propertiesFor by remember { mutableStateOf<Container?>(null) }
     var cronosReviewFor by remember { mutableStateOf<Container?>(null) }
     // A game added via Master Containers is a SHORTCUT inside a container you already have, so its
@@ -797,6 +799,18 @@ private fun DeckHome(
         }
     }
 
+    // Scrape cover saves the new art as the shortcut's custom cover, but Home draws its own stored cover: copy it across.
+    fun syncCover(s: Shortcut) = queueStore {
+        val art = s.customCoverArtPath?.let { File(it) }?.takeIf { it.isFile } ?: return@queueStore
+        val game = HubGamesStore.load(context).firstOrNull { it.shortcutPath == s.file.path } ?: return@queueStore
+        val old = game.coverPath?.let { File(it) }
+        if (old != null && old.isFile && old.lastModified() >= art.lastModified()) return@queueStore
+        val dir = File(context.filesDir, "hub_covers").apply { mkdirs() }
+        val out = File(dir, "custom_${s.file.nameWithoutExtension.hashCode()}.png")
+        art.copyTo(out, overwrite = true)
+        HubGamesStore.setCover(context, game, out.absolutePath)
+    }
+
     val closeSettings: () -> Unit = {
         shortcutSettingsFor = null
         // The editor can rename the game / swap its cover, so re-read the store to keep
@@ -804,9 +818,9 @@ private fun DeckHome(
         reloadEntries()
     }
     val backLayer = LocalDeckBack.current
-    DisposableEffect(homeMode, shortcutSettingsFor, xmbOpen) {
-        backLayer.onBack = if (xmbOpen) {
-            { xmbOpen = false; true }
+    DisposableEffect(homeMode, shortcutSettingsFor, xmbNested) {
+        backLayer.onBack = if (xmbNested) {
+            { xmbNav.pop(); true }
         } else if (shortcutSettingsFor != null) {
             { closeSettings(); true }
         } else if (homeMode != HomeMode.GAMES) {
@@ -839,34 +853,40 @@ private fun DeckHome(
     val sel = selected.coerceIn(0, (visible.size - 1).coerceAtLeast(0))
     val current = visible.getOrNull(sel)
     val currentPath = current?.game?.shortcutPath
-    LaunchedEffect(xmbStyle, visible, containers) {
+    LaunchedEffect(xmbStyle, currentPath, containers) {
         if (!xmbStyle) return@LaunchedEffect
-        xmbShortcuts = withContext(Dispatchers.IO) {
-            visible.mapNotNull { e ->
-                val g = e.game ?: return@mapNotNull null
-                val c = containers.find { it.id == g.containerId } ?: return@mapNotNull null
-                val f = File(g.shortcutPath)
-                if (f.isFile) runCatching { Shortcut(c, f) }.getOrNull() else null
-            }
+        val g = current?.game
+        xmbShortcut = if (g == null) null else withContext(Dispatchers.IO) {
+            val c = containers.find { it.id == g.containerId }
+            val f = File(g.shortcutPath)
+            if (c != null && f.isFile) runCatching { Shortcut(c, f) }.getOrNull() else null
         }
     }
-    // Everything deleted from inside the XMB: nothing left to show, so hand back to Home.
-    LaunchedEffect(xmbShortcuts) { if (xmbShortcuts.isEmpty()) xmbOpen = false }
-    // The XMB's rows for one game: the Games screen's full list with Home's own flows behind them.
-    fun xmbRowsFor(s: Shortcut): List<DeckXmbAction> {
-        val entry = visible.firstOrNull { it.game?.shortcutPath == s.file.path }
-        val game = entry?.game ?: return emptyList()
-        return hubXmbActions(
-            context, s, game, { containers },
-            HubXmbOps(
-                launchMethod = { openLaunchMethod(entry) },
-                settings = { openGameSettings(entry) },
-                addToHome = { addToHomeScreen(entry) },
-                containerProperties = { showProperties(entry) },
-                delete = { deleteEntry(entry) },
-            ),
-        ).map { DeckXmbAction(it.label, it.icon, it.subtitle, it.danger, it.menu, null, it.onClick) }
+    val appCtx = context
+    val coScope = scope
+    val xmbScope = remember(xmbNav) {
+        object : XmbScope {
+            override val context: Context get() = appCtx
+            override val scope: kotlinx.coroutines.CoroutineScope get() = coScope
+            override fun push(menu: XmbMenu) = xmbNav.push(menu)
+            override fun pop() = xmbNav.pop()
+            override fun popToRoot() = xmbNav.popTo(0)
+            override fun refresh() = xmbNav.bump()
+            override fun toast(message: String) { Toast.makeText(appCtx, message, Toast.LENGTH_SHORT).show() }
+            override fun saved() { xmbNav.savedAt = System.currentTimeMillis() }
+            override fun confirm(confirm: XmbConfirm, onOk: () -> Unit) = xmbNav.push(xmbConfirmMenu(xmbNav, confirm, onOk))
+            override fun reloadGames() { xmbShortcut?.let { syncCover(it) }; reloadEntries() }
+            override fun shortcutRenamed(container: Container, oldBase: String, newBase: String) = hubRenamed(container, oldBase, newBase)
+        }
     }
+    xmbNav.refocus = { runCatching { xmbFocus.requestFocus() } }
+    LaunchedEffect(xmbNested) { if (xmbNested) runCatching { xmbFocus.requestFocus() } }
+    val xmbHost = XmbGameHost(
+        remove = { s -> visible.firstOrNull { it.game?.shortcutPath == s.file.path }?.let { deleteEntry(it); true } ?: false },
+        containers = { containers },
+        openWrapperManager = { showWrapperManager = true },
+    )
+    val xmbSc = xmbShortcut?.takeIf { xmbStyle && it.file.path == currentPath }
     val details = current?.game?.let { g ->
         buildList {
             add("Store" to hubOriginLabel(current))
@@ -893,7 +913,25 @@ private fun DeckHome(
         }
     }
     val actions = current?.let { entry ->
-        listOf(
+        val game = entry.game
+        if (xmbSc != null && game != null) buildList<DeckMenuAction> {
+            // XMB dropdown: Play, then the Games screen's full list; rows with columns open them over Home.
+            add(DeckMenuAction("Play", Icons.Filled.PlayArrow) { playEntry(entry) })
+            hubXmbActions(
+                context, xmbSc, game, xmbHost,
+                HubXmbOps(
+                    launchMethod = { openLaunchMethod(entry) },
+                    addToHome = { addToHomeScreen(entry) },
+                    containerProperties = { showProperties(entry) },
+                    delete = { deleteEntry(entry) },
+                ),
+            ).forEachIndexed { i, a ->
+                add(DeckMenuAction(a.label, a.icon, a.danger, a.subtitle, a.menu != null) {
+                    val mk = a.menu
+                    if (mk != null) { xmbRootSel = i + 1; xmbNav.push(mk(xmbScope)) } else a.onClick()
+                })
+            }
+        } else listOf(
             DeckMenuAction("Play", Icons.Filled.PlayArrow) { playEntry(entry) },
             DeckMenuAction("Launch method", Icons.Filled.Layers) { openLaunchMethod(entry) },
             DeckMenuAction("Settings", Icons.Filled.Settings) { openGameSettings(entry) },
@@ -914,363 +952,368 @@ private fun DeckHome(
 
     // Hand focus back to the carousel once any dialog/overlay opened from Home goes away.
     val overlayOpen = pending != null || launchRequest != null || launchMethodFor != null ||
-        propertiesFor != null || cronosReviewFor != null || shortcutSettingsFor != null || addModeMenu || xmbOpen
+        propertiesFor != null || cronosReviewFor != null || shortcutSettingsFor != null || addModeMenu || xmbNested || showWrapperManager
     var hadOverlay by remember { mutableStateOf(false) }
     LaunchedEffect(overlayOpen) {
         if (!overlayOpen && hadOverlay) {
             delay(60)
             runCatching { heroFocus.requestFocus() }
-            xmbFocusTick++
         }
         hadOverlay = overlayOpen
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Deck.background)
-            .clipToBounds(),
-    ) {
-        DeckCapsuleWall(
-            covers = wallCovers,
-            driftMs = if (covers.isEmpty()) 75_000 else 40_000,
-        )
-        // The backdrop follows the focused game: its cover, blurred, crossfading as the selection moves.
-        Crossfade(targetState = current?.bitmap, animationSpec = tween(600), label = "homeBackdrop") { bmp ->
-            if (bmp != null) {
-                Image(
-                    bitmap = remember(bmp) { bmp.asImageBitmap() },
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize().blur(18.dp).alpha(0.34f),
-                )
-            }
-        }
-        val coverTint = remember(current?.bitmap) {
-            current?.bitmap?.let { b -> Color(Bitmap.createScaledBitmap(b, 1, 1, true).getPixel(0, 0)) }
-        }
-        val tint by animateColorAsState(coverTint ?: Deck.primary, tween(600), label = "homeTint")
+    // XMB style: text fields in the XMB columns type with the pad-friendly keyboard.
+    XmbKeyboardHost(xmbStyle) {
         Box(
-            Modifier.fillMaxSize().drawBehind {
-                val c = Offset(size.width * 0.2f, size.height * 0.3f)
-                drawCircle(
-                    Brush.radialGradient(listOf(tint.copy(alpha = 0.32f), Color.Transparent), c, size.width * 0.7f),
-                    size.width * 0.7f,
-                    c,
-                )
-            },
-        )
-        DeckWallFade()
-
-        DeckHomeCarousel(
-            modifier = Modifier.graphicsLayer {
-                alpha = if (xmbOpen) 0f else intro.value
-                translationY = (1f - intro.value) * 60.dp.toPx()
-            },
-            entries = visible,
-            loaded = entries != null && (visible.isNotEmpty() || entries.orEmpty().isEmpty()),
-            selected = sel,
-            favs = favs,
-            details = details,
-            onFavorite = { toggleFavorite() },
-            onSelect = { selected = it },
-            mode = homeMode,
-            // XMB style: Down (or a tap on the focused cover) opens the Deck XMB instead of the dropdown.
-            onMode = { m -> if (m == HomeMode.OPTIONS && xmbStyle && xmbShortcuts.isNotEmpty()) xmbOpen = true else homeMode = m },
-            actions = actions,
-            cards = cards,
-            onAdd = { addModeMenu = true },
-            focus = heroFocus,
-            enabled = shortcutSettingsFor == null && !xmbOpen,
-        )
-        if (entries == null) {
-            CircularProgressIndicator(
-                color = DeckPalette.primary,
-                modifier = Modifier.align(Alignment.Center),
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Deck.background)
+                .clipToBounds(),
+        ) {
+            DeckCapsuleWall(
+                covers = wallCovers,
+                driftMs = if (covers.isEmpty()) 75_000 else 40_000,
             )
-        } else if (visible.isEmpty() && entries.orEmpty().isNotEmpty()) {
-            Text(
-                "Nothing on this shelf yet - press Y on a game to favourite it",
-                color = DeckPalette.onSurfaceVariant,
-                fontSize = 14.sp,
-                modifier = Modifier.align(Alignment.Center),
-            )
-        }
-
-        // Shelves (L2/R2) top centre, status top right.
-        DeckStretchyTabs(
-            labels = listOf("All", "Recent", "Favourites", "Store games"),
-            selected = shelf,
-            onSelect = { deckTabs.select(it) },
-            focusable = false,
-            fillWidth = false,
-            height = 30.dp,
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
-        )
-        DeckStatusStrip(Modifier.align(Alignment.TopEnd).padding(end = 16.dp, top = 12.dp))
-        AnimatedVisibility(
-            visible = splash,
-            exit = fadeOut(tween(450)),
-            modifier = Modifier.align(Alignment.Center),
-        ) { DeckWordmark() }
-
-        if (addModeMenu) {
-            DeckAddModeMenu(
-                onPick = { mode ->
-                    addMode = mode
-                    addModeMenu = false
-                    picker.launch(arrayOf("*/*"))
-                },
-                onDismiss = { addModeMenu = false },
-            )
-        }
-
-        if (cronosBusy) {
-            Dialog(onDismissRequest = { }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-                Column(
-                    Modifier
-                        .fillMaxWidth(0.8f)
-                        .clip(DeckPalette.groupShape)
-                        .background(DeckPalette.surface)
-                        .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    CircularProgressIndicator(color = DeckPalette.primary)
-                    Spacer(Modifier.height(14.dp))
-                    Text(
-                        "Building Cronos container\n$cronosName…",
-                        color = DeckPalette.onBackground,
-                        fontSize = 13.sp,
-                        textAlign = TextAlign.Center,
+            // The backdrop follows the focused game: its cover, blurred, crossfading as the selection moves.
+            Crossfade(targetState = current?.bitmap, animationSpec = tween(600), label = "homeBackdrop") { bmp ->
+                if (bmp != null) {
+                    Image(
+                        bitmap = remember(bmp) { bmp.asImageBitmap() },
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().blur(18.dp).alpha(0.34f),
                     )
                 }
             }
-        }
-
-        propertiesFor?.let { c ->
-            DeckPropertiesDialog(container = c, onDismiss = { propertiesFor = null })
-        }
-
-        if (xmbOpen && xmbShortcuts.isNotEmpty()) {
-            // The Deck XMB over Home's own background, dimmed. Inert while the per-game editor is drawn over it.
+            val coverTint = remember(current?.bitmap) {
+                current?.bitmap?.let { b -> Color(Bitmap.createScaledBitmap(b, 1, 1, true).getPixel(0, 0)) }
+            }
+            val tint by animateColorAsState(coverTint ?: Deck.primary, tween(600), label = "homeTint")
             Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .pointerInput(Unit) { detectTapGestures { } }
-                    .focusProperties { canFocus = shortcutSettingsFor == null },
-            ) {
-                DeckXmbView(
-                    shortcuts = xmbShortcuts,
-                    selectionMode = false,
-                    selectedPaths = emptySet(),
-                    onToggleSelect = {},
-                    onExitSelection = {},
-                    onPlay = { s ->
-                        xmbOpen = false
-                        visible.firstOrNull { it.game?.shortcutPath == s.file.path }?.let { playEntry(it) }
-                    },
-                    actionsFor = { xmbRowsFor(it) },
-                    storeBadges = {},
-                    sdBadge = {},
-                    onReloadGames = { reloadEntries() },
-                    onFocusedChange = { s ->
-                        val i = visible.indexOfFirst { it.game?.shortcutPath == s.file.path }
-                        if (i >= 0) selected = i
-                    },
-                    inDeckShell = true,
-                    focusTick = xmbFocusTick,
-                    startOpen = true,
-                    initialPath = currentPath,
-                    jumpWithBumpers = true,
-                    drawBackdrop = false,
-                    onRenamed = { c, old, new -> hubRenamed(c, old, new) },
+                Modifier.fillMaxSize().drawBehind {
+                    val c = Offset(size.width * 0.2f, size.height * 0.3f)
+                    drawCircle(
+                        Brush.radialGradient(listOf(tint.copy(alpha = 0.32f), Color.Transparent), c, size.width * 0.7f),
+                        size.width * 0.7f,
+                        c,
+                    )
+                },
+            )
+            DeckWallFade()
+
+            DeckHomeCarousel(
+                modifier = Modifier.graphicsLayer {
+                    alpha = intro.value
+                    translationY = (1f - intro.value) * 60.dp.toPx()
+                },
+                entries = visible,
+                loaded = entries != null && (visible.isNotEmpty() || entries.orEmpty().isEmpty()),
+                selected = sel,
+                favs = favs,
+                details = details,
+                onFavorite = { toggleFavorite() },
+                onSelect = { selected = it },
+                mode = homeMode,
+                onMode = { homeMode = it },
+                xmbRows = xmbSc != null,
+                actions = actions,
+                cards = cards,
+                onAdd = { addModeMenu = true },
+                focus = heroFocus,
+                enabled = shortcutSettingsFor == null && !xmbNested,
+            )
+            if (entries == null) {
+                CircularProgressIndicator(
+                    color = DeckPalette.primary,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            } else if (visible.isEmpty() && entries.orEmpty().isNotEmpty()) {
+                Text(
+                    "Nothing on this shelf yet - press Y on a game to favourite it",
+                    color = DeckPalette.onSurfaceVariant,
+                    fontSize = 14.sp,
+                    modifier = Modifier.align(Alignment.Center),
                 )
             }
-        }
 
-        launchMethodFor?.let { s ->
-            DeckLaunchMethodDialog(
-                shortcut = s,
-                onDismiss = { launchMethodFor = null; launchMethodSteam = null },
-                steamOverride = launchMethodSteam,
-                heading = "Launch method",
-                confirmLabel = "Save",
-                onLaunch = { mode, gm, remember ->
-                    s.putExtra("launchMode", mode)
-                    s.putExtra("launchModeRemembered", if (remember) "1" else "0")
-                    if (gm != null) {
-                        SteamPrefs.init(context)
-                        SteamPrefs.setGoldbergMode(steamAppIdOf(s), gm)
-                    }
-                    s.saveData()
-                    launchMethodFor = null
-                    launchMethodSteam = null
-                    Toast.makeText(context, "Launch method saved", Toast.LENGTH_SHORT).show()
-                },
+            // Shelves (L2/R2) top centre, status top right.
+            DeckStretchyTabs(
+                labels = listOf("All", "Recent", "Favourites", "Store games"),
+                selected = shelf,
+                onSelect = { deckTabs.select(it) },
+                focusable = false,
+                fillWidth = false,
+                height = 30.dp,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
             )
-        }
+            DeckStatusStrip(Modifier.align(Alignment.TopEnd).padding(end = 16.dp, top = 12.dp))
+            AnimatedVisibility(
+                visible = splash,
+                exit = fadeOut(tween(450)),
+                modifier = Modifier.align(Alignment.Center),
+            ) { DeckWordmark() }
 
-        shortcutSettingsFor?.let { sc ->
-            // The editor is inline, so it needs its own focus owner: the wrapper takes focus when it
-            // opens and walks the D-pad itself, like the config popups do.
-            val editorRoot = remember { FocusRequester() }
-            val editTracker = LocalDeckEditTracker.current
-            LaunchedEffect(Unit) {
-                withFrameNanos { }
-                runCatching { editorRoot.requestFocus() }
-                settingsFocus.moveFocusSafely(FocusDirection.Next)
-            }
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .focusRequester(editorRoot)
-                    .focusable()
-                    .onKeyEvent { e ->
-                        if (e.type != KeyEventType.KeyDown || editTracker.editing) return@onKeyEvent false
-                        val dir = when (e.key) {
-                            Key.DirectionUp -> FocusDirection.Up
-                            Key.DirectionDown -> FocusDirection.Down
-                            Key.DirectionLeft -> FocusDirection.Left
-                            Key.DirectionRight -> FocusDirection.Right
-                            else -> null
-                        } ?: return@onKeyEvent false
-                        settingsFocus.moveFocusOrStep(dir)
+            if (addModeMenu) {
+                DeckAddModeMenu(
+                    onPick = { mode ->
+                        addMode = mode
+                        addModeMenu = false
+                        picker.launch(arrayOf("*/*"))
                     },
-            ) {
-                DeckShortcutSettingsScreen(shortcut = sc, onDismiss = closeSettings)
+                    onDismiss = { addModeMenu = false },
+                )
             }
-        }
 
-        cronosReviewFor?.let { c ->
-            DeckCronosReviewDialog(
-                container = c,
-                onKeep = { cronosReviewFor = null },
-                onEdit = {
-                    cronosReviewFor = null
-                    onEditContainer(c.id)
-                },
-            )
-        }
+            if (cronosBusy) {
+                Dialog(onDismissRequest = { }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth(0.8f)
+                            .clip(DeckPalette.groupShape)
+                            .background(DeckPalette.surface)
+                            .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        CircularProgressIndicator(color = DeckPalette.primary)
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            "Building Cronos container\n$cronosName…",
+                            color = DeckPalette.onBackground,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
+            }
 
-        DeckLaunchStack(
-            activity = activity,
-            request = launchRequest,
-            onMenuClosed = { launchRequest = null; launchSteam = null },
-            steamOverride = launchSteam,
-        )
+            propertiesFor?.let { c ->
+                DeckPropertiesDialog(container = c, onDismiss = { propertiesFor = null })
+            }
 
-        pending?.let { (file, identity) ->
-            HubConfirmDialog(
-                file = file,
-                containerNames = containers.map { it.name },
-                initialName = identity.name ?: file.nameWithoutExtension,
-                initialAppId = identity.appId,
-                mode = addMode,
-                onDismiss = { pending = null },
-                onConfirm = { name, appId, containerIndex, coverPath ->
-                    pending = null
-                    if (containerIndex < 0) {
-                        // Cronos — a FRESH dedicated container with just this game's shortcut.
-                        // Built through ContainerDetailViewModel (the SAME form seeding +
-                        // buildCreateData the old UI's New Container FAB uses), so its config
-                        // matches a hand-made container exactly. A bare Container(0).getData()
-                        // cannot do that: JSONObject.put(name, null) REMOVES the key, so the null
-                        // cpuList/cpuListWoW64/emulator/box64Version/fexcoreVersion never reached
-                        // the config file and the container died at launch with invalid settings.
-                        cronosName = name
-                        cronosBusy = true
-                        scope.launch(Dispatchers.IO) {
-                            val mgr = ContainerManager(context).also { it.reloadContainers() }
-                            val data = runCatching {
-                                // Wine pick = the first entry a manual New Container offers
-                                // (installed Wine profiles first, then Proton), with the editor's
-                                // empty-list fallbacks so a device with no content still tries the
-                                // wine a working container already uses.
-                                val cm = ContentsManager(context).also { it.syncContents() }
-                                val wineList =
-                                    cm.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_WINE)
-                                        .map { ContentsManager.getEntryName(it) } +
-                                        cm.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_PROTON)
-                                            .map { ContentsManager.getEntryName(it) }
-                                val wine = wineList.firstOrNull()
-                                    ?: mgr.getContainers().firstOrNull()?.wineVersion
-                                    ?: Container(0, mgr).wineVersion
-                                ContainerDetailViewModel.buildFreshCreateData(context, name, wine, true)
-                            }.getOrNull()
-                            withContext(Dispatchers.Main) {
-                                if (data == null) {
-                                    cronosBusy = false
-                                    Toast.makeText(context, "Cronos setup failed — couldn't build config", Toast.LENGTH_SHORT).show()
-                                    return@withContext
+            if (showWrapperManager) DeckWrapperManagerDialog(onDismiss = { showWrapperManager = false })
+
+            if (xmbNested) {
+                // The XMB dropdown's tools open as nested XMB columns over a dimmed Home.
+                BoxWithConstraints(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.88f))
+                        .focusRequester(xmbFocus)
+                        .focusable()
+                        .onPreviewKeyEvent { e ->
+                            if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            // Typing into a Text row: the field gets the keys; A = done, B = cancel.
+                            if (xmbNav.editingKey != null) {
+                                return@onPreviewKeyEvent when (e.key) {
+                                    Key.ButtonA, Key.DirectionCenter -> { xmbNav.commitEdit(xmbScope); true }
+                                    Key.ButtonB, Key.Back -> { xmbNav.pop(); true }
+                                    else -> false
                                 }
-                                mgr.createContainerAsync(data, ContentsManager(context)) { created ->
-                                    cronosBusy = false
-                                    if (created == null) {
-                                        Toast.makeText(context, "Cronos setup failed — couldn't create the Wine prefix", Toast.LENGTH_SHORT).show()
-                                        return@createContainerAsync
+                            }
+                            val k = when (e.key) {
+                                Key.DirectionUp -> XmbKey.Up
+                                Key.DirectionDown -> XmbKey.Down
+                                Key.DirectionLeft -> XmbKey.Left
+                                Key.DirectionRight -> XmbKey.Right
+                                Key.ButtonA, Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> XmbKey.A
+                                Key.ButtonB, Key.Back, Key.Escape -> XmbKey.B
+                                Key.ButtonL1 -> XmbKey.L1
+                                Key.ButtonR1 -> XmbKey.R1
+                                else -> null
+                            } ?: return@onPreviewKeyEvent false
+                            xmbNav.onKey(k, xmbScope)
+                        },
+                ) {
+                    XmbNestedLayer(
+                        xmbNav, xmbScope, maxWidth.value, maxHeight.value, maxHeight > maxWidth, Deck.primary,
+                        xmbSc?.name.orEmpty(), xmbSc?.icon, actions.map { it.icon }, xmbRootSel,
+                    )
+                }
+            }
+
+            launchMethodFor?.let { s ->
+                DeckLaunchMethodDialog(
+                    shortcut = s,
+                    onDismiss = { launchMethodFor = null; launchMethodSteam = null },
+                    steamOverride = launchMethodSteam,
+                    heading = "Launch method",
+                    confirmLabel = "Save",
+                    onLaunch = { mode, gm, remember ->
+                        s.putExtra("launchMode", mode)
+                        s.putExtra("launchModeRemembered", if (remember) "1" else "0")
+                        if (gm != null) {
+                            SteamPrefs.init(context)
+                            SteamPrefs.setGoldbergMode(steamAppIdOf(s), gm)
+                        }
+                        s.saveData()
+                        launchMethodFor = null
+                        launchMethodSteam = null
+                        Toast.makeText(context, "Launch method saved", Toast.LENGTH_SHORT).show()
+                    },
+                )
+            }
+
+            shortcutSettingsFor?.let { sc ->
+                // The editor is inline, so it needs its own focus owner: the wrapper takes focus when it
+                // opens and walks the D-pad itself, like the config popups do.
+                val editorRoot = remember { FocusRequester() }
+                val editTracker = LocalDeckEditTracker.current
+                LaunchedEffect(Unit) {
+                    withFrameNanos { }
+                    runCatching { editorRoot.requestFocus() }
+                    settingsFocus.moveFocusSafely(FocusDirection.Next)
+                }
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .focusRequester(editorRoot)
+                        .focusable()
+                        .onKeyEvent { e ->
+                            if (e.type != KeyEventType.KeyDown || editTracker.editing) return@onKeyEvent false
+                            val dir = when (e.key) {
+                                Key.DirectionUp -> FocusDirection.Up
+                                Key.DirectionDown -> FocusDirection.Down
+                                Key.DirectionLeft -> FocusDirection.Left
+                                Key.DirectionRight -> FocusDirection.Right
+                                else -> null
+                            } ?: return@onKeyEvent false
+                            settingsFocus.moveFocusOrStep(dir)
+                        },
+                ) {
+                    DeckShortcutSettingsScreen(shortcut = sc, onDismiss = closeSettings)
+                }
+            }
+
+            cronosReviewFor?.let { c ->
+                DeckCronosReviewDialog(
+                    container = c,
+                    onKeep = { cronosReviewFor = null },
+                    onEdit = {
+                        cronosReviewFor = null
+                        onEditContainer(c.id)
+                    },
+                )
+            }
+
+            DeckLaunchStack(
+                activity = activity,
+                request = launchRequest,
+                onMenuClosed = { launchRequest = null; launchSteam = null },
+                steamOverride = launchSteam,
+            )
+
+            pending?.let { (file, identity) ->
+                HubConfirmDialog(
+                    file = file,
+                    containerNames = containers.map { it.name },
+                    initialName = identity.name ?: file.nameWithoutExtension,
+                    initialAppId = identity.appId,
+                    mode = addMode,
+                    onDismiss = { pending = null },
+                    onConfirm = { name, appId, containerIndex, coverPath ->
+                        pending = null
+                        if (containerIndex < 0) {
+                            // Cronos — a FRESH dedicated container with just this game's shortcut.
+                            // Built through ContainerDetailViewModel (the SAME form seeding +
+                            // buildCreateData the old UI's New Container FAB uses), so its config
+                            // matches a hand-made container exactly. A bare Container(0).getData()
+                            // cannot do that: JSONObject.put(name, null) REMOVES the key, so the null
+                            // cpuList/cpuListWoW64/emulator/box64Version/fexcoreVersion never reached
+                            // the config file and the container died at launch with invalid settings.
+                            cronosName = name
+                            cronosBusy = true
+                            scope.launch(Dispatchers.IO) {
+                                val mgr = ContainerManager(context).also { it.reloadContainers() }
+                                val data = runCatching {
+                                    // Wine pick = the first entry a manual New Container offers
+                                    // (installed Wine profiles first, then Proton), with the editor's
+                                    // empty-list fallbacks so a device with no content still tries the
+                                    // wine a working container already uses.
+                                    val cm = ContentsManager(context).also { it.syncContents() }
+                                    val wineList =
+                                        cm.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_WINE)
+                                            .map { ContentsManager.getEntryName(it) } +
+                                            cm.getProfiles(ContentProfile.ContentType.CONTENT_TYPE_PROTON)
+                                                .map { ContentsManager.getEntryName(it) }
+                                    val wine = wineList.firstOrNull()
+                                        ?: mgr.getContainers().firstOrNull()?.wineVersion
+                                        ?: Container(0, mgr).wineVersion
+                                    ContainerDetailViewModel.buildFreshCreateData(context, name, wine, true)
+                                }.getOrNull()
+                                withContext(Dispatchers.Main) {
+                                    if (data == null) {
+                                        cronosBusy = false
+                                        Toast.makeText(context, "Cronos setup failed — couldn't build config", Toast.LENGTH_SHORT).show()
+                                        return@withContext
                                     }
-                                    scope.launch(Dispatchers.IO) {
-                                        val added = runCatching {
-                                            val desktop = ExeShortcutImporter.addToShortcuts(context, created, file, name, appId)
-                                            val finalCover = coverPath ?: appId?.let { fetchHubCover(context, it) }
-                                            val game = HubGame(
-                                                name, created.id, desktop.absolutePath, appId, finalCover,
-                                                hubStoreFromPath(file.absolutePath),
-                                            )
-                                            HubGamesStore.add(context, game)
-                                            HubEntry(name, finalCover?.let { BitmapFactory.decodeFile(it) }, game)
-                                        }.getOrNull()
-                                        containers = ContainerManager(context).also { it.reloadContainers() }.getContainers().toList()
-                                        withContext(Dispatchers.Main) {
-                                            if (added == null) {
-                                                Toast.makeText(context, "Container created, but adding the game failed", Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                val list = entries.orEmpty() + added
-                                                entries = list
-                                                deckTabs.select(0)
-                                                selected = list.lastIndex
-                                                Toast.makeText(context, "Added \"${added.title}\" to its own Cronos container", Toast.LENGTH_SHORT).show()
-                                                cronosReviewFor = created
+                                    mgr.createContainerAsync(data, ContentsManager(context)) { created ->
+                                        cronosBusy = false
+                                        if (created == null) {
+                                            Toast.makeText(context, "Cronos setup failed — couldn't create the Wine prefix", Toast.LENGTH_SHORT).show()
+                                            return@createContainerAsync
+                                        }
+                                        scope.launch(Dispatchers.IO) {
+                                            val added = runCatching {
+                                                val desktop = ExeShortcutImporter.addToShortcuts(context, created, file, name, appId)
+                                                val finalCover = coverPath ?: appId?.let { fetchHubCover(context, it) }
+                                                val game = HubGame(
+                                                    name, created.id, desktop.absolutePath, appId, finalCover,
+                                                    hubStoreFromPath(file.absolutePath),
+                                                )
+                                                HubGamesStore.add(context, game)
+                                                HubEntry(name, finalCover?.let { BitmapFactory.decodeFile(it) }, game)
+                                            }.getOrNull()
+                                            containers = ContainerManager(context).also { it.reloadContainers() }.getContainers().toList()
+                                            withContext(Dispatchers.Main) {
+                                                if (added == null) {
+                                                    Toast.makeText(context, "Container created, but adding the game failed", Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    val list = entries.orEmpty() + added
+                                                    entries = list
+                                                    deckTabs.select(0)
+                                                    selected = list.lastIndex
+                                                    Toast.makeText(context, "Added \"${added.title}\" to its own Cronos container", Toast.LENGTH_SHORT).show()
+                                                    cronosReviewFor = created
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
+                            return@HubConfirmDialog
                         }
-                        return@HubConfirmDialog
-                    }
-                    val container = containers.getOrNull(containerIndex)
-                    if (container == null) {
-                        Toast.makeText(context, "Create a container first", Toast.LENGTH_SHORT).show()
-                        return@HubConfirmDialog
-                    }
-                    scope.launch(Dispatchers.IO) {
-                        val added = runCatching {
-                            val desktop = ExeShortcutImporter.addToShortcuts(context, container, file, name, appId)
-                            val finalCover = coverPath ?: appId?.let { fetchHubCover(context, it) }
-                            val game = HubGame(
-                                name, container.id, desktop.absolutePath, appId, finalCover,
-                                hubStoreFromPath(file.absolutePath),
-                            )
-                            HubGamesStore.add(context, game)
-                            HubEntry(name, finalCover?.let { BitmapFactory.decodeFile(it) }, game)
-                        }.getOrNull()
-                        withContext(Dispatchers.Main) {
-                            if (added == null) {
-                                Toast.makeText(context, "Couldn't add that game", Toast.LENGTH_SHORT).show()
-                            } else {
-                                val list = entries.orEmpty() + added
-                                entries = list
-                                deckTabs.select(0)
-                                selected = list.lastIndex
-                                Toast.makeText(context, "Added \"${added.title}\"", Toast.LENGTH_SHORT).show()
+                        val container = containers.getOrNull(containerIndex)
+                        if (container == null) {
+                            Toast.makeText(context, "Create a container first", Toast.LENGTH_SHORT).show()
+                            return@HubConfirmDialog
+                        }
+                        scope.launch(Dispatchers.IO) {
+                            val added = runCatching {
+                                val desktop = ExeShortcutImporter.addToShortcuts(context, container, file, name, appId)
+                                val finalCover = coverPath ?: appId?.let { fetchHubCover(context, it) }
+                                val game = HubGame(
+                                    name, container.id, desktop.absolutePath, appId, finalCover,
+                                    hubStoreFromPath(file.absolutePath),
+                                )
+                                HubGamesStore.add(context, game)
+                                HubEntry(name, finalCover?.let { BitmapFactory.decodeFile(it) }, game)
+                            }.getOrNull()
+                            withContext(Dispatchers.Main) {
+                                if (added == null) {
+                                    Toast.makeText(context, "Couldn't add that game", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    val list = entries.orEmpty() + added
+                                    entries = list
+                                    deckTabs.select(0)
+                                    selected = list.lastIndex
+                                    Toast.makeText(context, "Added \"${added.title}\"", Toast.LENGTH_SHORT).show()
+                                }
                             }
                         }
-                    }
-                },
-            )
+                    },
+                )
+            }
         }
     }
 }
@@ -1944,6 +1987,8 @@ private class DeckMenuAction(
     val label: String,
     val icon: ImageVector,
     val danger: Boolean = false,
+    val subtitle: String? = null,
+    val nested: Boolean = false,
     val onClick: () -> Unit,
 )
 
@@ -2116,6 +2161,7 @@ private fun DeckHomeCarousel(
     onAdd: () -> Unit,
     focus: FocusRequester,
     enabled: Boolean,
+    xmbRows: Boolean = false,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -2288,7 +2334,15 @@ private fun DeckHomeCarousel(
                 if (r != selected) onSelect(r)
             }
         }
-        val vDrag = rememberDraggableState { d -> vAcc += d }
+        val vDrag = rememberDraggableState { d ->
+            vAcc += d
+            // XMB rows: a vertical drag in the dropdown scrolls it, a row at a time.
+            if (xmbRows && mode == HomeMode.OPTIONS) {
+                val step = with(density) { rowH.toPx() }
+                while (vAcc <= -step) { vAcc += step; menuIdx = (menuIdx + 1).coerceAtMost(actions.lastIndex) }
+                while (vAcc >= step) { vAcc -= step; menuIdx = (menuIdx - 1).coerceAtLeast(0) }
+            }
+        }
 
         Box(
             Modifier
@@ -2320,7 +2374,9 @@ private fun DeckHomeCarousel(
                     onDragStarted = { vAcc = 0f },
                     onDragStopped = {
                         val th = with(density) { 40.dp.toPx() }
-                        if (vAcc < -th) {
+                        if (xmbRows && mode == HomeMode.OPTIONS) {
+                            // scrolled the dropdown; leave it open
+                        } else if (vAcc < -th) {
                             if (mode == HomeMode.GAMES && n > 0) onMode(HomeMode.STORES)
                             else if (mode == HomeMode.OPTIONS) onMode(HomeMode.GAMES)
                         } else if (vAcc > th) {
@@ -2563,6 +2619,9 @@ private fun DeckHomeCarousel(
                             }
                             .padding(horizontal = 8.dp),
                     ) {
+                        if (xmbRows) XmbOptionRow(
+                            action.label, action.icon, action.subtitle, action.danger, action.nested, focused, accent,
+                        ) else {
                         Box(
                             Modifier
                                 .size(28.dp)
@@ -2586,6 +2645,7 @@ private fun DeckHomeCarousel(
                             maxLines = 1,
                             modifier = Modifier.padding(end = 10.dp),
                         )
+                        }
                     }
                 }
             }

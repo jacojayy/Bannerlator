@@ -592,9 +592,9 @@ private fun DeckHome(
     val scope = rememberCoroutineScope()
     // L2/R2 switch the shelves (All / Recent / Favourites / Store games) through the shell's sub-tabs.
     val deckTabs = LocalDeckTabs.current
-    // Home style (Settings > Appearance): the XMB has no shelves, so it claims a single page and L2/R2 stay idle.
+    // Home style (Settings > Appearance): XMB keeps this Home and swaps the game dropdown for the XMB one.
     val xmbStyle = remember { PreferenceManager.getDefaultSharedPreferences(context).getString("home_style", "xmb") != "classic" }
-    LaunchedEffect(deckTabs) { deckTabs.bind(if (xmbStyle) 1 else 4) }
+    LaunchedEffect(deckTabs) { deckTabs.bind(4) }
     val shelf = deckTabs.index
     var favs by remember {
         mutableStateOf(context.getSharedPreferences("hub_prefs", Context.MODE_PRIVATE).getStringSet("hub_favs", emptySet()).orEmpty())
@@ -613,12 +613,12 @@ private fun DeckHome(
     var cronosBusy by remember { mutableStateOf(false) }
     var cronosName by remember { mutableStateOf("") }
     var homeMode by remember { mutableStateOf(HomeMode.GAMES) }
-    // The XMB runs on Shortcuts, built once the games and containers have both loaded.
-    var dataReady by remember { mutableStateOf(false) }
-    var xmbShortcuts by remember { mutableStateOf<List<Shortcut>>(emptyList()) }
-    var xmbReady by remember { mutableStateOf(false) }
-    var xmbFocusTick by remember { mutableStateOf(0) }
-    var showWrapperManager by remember { mutableStateOf(false) }
+    // XMB dropdown: the focused game as a Shortcut (the tools work on it) and the nested XMB columns they open.
+    var xmbShortcut by remember { mutableStateOf<Shortcut?>(null) }
+    val xmbNav = remember { XmbNavState() }
+    var xmbRootSel by remember { mutableStateOf(0) }
+    val xmbFocus = remember { FocusRequester() }
+    val xmbNested = xmbStyle && xmbNav.depth > 0
     var propertiesFor by remember { mutableStateOf<Container?>(null) }
     var cronosReviewFor by remember { mutableStateOf<Container?>(null) }
     // A game added via Master Containers is a SHORTCUT inside a container you already have, so its
@@ -653,7 +653,6 @@ private fun DeckHome(
             selected = 0
             containers = ContainerManager(context).also { it.reloadContainers() }.getContainers().toList()
         }
-        dataReady = true
     }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -805,8 +804,10 @@ private fun DeckHome(
         reloadEntries()
     }
     val backLayer = LocalDeckBack.current
-    DisposableEffect(homeMode, shortcutSettingsFor) {
-        backLayer.onBack = if (shortcutSettingsFor != null) {
+    DisposableEffect(homeMode, shortcutSettingsFor, xmbNested) {
+        backLayer.onBack = if (xmbNested) {
+            { xmbNav.pop(); true }
+        } else if (shortcutSettingsFor != null) {
             { closeSettings(); true }
         } else if (homeMode != HomeMode.GAMES) {
             { homeMode = HomeMode.GAMES; true }
@@ -835,41 +836,37 @@ private fun DeckHome(
         }
     }
     LaunchedEffect(shelf) { selected = 0 }
-    LaunchedEffect(visible, containers, dataReady) {
-        if (!xmbStyle || !dataReady) return@LaunchedEffect
-        xmbShortcuts = withContext(Dispatchers.IO) {
-            visible.mapNotNull { e ->
-                val g = e.game ?: return@mapNotNull null
-                val c = containers.find { it.id == g.containerId } ?: return@mapNotNull null
-                val f = File(g.shortcutPath)
-                if (f.isFile) runCatching { Shortcut(c, f) }.getOrNull() else null
-            }
-        }
-        xmbReady = true
-    }
-    val xmbWait = xmbStyle && (entries == null || !xmbReady)
-    val useXmb = xmbStyle && xmbReady && xmbShortcuts.isNotEmpty()
-    val xmbHost = XmbGameHost(
-        remove = { s -> visible.firstOrNull { it.game?.shortcutPath == s.file.path }?.let { deleteEntry(it); true } ?: false },
-        containers = { containers },
-        openWrapperManager = { showWrapperManager = true },
-    )
-    // The XMB column carries the Games screen's full option list, with Home's own flows behind its rows.
-    val xmbActionsFor: (Shortcut) -> List<XmbAction> = { s ->
-        val entry = visible.firstOrNull { it.game?.shortcutPath == s.file.path }
-        val game = entry?.game
-        if (entry == null || game == null) emptyList() else hubXmbActions(
-            context, s, game, xmbHost,
-            HubXmbOps(
-                launchMethod = { openLaunchMethod(entry) },
-                addToHome = { addToHomeScreen(entry) },
-                containerProperties = { showProperties(entry) },
-                delete = { deleteEntry(entry) },
-            ),
-        )
-    }
     val sel = selected.coerceIn(0, (visible.size - 1).coerceAtLeast(0))
     val current = visible.getOrNull(sel)
+    val currentPath = current?.game?.shortcutPath
+    LaunchedEffect(xmbStyle, currentPath, containers) {
+        if (!xmbStyle) return@LaunchedEffect
+        val g = current?.game
+        xmbShortcut = if (g == null) null else withContext(Dispatchers.IO) {
+            val c = containers.find { it.id == g.containerId }
+            val f = File(g.shortcutPath)
+            if (c != null && f.isFile) runCatching { Shortcut(c, f) }.getOrNull() else null
+        }
+    }
+    val appCtx = context
+    val coScope = scope
+    val xmbScope = remember(xmbNav) {
+        object : XmbScope {
+            override val context: Context get() = appCtx
+            override val scope: kotlinx.coroutines.CoroutineScope get() = coScope
+            override fun push(menu: XmbMenu) = xmbNav.push(menu)
+            override fun pop() = xmbNav.pop()
+            override fun popToRoot() = xmbNav.popTo(0)
+            override fun refresh() = xmbNav.bump()
+            override fun toast(message: String) { Toast.makeText(appCtx, message, Toast.LENGTH_SHORT).show() }
+            override fun saved() { xmbNav.savedAt = System.currentTimeMillis() }
+            override fun confirm(confirm: XmbConfirm, onOk: () -> Unit) = xmbNav.push(xmbConfirmMenu(xmbNav, confirm, onOk))
+            override fun reloadGames() = reloadEntries()
+            override fun shortcutRenamed(container: Container, oldBase: String, newBase: String) = hubRenamed(container, oldBase, newBase)
+        }
+    }
+    xmbNav.refocus = { runCatching { xmbFocus.requestFocus() } }
+    LaunchedEffect(xmbNested) { if (xmbNested) runCatching { xmbFocus.requestFocus() } }
     val details = current?.game?.let { g ->
         buildList {
             add("Store" to hubOriginLabel(current))
@@ -895,8 +892,29 @@ private fun DeckHome(
             intro.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 180f))
         }
     }
+    val xmbSc = xmbShortcut?.takeIf { xmbStyle && it.file.path == currentPath }
     val actions = current?.let { entry ->
-        listOf(
+        val game = entry.game
+        if (xmbSc != null && game != null) buildList<DeckMenuAction> {
+            // XMB dropdown: Play, then the full tool list; tools with columns open them over Home.
+            add(DeckMenuAction("Play", Icons.Filled.PlayArrow) { playEntry(entry) })
+            val xmbActions = hubXmbActions(
+                context, xmbSc, game, { containers },
+                HubXmbOps(
+                    launchMethod = { openLaunchMethod(entry) },
+                    settings = { openGameSettings(entry) },
+                    addToHome = { addToHomeScreen(entry) },
+                    containerProperties = { showProperties(entry) },
+                    delete = { deleteEntry(entry) },
+                ),
+            )
+            xmbActions.forEachIndexed { i, a ->
+                add(DeckMenuAction(a.label, a.icon, a.danger) {
+                    val mk = a.menu
+                    if (mk != null) { xmbRootSel = i + 1; xmbNav.push(mk(xmbScope)) } else a.onClick()
+                })
+            }
+        } else listOf(
             DeckMenuAction("Play", Icons.Filled.PlayArrow) { playEntry(entry) },
             DeckMenuAction("Launch method", Icons.Filled.Layers) { openLaunchMethod(entry) },
             DeckMenuAction("Settings", Icons.Filled.Settings) { openGameSettings(entry) },
@@ -917,13 +935,12 @@ private fun DeckHome(
 
     // Hand focus back to the carousel once any dialog/overlay opened from Home goes away.
     val overlayOpen = pending != null || launchRequest != null || launchMethodFor != null ||
-        propertiesFor != null || cronosReviewFor != null || shortcutSettingsFor != null || addModeMenu || showWrapperManager
+        propertiesFor != null || cronosReviewFor != null || shortcutSettingsFor != null || addModeMenu || xmbNested
     var hadOverlay by remember { mutableStateOf(false) }
     LaunchedEffect(overlayOpen) {
         if (!overlayOpen && hadOverlay) {
             delay(60)
             runCatching { heroFocus.requestFocus() }
-            xmbFocusTick++
         }
         hadOverlay = overlayOpen
     }
@@ -934,106 +951,82 @@ private fun DeckHome(
             .background(Deck.background)
             .clipToBounds(),
     ) {
-        if (useXmb) {
-            // Inert while the per-game editor is drawn over it, so the D-pad can't wander back in.
-            Box(Modifier.fillMaxSize().focusProperties { canFocus = shortcutSettingsFor == null }) {
-                ShortcutsXmbView(
-                    shortcuts = xmbShortcuts,
-                    selectionMode = false,
-                    selectedPaths = emptySet(),
-                    onToggleSelect = {},
-                    onExitSelection = {},
-                    onPlay = { s -> visible.firstOrNull { it.game?.shortcutPath == s.file.path }?.let { playEntry(it) } },
-                    actionsFor = xmbActionsFor,
-                    sdBadge = {},
-                    onReloadGames = { reloadEntries() },
-                    focusTick = xmbFocusTick,
-                    onRenamed = { c, old, new -> hubRenamed(c, old, new) },
+        DeckCapsuleWall(
+            covers = wallCovers,
+            driftMs = if (covers.isEmpty()) 75_000 else 40_000,
+        )
+        // The backdrop follows the focused game: its cover, blurred, crossfading as the selection moves.
+        Crossfade(targetState = current?.bitmap, animationSpec = tween(600), label = "homeBackdrop") { bmp ->
+            if (bmp != null) {
+                Image(
+                    bitmap = remember(bmp) { bmp.asImageBitmap() },
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().blur(18.dp).alpha(0.34f),
                 )
             }
-        } else if (xmbWait) {
+        }
+        val coverTint = remember(current?.bitmap) {
+            current?.bitmap?.let { b -> Color(Bitmap.createScaledBitmap(b, 1, 1, true).getPixel(0, 0)) }
+        }
+        val tint by animateColorAsState(coverTint ?: Deck.primary, tween(600), label = "homeTint")
+        Box(
+            Modifier.fillMaxSize().drawBehind {
+                val c = Offset(size.width * 0.2f, size.height * 0.3f)
+                drawCircle(
+                    Brush.radialGradient(listOf(tint.copy(alpha = 0.32f), Color.Transparent), c, size.width * 0.7f),
+                    size.width * 0.7f,
+                    c,
+                )
+            },
+        )
+        DeckWallFade()
+
+        DeckHomeCarousel(
+            modifier = Modifier.graphicsLayer {
+                alpha = intro.value
+                translationY = (1f - intro.value) * 60.dp.toPx()
+            },
+            entries = visible,
+            loaded = entries != null && (visible.isNotEmpty() || entries.orEmpty().isEmpty()),
+            selected = sel,
+            favs = favs,
+            details = details,
+            onFavorite = { toggleFavorite() },
+            onSelect = { selected = it },
+            mode = homeMode,
+            onMode = { homeMode = it },
+            actions = actions,
+            cards = cards,
+            onAdd = { addModeMenu = true },
+            focus = heroFocus,
+            enabled = shortcutSettingsFor == null && !xmbNested,
+        )
+        if (entries == null) {
             CircularProgressIndicator(
                 color = DeckPalette.primary,
                 modifier = Modifier.align(Alignment.Center),
             )
-        } else {
-            DeckCapsuleWall(
-                covers = wallCovers,
-                driftMs = if (covers.isEmpty()) 75_000 else 40_000,
+        } else if (visible.isEmpty() && entries.orEmpty().isNotEmpty()) {
+            Text(
+                "Nothing on this shelf yet - press Y on a game to favourite it",
+                color = DeckPalette.onSurfaceVariant,
+                fontSize = 14.sp,
+                modifier = Modifier.align(Alignment.Center),
             )
-            // The backdrop follows the focused game: its cover, blurred, crossfading as the selection moves.
-            Crossfade(targetState = current?.bitmap, animationSpec = tween(600), label = "homeBackdrop") { bmp ->
-                if (bmp != null) {
-                    Image(
-                        bitmap = remember(bmp) { bmp.asImageBitmap() },
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize().blur(18.dp).alpha(0.34f),
-                    )
-                }
-            }
-            val coverTint = remember(current?.bitmap) {
-                current?.bitmap?.let { b -> Color(Bitmap.createScaledBitmap(b, 1, 1, true).getPixel(0, 0)) }
-            }
-            val tint by animateColorAsState(coverTint ?: Deck.primary, tween(600), label = "homeTint")
-            Box(
-                Modifier.fillMaxSize().drawBehind {
-                    val c = Offset(size.width * 0.2f, size.height * 0.3f)
-                    drawCircle(
-                        Brush.radialGradient(listOf(tint.copy(alpha = 0.32f), Color.Transparent), c, size.width * 0.7f),
-                        size.width * 0.7f,
-                        c,
-                    )
-                },
-            )
-            DeckWallFade()
-
-            DeckHomeCarousel(
-                modifier = Modifier.graphicsLayer {
-                    alpha = intro.value
-                    translationY = (1f - intro.value) * 60.dp.toPx()
-                },
-                entries = visible,
-                loaded = entries != null && (visible.isNotEmpty() || entries.orEmpty().isEmpty()),
-                selected = sel,
-                favs = favs,
-                details = details,
-                onFavorite = { toggleFavorite() },
-                onSelect = { selected = it },
-                mode = homeMode,
-                onMode = { homeMode = it },
-                actions = actions,
-                cards = cards,
-                onAdd = { addModeMenu = true },
-                focus = heroFocus,
-                enabled = shortcutSettingsFor == null,
-            )
-            if (entries == null) {
-                CircularProgressIndicator(
-                    color = DeckPalette.primary,
-                    modifier = Modifier.align(Alignment.Center),
-                )
-            } else if (visible.isEmpty() && entries.orEmpty().isNotEmpty()) {
-                Text(
-                    "Nothing on this shelf yet - press Y on a game to favourite it",
-                    color = DeckPalette.onSurfaceVariant,
-                    fontSize = 14.sp,
-                    modifier = Modifier.align(Alignment.Center),
-                )
-            }
-
-            // Shelves (L2/R2) top centre, status top right.
-            DeckStretchyTabs(
-                labels = listOf("All", "Recent", "Favourites", "Store games"),
-                selected = shelf,
-                onSelect = { deckTabs.select(it) },
-                focusable = false,
-                fillWidth = false,
-                height = 30.dp,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
-            )
-            DeckStatusStrip(Modifier.align(Alignment.TopEnd).padding(end = 16.dp, top = 12.dp))
         }
+
+        // Shelves (L2/R2) top centre, status top right.
+        DeckStretchyTabs(
+            labels = listOf("All", "Recent", "Favourites", "Store games"),
+            selected = shelf,
+            onSelect = { deckTabs.select(it) },
+            focusable = false,
+            fillWidth = false,
+            height = 30.dp,
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
+        )
+        DeckStatusStrip(Modifier.align(Alignment.TopEnd).padding(end = 16.dp, top = 12.dp))
         AnimatedVisibility(
             visible = splash,
             exit = fadeOut(tween(450)),
@@ -1078,7 +1071,44 @@ private fun DeckHome(
             DeckPropertiesDialog(container = c, onDismiss = { propertiesFor = null })
         }
 
-        if (showWrapperManager) DeckWrapperManagerDialog(onDismiss = { showWrapperManager = false })
+        if (xmbNested) {
+            // The XMB dropdown's tools open as nested XMB columns over a dimmed Home.
+            BoxWithConstraints(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.88f))
+                    .focusRequester(xmbFocus)
+                    .focusable()
+                    .onPreviewKeyEvent { e ->
+                        if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        // Typing into a Text row: the field gets the keys; A = done, B = cancel.
+                        if (xmbNav.editingKey != null) {
+                            return@onPreviewKeyEvent when (e.key) {
+                                Key.ButtonA, Key.DirectionCenter -> { xmbNav.commitEdit(xmbScope); true }
+                                Key.ButtonB, Key.Back -> { xmbNav.pop(); true }
+                                else -> false
+                            }
+                        }
+                        val k = when (e.key) {
+                            Key.DirectionUp -> XmbKey.Up
+                            Key.DirectionDown -> XmbKey.Down
+                            Key.DirectionLeft -> XmbKey.Left
+                            Key.DirectionRight -> XmbKey.Right
+                            Key.ButtonA, Key.Enter, Key.NumPadEnter, Key.DirectionCenter -> XmbKey.A
+                            Key.ButtonB, Key.Back, Key.Escape -> XmbKey.B
+                            Key.ButtonL1 -> XmbKey.L1
+                            Key.ButtonR1 -> XmbKey.R1
+                            else -> null
+                        } ?: return@onPreviewKeyEvent false
+                        xmbNav.onKey(k, xmbScope)
+                    },
+            ) {
+                XmbNestedLayer(
+                    xmbNav, xmbScope, maxWidth.value, maxHeight.value, maxHeight > maxWidth, Deck.primary,
+                    xmbSc?.name.orEmpty(), xmbSc?.icon, actions.map { it.icon }, xmbRootSel,
+                )
+            }
+        }
 
         launchMethodFor?.let { s ->
             DeckLaunchMethodDialog(

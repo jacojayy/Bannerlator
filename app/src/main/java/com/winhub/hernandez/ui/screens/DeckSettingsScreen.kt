@@ -646,7 +646,7 @@ internal fun DeckSettingsScreen() {
         DeckGroup(title = "Home") {
             DeckChoiceRow(
                 label = "Home style",
-                hint = "XMB shows your games on a bar with their options in a column under each one",
+                hint = "XMB gives the game dropdown the full XMB tool list (details, saves, cover, clone, logs and more)",
                 options = listOf(
                     "classic" to "Classic",
                     "xmb" to "XMB",

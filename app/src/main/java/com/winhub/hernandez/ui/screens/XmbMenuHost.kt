@@ -332,13 +332,17 @@ internal fun XmbNestedLayer(
     gameIcon: Bitmap?,
     rootIcons: List<ImageVector>,
     rootSel: Int,
+    /** Where the open column's picked row sits (dp from the top); null = the XMB's own spot. A host whose options column lies elsewhere passes it. */
+    anchorY: Float? = null,
+    /** Where the first icon strip starts (dp from the left). */
+    baseX: Float = 16f,
 ) {
     val m = nav.top ?: return
     val top = 70f
     val bottom = h - 10f
     val rowH = if (port) 44f else 40f
-    val anchor = top + (bottom - top) * (if (port) 0.2f else 0.28f)
-    val x0 = 16f + nav.depth * STRIP + 8f
+    val anchor = anchorY ?: (top + (bottom - top) * (if (port) 0.2f else 0.28f))
+    val x0 = baseX + nav.depth * STRIP + 8f
     val colW = max(160f, min(if (port) w - x0 - 12f else 560f, w - x0 - 16f))
     val density = LocalDensity.current
 
@@ -372,12 +376,12 @@ internal fun XmbNestedLayer(
         }
 
         // icon strips: the game's options, then each menu behind the active one
-        XmbStrip(rootIcons, rootSel, 16f, anchor, rowH, accent) { nav.popTo(0) }
+        XmbStrip(rootIcons, rootSel, baseX, anchor, rowH, accent) { nav.popTo(0) }
         for (i in 0 until nav.depth - 1) {
             val menu = nav.stack[i]
             val rows = nav.rowsOf(menu, xmb).filter { it !is XmbRow.Header }
             val sel = rows.indexOfFirst { it.key == menu.selKey }.coerceAtLeast(0)
-            XmbStrip(rows.map { it.iconOrNull() ?: rowIconFallback }, sel, 16f + (i + 1) * STRIP, anchor, rowH, accent) { nav.popTo(i + 1) }
+            XmbStrip(rows.map { it.iconOrNull() ?: rowIconFallback }, sel, baseX + (i + 1) * STRIP, anchor, rowH, accent) { nav.popTo(i + 1) }
         }
 
         val panel = m.panel

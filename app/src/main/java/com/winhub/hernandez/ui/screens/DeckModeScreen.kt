@@ -1037,6 +1037,7 @@ private fun DeckHome(
                 mode = homeMode,
                 onMode = { homeMode = it },
                 xmbRows = xmbSc != null,
+                menuHidden = xmbNested,
                 actions = actions,
                 cards = cards,
                 onAdd = { addModeMenu = true },
@@ -1119,7 +1120,7 @@ private fun DeckHome(
                 BoxWithConstraints(
                     Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.88f))
+                        .background(Color.Black.copy(alpha = 0.82f))
                         .focusRequester(xmbFocus)
                         .focusable()
                         .onPreviewKeyEvent { e ->
@@ -1146,9 +1147,12 @@ private fun DeckHome(
                             xmbNav.onKey(k, xmbScope)
                         },
                 ) {
+                    // The columns continue from the dropdown: same left edge, and the picked row stays where it was.
+                    val coverH = (maxHeight * 0.34f).coerceIn(96.dp, 168.dp)
                     XmbNestedLayer(
                         xmbNav, xmbScope, maxWidth.value, maxHeight.value, maxHeight > maxWidth, Deck.primary,
                         xmbSc?.name.orEmpty(), xmbSc?.icon, actions.map { it.icon }, xmbRootSel,
+                        anchorY = coverH.value * 0.72f + 26f, baseX = 28f,
                     )
                 }
             }
@@ -2183,6 +2187,8 @@ private fun DeckHomeCarousel(
     focus: FocusRequester,
     enabled: Boolean,
     xmbRows: Boolean = false,
+    /** The XMB dropdown's tools are open as columns over Home: the dropdown rows give way to them. */
+    menuHidden: Boolean = false,
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -2323,15 +2329,17 @@ private fun DeckHomeCarousel(
         val x0Px = with(density) { x0.toPx() }
         val gapPx = with(density) { 14.dp.toPx() }
         // Quick menu layout: the row folds to half size at the top, the menu hangs under the chosen cover.
-        val optsY = baseHPx * 0.3375f + with(density) { 14.dp.toPx() }
-        val menuTopPx = optsY + baseHPx * 0.3375f + with(density) { 12.dp.toPx() }
+        // The XMB dropdown folds the row less (the Deck XMB keeps its cover large) and hides the neighbours.
+        val menuScale = if (xmbRows) 0.72f else 0.5f
+        val optsY = baseHPx * (menuScale / 2f) + with(density) { 14.dp.toPx() }
+        val menuTopPx = optsY + baseHPx * (menuScale / 2f) + with(density) { 12.dp.toPx() }
         val titleMax = (maxWidth - x0 - baseW * 1.35f - 40.dp - (if (maxWidth > 560.dp) 230.dp else 0.dp)).coerceAtLeast(120.dp)
 
-        val gScale = { 1f - 0.5f * menuT.value - 0.45f * upT.value }
+        val gScale = { 1f - (1f - menuScale) * menuT.value - 0.45f * upT.value }
         val gCenter = { hPx / 2f + (optsY - hPx / 2f) * menuT.value + (hPx / 2f) * upT.value }
         val gGrow = { 1f - upT.value }
         val gAlpha = { 1f - 0.4f * upT.value }
-        val gDim = { 0.57f * menuT.value }
+        val gDim = { (if (xmbRows) 1.13f else 0.57f) * menuT.value }
         val gPosNow = { gPos.floatValue }
         val cScale = { 0.55f + 0.45f * upT.value }
         val cCenter = { 2f + (hPx / 2f - 2f) * upT.value }
@@ -2615,7 +2623,7 @@ private fun DeckHomeCarousel(
                 }
             }
 
-            if (menuVisible) {
+            if (menuVisible && !menuHidden) {
                 actions.forEachIndexed { idx, action ->
                     val focused = idx == menuIdx
                     val tint = if (action.danger) DeckPalette.error else Deck.onSurfaceVariant

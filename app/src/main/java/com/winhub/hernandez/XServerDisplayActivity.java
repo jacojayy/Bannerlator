@@ -2274,7 +2274,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // limiter, renderer) can be resolved against it below; each falls back to the container value.
         if (shortcutPath != null && !shortcutPath.isEmpty()) {
             shortcut = new Shortcut(container, new File(shortcutPath));
-            XServerDrawerState.INSTANCE.setGameTitle(shortcut.getName());
+            XServerDrawerState.INSTANCE.setGameTitle(shortcut.name);
         }
 
         // In-game Friends tab (drawer): read the friends/chat opt-in once for this launch and start

@@ -618,6 +618,7 @@ private fun DeckHome(
     var xmbShortcuts by remember { mutableStateOf<List<Shortcut>>(emptyList()) }
     var xmbReady by remember { mutableStateOf(false) }
     var xmbFocusTick by remember { mutableStateOf(0) }
+    var showWrapperManager by remember { mutableStateOf(false) }
     var propertiesFor by remember { mutableStateOf<Container?>(null) }
     var cronosReviewFor by remember { mutableStateOf<Container?>(null) }
     // A game added via Master Containers is a SHORTCUT inside a container you already have, so its
@@ -848,15 +849,19 @@ private fun DeckHome(
     }
     val xmbWait = xmbStyle && (entries == null || !xmbReady)
     val useXmb = xmbStyle && xmbReady && xmbShortcuts.isNotEmpty()
+    val xmbHost = XmbGameHost(
+        remove = { s -> visible.firstOrNull { it.game?.shortcutPath == s.file.path }?.let { deleteEntry(it); true } ?: false },
+        containers = { containers },
+        openWrapperManager = { showWrapperManager = true },
+    )
     // The XMB column carries the Games screen's full option list, with Home's own flows behind its rows.
     val xmbActionsFor: (Shortcut) -> List<XmbAction> = { s ->
         val entry = visible.firstOrNull { it.game?.shortcutPath == s.file.path }
         val game = entry?.game
         if (entry == null || game == null) emptyList() else hubXmbActions(
-            context, s, game, { containers },
+            context, s, game, xmbHost,
             HubXmbOps(
                 launchMethod = { openLaunchMethod(entry) },
-                settings = { openGameSettings(entry) },
                 addToHome = { addToHomeScreen(entry) },
                 containerProperties = { showProperties(entry) },
                 delete = { deleteEntry(entry) },
@@ -912,7 +917,7 @@ private fun DeckHome(
 
     // Hand focus back to the carousel once any dialog/overlay opened from Home goes away.
     val overlayOpen = pending != null || launchRequest != null || launchMethodFor != null ||
-        propertiesFor != null || cronosReviewFor != null || shortcutSettingsFor != null || addModeMenu
+        propertiesFor != null || cronosReviewFor != null || shortcutSettingsFor != null || addModeMenu || showWrapperManager
     var hadOverlay by remember { mutableStateOf(false) }
     LaunchedEffect(overlayOpen) {
         if (!overlayOpen && hadOverlay) {
@@ -1072,6 +1077,8 @@ private fun DeckHome(
         propertiesFor?.let { c ->
             DeckPropertiesDialog(container = c, onDismiss = { propertiesFor = null })
         }
+
+        if (showWrapperManager) DeckWrapperManagerDialog(onDismiss = { showWrapperManager = false })
 
         launchMethodFor?.let { s ->
             DeckLaunchMethodDialog(

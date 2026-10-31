@@ -15,7 +15,6 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.view.HapticFeedbackConstants
 import android.view.InputDevice
-import android.view.SoundEffectConstants
 import androidx.compose.animation.Crossfade
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.ui.draw.blur
@@ -312,11 +311,18 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     val sectionNow by rememberUpdatedState(section)
     DisposableEffect(Unit) {
         DeckHardKeys.handler = handler@{ code ->
+            if (DeckConsole.screensaver) {
+                DeckConsole.poke()
+                return@handler true
+            }
+            DeckConsole.poke()
             DeckTouchMode.touch = false
             if (editTracker.editing) return@handler false
+            if (code == android.view.KeyEvent.KEYCODE_BUTTON_L1 || code == android.view.KeyEvent.KEYCODE_BUTTON_R1) DeckSound.play(DeckSound.MOVE)
             when (code) {
                 android.view.KeyEvent.KEYCODE_BUTTON_L1 -> { stepSection(railSections, sectionNow, -1) { section = it; deckDetail = null }; true }
                 android.view.KeyEvent.KEYCODE_BUTTON_R1 -> { stepSection(railSections, sectionNow, 1) { section = it; deckDetail = null }; true }
+                android.view.KeyEvent.KEYCODE_BUTTON_START -> { DeckConsole.quickMenu = true; true }
                 android.view.KeyEvent.KEYCODE_BUTTON_L2 -> if (tabs.count > 1) { tabs.step(-1); true } else false
                 android.view.KeyEvent.KEYCODE_BUTTON_R2 -> if (tabs.count > 1) { tabs.step(1); true } else false
                 else -> false
@@ -324,6 +330,11 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
         }
         onDispose { DeckHardKeys.handler = null }
     }
+    // Tappable equivalents of the pad buttons for the hint bar.
+    val hintBack: () -> Unit = {
+        if (backLayer.onBack?.invoke() != true && tabs.onBack?.invoke() != true) goBack()
+    }
+    val hintStep: (Int) -> Unit = { d -> stepSection(railSections, sectionNow, d) { section = it; deckDetail = null } }
     LaunchedEffect(section, deckDetail) { tabs.bind(0) }
     // Park on the rail ONCE when the shell opens. Keying this on `section` re-parked the rail on
     // every section change, including changes triggered from inside the content, which is what
@@ -397,10 +408,12 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 .drawBehind { drawDeckCornerGlow(Deck.primary) }
                 .deckTouchTracker()
                 .onPreviewKeyEvent { e ->
-                    if (e.type == KeyEventType.KeyDown) DeckTouchMode.touch = false
+                    if (DeckConsole.screensaver) { DeckConsole.poke(); return@onPreviewKeyEvent true }
+                    if (e.type == KeyEventType.KeyDown) { DeckTouchMode.touch = false; DeckConsole.poke() }
                     if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (e.key) {
                         Key.ButtonB -> {
+                            DeckSound.play(DeckSound.BACK)
                             if (editTracker.editing) false
                             else if (backLayer.onBack?.invoke() == true) true
                             else if (tabs.onBack?.invoke() == true) true
@@ -439,7 +452,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                     onGraphicPane = { graphicPane = it },
                     homeFocus = homeHeroFocus,
                 )
-                DeckLegend(Modifier.align(Alignment.BottomEnd))
+                DeckHintBar(Modifier.align(Alignment.BottomEnd), onBack = hintBack, onPrev = { hintStep(-1) }, onNext = { hintStep(1) }, subTabs = tabs.count > 1)
                 DeckCornerGlow()
             }
         }
@@ -450,10 +463,12 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
             .background(Deck.background)
             .deckTouchTracker()
             .onPreviewKeyEvent { e ->
-                if (e.type == KeyEventType.KeyDown) DeckTouchMode.touch = false
+                if (DeckConsole.screensaver) { DeckConsole.poke(); return@onPreviewKeyEvent true }
+                if (e.type == KeyEventType.KeyDown) { DeckTouchMode.touch = false; DeckConsole.poke() }
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (e.key) {
                     Key.ButtonB -> {
+                        DeckSound.play(DeckSound.BACK)
                         // A text field that is taking input owns B first (it just closes the IME).
                         if (editTracker.editing) false
                         else if (backLayer.onBack?.invoke() == true) true
@@ -499,11 +514,12 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 onGraphicPane = { graphicPane = it },
                 homeFocus = homeHeroFocus,
             )
-            DeckLegend(Modifier.align(Alignment.BottomEnd))
+            DeckHintBar(Modifier.align(Alignment.BottomEnd), onBack = hintBack, onPrev = { hintStep(-1) }, onNext = { hintStep(1) }, subTabs = tabs.count > 1)
             DeckCornerGlow()
         }
     }
     }
+        DeckConsoleOverlays(onGo = { key -> section = key; deckDetail = null })
         if (!introDone) {
             DeckIntro(onDone = { introDone = true })
         }
@@ -862,6 +878,20 @@ private fun DeckHome(
                 )
             }
         }
+        val coverTint = remember(current?.bitmap) {
+            current?.bitmap?.let { b -> Color(Bitmap.createScaledBitmap(b, 1, 1, true).getPixel(0, 0)) }
+        }
+        val tint by animateColorAsState(coverTint ?: Deck.primary, tween(600), label = "homeTint")
+        Box(
+            Modifier.fillMaxSize().drawBehind {
+                val c = Offset(size.width * 0.2f, size.height * 0.3f)
+                drawCircle(
+                    Brush.radialGradient(listOf(tint.copy(alpha = 0.32f), Color.Transparent), c, size.width * 0.7f),
+                    size.width * 0.7f,
+                    c,
+                )
+            },
+        )
         DeckWallFade()
 
         DeckHomeCarousel(
@@ -1202,7 +1232,7 @@ private fun Modifier.deckTouchTracker(): Modifier = pointerInput(Unit) {
     awaitPointerEventScope {
         while (true) {
             val event = awaitPointerEvent(PointerEventPass.Initial)
-            if (event.changes.any { it.pressed }) DeckTouchMode.touch = true
+            if (event.changes.any { it.pressed }) { DeckTouchMode.touch = true; DeckConsole.poke() }
         }
     }
 }
@@ -2043,7 +2073,7 @@ private fun DeckHomeCarousel(
     // sound, and a short rumble on the pad that sent the key.
     fun buzz(deviceId: Int, strong: Boolean) {
         view.performHapticFeedback(if (strong) HapticFeedbackConstants.LONG_PRESS else HapticFeedbackConstants.KEYBOARD_TAP)
-        view.playSoundEffect(if (strong) SoundEffectConstants.CLICK else SoundEffectConstants.NAVIGATION_RIGHT)
+        DeckSound.play(if (strong) DeckSound.SELECT else DeckSound.MOVE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && deviceId >= 0) {
             InputDevice.getDevice(deviceId)?.vibratorManager?.defaultVibrator
                 ?.vibrate(VibrationEffect.createOneShot(if (strong) 40L else 15L, if (strong) 160 else 70))

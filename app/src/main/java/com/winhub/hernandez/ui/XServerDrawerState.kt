@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 enum class TabType {
+    // The drawer's landing page: live quick cards that jump to the settings behind them.
+    QUICK,
     GRAPHICS, HUD, RESHADE, CONTROLS, ADVANCED, TASK_MANAGER, TV, AUDIO,
     // Steam friends + chat while playing. Only in the rail while InGameFriendsSource says a live
     // source exists (see ui/XServerFriendsTab.kt).
@@ -20,8 +22,13 @@ enum class TabType {
 
 object XServerDrawerState {
 
-    private val _selectedTab = MutableStateFlow(TabType.GRAPHICS)
+    private val _selectedTab = MutableStateFlow(TabType.QUICK)
     val selectedTab: StateFlow<TabType> = _selectedTab
+
+    // The running game's name, shown in the drawer header.
+    private val _gameTitle = MutableStateFlow("")
+    val gameTitle: StateFlow<String> = _gameTitle
+    fun setGameTitle(v: String) { _gameTitle.value = v }
 
     fun selectTab(tab: TabType) { _selectedTab.value = tab }
 
@@ -591,7 +598,7 @@ object XServerDrawerState {
     fun toggleFpsExpanded() { _fpsExpanded.value = !_fpsExpanded.value }
 
     fun reset() {
-        _selectedTab.value = TabType.GRAPHICS
+        _selectedTab.value = TabType.QUICK
         _controlsSubTab.value = 0
         _isPaused.value = false
         _isRelativeMouseMovement.value = false

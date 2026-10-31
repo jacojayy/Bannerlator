@@ -11,7 +11,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -88,7 +87,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -97,6 +95,12 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
@@ -120,7 +124,7 @@ import com.winhub.hernandez.reshade.ReshadeManager
 import com.winhub.hernandez.ui.components.ColorPicker
 import com.winhub.hernandez.ui.screens.HelpDialog
 import com.winhub.hernandez.ui.screens.DeckPalette
-import com.winhub.hernandez.ui.screens.DeckStretchyTabs
+import com.winhub.hernandez.ui.screens.DeckSound
 import com.winhub.hernandez.ui.screens.MenuItemDivider
 import com.winhub.hernandez.ui.screens.WatchdogSection
 import com.winhub.hernandez.ui.screens.outlinedMenuCard
@@ -208,6 +212,7 @@ private fun XServerDrawerContent() {
     val isPaused by state.isPaused.collectAsState()
     val tvConnected by state.tvConnected.collectAsState()
     val castSupported by state.castSupported.collectAsState()
+    val gameTitle by state.gameTitle.collectAsState()
     // Friends tab: present only while a live friends source exists for this launch (agent relay during
     // a SteamLite game, else the app's own session); unread dot = a message landed while the thread
     // wasn't open. See XServerFriendsTab.kt.
@@ -216,15 +221,61 @@ private fun XServerDrawerContent() {
     // Re-check the friends source on every drawer open (its liveness isn't all flow-driven).
     val menuOpen by XServerDialogState.menuOpen.collectAsState()
     LaunchedEffect(menuOpen) { if (menuOpen) com.winhub.hernandez.store.InGameFriendsSource.poke() }
-    val pauseIcon = if (isPaused) R.drawable.icon_play else R.drawable.icon_pause
+    val clock = rememberDrawerClock()
+    val appContext = LocalContext.current
+    LaunchedEffect(Unit) { DeckSound.init(appContext) }
 
-    // ── Shell: a Deck command surface — a floating graphite card, a compact live session header,
-    // a stretchy Deck tab strip, then the selected tab's panel. The gutters stay unpainted so the
-    // host's single dim shows evenly and the card reads as floating over the game.
+    // The header line shows the focused tile / tab's name for a moment, like a console tooltip.
+    var hint by remember { mutableStateOf<String?>(null) }
+    fun hintFor(label: String): (Boolean) -> Unit = { focused -> if (focused) hint = label else if (hint == label) hint = null }
+    var confirmExit by remember { mutableStateOf(false) }
+    var exitTried by remember { mutableStateOf(false) }
+    val resumeFocus = remember { FocusRequester() }
+    val exitFocus = remember { FocusRequester() }
+    val cancelFocus = remember { FocusRequester() }
+    // The controller starts on Resume whenever the menu opens; the exit confirmation starts on Cancel.
+    LaunchedEffect(menuOpen) { if (menuOpen) runCatching { resumeFocus.requestFocus() } }
+    LaunchedEffect(confirmExit) {
+        if (confirmExit) runCatching { cancelFocus.requestFocus() }
+        else if (exitTried) runCatching { exitFocus.requestFocus() }
+    }
+
+    val stripTabs = remember(friendsSource.tabVisible, tvConnected, castSupported) {
+        buildList {
+            add(TabType.QUICK)
+            add(TabType.GRAPHICS)
+            add(TabType.HUD)
+            add(TabType.RESHADE)
+            add(TabType.CONTROLS)
+            add(TabType.AUDIO)
+            add(TabType.ADVANCED)
+            if (friendsSource.tabVisible) add(TabType.FRIENDS)
+            if (com.winhub.hernandez.FeatureFlags.TV_OUTPUT_ENABLED && (tvConnected || castSupported)) add(TabType.TV)
+            add(TabType.TASK_MANAGER)
+        }
+    }
+    fun stepTab(delta: Int) {
+        val i = stripTabs.indexOf(selectedTab).coerceAtLeast(0)
+        handleTabClick(stripTabs[(i + delta + stripTabs.size) % stripTabs.size], state)
+    }
+    val unreadTotal = friendsUnread.values.sum()
+
+    // ── Shell: a quick-menu panel docked to the right edge — glass over the live game, a header with
+    // the game and the session actions, a tab rail, the open tab's page, and a button-hint bar. B and
+    // the bumpers work from anywhere in it (A is turned into the confirm key by the activity).
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 12.dp, vertical = 12.dp),
+            .padding(vertical = 8.dp)
+            .onPreviewKeyEvent { e ->
+                if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (e.key) {
+                    Key.ButtonB -> { DeckSound.play(DeckSound.BACK); if (confirmExit) confirmExit = false else state.onClose?.run(); true }
+                    Key.ButtonL1 -> { DeckSound.play(DeckSound.MOVE); stepTab(-1); true }
+                    Key.ButtonR1 -> { DeckSound.play(DeckSound.MOVE); stepTab(1); true }
+                    else -> false
+                }
+            },
     ) {
         // Touch sink, bottom-most child: eat every event on the empty panel and gutters so a tap
         // can never fall through to the game surface / virtual controls underneath.
@@ -242,128 +293,140 @@ private fun XServerDrawerContent() {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .shadow(16.dp, RoundedCornerShape(20.dp), clip = false)
-                .clip(RoundedCornerShape(20.dp))
-                .background(DeckPalette.background)
-                .border(1.dp, DeckPalette.line2, RoundedCornerShape(20.dp))
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .drawerGlass(RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp))
+                .padding(start = 14.dp, end = 12.dp, top = 10.dp, bottom = 8.dp),
         ) {
-            // Header: the WinHub wordmark on the left, the session actions on the right.
+            // Header: game + status on the left, the session actions on the right.
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f),
-                ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                     Text(
-                        text = "Win",
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = (-0.4).sp,
+                        text = gameTitle.ifBlank { "In game" },
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
                         color = DeckPalette.onBackground,
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "Hub",
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = (-0.4).sp,
-                        color = DeckPalette.primary,
+                        text = hint ?: if (isPaused) "Paused  ·  $clock" else clock,
+                        fontSize = 13.sp,
+                        color = if (hint != null) DeckPalette.primary else DeckPalette.onSurfaceVariant,
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
+                }
+                if (confirmExit) {
+                    Text("Exit game?", color = DeckPalette.onBackground, fontSize = 14.sp, modifier = Modifier.padding(end = 8.dp))
+                    DrawerPill("Cancel", danger = false, focusRequester = cancelFocus) { confirmExit = false }
                     Spacer(Modifier.width(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(5.dp)
-                            .clip(CircleShape)
-                            .background(DeckPalette.primary),
-                    )
-                }
-                DeckHeaderIcon(R.drawable.icon_keyboard, "Show keyboard") {
-                    state.onClose?.run(); state.onKeyboard?.run()
-                }
-                Spacer(Modifier.width(6.dp))
-                DeckHeaderIcon(R.drawable.icon_task_manager, "Task manager") {
-                    state.selectTab(TabType.TASK_MANAGER)
-                    state.onTaskManager?.run()
-                }
-                Spacer(Modifier.width(6.dp))
-                DeckHeaderIcon(pauseIcon, if (isPaused) "Resume" else "Pause") {
-                    state.onPauseResume?.run(); state.onClose?.run()
-                }
-                Spacer(Modifier.width(6.dp))
-                DeckHeaderIcon(R.drawable.icon_exit, "Exit session", tint = DeckPalette.error) {
-                    state.onExit?.run()
+                    DrawerPill("Exit", danger = true) { state.onExit?.run() }
+                } else {
+                    DrawerTile(R.drawable.icon_play, "Resume", focusRequester = resumeFocus, onFocus = hintFor("Resume")) {
+                        if (isPaused) state.onPauseResume?.run()
+                        state.onClose?.run()
+                    }
+                    if (!isPaused) {
+                        Spacer(Modifier.width(6.dp))
+                        DrawerTile(R.drawable.icon_pause, "Pause", onFocus = hintFor("Pause")) {
+                            state.onPauseResume?.run(); state.onClose?.run()
+                        }
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    DrawerTile(R.drawable.icon_keyboard, "Keyboard", onFocus = hintFor("Keyboard")) {
+                        state.onClose?.run(); state.onKeyboard?.run()
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    DrawerTile(R.drawable.icon_task_manager, "Task manager", onFocus = hintFor("Task manager")) {
+                        state.selectTab(TabType.TASK_MANAGER)
+                        state.onTaskManager?.run()
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    DrawerTile(
+                        R.drawable.icon_exit, "Exit game", tint = DeckPalette.error,
+                        focusRequester = exitFocus, onFocus = hintFor("Exit game"),
+                    ) { exitTried = true; confirmExit = true }
                 }
             }
 
-            Spacer(Modifier.height(10.dp))
-
-            val stripTabs = remember(friendsSource.tabVisible, tvConnected, castSupported) {
-                buildList {
-                    add(TabType.GRAPHICS)
-                    add(TabType.HUD)
-                    add(TabType.RESHADE)
-                    add(TabType.CONTROLS)
-                    add(TabType.AUDIO)
-                    add(TabType.ADVANCED)
-                    if (friendsSource.tabVisible) add(TabType.FRIENDS)
-                    if (com.winhub.hernandez.FeatureFlags.TV_OUTPUT_ENABLED && (tvConnected || castSupported)) add(TabType.TV)
-                    add(TabType.TASK_MANAGER)
-                }
-            }
-            val unreadTotal = friendsUnread.values.sum()
-            val tabBadges = remember(stripTabs, unreadTotal) {
-                stripTabs.map { if (it == TabType.FRIENDS) unreadTotal else 0 }
-            }
-            // Deck stretchy tabs: one scrolling strip, blue stroke slides onto the new tab.
-            DeckStretchyTabs(
-                labels = stripTabs.map { tabLabel(it) },
-                selected = stripTabs.indexOf(selectedTab).coerceAtLeast(0),
-                onSelect = { handleTabClick(stripTabs[it], state) },
-                badges = tabBadges,
-                scroll = true,
-                height = 34.dp,
-            )
-
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(1.dp)
                     .background(DeckPalette.line),
             )
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
 
-            // The selected tab's panel. Friends owns its own scrolling (LazyColumn roster/thread
-            // with a pinned send box), so it opts out of the pane's verticalScroll.
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .fillMaxWidth()
-                    .then(if (selectedTab == TabType.FRIENDS) Modifier else Modifier.verticalScroll(rememberScrollState()))
-                    .padding(horizontal = 2.dp),
-            ) {
-                when (selectedTab) {
-                    TabType.GRAPHICS -> GraphicsContent(state)
-                    TabType.HUD -> HudContent(state)
-                    TabType.RESHADE -> ReshadeContent(state)
-                    TabType.CONTROLS -> ControlsContent(state)
-                    TabType.ADVANCED -> AdvancedContent(state)
-                    TabType.TASK_MANAGER -> TmContent()
-                    TabType.TV -> TvContent(state)
-                    TabType.AUDIO -> AudioContent(state)
-                    TabType.FRIENDS -> FriendsContent(state)
+            Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                // Tab rail: icons only; the focused one names itself in the header.
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier
+                        .width(52.dp)
+                        .fillMaxHeight()
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    stripTabs.forEach { tab ->
+                        DrawerRailItem(
+                            icon = drawerTabIcon(tab),
+                            label = tabLabel(tab),
+                            selected = tab == selectedTab,
+                            unread = if (tab == TabType.FRIENDS) unreadTotal else 0,
+                            onFocus = hintFor(tabLabel(tab)),
+                        ) { handleTabClick(tab, state) }
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .fillMaxHeight()
+                        .background(DeckPalette.line),
+                )
+                Spacer(Modifier.width(10.dp))
+                // The selected tab's page. Friends owns its own scrolling (LazyColumn roster/thread
+                // with a pinned send box), so it opts out of the page's verticalScroll.
+                Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    Text(
+                        text = tabLabel(selectedTab),
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = DeckPalette.onBackground,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .then(if (selectedTab == TabType.FRIENDS) Modifier else Modifier.verticalScroll(rememberScrollState()))
+                            .padding(horizontal = 2.dp),
+                    ) {
+                        when (selectedTab) {
+                            TabType.QUICK -> DrawerQuickPage { handleTabClick(it, state) }
+                            TabType.GRAPHICS -> GraphicsContent(state)
+                            TabType.HUD -> HudContent(state)
+                            TabType.RESHADE -> ReshadeContent(state)
+                            TabType.CONTROLS -> ControlsContent(state)
+                            TabType.ADVANCED -> AdvancedContent(state)
+                            TabType.TASK_MANAGER -> TmContent()
+                            TabType.TV -> TvContent(state)
+                            TabType.AUDIO -> AudioContent(state)
+                            TabType.FRIENDS -> FriendsContent(state)
+                        }
+                    }
                 }
             }
+
+            DrawerHintBar(Modifier.fillMaxWidth().padding(top = 8.dp, start = 4.dp))
         }
     }
 }
 
 private fun tabLabel(tab: TabType): String = when (tab) {
+    TabType.QUICK -> "Quick"
     TabType.GRAPHICS -> "Graphics"
     TabType.HUD -> "FPS"
     TabType.RESHADE -> "Effects"
@@ -375,34 +438,8 @@ private fun tabLabel(tab: TabType): String = when (tab) {
     TabType.TASK_MANAGER -> "Tasks"
 }
 
-/** Compact header action: a graphite tile with a hairline border, 34dp, icon only. */
-@Composable
-private fun DeckHeaderIcon(
-    iconRes: Int,
-    contentDescription: String,
-    tint: Color = DeckPalette.onSurfaceVariant,
-    onClick: () -> Unit,
-) {
-    val interaction = remember { MutableInteractionSource() }
-    Box(
-        modifier = Modifier
-            .size(34.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(DeckPalette.surface)
-            .border(1.dp, DeckPalette.line, RoundedCornerShape(10.dp))
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            painter = painterResource(iconRes),
-            contentDescription = contentDescription,
-            tint = tint,
-            modifier = Modifier.size(17.dp),
-        )
-    }
-}
-
 private fun handleTabClick(tab: TabType, state: XServerDrawerState) {
+    DeckSound.play(DeckSound.SELECT)
     if (tab == TabType.TASK_MANAGER && state.selectedTab.value != tab) state.onTaskManager?.run()
     state.selectTab(tab)
 }
@@ -731,24 +768,28 @@ private fun SectionHeader(title: String) {
 private fun ToggleRow(label: String, checked: Boolean, enabled: Boolean = true, onCheckedChange: (Boolean) -> Unit) {
     val accent = MaterialTheme.colorScheme.primary
     val accentDim = LocalAccentDim.current
+    val shape = RoundedCornerShape(12.dp)
+    // The whole row is the one focus target (A / tap flips it); the switch itself is display-only.
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .then(if (enabled) Modifier.consoleFocus(shape) else Modifier)
+            .clip(shape)
             .background(MaterialTheme.colorScheme.surface)
             .then(if (enabled) Modifier.clickable { onCheckedChange(!checked) } else Modifier.alpha(0.4f))
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .padding(horizontal = 14.dp, vertical = 13.dp)
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
+            fontSize = 15.sp,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f)
         )
         Switch(
             checked = checked,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = null,
             enabled = enabled,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = accent,
@@ -774,7 +815,15 @@ private fun LabeledSlider(
     format: (Float) -> String = { "%.0f".format(it) }
 ) {
     val accent = MaterialTheme.colorScheme.primary
-    Column(modifier = Modifier.padding(vertical = 4.dp).then(if (enabled) Modifier else Modifier.alpha(0.4f))) {
+    val shape = RoundedCornerShape(12.dp)
+    Column(
+        modifier = Modifier
+            .padding(vertical = 3.dp)
+            .then(if (enabled) Modifier.consoleFocus(shape) else Modifier.alpha(0.4f))
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -782,14 +831,16 @@ private fun LabeledSlider(
         ) {
             Text(
                 text = label,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodyMedium,
+                fontSize = 15.sp,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
                 text = format(value),
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodyMedium,
+                fontSize = 15.sp,
                 color = accent,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Bold
             )
         }
         Slider(
@@ -2412,6 +2463,7 @@ private fun ModeChipGrid(items: List<Triple<String, Boolean, () -> Unit>>, perRo
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
                             .weight(1f)
+                            .then(if (chipEnabled) Modifier.consoleFocus(RoundedCornerShape(8.dp), 1.04f) else Modifier)
                             .clip(RoundedCornerShape(8.dp))
                             .background(if (isOn && chipEnabled) DeckPalette.primary.copy(alpha = 0.16f) else DeckPalette.surfaceVariant)
                             .border(
@@ -2420,7 +2472,7 @@ private fun ModeChipGrid(items: List<Triple<String, Boolean, () -> Unit>>, perRo
                                 shape = RoundedCornerShape(8.dp)
                             )
                             .clickable(enabled = chipEnabled) { onTap() }
-                            .padding(vertical = 9.dp)
+                            .padding(vertical = 13.dp)
                     ) {
                         Text(
                             label,
@@ -2429,7 +2481,7 @@ private fun ModeChipGrid(items: List<Triple<String, Boolean, () -> Unit>>, perRo
                                 isOn         -> DeckPalette.primary
                                 else         -> DeckPalette.onBackground
                             },
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                             fontWeight = if (isOn && chipEnabled) FontWeight.SemiBold else FontWeight.Medium
                         )
                     }
@@ -2476,6 +2528,7 @@ private fun ToggleChipGrid(items: List<ToggleChipItem>, perRow: Int = 3) {
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
+                            .then(if (item.enabled) Modifier.consoleFocus(RoundedCornerShape(8.dp), 1.04f) else Modifier)
                             .clip(RoundedCornerShape(8.dp))
                             .background(if (isOn) DeckPalette.primary.copy(alpha = 0.16f) else DeckPalette.surfaceVariant)
                             .border(
@@ -2487,13 +2540,13 @@ private fun ToggleChipGrid(items: List<ToggleChipItem>, perRow: Int = 3) {
                                 if (item.enabled) Modifier.clickable { item.onToggle(!item.checked) }
                                 else Modifier.alpha(0.4f)
                             )
-                            .padding(horizontal = 6.dp, vertical = 9.dp)
+                            .padding(horizontal = 6.dp, vertical = 13.dp)
                     ) {
                         Text(
                             item.label,
                             color = if (isOn) DeckPalette.primary else DeckPalette.onBackground,
-                            fontSize = 12.sp,
-                            lineHeight = 14.sp,
+                            fontSize = 13.sp,
+                            lineHeight = 15.sp,
                             textAlign = TextAlign.Center,
                             fontWeight = if (isOn) FontWeight.SemiBold else FontWeight.Medium
                         )

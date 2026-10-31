@@ -1680,6 +1680,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
                 // Hide the on-handheld "playing on external display" badge while the menu is open so
                 // it doesn't overlap the drawer content.
                 XServerDialogState.INSTANCE.setMenuOpen(true);
+                // Take view focus so the pad / keyboard drive the menu (see dispatchKeyEvent).
+                drawerView.requestFocus();
                 // Menu owns the controller while open — flush a neutral state
                 // once so a held stick / pressed button / latched trigger from
                 // the last frame doesn't stay applied in the guest.
@@ -1713,7 +1715,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
         state.onClose                  = () -> runOnUiThread(() -> drawerLayout.closeDrawers());
         state.onKeyboard               = this::showGuestKeyboard;
         state.onInputControls          = () -> showInputControlsDialog();
-        state.onGraphicEngine          = () -> { XServerDrawerState.INSTANCE.selectTab(com.winhub.hernandez.ui.TabType.GRAPHICS); runOnUiThread(() -> drawerLayout.openDrawer(GravityCompat.START)); };
+        state.onGraphicEngine          = () -> { XServerDrawerState.INSTANCE.selectTab(com.winhub.hernandez.ui.TabType.GRAPHICS); runOnUiThread(() -> drawerLayout.openDrawer(GravityCompat.END)); };
         state.onVibration              = () -> showVibrationDialog();
         state.onOverlayOpacityChange   = () -> {
             float v = XServerDrawerState.INSTANCE.getOverlayOpacityValue();
@@ -2272,6 +2274,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
         // limiter, renderer) can be resolved against it below; each falls back to the container value.
         if (shortcutPath != null && !shortcutPath.isEmpty()) {
             shortcut = new Shortcut(container, new File(shortcutPath));
+            XServerDrawerState.INSTANCE.setGameTitle(shortcut.getName());
         }
 
         // In-game Friends tab (drawer): read the friends/chat opt-in once for this launch and start
@@ -6631,8 +6634,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
             return;
         }
         if (environment != null) {
-            if (!drawerLayout.isDrawerOpen(GravityCompat.START)) {
-                drawerLayout.openDrawer(GravityCompat.START);
+            if (!drawerLayout.isDrawerOpen(GravityCompat.END)) {
+                drawerLayout.openDrawer(GravityCompat.END);
             }
             else drawerLayout.closeDrawers();
         }
@@ -6641,8 +6644,8 @@ public class XServerDisplayActivity extends AppCompatActivity {
     private void openXServerDrawer() {
         if (environment != null) {
             releasePointerCaptureIfNeeded("open-drawer/shortcut");
-            if (!drawerLayout.isDrawerOpen(GravityCompat.START)) {
-                drawerLayout.openDrawer(GravityCompat.START);
+            if (!drawerLayout.isDrawerOpen(GravityCompat.END)) {
+                drawerLayout.openDrawer(GravityCompat.END);
             } else {
                 drawerLayout.closeDrawers();
             }
@@ -8049,7 +8052,7 @@ public class XServerDisplayActivity extends AppCompatActivity {
         touchpadView.setSensitivity(globalCursorSpeed);
         touchpadView.setMouseEnabled(!isMouseDisabled);
         touchpadView.setFourFingersTapCallback(() -> {
-            if (!drawerLayout.isDrawerOpen(GravityCompat.START)) drawerLayout.openDrawer(GravityCompat.START);
+            if (!drawerLayout.isDrawerOpen(GravityCompat.END)) drawerLayout.openDrawer(GravityCompat.END);
         });
         // The preference persists across launches but was never restored onto the view, so
         // Cursor to Touch silently reverted to off every session until it was toggled again.
@@ -9632,6 +9635,10 @@ public class XServerDisplayActivity extends AppCompatActivity {
             return true;
         }
         if (isSteamControllerShadowEvent(event.getDevice())) return true;
+        // The open menu gets the sticks / hat too (the framework turns the hat into D-pad keys).
+        if (drawerLayout != null && drawerLayout.isDrawerOpen(GravityCompat.END)) {
+            return super.dispatchGenericMotionEvent(event);
+        }
         // Controller-test isolation: while the Players popup is open, a game-controller AXIS event
         // drives ONLY the throwaway visualizer snapshot and is swallowed here — it never reaches
         // winHandler / touchpadView / the guest. Strictly gated on controllerTestActive so the normal
@@ -9679,6 +9686,18 @@ public class XServerDisplayActivity extends AppCompatActivity {
             return true;
         }
         if (isSteamControllerShadowEvent(event.getDevice())) return true;
+
+        // While the menu is open it owns the keyboard and pad: A becomes the confirm key the Compose
+        // controls understand, everything else goes to the focused control (B / Back close it).
+        if (drawerLayout != null && drawerLayout.isDrawerOpen(GravityCompat.END)) {
+            KeyEvent menuEvent = event;
+            if (event.getKeyCode() == KeyEvent.KEYCODE_BUTTON_A) {
+                menuEvent = new KeyEvent(event.getDownTime(), event.getEventTime(), event.getAction(),
+                        KeyEvent.KEYCODE_DPAD_CENTER, event.getRepeatCount(), event.getMetaState(),
+                        event.getDeviceId(), event.getScanCode(), event.getFlags(), event.getSource());
+            }
+            return super.dispatchKeyEvent(menuEvent);
+        }
 
         // Controller-test isolation: while the Players popup is open, a game-controller BUTTON event
         // drives ONLY the throwaway visualizer snapshot and is swallowed here (before the drawer-open

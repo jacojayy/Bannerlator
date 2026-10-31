@@ -867,6 +867,31 @@ private fun DeckHome(
             ),
         ).map { DeckXmbAction(it.label, it.icon, it.subtitle, it.danger, it.menu, null, it.onClick) }
     }
+    val details = current?.game?.let { g ->
+        buildList {
+            add("Store" to hubOriginLabel(current))
+            containers.find { it.id == g.containerId }?.let { add("Container" to it.name) }
+            add("Playtime" to hubPlaytimeLabel(context, current.title))
+            g.appId?.let { add("Steam AppID" to it.toString()) }
+        }
+    }.orEmpty()
+    fun toggleFavorite() {
+        val path = current?.game?.shortcutPath ?: return
+        favs = if (path in favs) favs - path else favs + path
+        context.getSharedPreferences("hub_prefs", Context.MODE_PRIVATE).edit().putStringSet("hub_favs", favs).apply()
+        Toast.makeText(context, if (path in favs) "Added to favourites" else "Removed from favourites", Toast.LENGTH_SHORT).show()
+    }
+    val playIntro = remember { !homeIntroPlayed }
+    var splash by remember { mutableStateOf(playIntro) }
+    val intro = remember { Animatable(if (playIntro) 0f else 1f) }
+    LaunchedEffect(Unit) {
+        if (playIntro) {
+            homeIntroPlayed = true
+            delay(650)
+            splash = false
+            intro.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 180f))
+        }
+    }
     val actions = current?.let { entry ->
         listOf(
             DeckMenuAction("Play", Icons.Filled.PlayArrow) { playEntry(entry) },

@@ -130,6 +130,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -350,7 +351,13 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
         if (backLayer.onBack?.invoke() != true && tabs.onBack?.invoke() != true) goBack()
     }
     val hintStep: (Int) -> Unit = { d -> stepSection(railSections, sectionNow, d) { section = it; deckDetail = null } }
-    LaunchedEffect(section, deckDetail) { tabs.bind(0) }
+    // Clear the previous page's sub-tabs as the page changes. A SideEffect runs before the new page's own
+    // LaunchedEffect bind, so the new page's tabs can never be wiped by this reset arriving late.
+    val boundFor = remember { arrayOfNulls<Any>(1) }
+    SideEffect {
+        val key = section to deckDetail
+        if (boundFor[0] != key) { boundFor[0] = key; tabs.bind(0) }
+    }
     // Park on the rail ONCE when the shell opens. Keying this on `section` re-parked the rail on
     // every section change, including changes triggered from inside the content, which is what
     // yanked the D-pad back to the sidebar and made the player redo the walk.

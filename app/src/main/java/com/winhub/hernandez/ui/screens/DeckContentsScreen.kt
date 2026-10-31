@@ -233,8 +233,7 @@ internal fun DeckContentsScreen(vm: ContentsHubViewModel = viewModel()) {
                     labels = tabLabels,
                     selected = tab,
                     onSelect = { tabs.select(it) },
-                    focusable = true,
-                    selectOnFocus = true,
+                    focusable = false,
                 )
                 Spacer(Modifier.height(12.dp))
             }
@@ -265,6 +264,7 @@ internal fun DeckContentsScreen(vm: ContentsHubViewModel = viewModel()) {
                             labels = tabLabels,
                             selected = tab,
                             onSelect = { tabs.select(it) },
+                            padFocus = false,
                             modifier = Modifier
                                 .width(200.dp)
                                 .fillMaxHeight()

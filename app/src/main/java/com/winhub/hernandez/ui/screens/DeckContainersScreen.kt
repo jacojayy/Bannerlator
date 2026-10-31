@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -51,7 +53,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SettingsBackupRestore
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -180,7 +181,7 @@ internal fun DeckContainersScreen(onEditContainer: (Int) -> Unit, vm: Containers
                 labels = listOf("Cronos", "Containers"),
                 selected = subtab,
                 onSelect = { tabs.select(it) },
-                selectOnFocus = true,
+                padFocus = false,
                 modifier = Modifier.width(200.dp).fillMaxHeight(),
             )
             Spacer(Modifier.width(16.dp))
@@ -841,17 +842,29 @@ private fun DeckContainerCard(
                     modifier = Modifier.size(22.dp),
                 )
             }
-            DropdownMenu(
-                expanded = menuOpen,
+            // A dialog, not a dropdown: a popup window has no focus owner, so the D-pad could never walk its items.
+            if (menuOpen) Dialog(
                 onDismissRequest = { menuOpen = false },
-                modifier = Modifier.background(DeckPalette.surfaceVariant),
+                properties = DialogProperties(usePlatformDefaultWidth = false),
             ) {
-                DeckMenuItem("Edit", Icons.Filled.Edit) { menuOpen = false; onEdit() }
-                DeckMenuItem("Duplicate", Icons.Filled.ContentCopy) { menuOpen = false; onDuplicate() }
-                DeckMenuItem("Remove", Icons.Filled.Delete) { menuOpen = false; onRemove() }
-                DeckMenuItem("Export", Icons.Filled.FileUpload) { menuOpen = false; onExport() }
-                DeckMenuItem("Backup / Restore save", Icons.Filled.SettingsBackupRestore) { menuOpen = false; onBackupRestore() }
-                DeckMenuItem("Properties", Icons.Filled.Info) { menuOpen = false; onInfo() }
+                Column(
+                    Modifier
+                        .fillMaxWidth(0.5f)
+                        .heightIn(max = 320.dp)
+                        .clip(DeckPalette.groupShape)
+                        .background(DeckPalette.surfaceVariant)
+                        .border(1.dp, DeckPalette.line, DeckPalette.groupShape)
+                        .deckDialogNav { menuOpen = false }
+                        .verticalScroll(rememberScrollState())
+                        .padding(vertical = 8.dp),
+                ) {
+                    DeckMenuItem("Edit", Icons.Filled.Edit) { menuOpen = false; onEdit() }
+                    DeckMenuItem("Duplicate", Icons.Filled.ContentCopy) { menuOpen = false; onDuplicate() }
+                    DeckMenuItem("Remove", Icons.Filled.Delete) { menuOpen = false; onRemove() }
+                    DeckMenuItem("Export", Icons.Filled.FileUpload) { menuOpen = false; onExport() }
+                    DeckMenuItem("Backup / Restore save", Icons.Filled.SettingsBackupRestore) { menuOpen = false; onBackupRestore() }
+                    DeckMenuItem("Properties", Icons.Filled.Info) { menuOpen = false; onInfo() }
+                }
             }
         }
     }

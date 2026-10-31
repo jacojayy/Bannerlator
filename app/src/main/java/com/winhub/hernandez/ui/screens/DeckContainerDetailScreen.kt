@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.focusGroup
@@ -208,8 +209,7 @@ internal fun DeckContainerDetailScreen(
                 labels = tabTitles,
                 selected = tab,
                 onSelect = { tabs.select(it) },
-                focusable = true,
-                selectOnFocus = true,
+                focusable = false,
                 scroll = true,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
             )
@@ -242,6 +242,7 @@ internal fun DeckContainerDetailScreen(
                     labels = tabTitles,
                     selected = tab,
                     onSelect = { tabs.select(it) },
+                    padFocus = false,
                     modifier = Modifier
                         .width(200.dp)
                         .fillMaxHeight()
@@ -791,6 +792,8 @@ internal fun DeckEditorCategoryRail(
     // Landing on a row selects it (D-pad browsing), and the selected row can be refocused by L2/R2.
     selectOnFocus: Boolean = false,
     selectedFocus: FocusRequester? = null,
+    // False for sub-tab rails: the pad switches them with L2/R2 only, so D-pad focus never lands on them (touch still taps).
+    padFocus: Boolean = true,
 ) {
     Column(
         // Scrollable: with many categories the tail ran off the bottom of the rail, so those
@@ -817,6 +820,7 @@ internal fun DeckEditorCategoryRail(
                     .height(48.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(bg)
+                    .focusProperties { canFocus = padFocus }
                     .then(if (isSel && selectedFocus != null) Modifier.focusRequester(selectedFocus) else Modifier)
                     .onFocusChanged { if (it.isFocused && selectOnFocus && !isSel) onSelect(i) }
                     .clickable { onSelect(i) }

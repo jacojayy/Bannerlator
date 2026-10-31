@@ -373,8 +373,7 @@ internal fun DeckSettingsScreen() {
                 labels = settingsTabs,
                 selected = settingsTab,
                 onSelect = { settingsTab = it; subTabs.select(it) },
-                focusable = true,
-                selectOnFocus = true,
+                focusable = false,
                 scroll = true,
                 modifier = Modifier.padding(horizontal = 22.dp, vertical = 4.dp),
             )
@@ -405,7 +404,7 @@ internal fun DeckSettingsScreen() {
                     labels = settingsTabs,
                     selected = settingsTab,
                     onSelect = { settingsTab = it; subTabs.select(it) },
-                    selectOnFocus = true,
+                    padFocus = false,
                     modifier = Modifier
                         .width(200.dp)
                         .fillMaxHeight()

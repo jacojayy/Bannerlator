@@ -1149,10 +1149,11 @@ private fun DeckHome(
                 ) {
                     // The tool's columns open beside the dropdown, level with the row that was picked.
                     val coverH = (maxHeight * 0.34f).coerceIn(96.dp, 168.dp)
+                    val topM = ((maxHeight - coverH * 0.95f - 12.dp - 160.dp) / 2).coerceIn(14.dp, 60.dp)
                     XmbNestedLayer(
                         xmbNav, xmbScope, maxWidth.value, maxHeight.value, maxHeight > maxWidth, Deck.primary,
                         xmbSc?.name.orEmpty(), xmbSc?.icon, actions.map { it.icon }, xmbRootSel,
-                        anchorY = coverH.value * 0.95f + 26f, baseX = 266f, besideRoot = true,
+                        anchorY = (topM + coverH * 0.95f + 12.dp).value, baseX = 266f, besideRoot = true,
                     )
                 }
             }
@@ -2298,7 +2299,8 @@ private fun DeckHomeCarousel(
                             confirm -> {
                                 if (fresh) {
                                     val action = actions.getOrNull(menuIdx)
-                                    onMode(HomeMode.GAMES)
+                                    // A tool's columns open beside the dropdown, so it stays open then.
+                                    if (!(xmbRows && action?.nested == true)) onMode(HomeMode.GAMES)
                                     action?.onClick?.invoke()
                                 }
                                 true
@@ -2331,7 +2333,9 @@ private fun DeckHomeCarousel(
         // Quick menu layout: the row folds to half size at the top, the menu hangs under the chosen cover.
         // The XMB dropdown folds the row less (the Deck XMB keeps its cover large) and hides the neighbours.
         val menuScale = if (xmbRows) 0.95f else 0.5f
-        val optsY = baseHPx * (menuScale / 2f) + with(density) { 14.dp.toPx() }
+        // The XMB dropdown shows four rows; the cover and the rows are centred as one block so the cover isn't pushed to the top.
+        val topMargin = if (xmbRows) ((maxHeight - baseH * menuScale - 12.dp - rowH * 4) / 2).coerceIn(14.dp, 60.dp) else 14.dp
+        val optsY = baseHPx * (menuScale / 2f) + with(density) { topMargin.toPx() }
         val menuTopPx = optsY + baseHPx * (menuScale / 2f) + with(density) { 12.dp.toPx() }
         val titleMax = (maxWidth - x0 - baseW * 1.35f - 40.dp - (if (maxWidth > 560.dp) 230.dp else 0.dp)).coerceAtLeast(120.dp)
 
@@ -2636,9 +2640,11 @@ private fun DeckHomeCarousel(
                                 translationX = x0Px - (1f - menuT.value) * 12.dp.toPx()
                                 translationY = menuTopPx + rel * rowH.toPx()
                                 // Rows already passed fade out above the focused one, like the XMB.
-                                alpha = menuT.value * (1f + rel).coerceIn(0f, 1f) *
-                                    // The XMB dropdown is short: rows that would run off the bottom fade out.
-                                    (if (xmbRows) ((hPx - translationY) / rowH.toPx() - 0.5f).coerceIn(0f, 1f) else 1f)
+                                // The XMB dropdown keeps clear of the cover: rows scrolled past vanish at its top edge, and only
+                                // four rows show below.
+                                alpha = menuT.value *
+                                    (if (xmbRows) (1f + 3f * rel).coerceIn(0f, 1f) else (1f + rel).coerceIn(0f, 1f)) *
+                                    (if (xmbRows) ((menuTopPx + 4f * rowH.toPx() - translationY) / rowH.toPx()).coerceIn(0f, 1f) else 1f)
                             }
                             .height(rowH)
                             .clip(RoundedCornerShape(10.dp))
@@ -2646,7 +2652,7 @@ private fun DeckHomeCarousel(
                                 // Taps wait while one of the tools' columns is open beside the dropdown.
                                 if (!menuHidden) detectTapGestures {
                                     menuIdx = idx
-                                    onMode(HomeMode.GAMES)
+                                    if (!(xmbRows && action.nested)) onMode(HomeMode.GAMES)
                                     action.onClick()
                                 }
                             }

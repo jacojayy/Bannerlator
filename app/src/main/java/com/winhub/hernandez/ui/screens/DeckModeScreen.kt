@@ -268,7 +268,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     // still works as before, focus never disappears.
     val platformInputMode = LocalInputModeManager.current
     val deckInputMode = remember(platformInputMode) { DeckInputModeManager(platformInputMode) }
-    var introDone by remember { mutableStateOf(false) }
+    var introDone by remember { mutableStateOf(DeckBoot.shown) }
     var section by remember { mutableStateOf("home") }
     var graphicPane by remember { mutableStateOf("gpu") }
     var deckDetail by remember { mutableStateOf<Int?>(null) }
@@ -311,6 +311,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     val sectionNow by rememberUpdatedState(section)
     DisposableEffect(Unit) {
         DeckHardKeys.handler = handler@{ code ->
+            if (DeckConsole.boot) return@handler false
             if (DeckConsole.screensaver) {
                 DeckConsole.poke()
                 return@handler true
@@ -408,6 +409,10 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 .drawBehind { drawDeckCornerGlow(Deck.primary) }
                 .deckTouchTracker()
                 .onPreviewKeyEvent { e ->
+                    if (DeckConsole.boot) {
+                        if (e.type == KeyEventType.KeyDown && (e.key == Key.ButtonA || e.key == Key.Enter || e.key == Key.DirectionCenter || e.key == Key.ButtonStart)) DeckConsole.boot = false
+                        return@onPreviewKeyEvent true
+                    }
                     if (DeckConsole.screensaver) { DeckConsole.poke(); return@onPreviewKeyEvent true }
                     if (e.type == KeyEventType.KeyDown) { DeckTouchMode.touch = false; DeckConsole.poke() }
                     if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -463,6 +468,10 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
             .background(Deck.background)
             .deckTouchTracker()
             .onPreviewKeyEvent { e ->
+                if (DeckConsole.boot) {
+                    if (e.type == KeyEventType.KeyDown && (e.key == Key.ButtonA || e.key == Key.Enter || e.key == Key.DirectionCenter || e.key == Key.ButtonStart)) DeckConsole.boot = false
+                    return@onPreviewKeyEvent true
+                }
                 if (DeckConsole.screensaver) { DeckConsole.poke(); return@onPreviewKeyEvent true }
                 if (e.type == KeyEventType.KeyDown) { DeckTouchMode.touch = false; DeckConsole.poke() }
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -521,7 +530,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     }
         DeckConsoleOverlays(onGo = { key -> section = key; deckDetail = null })
         if (!introDone) {
-            DeckIntro(onDone = { introDone = true })
+            DeckBootScreen(onDone = { introDone = true })
         }
         }
     }

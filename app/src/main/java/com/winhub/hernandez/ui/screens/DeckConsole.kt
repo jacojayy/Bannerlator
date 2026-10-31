@@ -73,13 +73,33 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.height
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import com.winhub.hernandez.R
+import com.winhub.hernandez.store.AmazonUserData
+import com.winhub.hernandez.store.EpicUserData
+import com.winhub.hernandez.store.GogUserData
+import com.winhub.hernandez.store.SteamSessionManager
 import com.winhub.hernandez.store.download.DownloadRegistry
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 
 /** Shell-wide console state: the Start-button quick menu, the idle screensaver and the idle clock. */
 internal object DeckConsole {
     var quickMenu by mutableStateOf(false)
     var screensaver by mutableStateOf(false)
+    var boot by mutableStateOf(false)
     private var lastInputMs = SystemClock.uptimeMillis()
 
     /** Any input counts as activity and wakes the screensaver. */
@@ -410,5 +430,123 @@ private fun QuickStep(symbol: String, onClick: () -> Unit) {
             .clickable(interactionSource = src, indication = null, onClick = onClick),
     ) {
         Text(symbol, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** The launch screen shows once per app start, not every time the Deck shell is recomposed. */
+internal object DeckBoot {
+    var shown = false
+}
+
+/**
+ * Launch screen: the app mark over the Deck glow while the store services come up - Steam's session is
+ * really connected (bounded wait), the other stores report their saved sign-in. Tap or A skips it; it
+ * ends by itself once every store has answered, and never shows again until the app is restarted.
+ */
+@Composable
+internal fun DeckBootScreen(onDone: () -> Unit) {
+    val appContext = LocalContext.current.applicationContext
+    remember { DeckConsole.boot = true }
+    val names = remember { listOf("Steam", "Epic", "GOG", "Amazon") }
+    // 0 waiting, 1 working, 2 ready, 3 needs attention
+    val status = remember { mutableStateMapOf<String, Pair<Int, String>>() }
+    LaunchedEffect(Unit) {
+        snapshotFlow { DeckConsole.boot }.first { !it }
+        DeckBoot.shown = true
+        onDone()
+    }
+    LaunchedEffect(Unit) {
+        val started = SystemClock.uptimeMillis()
+        names.forEach { status[it] = 0 to "Waiting" }
+        coroutineScope {
+            launch {
+                status["Steam"] = 1 to "Connecting"
+                val result = withContext(Dispatchers.IO) { SteamSessionManager.ensureSession(appContext, 12_000L) }
+                status["Steam"] = when (result) {
+                    is SteamSessionManager.SessionResult.Ok -> 2 to "Online"
+                    is SteamSessionManager.SessionResult.NeedsSignIn -> 3 to "Sign in needed"
+                    is SteamSessionManager.SessionResult.Offline -> 3 to "Offline"
+                }
+            }
+            launch {
+                withContext(Dispatchers.IO) { DownloadRegistry.init(appContext) }
+                listOf("Epic", "GOG", "Amazon").forEach { name ->
+                    status[name] = 1 to "Checking"
+                    delay(220)
+                    val signedIn = withContext(Dispatchers.IO) {
+                        when (name) {
+                            "Epic" -> EpicUserData.cached(appContext) != null
+                            "GOG" -> GogUserData.cached(appContext) != null
+                            else -> AmazonUserData.cached(appContext) != null
+                        }
+                    }
+                    status[name] = if (signedIn) 2 to "Signed in" else 3 to "Not signed in"
+                }
+            }
+        }
+        val rest = 1_400L - (SystemClock.uptimeMillis() - started)
+        if (rest > 0) delay(rest)
+        DeckConsole.boot = false
+    }
+    val pulse by rememberInfiniteTransition(label = "boot").animateFloat(
+        initialValue = 0.96f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(tween(1_400), RepeatMode.Reverse),
+        label = "bootPulse",
+    )
+    val accent = Deck.primary
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Deck.background)
+            .drawBehind {
+                val c = Offset(size.width * 0.5f, size.height * 0.38f)
+                drawCircle(Brush.radialGradient(listOf(accent.copy(alpha = 0.28f), Color.Transparent), c, size.width * 0.6f), size.width * 0.6f, c)
+            }
+            .pointerInput(Unit) { detectTapGestures { DeckConsole.boot = false } },
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Image(
+                painter = painterResource(R.drawable.deck_boot_logo),
+                contentDescription = "WinHub",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.size(120.dp).graphicsLayer { scaleX = pulse; scaleY = pulse },
+            )
+            Text("WinHub", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+            Text("Starting services", color = Deck.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(bottom = 10.dp))
+            names.forEach { name ->
+                val (state, detail) = status[name] ?: (0 to "Waiting")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.width(230.dp).height(26.dp),
+                ) {
+                    Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+                        if (state == 1) {
+                            CircularProgressIndicator(color = accent, strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
+                        } else {
+                            Box(
+                                Modifier.size(8.dp).clip(CircleShape).background(
+                                    when (state) {
+                                        2 -> Color(0xFF3DDC84)
+                                        3 -> Deck.attention
+                                        else -> Deck.line
+                                    },
+                                ),
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(72.dp))
+                    Text(detail, color = Deck.onSurfaceVariant, fontSize = 12.sp, maxLines = 1)
+                }
+            }
+        }
+        Text(
+            "A / tap to skip",
+            color = Deck.onSurfaceVariant.copy(alpha = 0.6f),
+            fontSize = 12.sp,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
+        )
     }
 }

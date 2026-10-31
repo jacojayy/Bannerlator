@@ -165,6 +165,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // A fresh open of the app plays the services launch screen again; rotations and returns do not.
+        if (savedInstanceState == null) com.winhub.hernandez.ui.screens.DeckBoot.shown = false
         AppCompatDelegate.setCompatVectorFromResourcesEnabled(true)
         // Wire the AndroidX cold-start splash BEFORE super.onCreate so the OS splash bridges the gap
         // to our first Compose frame; hold it only until the UI is ready to draw (set just below).

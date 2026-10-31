@@ -83,9 +83,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import com.winhub.hernandez.R
-import com.winhub.hernandez.store.AmazonUserData
-import com.winhub.hernandez.store.EpicUserData
-import com.winhub.hernandez.store.GogUserData
+import com.winhub.hernandez.ui.Screen
 import com.winhub.hernandez.store.SteamSessionManager
 import com.winhub.hernandez.store.download.DownloadRegistry
 import kotlinx.coroutines.Dispatchers
@@ -474,11 +472,14 @@ internal fun DeckBootScreen(onDone: () -> Unit) {
                     status[name] = 1 to "Checking"
                     delay(220)
                     val signedIn = withContext(Dispatchers.IO) {
-                        when (name) {
-                            "Epic" -> EpicUserData.cached(appContext) != null
-                            "GOG" -> GogUserData.cached(appContext) != null
-                            else -> AmazonUserData.cached(appContext) != null
-                        }
+                        deckSignedIn(
+                            appContext,
+                            when (name) {
+                                "Epic" -> Screen.Epic
+                                "GOG" -> Screen.Gog
+                                else -> Screen.Amazon
+                            },
+                        )
                     }
                     status[name] = if (signedIn) 2 to "Signed in" else 3 to "Not signed in"
                 }

@@ -183,11 +183,13 @@ private fun launchDeckLogin(context: Context, screen: Screen) {
 }
 
 /** Live sign-in, straight off each store's own session store. */
-private fun deckSignedIn(context: Context, screen: Screen): Boolean = when (screen) {
-    Screen.Gog -> GogUserData.cached(context) != null
-    Screen.Epic -> EpicUserData.cached(context) != null
-    Screen.Amazon -> AmazonUserData.cached(context) != null
-    Screen.Steam -> SteamSessionManager.isLoggedOn()
+internal fun deckSignedIn(context: Context, screen: Screen): Boolean = when (screen) {
+    // The saved credentials, not the profile cache: that cache is only filled later by the Profile tab,
+    // so right after a login the store still read "signed out".
+    Screen.Gog -> !context.getSharedPreferences("bh_gog_prefs", 0).getString("access_token", null).isNullOrEmpty()
+    Screen.Epic -> com.winhub.hernandez.store.EpicCredentialStore.load(context) != null
+    Screen.Amazon -> com.winhub.hernandez.store.AmazonCredentialStore.isLoggedIn(context)
+    Screen.Steam -> SteamSessionManager.isLoggedOn() || SteamPrefs.isLoggedIn
     else -> false
 }
 

@@ -121,28 +121,54 @@ private fun XmbScope.set(p: XmbPrefs, key: String, value: String?) { p.put(key, 
 
 // ── Settings: the section list (L1/R1 cycles the open section) ─────────────────────────────────────
 
-private val SECTION_TITLES = listOf("General", "Win Components", "Env Vars", "Advanced", "Controller")
+// The sections follow the pop-up editor's tabs: General, Graphics, Win Components, Env Vars, Advanced, Controller (+ TV while a
+// screen is plugged in or the game launches on one). General, Graphics and TV share one row builder and split it by key.
+private val GFX_KEYS = setOf(
+    "hGfx", "gfxDriver", "gfxConfig", "wrappers", com.winhub.hernandez.core.UnrealHdr.EXTRA, "unrealHdrNvidia",
+    "dxWrapper", "dxConfig", "renderer", "vkNative", "vkColors", "vkPresent", "vkDriver", "renderScale",
+)
+private val TV_KEYS = setOf("hTv", "tvDisplay", "tvLaunch", "tvModeId", "tvMatchRes", "tvHdr", "tvNoteUnplug", "tvNoteTouch")
 
 internal fun xmbSettingsMenu(xmb: XmbScope, shortcut: Shortcut, host: XmbGameHost): XmbMenu {
     val p = XmbPrefs(xmb.context, shortcut).also { it.loadAsync(xmb) }
+    val tvOn = runCatching {
+        com.winhub.hernandez.display.ExternalDisplay.find(xmb.context) != null ||
+            com.winhub.hernandez.display.ExternalDisplay.launchOnTv(shortcut)
+    }.getOrDefault(false)
+    val titles = listOf("General", "Graphics", "Win Components", "Env Vars", "Advanced", "Controller") + if (tvOn) listOf("TV") else emptyList()
     fun section(n: Int): XmbMenu = when (n) {
         0 -> xmbGeneralMenu(xmb, p, host)
-        1 -> xmbWinComponentsMenu(xmb, shortcut)
-        2 -> xmbEnvVarsMenu(xmb, shortcut)
-        3 -> xmbAdvancedMenu(xmb, shortcut)
-        else -> xmbControllerMenu(xmb, p)
-    }.also { it.siblings = XmbSiblings(n, SECTION_TITLES.size, ::section) { i -> "sec$i" } }
-    val icons = listOf(Icons.Filled.Settings, Icons.Filled.Widgets, Icons.Filled.Extension, Icons.Filled.Tune, Icons.Filled.Gamepad)
-    val subs = listOf("Display, graphics, audio", "DirectX, VC++ runtimes…", "Environment variables", "Box64 / FEXCore, CPU cores, ReShade…", "Input, player slots, motion aim")
+        1 -> xmbGraphicsMenu(xmb, p, host)
+        2 -> xmbWinComponentsMenu(xmb, shortcut)
+        3 -> xmbEnvVarsMenu(xmb, shortcut)
+        4 -> xmbAdvancedMenu(xmb, shortcut)
+        5 -> xmbControllerMenu(xmb, p)
+        else -> xmbTvMenu(xmb, p, host)
+    }.also { it.siblings = XmbSiblings(n, titles.size, ::section) { i -> "sec$i" } }
+    val icons = listOf(Icons.Filled.Settings, Icons.Filled.DesktopWindows, Icons.Filled.Widgets, Icons.Filled.Extension, Icons.Filled.Tune, Icons.Filled.Gamepad, Icons.Filled.Tv)
+    val subs = listOf(
+        "Game, display, frame generation, audio", "Driver, DX wrapper, renderer", "DirectX, VC++ runtimes…", "Environment variables",
+        "Box64 / FEXCore, CPU cores, ReShade…", "Input, player slots, motion aim", "External display",
+    )
     return XmbMenu("Settings", Icons.Filled.Settings) {
-        SECTION_TITLES.mapIndexed { n, t -> XmbRow.Link("sec$n", t, icons[n], subtitle = subs[n]) { section(n) } }
+        titles.mapIndexed { n, t -> XmbRow.Link("sec$n", t, icons[n], subtitle = subs[n]) { section(n) } }
     }
 }
 
 // ── General ─────────────────────────────────────────────────────────────────────────────────────────
 
 internal fun xmbGeneralMenu(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): XmbMenu =
-    XmbMenu("General", Icons.Filled.Settings) { generalRows(this, p, host) }
+    XmbMenu("General", Icons.Filled.Settings) { generalRows(this, p, host).filter { it.key !in GFX_KEYS && it.key !in TV_KEYS } }
+
+internal fun xmbGraphicsMenu(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): XmbMenu =
+    XmbMenu("Graphics", Icons.Filled.DesktopWindows) {
+        val g = generalRows(this, p, host).filter { it.key in GFX_KEYS }
+        // The editor lists the render scale last in Graphics; it is built with Display, so move it.
+        g.filter { it.key == "hGfx" } + g.filter { it.key != "hGfx" && it.key != "renderScale" } + g.filter { it.key == "renderScale" }
+    }
+
+internal fun xmbTvMenu(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): XmbMenu =
+    XmbMenu("TV", Icons.Filled.Tv) { generalRows(this, p, host).filter { it.key in TV_KEYS } }
 
 private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<XmbRow> {
     val s = p.shortcut
@@ -379,6 +405,7 @@ private fun generalRows(xmb: XmbScope, p: XmbPrefs, host: XmbGameHost): List<Xmb
     val fg = p.ex("frameGenEngine", c.frameGenEngine).let { if (it == "bionic" || it == "lsfg") "lsfg-native" else it }
     val lsfgDll = File(p.context.filesDir, "lsfg-vk/Lossless.dll").isFile
     val fgShown = fgLabels[fgEngines.indexOf(fg).coerceAtLeast(0)]
+    rows += XmbRow.Header("hFg", "Frame generation")
     rows += XmbRow.Choice("frameGen", "Frame generation", Icons.Filled.Speed, fgLabels, fgShown,
         subtitle = if (!lsfgDll) "Import a Lossless.dll in Settings to enable LSFG" else null,
         disabledReason = when {

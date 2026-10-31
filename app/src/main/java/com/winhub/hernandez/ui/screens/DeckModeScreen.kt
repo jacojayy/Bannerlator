@@ -644,7 +644,7 @@ private fun DeckHome(
         }
         context.getSharedPreferences("hub_prefs", Context.MODE_PRIVATE)
             .edit().putString("last_played", game.shortcutPath).apply()
-        launchSteam = game.appId != null || game.store == "Steam"
+        launchSteam = game.store == "Steam"
         scope.launch(Dispatchers.IO) {
             val shortcut = runCatching {
                 // Read the container fresh from disk for THIS launch. `containers` is the list the
@@ -686,7 +686,7 @@ private fun DeckHome(
                 if (shortcut == null) {
                     Toast.makeText(context, "That game's shortcut is missing — re-add it", Toast.LENGTH_SHORT).show()
                 } else {
-                    launchMethodSteam = game.appId != null || game.store == "Steam"
+                    launchMethodSteam = game.store == "Steam"
                     launchMethodFor = shortcut
                 }
             }
@@ -777,7 +777,7 @@ private fun DeckHome(
                         .thenByDescending { stats.getLong("${it.title}_playtime", 0L) },
                 )
             2 -> all.filter { it.game?.shortcutPath in favs }
-            3 -> all.filter { it.game?.store != null || it.game?.appId != null }
+            3 -> all.filter { it.game?.store != null }
             else -> all
         }
     }

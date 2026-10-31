@@ -755,7 +755,8 @@ internal fun hubHasPlaytime(context: Context, name: String): Boolean =
 /** "Steam" / "Epic" / "GOG" / "Amazon" for store-added games, "Custom" for hand-added ones. */
 internal fun hubOriginLabel(entry: HubEntry): String =
     entry.game?.store?.takeIf { it.isNotBlank() && !it.equals("null", true) }
-        ?: if (entry.game?.appId != null) "Steam" else "Custom"
+        // An appId alone only means the name matched a Steam title (cover lookup), not that the game is from Steam.
+        ?: "Custom"
 
 // ── Where an added game lives: an existing container (Master) vs its own clone (Cronos) ──────────
 internal enum class HubAddMode { MASTER, CRONOS }

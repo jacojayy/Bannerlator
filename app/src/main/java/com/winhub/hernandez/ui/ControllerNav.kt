@@ -73,7 +73,7 @@ private class ControllerFocusInstance(private val color: Color) : IndicationInst
         if (pressed.value) {
             drawRect(color = color.copy(alpha = 0.16f))
         }
-        if (focused.value) {
+        if (focused.value && !com.winhub.hernandez.ui.screens.DeckTouchMode.touch) {
             val stroke = 3.dp.toPx()
             val half = stroke / 2f
             val radius = 10.dp.toPx()

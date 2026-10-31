@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlin.math.abs
 import android.widget.VideoView
@@ -300,6 +301,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     val sectionNow by rememberUpdatedState(section)
     DisposableEffect(Unit) {
         DeckHardKeys.handler = handler@{ code ->
+            DeckTouchMode.touch = false
             if (editTracker.editing) return@handler false
             when (code) {
                 android.view.KeyEvent.KEYCODE_BUTTON_L1 -> { stepSection(railSections, sectionNow, -1) { section = it; deckDetail = null }; true }
@@ -382,7 +384,9 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                 .background(Deck.background)
                 // Behind the bar too, so a see-through top bar shows the page glow.
                 .drawBehind { drawDeckCornerGlow(Deck.primary) }
+                .deckTouchTracker()
                 .onPreviewKeyEvent { e ->
+                    if (e.type == KeyEventType.KeyDown) DeckTouchMode.touch = false
                     if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (e.key) {
                         Key.ButtonB -> {
@@ -433,7 +437,9 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .background(Deck.background)
+            .deckTouchTracker()
             .onPreviewKeyEvent { e ->
+                if (e.type == KeyEventType.KeyDown) DeckTouchMode.touch = false
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (e.key) {
                     Key.ButtonB -> {
@@ -1087,6 +1093,16 @@ private fun DeckWordmark() {
                 .clip(CircleShape)
                 .background(Deck.primary),
         )
+    }
+}
+
+/** Flags touch input (observed before the children, never consumed) so focus rings can hide. */
+private fun Modifier.deckTouchTracker(): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope {
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            if (event.changes.any { it.pressed }) DeckTouchMode.touch = true
+        }
     }
 }
 

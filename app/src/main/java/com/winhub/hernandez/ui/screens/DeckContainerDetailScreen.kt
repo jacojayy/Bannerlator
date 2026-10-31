@@ -594,11 +594,14 @@ internal fun DeckContainerDetailScreen(
 
                     5 -> {
                         DeckGroup("Environment") {
-                        DeckExpandableRow(
+                        DeckConfigSection(
                             label = "Env Vars",
                             hint = "KEY=value pairs",
-                            expanded = openSection == "envVars",
-                            onToggle = { openSection = if (openSection == "envVars") null else "envVars" },
+                            title = "Env Vars",
+                            sectionKey = "envVars",
+                            style = configEditorStyle,
+                            openSection = openSection,
+                            onOpen = { openSection = it },
                         ) {
                             DeckEnvVarsEditor(
                                 value = viewModel.envVarsStr,

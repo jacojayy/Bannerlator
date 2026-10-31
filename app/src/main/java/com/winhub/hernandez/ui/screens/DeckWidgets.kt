@@ -296,7 +296,7 @@ internal fun DeckDragFrame(
             }
             .drawWithContent {
                 drawContent()
-                if (hasFocus && armed && right.value > left.value) {
+                if (hasFocus && armed && !DeckTouchMode.touch && right.value > left.value) {
                     val g = gap.toPx()
                     val radius = shape.topStart.toPx(
                         Size(right.value - left.value, bottom.value - top.value),
@@ -334,7 +334,7 @@ internal fun Modifier.deckOuterFocusStroke(
     val focused by interaction.collectIsFocusedAsState()
     return drawWithContent {
         drawContent()
-        if (focused) {
+        if (focused && !DeckTouchMode.touch) {
             // Drawn INSIDE the bounds: a ring painted outside is clipped away by the caller's
             // .clip(shape) (hero banner, blue buttons, store cards), which is why they had no stroke.
             val sw = strokeWidth.toPx()
@@ -368,7 +368,7 @@ internal fun Modifier.deckSelfFocusStroke(
         .onFocusChanged { focused = it.isFocused }
         .drawWithContent {
             drawContent()
-            if (!focused) return@drawWithContent
+            if (!focused || DeckTouchMode.touch) return@drawWithContent
             // Inset, for the same reason as deckOuterFocusStroke: clips eat an outer ring.
             val sw = strokeWidth.toPx()
             val inset = sw / 2f
@@ -443,10 +443,19 @@ internal fun Modifier.deckFocusBorder(
     focusColor: Color = DeckPalette.primary,
 ): Modifier {
     val focused by interaction.collectIsFocusedAsState()
-    return border(if (focused) 2.dp else 1.dp, if (focused) focusColor else base, shape)
+    val ring = focused && !DeckTouchMode.touch
+    return border(if (ring) 2.dp else 1.dp, if (ring) focusColor else base, shape)
 }
 
 /** DroidDeck's own ease: quick off the mark, then a long glide — the "dragged" feel. */
+/**
+ * True after the last input was a touch, false after the last key. Every focus ring is hidden while it
+ * is set: a touch leaves Compose focus on the tapped control, and that ring used to stay painted.
+ */
+internal object DeckTouchMode {
+    var touch by mutableStateOf(false)
+}
+
 /** Activity-level hook for the Deck's shoulder/trigger buttons, so they never depend on Compose focus. */
 internal object DeckHardKeys {
     @Volatile var handler: ((Int) -> Boolean)? = null

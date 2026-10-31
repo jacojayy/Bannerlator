@@ -288,6 +288,16 @@ internal fun DeckChoiceRowWithDownload(
  * also fail to take focus before the window is attached, leaving D-pad dead. Both listeners sit on
  * the dialog's decor view as a fallback: they only run when Compose did not handle the event.
  */
+/**
+ * Popups are vertical forms: Up/Down follow the focus order, so no row can be jumped over by the
+ * geometric beam search (the "1 - skip - 2" step); Left/Right keep the geometric search.
+ */
+private fun androidx.compose.ui.focus.FocusManager.stepForm(dir: FocusDirection): Boolean = when (dir) {
+    FocusDirection.Up -> moveFocusSafely(FocusDirection.Previous)
+    FocusDirection.Down -> moveFocusSafely(FocusDirection.Next)
+    else -> moveFocusOrStep(dir)
+}
+
 private var lastStepDir: FocusDirection? = null
 private var lastStepMs = 0L
 
@@ -313,11 +323,11 @@ private fun DeckDialogControllerBridge(
 
     fun walk(dir: FocusDirection): Boolean {
         if (deckStepIsDuplicate(dir)) return true
-        if (focusManager.moveFocusOrStep(dir)) return true
+        if (focusManager.stepForm(dir)) return true
         // Nothing in the dialog owns Compose focus yet: give the root focus, then walk.
         runCatching { view.requestFocus() }
         runCatching { rootFocus.requestFocus() }
-        return focusManager.moveFocusOrStep(dir)
+        return focusManager.stepForm(dir)
     }
 
     val motion = remember(view, focusManager, rootFocus) {
@@ -488,7 +498,7 @@ internal fun DeckConfigDialog(
                     } ?: return@onKeyEvent false
                     // A direction with no geometric target (the root just took focus, or the
                     // content is a single column) falls back to Next so the popup still walks.
-                    deckStepIsDuplicate(dir) || focusManager.moveFocusOrStep(dir)
+                    deckStepIsDuplicate(dir) || focusManager.stepForm(dir)
                 },
         ) {
             // Header

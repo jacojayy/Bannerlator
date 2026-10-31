@@ -1712,14 +1712,14 @@ private fun Modifier.deckGlassBlobs(accent: Color): Modifier = this.drawBehind {
     val b = Offset(size.width * 0.9f, size.height * 0.85f)
     val ra = size.width * 0.8f
     val rb = size.width * 0.9f
-    drawCircle(Brush.radialGradient(listOf(accent.copy(alpha = 0.8f), Color.Transparent), a, ra), ra, a)
-    drawCircle(Brush.radialGradient(listOf(Color(0xFF8E5BFF).copy(alpha = 0.7f), Color.Transparent), b, rb), rb, b)
+    drawCircle(Brush.radialGradient(listOf(Color.White.copy(alpha = 0.5f), Color.Transparent), a, ra), ra, a)
+    drawCircle(Brush.radialGradient(listOf(Color(0xFF9DB8D6).copy(alpha = 0.55f), Color.Transparent), b, rb), rb, b)
 }
 
 /** The liquid-glass face of the Add game card. */
 @Composable
 private fun DeckGlassAddFace(accent: Color) {
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(4.dp)
     Box(Modifier.fillMaxSize().deckGlassBlobs(accent), contentAlignment = Alignment.Center) {
         Box(Modifier.matchParentSize().deckGlass(shape, 1.4f))
         // A diagonal specular streak across the frost.
@@ -1868,13 +1868,13 @@ private fun DeckHomeCarousel(
             cSel = 0
             cJob = launch { animate(cPos.floatValue, 0f, animationSpec = settle) { v, _ -> cPos.floatValue = v } }
         }
-        launch { upT.animateTo(if (mode == HomeMode.STORES) 1f else 0f, tween(300, easing = DeckEase)) }
-        menuT.animateTo(if (mode == HomeMode.OPTIONS) 1f else 0f, tween(300, easing = DeckEase))
+        launch { upT.animateTo(if (mode == HomeMode.STORES) 1f else 0f, settle) }
+        menuT.animateTo(if (mode == HomeMode.OPTIONS) 1f else 0f, settle)
         if (mode != HomeMode.OPTIONS) menuVisible = false
     }
     LaunchedEffect(menuIdx) { menuPos.animateTo(menuIdx.toFloat(), tween(180, easing = DeckEase)) }
 
-    val cardShape = RoundedCornerShape(10.dp)
+    val cardShape = RoundedCornerShape(4.dp)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val baseH = (maxHeight * 0.34f).coerceIn(96.dp, 168.dp)
         val baseW = baseH * 2f / 3f
@@ -1894,7 +1894,7 @@ private fun DeckHomeCarousel(
         val gCenter = { hPx / 2f + (optsY - hPx / 2f) * menuT.value + (hPx / 2f) * upT.value }
         val gGrow = { 1f - upT.value }
         val gAlpha = { 1f - 0.4f * upT.value }
-        val gDim = { menuT.value }
+        val gDim = { 0.57f * menuT.value }
         val gPosNow = { gPos.floatValue }
         val cScale = { 0.55f + 0.45f * upT.value }
         val cCenter = { 2f + (hPx / 2f - 2f) * upT.value }
@@ -2018,7 +2018,7 @@ private fun DeckHomeCarousel(
                                         color = if (w > 0.02f) accent.copy(alpha = w) else Color.White.copy(alpha = 0.14f),
                                         topLeft = Offset(sw / 2f, sw / 2f),
                                         size = Size(size.width - sw, size.height - sw),
-                                        cornerRadius = CornerRadius(10.dp.toPx()),
+                                        cornerRadius = CornerRadius(4.dp.toPx()),
                                         style = Stroke(width = sw),
                                     )
                                 }
@@ -2074,7 +2074,7 @@ private fun DeckHomeCarousel(
                                         color = accent.copy(alpha = w),
                                         topLeft = Offset(sw / 2f, sw / 2f),
                                         size = Size(size.width - sw, size.height - sw),
-                                        cornerRadius = CornerRadius(10.dp.toPx()),
+                                        cornerRadius = CornerRadius(4.dp.toPx()),
                                         style = Stroke(width = sw),
                                     )
                                 }
@@ -2213,7 +2213,7 @@ private fun DeckHomeCarousel(
                                 alpha = menuT.value * (1f + rel).coerceIn(0f, 1f)
                             }
                             .height(rowH)
-                            .clip(CircleShape)
+                            .clip(RoundedCornerShape(10.dp))
                             .pointerInput(idx) {
                                 detectTapGestures {
                                     menuIdx = idx
@@ -2226,7 +2226,7 @@ private fun DeckHomeCarousel(
                         Box(
                             Modifier
                                 .size(28.dp)
-                                .clip(CircleShape)
+                                .clip(RoundedCornerShape(8.dp))
                                 .background(if (focused) accent else Color.White.copy(alpha = 0.10f)),
                             contentAlignment = Alignment.Center,
                         ) {

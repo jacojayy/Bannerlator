@@ -338,8 +338,10 @@ internal fun DeckStoreSideTabs(
                     .clip(shape)
                     .background(bg)
                     .border(
-                        width = if (isSel || focused) 2.dp else 1.dp,
-                        color = if (focused) Deck.primary else if (isSel) Deck.primary.copy(alpha = 0.6f) else Deck.line,
+                        // Selection alone draws the ring: a focus left on the old tab after L2/R2 or a
+                        // touch must not leave a second ring behind.
+                        width = if (isSel) 2.dp else 1.dp,
+                        color = if (isSel) Deck.primary else Deck.line,
                         shape = shape,
                     )
                     .then(if (isSel) Modifier.focusRequester(selectedFocus) else Modifier)

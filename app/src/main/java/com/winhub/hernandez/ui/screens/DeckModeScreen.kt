@@ -10,6 +10,17 @@ import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
 import android.graphics.drawable.Icon
 import android.widget.Toast
+import android.os.BatteryManager
+import android.os.Build
+import android.os.VibrationEffect
+import android.view.HapticFeedbackConstants
+import android.view.InputDevice
+import android.view.SoundEffectConstants
+import androidx.compose.animation.Crossfade
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.input.key.KeyEvent
+import com.winhub.hernandez.store.download.DownloadRegistry
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.spring
@@ -553,6 +564,13 @@ private fun DeckHome(
     val context = LocalContext.current
     val activity = context as Activity
     val scope = rememberCoroutineScope()
+    // L2/R2 switch the shelves (All / Recent / Favourites / Store games) through the shell's sub-tabs.
+    val deckTabs = LocalDeckTabs.current
+    LaunchedEffect(deckTabs) { deckTabs.bind(4) }
+    val shelf = deckTabs.index
+    var favs by remember {
+        mutableStateOf(context.getSharedPreferences("hub_prefs", Context.MODE_PRIVATE).getStringSet("hub_favs", emptySet()).orEmpty())
+    }
     var covers by remember { mutableStateOf<List<DeckCover>>(emptyList()) }
     var entries by remember { mutableStateOf<List<HubEntry>?>(null) }
     var containers by remember { mutableStateOf<List<Container>>(emptyList()) }
@@ -592,14 +610,13 @@ private fun DeckHome(
             covers = featuredCovers.map { (name, asset) ->
                 DeckCover(name, hueOf(name), decodeCover(context, asset))
             }
-            entries = HubGamesStore.load(context).map { g ->
-                HubEntry(g.name, g.coverPath?.let { BitmapFactory.decodeFile(it) }, g)
-            }
-            val loaded = entries.orEmpty()
             val lastPlayed = context.getSharedPreferences("hub_prefs", Context.MODE_PRIVATE)
                 .getString("last_played", null)
-            val lastIndex = loaded.indexOfFirst { it.game?.shortcutPath == lastPlayed }
-            selected = if (lastIndex >= 0) lastIndex else (loaded.size - 1).coerceAtLeast(0)
+            // The game you last played leads the row, so Home opens on "continue".
+            entries = HubGamesStore.load(context).map { g ->
+                HubEntry(g.name, g.coverPath?.let { BitmapFactory.decodeFile(it) }, g)
+            }.sortedByDescending { it.game?.shortcutPath == lastPlayed }
+            selected = 0
             containers = ContainerManager(context).also { it.reloadContainers() }.getContainers().toList()
         }
     }
@@ -627,8 +644,6 @@ private fun DeckHome(
         }
         context.getSharedPreferences("hub_prefs", Context.MODE_PRIVATE)
             .edit().putString("last_played", game.shortcutPath).apply()
-        selected = (entries.orEmpty().indexOfFirst { it.game?.shortcutPath == game.shortcutPath })
-            .takeIf { it >= 0 } ?: selected
         launchSteam = game.appId != null || game.store == "Steam"
         scope.launch(Dispatchers.IO) {
             val shortcut = runCatching {
@@ -751,7 +766,49 @@ private fun DeckHome(
     val wallCovers = remember(covers) {
         if (covers.isEmpty()) List(12) { index -> DeckCover("", index / 12f) } else covers
     }
-    val current = entries?.getOrNull(selected)
+    val lastPlayedPath = context.getSharedPreferences("hub_prefs", Context.MODE_PRIVATE).getString("last_played", null)
+    val visible = remember(entries, shelf, favs) {
+        val all = entries.orEmpty()
+        val stats = context.getSharedPreferences("playtime_stats", Context.MODE_PRIVATE)
+        when (shelf) {
+            1 -> all.filter { hubHasPlaytime(context, it.title) || it.game?.shortcutPath == lastPlayedPath }
+                .sortedWith(
+                    compareByDescending<HubEntry> { it.game?.shortcutPath == lastPlayedPath }
+                        .thenByDescending { stats.getLong("${it.title}_playtime", 0L) },
+                )
+            2 -> all.filter { it.game?.shortcutPath in favs }
+            3 -> all.filter { it.game?.store != null || it.game?.appId != null }
+            else -> all
+        }
+    }
+    LaunchedEffect(shelf) { selected = 0 }
+    val sel = selected.coerceIn(0, (visible.size - 1).coerceAtLeast(0))
+    val current = visible.getOrNull(sel)
+    val details = current?.game?.let { g ->
+        buildList {
+            add("Store" to hubOriginLabel(current))
+            containers.find { it.id == g.containerId }?.let { add("Container" to it.name) }
+            add("Playtime" to hubPlaytimeLabel(context, current.title))
+            g.appId?.let { add("Steam AppID" to it.toString()) }
+        }
+    }.orEmpty()
+    fun toggleFavorite() {
+        val path = current?.game?.shortcutPath ?: return
+        favs = if (path in favs) favs - path else favs + path
+        context.getSharedPreferences("hub_prefs", Context.MODE_PRIVATE).edit().putStringSet("hub_favs", favs).apply()
+        Toast.makeText(context, if (path in favs) "Added to favourites" else "Removed from favourites", Toast.LENGTH_SHORT).show()
+    }
+    val playIntro = remember { !homeIntroPlayed }
+    var splash by remember { mutableStateOf(playIntro) }
+    val intro = remember { Animatable(if (playIntro) 0f else 1f) }
+    LaunchedEffect(Unit) {
+        if (playIntro) {
+            homeIntroPlayed = true
+            delay(650)
+            splash = false
+            intro.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = 180f))
+        }
+    }
     val actions = current?.let { entry ->
         listOf(
             DeckMenuAction("Play", Icons.Filled.PlayArrow) { playEntry(entry) },
@@ -794,12 +851,30 @@ private fun DeckHome(
             covers = wallCovers,
             driftMs = if (covers.isEmpty()) 75_000 else 40_000,
         )
+        // The backdrop follows the focused game: its cover, blurred, crossfading as the selection moves.
+        Crossfade(targetState = current?.bitmap, animationSpec = tween(600), label = "homeBackdrop") { bmp ->
+            if (bmp != null) {
+                Image(
+                    bitmap = remember(bmp) { bmp.asImageBitmap() },
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().blur(18.dp).alpha(0.34f),
+                )
+            }
+        }
         DeckWallFade()
 
         DeckHomeCarousel(
-            entries = entries.orEmpty(),
-            loaded = entries != null,
-            selected = selected,
+            modifier = Modifier.graphicsLayer {
+                alpha = intro.value
+                translationY = (1f - intro.value) * 60.dp.toPx()
+            },
+            entries = visible,
+            loaded = entries != null && (visible.isNotEmpty() || entries.orEmpty().isEmpty()),
+            selected = sel,
+            favs = favs,
+            details = details,
+            onFavorite = { toggleFavorite() },
             onSelect = { selected = it },
             mode = homeMode,
             onMode = { homeMode = it },
@@ -814,7 +889,31 @@ private fun DeckHome(
                 color = DeckPalette.primary,
                 modifier = Modifier.align(Alignment.Center),
             )
+        } else if (visible.isEmpty() && entries.orEmpty().isNotEmpty()) {
+            Text(
+                "Nothing on this shelf yet - press Y on a game to favourite it",
+                color = DeckPalette.onSurfaceVariant,
+                fontSize = 14.sp,
+                modifier = Modifier.align(Alignment.Center),
+            )
         }
+
+        // Shelves (L2/R2) top centre, status top right.
+        DeckStretchyTabs(
+            labels = listOf("All", "Recent", "Favourites", "Store games"),
+            selected = shelf,
+            onSelect = { deckTabs.select(it) },
+            focusable = false,
+            fillWidth = false,
+            height = 30.dp,
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
+        )
+        DeckStatusStrip(Modifier.align(Alignment.TopEnd).padding(end = 16.dp, top = 12.dp))
+        AnimatedVisibility(
+            visible = splash,
+            exit = fadeOut(tween(450)),
+            modifier = Modifier.align(Alignment.Center),
+        ) { DeckWordmark() }
 
         if (addModeMenu) {
             DeckAddModeMenu(
@@ -993,6 +1092,7 @@ private fun DeckHome(
                                             } else {
                                                 val list = entries.orEmpty() + added
                                                 entries = list
+                                                deckTabs.select(0)
                                                 selected = list.lastIndex
                                                 Toast.makeText(context, "Added \"${added.title}\" to its own Cronos container", Toast.LENGTH_SHORT).show()
                                                 cronosReviewFor = created
@@ -1026,6 +1126,7 @@ private fun DeckHome(
                             } else {
                                 val list = entries.orEmpty() + added
                                 entries = list
+                                deckTabs.select(0)
                                 selected = list.lastIndex
                                 Toast.makeText(context, "Added \"${added.title}\"", Toast.LENGTH_SHORT).show()
                             }
@@ -1239,6 +1340,8 @@ private fun DrawScope.drawDeckCornerGlow(cornerAccent: Color) {
  * name to the right of the icon; unselected ones are just the icon. L1/R1 (handled by the shell)
  * switch sections, so this strip itself is not a focus target.
  */
+private const val SELECTED_TAB_WEIGHT = 2.4f
+
 @Composable
 private fun DeckTopTabs(
     sections: List<DeckSection>,
@@ -1263,15 +1366,16 @@ private fun DeckTopTabs(
     ) {
         val index = sections.indexOfFirst { it.key == selected }.coerceAtLeast(0)
         val padPx = with(density) { 8.dp.toPx() }
-        val cellPx = (with(density) { maxWidth.toPx() } - padPx * 2f) / sections.size
-        val showLabels = maxWidth / sections.size >= 84.dp
-        LaunchedEffect(index, cellPx) {
-            val s0 = padPx + index * cellPx
-            val e0 = s0 + cellPx
+        // The selected tab is wider (it carries its name); the total weight never changes, so the
+        // unit width is constant and the pill's target is exact before the glide even starts.
+        val unitPx = (with(density) { maxWidth.toPx() } - padPx * 2f) / (sections.size - 1 + SELECTED_TAB_WEIGHT)
+        LaunchedEffect(index, unitPx) {
+            val s0 = padPx + index * unitPx
+            val e0 = s0 + SELECTED_TAB_WEIGHT * unitPx
             val from = lastIndex
             lastIndex = index
-            if (from < 0 || from == index || placedAt != cellPx) {
-                placedAt = cellPx
+            if (from < 0 || from == index || placedAt != unitPx) {
+                placedAt = unitPx
                 start.snapTo(s0)
                 end.snapTo(e0)
                 return@LaunchedEffect
@@ -1309,7 +1413,7 @@ private fun DeckTopTabs(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center,
                     modifier = Modifier
-                        .weight(1f)
+                        .weight(if (current) SELECTED_TAB_WEIGHT else 1f)
                         .clip(RoundedCornerShape(10.dp))
                         .focusProperties { canFocus = false }
                         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
@@ -1323,7 +1427,7 @@ private fun DeckTopTabs(
                         tint = if (current) Deck.primary else Deck.onSurfaceVariant,
                         modifier = Modifier.size(20.dp),
                     )
-                    if (showLabels) {
+                    if (current) {
                         Text(
                             text = item.label,
                             color = if (current) Deck.primary else Deck.onSurfaceVariant,
@@ -1656,6 +1760,45 @@ private fun DeckIntro(onDone: () -> Unit) {
     }
 }
 
+/** The intro (wordmark, row rising into place) plays once per process, not on every visit to Home. */
+private var homeIntroPlayed = false
+
+/** Clock, battery, a controller icon while a pad is connected, and a downloads badge. */
+@Composable
+private fun DeckStatusStrip(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var tick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        DownloadRegistry.init(context)
+        while (true) {
+            delay(15_000)
+            tick++
+        }
+    }
+    val clock = remember(tick) { android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date()) }
+    val battery = remember(tick) {
+        context.getSystemService(BatteryManager::class.java)?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+    }
+    val pad = remember(tick) {
+        InputDevice.getDeviceIds().any { id ->
+            InputDevice.getDevice(id)?.let { (it.sources and InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD } == true
+        }
+    }
+    val downloads by DownloadRegistry.entries.collectAsState()
+    val active = downloads.count { it.isActive }
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (active > 0) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Download, contentDescription = "Downloads", tint = Deck.primary, modifier = Modifier.size(16.dp))
+                Text("$active", color = Deck.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        if (pad) Icon(Icons.Filled.SportsEsports, contentDescription = "Controller connected", tint = Deck.onSurfaceVariant, modifier = Modifier.size(16.dp))
+        if (battery >= 0) Text("$battery%", color = Deck.onSurfaceVariant, fontSize = 12.sp)
+        Text(clock, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
 /** Which layer of the XMB home is up: the games, one game's quick menu, or the store cards. */
 private enum class HomeMode { GAMES, OPTIONS, STORES }
 
@@ -1821,7 +1964,11 @@ private fun Modifier.deckRowLayer(
  */
 @Composable
 private fun DeckHomeCarousel(
+    modifier: Modifier = Modifier,
     entries: List<HubEntry>,
+    favs: Set<String>,
+    details: List<Pair<String, String>>,
+    onFavorite: () -> Unit,
     loaded: Boolean,
     selected: Int,
     onSelect: (Int) -> Unit,
@@ -1838,7 +1985,9 @@ private fun DeckHomeCarousel(
     val scope = rememberCoroutineScope()
     val accent = Deck.primary
     val n = entries.size
+    val view = LocalView.current
     val settle = spring<Float>(dampingRatio = 0.9f, stiffness = 420f)
+    var dwell by remember { mutableStateOf(false) }
     val gPos = remember { mutableFloatStateOf(selected.toFloat()) }
     val cPos = remember { mutableFloatStateOf(0f) }
     var cSel by remember { mutableIntStateOf(0) }
@@ -1890,8 +2039,76 @@ private fun DeckHomeCarousel(
     }
     LaunchedEffect(menuIdx) { menuPos.animateTo(menuIdx.toFloat(), tween(180, easing = DeckEase)) }
 
+    // A tick for every move, a firmer one for select/layer changes: view haptics, the system click
+    // sound, and a short rumble on the pad that sent the key.
+    fun buzz(deviceId: Int, strong: Boolean) {
+        view.performHapticFeedback(if (strong) HapticFeedbackConstants.LONG_PRESS else HapticFeedbackConstants.KEYBOARD_TAP)
+        view.playSoundEffect(if (strong) SoundEffectConstants.CLICK else SoundEffectConstants.NAVIGATION_RIGHT)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && deviceId >= 0) {
+            InputDevice.getDevice(deviceId)?.vibratorManager?.defaultVibrator
+                ?.vibrate(VibrationEffect.createOneShot(if (strong) 40L else 15L, if (strong) 160 else 70))
+        }
+    }
+
+    // Once the selection rests for a moment, the details panel fades in.
+    LaunchedEffect(selected, mode) {
+        dwell = false
+        if (mode == HomeMode.GAMES) {
+            delay(900)
+            dwell = true
+        }
+    }
+
+    fun handleKey(e: KeyEvent): Boolean {
+                    if (!enabled || e.type != KeyEventType.KeyDown) return false
+                    val fresh = e.nativeKeyEvent.repeatCount == 0
+                    val confirm = e.key == Key.ButtonA || e.key == Key.Enter ||
+                        e.key == Key.NumPadEnter || e.key == Key.DirectionCenter
+                    if (n == 0) {
+                        if (confirm && loaded) {
+                            if (fresh) onAdd()
+                            return true
+                        }
+                        return false
+                    }
+                    return when (mode) {
+                        HomeMode.GAMES -> when {
+                            e.key == Key.ButtonY -> { onFavorite(); true }
+                            e.key == Key.DirectionLeft -> if (selected > 0) { settleGames(selected - 1); true } else false
+                            e.key == Key.DirectionRight -> { if (selected < n - 1) settleGames(selected + 1); true }
+                            e.key == Key.DirectionDown -> { onMode(HomeMode.OPTIONS); true }
+                            e.key == Key.DirectionUp -> { onMode(HomeMode.STORES); true }
+                            confirm -> { if (fresh) actions.firstOrNull()?.onClick?.invoke(); true }
+                            else -> false
+                        }
+                        HomeMode.OPTIONS -> when {
+                            e.key == Key.DirectionUp -> { if (menuIdx > 0) menuIdx-- else onMode(HomeMode.GAMES); true }
+                            e.key == Key.DirectionDown -> { if (menuIdx < actions.lastIndex) menuIdx++; true }
+                            e.key == Key.DirectionLeft || e.key == Key.DirectionRight -> true
+                            confirm -> {
+                                if (fresh) {
+                                    val action = actions.getOrNull(menuIdx)
+                                    onMode(HomeMode.GAMES)
+                                    action?.onClick?.invoke()
+                                }
+                                true
+                            }
+                            e.key == Key.Escape -> { onMode(HomeMode.GAMES); true }
+                            else -> false
+                        }
+                        HomeMode.STORES -> when {
+                            e.key == Key.DirectionLeft -> { settleCards(cSel - 1); true }
+                            e.key == Key.DirectionRight -> { settleCards(cSel + 1); true }
+                            e.key == Key.DirectionDown || e.key == Key.Escape -> { onMode(HomeMode.GAMES); true }
+                            e.key == Key.DirectionUp -> true
+                            confirm -> { if (fresh) cards.getOrNull(cSel)?.onClick?.invoke(); true }
+                            else -> false
+                        }
+                    }
+    }
+
     val cardShape = RoundedCornerShape(4.dp)
-    BoxWithConstraints(Modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier.fillMaxSize()) {
         val baseH = (maxHeight * 0.34f).coerceIn(96.dp, 168.dp)
         val baseW = baseH * 2f / 3f
         val x0 = 28.dp
@@ -1904,7 +2121,7 @@ private fun DeckHomeCarousel(
         // Quick menu layout: the row folds to half size at the top, the menu hangs under the chosen cover.
         val optsY = baseHPx * 0.3375f + with(density) { 14.dp.toPx() }
         val menuTopPx = optsY + baseHPx * 0.3375f + with(density) { 12.dp.toPx() }
-        val titleMax = (maxWidth - x0 - baseW * 1.35f - 40.dp).coerceAtLeast(120.dp)
+        val titleMax = (maxWidth - x0 - baseW * 1.35f - 40.dp - (if (maxWidth > 560.dp) 230.dp else 0.dp)).coerceAtLeast(120.dp)
 
         val gScale = { 1f - 0.5f * menuT.value - 0.45f * upT.value }
         val gCenter = { hPx / 2f + (optsY - hPx / 2f) * menuT.value + (hPx / 2f) * upT.value }
@@ -1942,48 +2159,9 @@ private fun DeckHomeCarousel(
                 .focusProperties { canFocus = enabled }
                 .focusRequester(focus)
                 .onPreviewKeyEvent { e ->
-                    if (!enabled || e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    val fresh = e.nativeKeyEvent.repeatCount == 0
-                    val confirm = e.key == Key.ButtonA || e.key == Key.Enter ||
-                        e.key == Key.NumPadEnter || e.key == Key.DirectionCenter
-                    if (n == 0) {
-                        if (confirm && loaded) {
-                            if (fresh) onAdd()
-                            return@onPreviewKeyEvent true
-                        }
-                        return@onPreviewKeyEvent false
-                    }
-                    when (mode) {
-                        HomeMode.GAMES -> when {
-                            e.key == Key.DirectionLeft -> if (selected > 0) { settleGames(selected - 1); true } else false
-                            e.key == Key.DirectionRight -> { if (selected < n - 1) settleGames(selected + 1); true }
-                            e.key == Key.DirectionDown -> { onMode(HomeMode.OPTIONS); true }
-                            e.key == Key.DirectionUp -> { onMode(HomeMode.STORES); true }
-                            confirm -> { if (fresh) actions.firstOrNull()?.onClick?.invoke(); true }
-                            else -> false
-                        }
-                        HomeMode.OPTIONS -> when {
-                            e.key == Key.DirectionUp -> { if (menuIdx > 0) menuIdx-- else onMode(HomeMode.GAMES); true }
-                            e.key == Key.DirectionDown -> { if (menuIdx < actions.lastIndex) menuIdx++; true }
-                            e.key == Key.DirectionLeft || e.key == Key.DirectionRight -> true
-                            confirm -> {
-                                if (fresh) {
-                                    val action = actions.getOrNull(menuIdx)
-                                    onMode(HomeMode.GAMES)
-                                    action?.onClick?.invoke()
-                                }
-                                true
-                            }
-                            e.key == Key.Escape -> { onMode(HomeMode.GAMES); true }
-                            else -> false
-                        }
-                        HomeMode.STORES -> when {
-                            e.key == Key.DirectionLeft -> { settleCards(cSel - 1); true }
-                            e.key == Key.DirectionRight -> { settleCards(cSel + 1); true }
-                            e.key == Key.DirectionDown || e.key == Key.Escape -> { onMode(HomeMode.GAMES); true }
-                            e.key == Key.DirectionUp -> true
-                            confirm -> { if (fresh) cards.getOrNull(cSel)?.onClick?.invoke(); true }
-                            else -> false
+                    handleKey(e).also { handled ->
+                        if (handled && e.type == KeyEventType.KeyDown) {
+                            buzz(e.nativeKeyEvent.deviceId, e.key != Key.DirectionLeft && e.key != Key.DirectionRight)
                         }
                     }
                 }
@@ -2153,8 +2331,17 @@ private fun DeckHomeCarousel(
                     if (entry != null) {
                         val playtime = remember(entry) { hubPlaytimeLabel(context, entry.title) }
                         Column {
+                            if (idx == 0 && entry.game != null && hubHasPlaytime(context, entry.title)) {
+                                Text(
+                                    "CONTINUE PLAYING",
+                                    color = accent,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    letterSpacing = 1.8.sp,
+                                )
+                            }
                             Text(
-                                entry.title,
+                                (if (entry.game?.shortcutPath in favs) "\u2605 " else "") + entry.title,
                                 color = Color.White,
                                 fontSize = 22.sp,
                                 lineHeight = 25.sp,
@@ -2266,6 +2453,30 @@ private fun DeckHomeCarousel(
                 }
             }
 
+            AnimatedVisibility(
+                visible = dwell && mode == HomeMode.GAMES && details.isNotEmpty(),
+                enter = fadeIn(tween(300)) + slideInVertically(tween(300)) { it / 8 },
+                exit = fadeOut(tween(120)),
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 20.dp, bottom = 44.dp),
+            ) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .width(210.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Deck.surface.copy(alpha = 0.78f))
+                        .border(1.dp, Deck.line, RoundedCornerShape(12.dp))
+                        .padding(14.dp),
+                ) {
+                    details.forEach { (k, v) ->
+                        Column {
+                            Text(k.uppercase(), color = Deck.onSurfaceVariant, fontSize = 10.sp, letterSpacing = 1.2.sp)
+                            Text(v, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+
             if (loaded && n == 0) DeckGlassPill("Add a game", onAdd, Modifier.align(Alignment.Center))
 
             Text(
@@ -2273,7 +2484,7 @@ private fun DeckHomeCarousel(
                     n == 0 -> if (loaded) "A  Add a game" else ""
                     mode == HomeMode.OPTIONS -> "A  Select      B  Back"
                     mode == HomeMode.STORES -> "A  Add game      B  Back"
-                    else -> "A  Play      ↑  Add game      ↓  Options"
+                    else -> "A  Play    ↑  Add game    ↓  Options    Y  Favourite    L2 R2  Shelves"
                 },
                 color = Deck.onSurfaceVariant,
                 fontSize = 12.sp,

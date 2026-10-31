@@ -135,6 +135,10 @@ internal fun DeckSettingsScreen() {
     // always using their top strip. Off by default so the classic Deck tabs stay untouched.
     var universalLayout by remember { mutableStateOf(prefs.getBoolean("deck_universal_layout", false)) }
     var settingsTab by remember { mutableStateOf(0) }
+    // The categories are this page's sub-tabs: L2/R2 step them, like Contents and Storage.
+    val subTabs = LocalDeckTabs.current
+    LaunchedEffect(subTabs) { subTabs.bind(5) }
+    LaunchedEffect(subTabs.index) { if (settingsTab != subTabs.index) settingsTab = subTabs.index }
     var settingsPagesCategoryOpen by remember { mutableStateOf(false) }
     val settingsTabs = remember { listOf("General", "Interface", "Appearance", "System", "Graphics") }
 
@@ -368,7 +372,7 @@ internal fun DeckSettingsScreen() {
             DeckStretchyTabs(
                 labels = settingsTabs,
                 selected = settingsTab,
-                onSelect = { settingsTab = it },
+                onSelect = { settingsTab = it; subTabs.select(it) },
                 focusable = true,
                 selectOnFocus = true,
                 scroll = true,
@@ -389,7 +393,7 @@ internal fun DeckSettingsScreen() {
                     DeckEditorCategoryRow(
                         label = label,
                         selected = i == settingsTab,
-                        onClick = { settingsTab = i; settingsPagesCategoryOpen = true },
+                        onClick = { settingsTab = i; subTabs.select(i); settingsPagesCategoryOpen = true },
                     )
                 }
                 Spacer(Modifier.height(16.dp))
@@ -400,7 +404,8 @@ internal fun DeckSettingsScreen() {
                 DeckEditorCategoryRail(
                     labels = settingsTabs,
                     selected = settingsTab,
-                    onSelect = { settingsTab = it },
+                    onSelect = { settingsTab = it; subTabs.select(it) },
+                    selectOnFocus = true,
                     modifier = Modifier
                         .width(200.dp)
                         .fillMaxHeight()

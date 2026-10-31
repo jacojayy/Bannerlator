@@ -491,6 +491,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * An analog trigger pulled past the threshold. The synthetic key goes straight to super, so it never
+     * passed the Deck's hard-key hook above: sub-tab switching (L2/R2) was dead on pads with analog triggers.
+     */
+    private fun dispatchSyntheticTrigger(keyCode: Int) {
+        if (com.winhub.hernandez.ui.screens.DeckHardKeys.handler?.invoke(keyCode) == true) return
+        dispatchSyntheticKey(keyCode)
+    }
+
     /** Fire one D-pad press straight at the window (bypasses the A/B rewrite in dispatchKeyEvent). */
     private fun dispatchSyntheticKey(keyCode: Int) {
         val now = android.os.SystemClock.uptimeMillis()
@@ -526,8 +535,8 @@ class MainActivity : AppCompatActivity() {
             event.getAxisValue(android.view.MotionEvent.AXIS_GAS),
         ) > 0.6f
         if (!padTriggerKeySeen) {
-            if (l2 && !padL2Down) dispatchSyntheticKey(android.view.KeyEvent.KEYCODE_BUTTON_L2)
-            if (r2 && !padR2Down) dispatchSyntheticKey(android.view.KeyEvent.KEYCODE_BUTTON_R2)
+            if (l2 && !padL2Down) dispatchSyntheticTrigger(android.view.KeyEvent.KEYCODE_BUTTON_L2)
+            if (r2 && !padR2Down) dispatchSyntheticTrigger(android.view.KeyEvent.KEYCODE_BUTTON_R2)
         }
         padL2Down = l2
         padR2Down = r2

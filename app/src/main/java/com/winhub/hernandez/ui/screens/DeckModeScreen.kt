@@ -301,6 +301,18 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
     // page's first control (unless the page already took focus itself).
     val focusManager = LocalFocusManager.current
     var contentFocused by remember { mutableStateOf(false) }
+    // After a page swap the focused control is gone and the shell itself holds focus, so the D-pad and A do nothing
+    // until something is pressed twice. Hand focus straight to the page instead.
+    var shellOnly by remember { mutableStateOf(false) }
+    LaunchedEffect(shellOnly, section, introDone) {
+        if (!shellOnly || !introDone) return@LaunchedEffect
+        repeat(8) {
+            delay(120)
+            if (!shellOnly || DeckConsole.boot || DeckConsole.screensaver) return@LaunchedEffect
+            if (section == "home") runCatching { homeHeroFocus.requestFocus() }
+            else focusManager.moveFocusSafely(FocusDirection.Enter)
+        }
+    }
     LaunchedEffect(section, horizontalRail) {
         if (!horizontalRail) return@LaunchedEffect
         delay(450)
@@ -435,6 +447,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                         else -> false
                     }
                 }
+                .onFocusChanged { shellOnly = it.isFocused }
                 .focusable(),
         ) {
             DeckTopTabs(
@@ -497,6 +510,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
                     else -> false
                 }
             }
+            .onFocusChanged { shellOnly = it.isFocused }
             .focusable(),
     ) {
         DeckSideRail(

@@ -1120,7 +1120,7 @@ private fun DeckHome(
                 BoxWithConstraints(
                     Modifier
                         .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.82f))
+                        .pointerInput(Unit) { detectTapGestures { xmbNav.popTo(0) } }
                         .focusRequester(xmbFocus)
                         .focusable()
                         .onPreviewKeyEvent { e ->
@@ -1147,12 +1147,12 @@ private fun DeckHome(
                             xmbNav.onKey(k, xmbScope)
                         },
                 ) {
-                    // The columns continue from the dropdown: same left edge, and the picked row stays where it was.
+                    // The tool's columns open beside the dropdown, level with the row that was picked.
                     val coverH = (maxHeight * 0.34f).coerceIn(96.dp, 168.dp)
                     XmbNestedLayer(
                         xmbNav, xmbScope, maxWidth.value, maxHeight.value, maxHeight > maxWidth, Deck.primary,
                         xmbSc?.name.orEmpty(), xmbSc?.icon, actions.map { it.icon }, xmbRootSel,
-                        anchorY = coverH.value * 0.72f + 26f, baseX = 28f,
+                        anchorY = coverH.value * 0.95f + 26f, baseX = 266f, besideRoot = true,
                     )
                 }
             }
@@ -2187,7 +2187,7 @@ private fun DeckHomeCarousel(
     focus: FocusRequester,
     enabled: Boolean,
     xmbRows: Boolean = false,
-    /** The XMB dropdown's tools are open as columns over Home: the dropdown rows give way to them. */
+    /** The XMB dropdown's tools are open as columns beside it: the rows stay but ignore taps. */
     menuHidden: Boolean = false,
 ) {
     val context = LocalContext.current
@@ -2330,7 +2330,7 @@ private fun DeckHomeCarousel(
         val gapPx = with(density) { 14.dp.toPx() }
         // Quick menu layout: the row folds to half size at the top, the menu hangs under the chosen cover.
         // The XMB dropdown folds the row less (the Deck XMB keeps its cover large) and hides the neighbours.
-        val menuScale = if (xmbRows) 0.72f else 0.5f
+        val menuScale = if (xmbRows) 0.95f else 0.5f
         val optsY = baseHPx * (menuScale / 2f) + with(density) { 14.dp.toPx() }
         val menuTopPx = optsY + baseHPx * (menuScale / 2f) + with(density) { 12.dp.toPx() }
         val titleMax = (maxWidth - x0 - baseW * 1.35f - 40.dp - (if (maxWidth > 560.dp) 230.dp else 0.dp)).coerceAtLeast(120.dp)
@@ -2547,7 +2547,8 @@ private fun DeckHomeCarousel(
                             )
                         }
                         .widthIn(max = titleMax)
-                        .graphicsLayer { alpha = 1f - upT.value },
+                        // The tools' columns open where the title sits: it steps aside while one is open.
+                        .graphicsLayer { alpha = (1f - upT.value) * (if (menuHidden) 0f else 1f) },
                 ) { idx ->
                     val entry = entries.getOrNull(idx)
                     if (entry != null) {
@@ -2623,7 +2624,7 @@ private fun DeckHomeCarousel(
                 }
             }
 
-            if (menuVisible && !menuHidden) {
+            if (menuVisible) {
                 actions.forEachIndexed { idx, action ->
                     val focused = idx == menuIdx
                     val tint = if (action.danger) DeckPalette.error else Deck.onSurfaceVariant
@@ -2635,12 +2636,15 @@ private fun DeckHomeCarousel(
                                 translationX = x0Px - (1f - menuT.value) * 12.dp.toPx()
                                 translationY = menuTopPx + rel * rowH.toPx()
                                 // Rows already passed fade out above the focused one, like the XMB.
-                                alpha = menuT.value * (1f + rel).coerceIn(0f, 1f)
+                                alpha = menuT.value * (1f + rel).coerceIn(0f, 1f) *
+                                    // The XMB dropdown is short: rows that would run off the bottom fade out.
+                                    (if (xmbRows) ((hPx - translationY) / rowH.toPx() - 0.5f).coerceIn(0f, 1f) else 1f)
                             }
                             .height(rowH)
                             .clip(RoundedCornerShape(10.dp))
-                            .pointerInput(idx) {
-                                detectTapGestures {
+                            .pointerInput(idx, menuHidden) {
+                                // Taps wait while one of the tools' columns is open beside the dropdown.
+                                if (!menuHidden) detectTapGestures {
                                     menuIdx = idx
                                     onMode(HomeMode.GAMES)
                                     action.onClick()

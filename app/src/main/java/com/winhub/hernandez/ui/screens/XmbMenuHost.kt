@@ -336,19 +336,34 @@ internal fun XmbNestedLayer(
     anchorY: Float? = null,
     /** Where the first icon strip starts (dp from the left). */
     baseX: Float = 16f,
+    /**
+     * The game's options column stays on screen beside the open menus (a host that keeps it drawn): no root icon strip and no
+     * breadcrumb, the first column starts at [baseX] + 8, and only the "Saved" flash is shown.
+     */
+    besideRoot: Boolean = false,
 ) {
     val m = nav.top ?: return
     val top = 70f
     val bottom = h - 10f
     val rowH = if (port) 44f else 40f
     val anchor = anchorY ?: (top + (bottom - top) * (if (port) 0.2f else 0.28f))
-    val x0 = baseX + nav.depth * STRIP + 8f
+    val strips = if (besideRoot) nav.depth - 1 else nav.depth
+    val x0 = baseX + strips * STRIP + 8f
     val colW = max(160f, min(if (port) w - x0 - 12f else 560f, w - x0 - 16f))
     val density = LocalDensity.current
 
     Box(Modifier.fillMaxSize()) {
         // breadcrumb — tap a step to go back to it
-        Row(
+        if (besideRoot) {
+            val flash = nav.savedAt
+            var showSaved by remember { mutableStateOf(false) }
+            LaunchedEffect(flash) {
+                if (flash > 0L && System.currentTimeMillis() - flash < 1500L) { showSaved = true; kotlinx.coroutines.delay(1200); showSaved = false }
+            }
+            val sa by animateFloatAsState(if (showSaved) 1f else 0f, tween(250), label = "xmbSavedBeside")
+            Text("✓ Saved", color = Color(0xFF3DDC84), fontSize = 12.sp,
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 12.dp, end = 16.dp).graphicsLayer { alpha = sa })
+        } else Row(
             Modifier.offset(16.dp, 30.dp).fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -376,12 +391,12 @@ internal fun XmbNestedLayer(
         }
 
         // icon strips: the game's options, then each menu behind the active one
-        XmbStrip(rootIcons, rootSel, baseX, anchor, rowH, accent) { nav.popTo(0) }
+        if (!besideRoot) XmbStrip(rootIcons, rootSel, baseX, anchor, rowH, accent) { nav.popTo(0) }
         for (i in 0 until nav.depth - 1) {
             val menu = nav.stack[i]
             val rows = nav.rowsOf(menu, xmb).filter { it !is XmbRow.Header }
             val sel = rows.indexOfFirst { it.key == menu.selKey }.coerceAtLeast(0)
-            XmbStrip(rows.map { it.iconOrNull() ?: rowIconFallback }, sel, baseX + (i + 1) * STRIP, anchor, rowH, accent) { nav.popTo(i + 1) }
+            XmbStrip(rows.map { it.iconOrNull() ?: rowIconFallback }, sel, baseX + (if (besideRoot) i else i + 1) * STRIP, anchor, rowH, accent) { nav.popTo(i + 1) }
         }
 
         val panel = m.panel

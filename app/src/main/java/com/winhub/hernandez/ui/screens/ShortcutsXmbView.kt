@@ -126,6 +126,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.LifecycleEventObserver
 import com.winhub.hernandez.R
+import com.winhub.hernandez.container.Container
 import com.winhub.hernandez.container.Shortcut
 import com.winhub.hernandez.inputcontrols.ExternalController
 import com.winhub.hernandez.store.EpicMainActivity
@@ -188,6 +189,8 @@ internal fun ShortcutsXmbView(
     onNavigate: ((Screen) -> Unit)? = null,
     /** Bump to take D-pad focus back (e.g. after an overlay drawn over the XMB closes). */
     focusTick: Int = 0,
+    /** A game's shortcut files were renamed (Game Details): the host's own game list follows. */
+    onRenamed: (Container, String, String) -> Unit = { _, _, _ -> },
 ) {
     if (shortcuts.isEmpty()) return
     val context = LocalContext.current
@@ -244,6 +247,7 @@ internal fun ShortcutsXmbView(
     val nav = remember { XmbNavState() }
     val nested = nav.depth > 0
     val reload by rememberUpdatedState(onReloadGames)
+    val renamed by rememberUpdatedState(onRenamed)
     val appCtx = context
     val coScope = scope
     val xmbScope = remember(nav) {
@@ -258,6 +262,7 @@ internal fun ShortcutsXmbView(
             override fun saved() { nav.savedAt = System.currentTimeMillis() }
             override fun confirm(confirm: XmbConfirm, onOk: () -> Unit) = nav.push(xmbConfirmMenu(nav, confirm, onOk))
             override fun reloadGames() = reload()
+            override fun shortcutRenamed(container: Container, oldBase: String, newBase: String) = renamed(container, oldBase, newBase)
         }
     }
     fun runAction(a: XmbAction) { val mk = a.menu; if (mk != null) nav.push(mk(xmbScope)) else a.onClick() }

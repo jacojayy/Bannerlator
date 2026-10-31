@@ -1,6 +1,7 @@
 package com.winhub.hernandez.ui.screens
 
 import android.content.Context
+import com.winhub.hernandez.container.Container
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -162,4 +163,6 @@ internal interface XmbScope {
     fun confirm(confirm: XmbConfirm, onOk: () -> Unit)
     /** The game list may be stale (rename, clone, remove, new exe): reload it. */
     fun reloadGames()
+    /** A game's shortcut files were renamed from [oldBase] to [newBase]; hosts that track games by path follow it. */
+    fun shortcutRenamed(container: Container, oldBase: String, newBase: String) {}
 }

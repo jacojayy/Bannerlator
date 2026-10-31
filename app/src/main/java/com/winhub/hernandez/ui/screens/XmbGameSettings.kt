@@ -466,7 +466,7 @@ private fun renameAndReturn(xmb: XmbScope, s: Shortcut, newBase: String) {
     xmb.scope.launch {
         val ok = withContext(Dispatchers.IO) { runCatching { ExeShortcutImporter.renameShortcutFiles(container, oldBase, newBase) }.getOrDefault(false) }
         xmb.toast(if (ok) "Renamed to “$newBase”" else "Couldn't rename — a game with that name may already exist")
-        if (ok) { xmb.popToRoot(); xmb.reloadGames() }
+        if (ok) { xmb.shortcutRenamed(container, oldBase, newBase); xmb.popToRoot(); xmb.reloadGames() }
     }
 }
 

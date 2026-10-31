@@ -189,6 +189,23 @@ internal object HubGamesStore {
         }
     }
 
+    /** Points [old] at its renamed shortcut, keeping its place in the list. */
+    fun replace(context: Context, old: HubGame, new: HubGame) {
+        runCatching {
+            val file = File(context.filesDir, FILE_NAME)
+            val raw = FileUtils.readString(file) ?: return
+            val arr = JSONArray(raw)
+            (0 until arr.length()).forEach { i ->
+                val o = arr.optJSONObject(i) ?: return@forEach
+                if (o.optString("shortcutPath") == old.shortcutPath) {
+                    o.put("name", new.name)
+                    o.put("shortcutPath", new.shortcutPath)
+                }
+            }
+            FileUtils.writeString(file, arr.toString())
+        }
+    }
+
     fun add(context: Context, game: HubGame) {
         runCatching {
             val arr = JSONArray()

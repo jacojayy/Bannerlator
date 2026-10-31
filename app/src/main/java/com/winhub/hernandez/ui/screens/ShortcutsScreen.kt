@@ -5089,9 +5089,9 @@ internal fun steamAppIdOf(shortcut: Shortcut): Int =
 
 // A shortcut is "custom" (exe/folder import) when it is NOT a genuine Steam-library game. Steam games
 // get the "Cloud Saves" item; custom games get the local-only "Back up / Restore saves" items.
-private fun isCustomShortcut(shortcut: Shortcut): Boolean = !isSteamOriginShortcut(shortcut)
+internal fun isCustomShortcut(shortcut: Shortcut): Boolean = !isSteamOriginShortcut(shortcut)
 
-private fun launchSaveManager(context: Context, focusAppId: Int) {
+internal fun launchSaveManager(context: Context, focusAppId: Int) {
     context.startActivity(
         Intent(context, SteamSaveManagerActivity::class.java)
             .putExtra(SteamSaveManagerActivity.EXTRA_FOCUS_APP_ID, focusAppId),
@@ -10837,7 +10837,7 @@ private fun addToHomeScreen(context: Context, shortcut: Shortcut) {
     } catch (_: Exception) {}
 }
 
-private fun exportShortcut(context: Context, shortcut: Shortcut) {
+internal fun exportShortcut(context: Context, shortcut: Shortcut) {
     val prefs: SharedPreferences = PreferenceManager.getDefaultSharedPreferences(context)
     val uriString = prefs.getString("shortcuts_export_path_uri", null)
 

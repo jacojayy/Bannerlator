@@ -37,7 +37,6 @@ import kotlin.math.exp
 import kotlinx.coroutines.Job
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.preference.PreferenceManager
 import androidx.compose.material.icons.filled.Home
@@ -775,16 +774,34 @@ private fun DeckHome(
         }
     }
 
+    // Store reads and writes run one after another, so a reload never sees a half-finished rename.
+    val storeOps = remember { arrayOfNulls<Job>(1) }
+    fun queueStore(block: suspend () -> Unit) {
+        val prev = storeOps[0]
+        storeOps[0] = scope.launch(Dispatchers.IO) { prev?.join(); block() }
+    }
+    fun reloadEntries() = queueStore {
+        val refreshed = HubGamesStore.load(context).map { g ->
+            HubEntry(g.name, g.coverPath?.let { BitmapFactory.decodeFile(it) }, g)
+        }
+        withContext(Dispatchers.Main) { entries = refreshed }
+    }
+    // The XMB's Game Details renames a game's shortcut files; its Home entry follows them.
+    fun hubRenamed(container: Container, oldBase: String, newBase: String) = queueStore {
+        val old = HubGamesStore.load(context).firstOrNull {
+            it.containerId == container.id && File(it.shortcutPath).name == "$oldBase.desktop"
+        }
+        if (old != null) {
+            val moved = File(old.shortcutPath).resolveSibling("$newBase.desktop").absolutePath
+            HubGamesStore.replace(context, old, old.copy(name = newBase, shortcutPath = moved))
+        }
+    }
+
     val closeSettings: () -> Unit = {
         shortcutSettingsFor = null
         // The editor can rename the game / swap its cover, so re-read the store to keep
         // the carousel tile in sync.
-        scope.launch(Dispatchers.IO) {
-            val refreshed = HubGamesStore.load(context).map { g ->
-                HubEntry(g.name, g.coverPath?.let { BitmapFactory.decodeFile(it) }, g)
-            }
-            withContext(Dispatchers.Main) { entries = refreshed }
-        }
+        reloadEntries()
     }
     val backLayer = LocalDeckBack.current
     DisposableEffect(homeMode, shortcutSettingsFor) {
@@ -831,26 +848,19 @@ private fun DeckHome(
     }
     val xmbWait = xmbStyle && (entries == null || !xmbReady)
     val useXmb = xmbStyle && xmbReady && xmbShortcuts.isNotEmpty()
-    // The XMB column carries the same options as the classic game menu.
+    // The XMB column carries the Games screen's full option list, with Home's own flows behind its rows.
     val xmbActionsFor: (Shortcut) -> List<XmbAction> = { s ->
         val entry = visible.firstOrNull { it.game?.shortcutPath == s.file.path }
-        if (entry == null) emptyList() else listOf(
-            XmbAction("Launch method", Icons.Filled.Layers) { openLaunchMethod(entry) },
-            XmbAction("Settings", Icons.Filled.Settings) { openGameSettings(entry) },
-            XmbAction("Add to Home Screen", Icons.Filled.Home) { addToHomeScreen(entry) },
-            XmbAction("Properties", Icons.Filled.Info) { showProperties(entry) },
-            XmbAction("Delete", Icons.Filled.Delete, "Asks to confirm first", danger = true, menu = { xmb ->
-                XmbMenu("Delete game?", Icons.Filled.Delete, initialKey = "cancel") {
-                    listOf(
-                        XmbRow.Info("msg", "Delete “${entry.title}”?", Icons.Filled.Info),
-                        XmbRow.Action("delete", "Delete", Icons.Filled.Delete, danger = true) {
-                            deleteEntry(entry)
-                            xmb.popToRoot()
-                        },
-                        XmbRow.Action("cancel", "Cancel", Icons.Filled.Close) { xmb.pop() },
-                    )
-                }
-            }),
+        val game = entry?.game
+        if (entry == null || game == null) emptyList() else hubXmbActions(
+            context, s, game, { containers },
+            HubXmbOps(
+                launchMethod = { openLaunchMethod(entry) },
+                settings = { openGameSettings(entry) },
+                addToHome = { addToHomeScreen(entry) },
+                containerProperties = { showProperties(entry) },
+                delete = { deleteEntry(entry) },
+            ),
         )
     }
     val sel = selected.coerceIn(0, (visible.size - 1).coerceAtLeast(0))
@@ -931,7 +941,9 @@ private fun DeckHome(
                     onPlay = { s -> visible.firstOrNull { it.game?.shortcutPath == s.file.path }?.let { playEntry(it) } },
                     actionsFor = xmbActionsFor,
                     sdBadge = {},
+                    onReloadGames = { reloadEntries() },
                     focusTick = xmbFocusTick,
+                    onRenamed = { c, old, new -> hubRenamed(c, old, new) },
                 )
             }
         } else if (xmbWait) {

@@ -118,6 +118,8 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
@@ -631,6 +633,8 @@ private fun DeckHome(
     var launchMethodFor by remember { mutableStateOf<Shortcut?>(null) }
     var launchMethodSteam by remember { mutableStateOf<Boolean?>(null) }
     var addModeMenu by remember { mutableStateOf(false) }
+    // Classic style: long-press a cover / Y opens the console-style game menu instead of the dropdown.
+    var classicMenu by remember { mutableStateOf(false) }
     var addMode by remember { mutableStateOf(HubAddMode.MASTER) }
     var cronosBusy by remember { mutableStateOf(false) }
     var cronosName by remember { mutableStateOf("") }
@@ -962,6 +966,20 @@ private fun DeckHome(
         )
     }.orEmpty()
 
+    val classicItems = current?.takeIf { !xmbStyle }?.let { entry ->
+        val fav = entry.game?.shortcutPath in favs
+        buildList {
+            actions.forEachIndexed { i, a ->
+                add(DeckConsoleItem(a.label, a.icon, a.danger, a.onClick))
+                // Favourite sits after Settings (Y no longer toggles it in this style).
+                if (i == 2 && entry.game != null) {
+                    add(DeckConsoleItem(if (fav) "Remove from favourites" else "Add to favourites",
+                        if (fav) Icons.Filled.StarBorder else Icons.Filled.Star) { toggleFavorite() })
+                }
+            }
+        }
+    }.orEmpty()
+
     // The row above the games holds the glass Add game card.
     val cards = listOf(
         DeckHomeCard("Add game", "Add games to your library", Icons.Filled.Add,
@@ -973,7 +991,7 @@ private fun DeckHome(
 
     // Hand focus back to the carousel once any dialog/overlay opened from Home goes away.
     val overlayOpen = pending != null || launchRequest != null || launchMethodFor != null ||
-        propertiesFor != null || cronosReviewFor != null || shortcutSettingsFor != null || addModeMenu || xmbNested || showWrapperManager
+        propertiesFor != null || cronosReviewFor != null || shortcutSettingsFor != null || addModeMenu || xmbNested || showWrapperManager || classicMenu
     var hadOverlay by remember { mutableStateOf(false) }
     LaunchedEffect(overlayOpen) {
         if (!overlayOpen && hadOverlay) {
@@ -1033,6 +1051,8 @@ private fun DeckHome(
                 favs = favs,
                 details = details,
                 onFavorite = { toggleFavorite() },
+                classic = !xmbStyle,
+                onMenu = { classicMenu = true },
                 onSelect = { selected = it },
                 mode = homeMode,
                 onMode = { homeMode = it },
@@ -1042,7 +1062,7 @@ private fun DeckHome(
                 cards = cards,
                 onAdd = { addModeMenu = true },
                 focus = heroFocus,
-                enabled = shortcutSettingsFor == null && !xmbNested,
+                enabled = shortcutSettingsFor == null && !xmbNested && !classicMenu,
             )
             if (entries == null) {
                 CircularProgressIndicator(
@@ -1051,7 +1071,7 @@ private fun DeckHome(
                 )
             } else if (visible.isEmpty() && entries.orEmpty().isNotEmpty()) {
                 Text(
-                    "Nothing on this shelf yet - press Y on a game to favourite it",
+                    if (xmbStyle) "Nothing on this shelf yet - press Y on a game to favourite it" else "Nothing on this shelf yet - open a game's menu (Y) to favourite it",
                     color = DeckPalette.onSurfaceVariant,
                     fontSize = 14.sp,
                     modifier = Modifier.align(Alignment.Center),
@@ -1074,6 +1094,15 @@ private fun DeckHome(
                 exit = fadeOut(tween(450)),
                 modifier = Modifier.align(Alignment.Center),
             ) { DeckWordmark() }
+
+            if (classicMenu && current != null && classicItems.isNotEmpty()) {
+                DeckConsoleGameMenu(
+                    title = current.title,
+                    subtitle = hubOriginLabel(current),
+                    items = classicItems,
+                    onDismiss = { classicMenu = false },
+                )
+            }
 
             if (addModeMenu) {
                 DeckAddModeMenu(
@@ -2177,6 +2206,8 @@ private fun DeckHomeCarousel(
     favs: Set<String>,
     details: List<Pair<String, String>>,
     onFavorite: () -> Unit,
+    classic: Boolean,
+    onMenu: () -> Unit,
     loaded: Boolean,
     selected: Int,
     onSelect: (Int) -> Unit,
@@ -2284,10 +2315,10 @@ private fun DeckHomeCarousel(
                     }
                     return when (mode) {
                         HomeMode.GAMES -> when {
-                            e.key == Key.ButtonY -> { onFavorite(); true }
+                            e.key == Key.ButtonY -> { if (classic) { if (fresh) onMenu() } else onFavorite(); true }
                             e.key == Key.DirectionLeft -> if (selected > 0) { settleGames(selected - 1); true } else false
                             e.key == Key.DirectionRight -> { if (selected < n - 1) settleGames(selected + 1); true }
-                            e.key == Key.DirectionDown -> { onMode(HomeMode.OPTIONS); true }
+                            e.key == Key.DirectionDown -> { if (!classic) onMode(HomeMode.OPTIONS); true }
                             e.key == Key.DirectionUp -> { onMode(HomeMode.STORES); true }
                             confirm -> { if (fresh) actions.firstOrNull()?.onClick?.invoke(); true }
                             else -> false
@@ -2413,7 +2444,7 @@ private fun DeckHomeCarousel(
                             if (mode == HomeMode.GAMES && n > 0) onMode(HomeMode.STORES)
                             else if (mode == HomeMode.OPTIONS) onMode(HomeMode.GAMES)
                         } else if (vAcc > th) {
-                            if (mode == HomeMode.GAMES && n > 0) onMode(HomeMode.OPTIONS)
+                            if (mode == HomeMode.GAMES && n > 0) { if (!classic) onMode(HomeMode.OPTIONS) }
                             else if (mode == HomeMode.STORES) onMode(HomeMode.GAMES)
                         }
                     },
@@ -2500,16 +2531,27 @@ private fun DeckHomeCarousel(
                                 }
                             }
                             .pointerInput(i, selected, mode) {
-                                detectTapGestures {
-                                    when {
-                                        i != selected -> {
-                                            if (mode != HomeMode.GAMES) onMode(HomeMode.GAMES)
-                                            settleGames(i)
+                                detectTapGestures(
+                                    onLongPress = {
+                                        if (classic) {
+                                            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                            if (i != selected) settleGames(i)
+                                            onMenu()
                                         }
-                                        mode == HomeMode.GAMES -> onMode(HomeMode.OPTIONS)
-                                        else -> onMode(HomeMode.GAMES)
-                                    }
-                                }
+                                    },
+                                    onTap = {
+                                        when {
+                                            i != selected -> {
+                                                if (mode != HomeMode.GAMES) onMode(HomeMode.GAMES)
+                                                settleGames(i)
+                                            }
+                                            // Classic: a tap on the chosen cover plays it; the menu is on hold / Y.
+                                            classic -> actions.firstOrNull()?.onClick?.invoke()
+                                            mode == HomeMode.GAMES -> onMode(HomeMode.OPTIONS)
+                                            else -> onMode(HomeMode.GAMES)
+                                        }
+                                    },
+                                )
                             },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -2720,6 +2762,7 @@ private fun DeckHomeCarousel(
                     n == 0 -> if (loaded) "A  Add a game" else ""
                     mode == HomeMode.OPTIONS -> "A  Select      B  Back"
                     mode == HomeMode.STORES -> "A  Add game      B  Back"
+                    classic -> "A  Play    ↑  Add game    Y  Menu    L2 R2  Shelves"
                     else -> "A  Play    ↑  Add game    ↓  Options    Y  Favourite    L2 R2  Shelves"
                 },
                 color = Deck.onSurfaceVariant,

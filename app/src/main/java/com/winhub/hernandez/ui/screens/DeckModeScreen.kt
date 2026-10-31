@@ -311,7 +311,7 @@ internal fun DeckModeScreen(onExit: () -> Unit) {
             delay(120)
             if (!shellOnly || DeckConsole.boot || DeckConsole.screensaver) return@LaunchedEffect
             if (section == "home") runCatching { homeHeroFocus.requestFocus() }
-            else focusManager.moveFocusSafely(FocusDirection.Enter)
+            else focusManager.moveFocusSafely(FocusDirection.Next)
         }
     }
     LaunchedEffect(section, horizontalRail) {

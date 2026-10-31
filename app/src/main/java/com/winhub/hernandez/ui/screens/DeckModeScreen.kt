@@ -37,7 +37,9 @@ import kotlin.math.exp
 import kotlinx.coroutines.Job
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.preference.PreferenceManager
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Layers
@@ -591,7 +593,9 @@ private fun DeckHome(
     val scope = rememberCoroutineScope()
     // L2/R2 switch the shelves (All / Recent / Favourites / Store games) through the shell's sub-tabs.
     val deckTabs = LocalDeckTabs.current
-    LaunchedEffect(deckTabs) { deckTabs.bind(4) }
+    // Home style (Settings > Appearance): the XMB has no shelves, so it claims a single page and L2/R2 stay idle.
+    val xmbStyle = remember { PreferenceManager.getDefaultSharedPreferences(context).getString("home_style", "xmb") != "classic" }
+    LaunchedEffect(deckTabs) { deckTabs.bind(if (xmbStyle) 1 else 4) }
     val shelf = deckTabs.index
     var favs by remember {
         mutableStateOf(context.getSharedPreferences("hub_prefs", Context.MODE_PRIVATE).getStringSet("hub_favs", emptySet()).orEmpty())
@@ -610,6 +614,11 @@ private fun DeckHome(
     var cronosBusy by remember { mutableStateOf(false) }
     var cronosName by remember { mutableStateOf("") }
     var homeMode by remember { mutableStateOf(HomeMode.GAMES) }
+    // The XMB runs on Shortcuts, built once the games and containers have both loaded.
+    var dataReady by remember { mutableStateOf(false) }
+    var xmbShortcuts by remember { mutableStateOf<List<Shortcut>>(emptyList()) }
+    var xmbReady by remember { mutableStateOf(false) }
+    var xmbFocusTick by remember { mutableStateOf(0) }
     var propertiesFor by remember { mutableStateOf<Container?>(null) }
     var cronosReviewFor by remember { mutableStateOf<Container?>(null) }
     // A game added via Master Containers is a SHORTCUT inside a container you already have, so its
@@ -644,6 +653,7 @@ private fun DeckHome(
             selected = 0
             containers = ContainerManager(context).also { it.reloadContainers() }.getContainers().toList()
         }
+        dataReady = true
     }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -807,6 +817,42 @@ private fun DeckHome(
         }
     }
     LaunchedEffect(shelf) { selected = 0 }
+    LaunchedEffect(visible, containers, dataReady) {
+        if (!xmbStyle || !dataReady) return@LaunchedEffect
+        xmbShortcuts = withContext(Dispatchers.IO) {
+            visible.mapNotNull { e ->
+                val g = e.game ?: return@mapNotNull null
+                val c = containers.find { it.id == g.containerId } ?: return@mapNotNull null
+                val f = File(g.shortcutPath)
+                if (f.isFile) runCatching { Shortcut(c, f) }.getOrNull() else null
+            }
+        }
+        xmbReady = true
+    }
+    val xmbWait = xmbStyle && (entries == null || !xmbReady)
+    val useXmb = xmbStyle && xmbReady && xmbShortcuts.isNotEmpty()
+    // The XMB column carries the same options as the classic game menu.
+    val xmbActionsFor: (Shortcut) -> List<XmbAction> = { s ->
+        val entry = visible.firstOrNull { it.game?.shortcutPath == s.file.path }
+        if (entry == null) emptyList() else listOf(
+            XmbAction("Launch method", Icons.Filled.Layers) { openLaunchMethod(entry) },
+            XmbAction("Settings", Icons.Filled.Settings) { openGameSettings(entry) },
+            XmbAction("Add to Home Screen", Icons.Filled.Home) { addToHomeScreen(entry) },
+            XmbAction("Properties", Icons.Filled.Info) { showProperties(entry) },
+            XmbAction("Delete", Icons.Filled.Delete, "Asks to confirm first", danger = true, menu = { xmb ->
+                XmbMenu("Delete game?", Icons.Filled.Delete, initialKey = "cancel") {
+                    listOf(
+                        XmbRow.Info("msg", "Delete “${entry.title}”?", Icons.Filled.Info),
+                        XmbRow.Action("delete", "Delete", Icons.Filled.Delete, danger = true) {
+                            deleteEntry(entry)
+                            xmb.popToRoot()
+                        },
+                        XmbRow.Action("cancel", "Cancel", Icons.Filled.Close) { xmb.pop() },
+                    )
+                }
+            }),
+        )
+    }
     val sel = selected.coerceIn(0, (visible.size - 1).coerceAtLeast(0))
     val current = visible.getOrNull(sel)
     val details = current?.game?.let { g ->
@@ -862,6 +908,7 @@ private fun DeckHome(
         if (!overlayOpen && hadOverlay) {
             delay(60)
             runCatching { heroFocus.requestFocus() }
+            xmbFocusTick++
         }
         hadOverlay = overlayOpen
     }
@@ -872,82 +919,104 @@ private fun DeckHome(
             .background(Deck.background)
             .clipToBounds(),
     ) {
-        DeckCapsuleWall(
-            covers = wallCovers,
-            driftMs = if (covers.isEmpty()) 75_000 else 40_000,
-        )
-        // The backdrop follows the focused game: its cover, blurred, crossfading as the selection moves.
-        Crossfade(targetState = current?.bitmap, animationSpec = tween(600), label = "homeBackdrop") { bmp ->
-            if (bmp != null) {
-                Image(
-                    bitmap = remember(bmp) { bmp.asImageBitmap() },
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize().blur(18.dp).alpha(0.34f),
+        if (useXmb) {
+            // Inert while the per-game editor is drawn over it, so the D-pad can't wander back in.
+            Box(Modifier.fillMaxSize().focusProperties { canFocus = shortcutSettingsFor == null }) {
+                ShortcutsXmbView(
+                    shortcuts = xmbShortcuts,
+                    selectionMode = false,
+                    selectedPaths = emptySet(),
+                    onToggleSelect = {},
+                    onExitSelection = {},
+                    onPlay = { s -> visible.firstOrNull { it.game?.shortcutPath == s.file.path }?.let { playEntry(it) } },
+                    actionsFor = xmbActionsFor,
+                    sdBadge = {},
+                    focusTick = xmbFocusTick,
                 )
             }
-        }
-        val coverTint = remember(current?.bitmap) {
-            current?.bitmap?.let { b -> Color(Bitmap.createScaledBitmap(b, 1, 1, true).getPixel(0, 0)) }
-        }
-        val tint by animateColorAsState(coverTint ?: Deck.primary, tween(600), label = "homeTint")
-        Box(
-            Modifier.fillMaxSize().drawBehind {
-                val c = Offset(size.width * 0.2f, size.height * 0.3f)
-                drawCircle(
-                    Brush.radialGradient(listOf(tint.copy(alpha = 0.32f), Color.Transparent), c, size.width * 0.7f),
-                    size.width * 0.7f,
-                    c,
-                )
-            },
-        )
-        DeckWallFade()
-
-        DeckHomeCarousel(
-            modifier = Modifier.graphicsLayer {
-                alpha = intro.value
-                translationY = (1f - intro.value) * 60.dp.toPx()
-            },
-            entries = visible,
-            loaded = entries != null && (visible.isNotEmpty() || entries.orEmpty().isEmpty()),
-            selected = sel,
-            favs = favs,
-            details = details,
-            onFavorite = { toggleFavorite() },
-            onSelect = { selected = it },
-            mode = homeMode,
-            onMode = { homeMode = it },
-            actions = actions,
-            cards = cards,
-            onAdd = { addModeMenu = true },
-            focus = heroFocus,
-            enabled = shortcutSettingsFor == null,
-        )
-        if (entries == null) {
+        } else if (xmbWait) {
             CircularProgressIndicator(
                 color = DeckPalette.primary,
                 modifier = Modifier.align(Alignment.Center),
             )
-        } else if (visible.isEmpty() && entries.orEmpty().isNotEmpty()) {
-            Text(
-                "Nothing on this shelf yet - press Y on a game to favourite it",
-                color = DeckPalette.onSurfaceVariant,
-                fontSize = 14.sp,
-                modifier = Modifier.align(Alignment.Center),
+        } else {
+            DeckCapsuleWall(
+                covers = wallCovers,
+                driftMs = if (covers.isEmpty()) 75_000 else 40_000,
             )
-        }
+            // The backdrop follows the focused game: its cover, blurred, crossfading as the selection moves.
+            Crossfade(targetState = current?.bitmap, animationSpec = tween(600), label = "homeBackdrop") { bmp ->
+                if (bmp != null) {
+                    Image(
+                        bitmap = remember(bmp) { bmp.asImageBitmap() },
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().blur(18.dp).alpha(0.34f),
+                    )
+                }
+            }
+            val coverTint = remember(current?.bitmap) {
+                current?.bitmap?.let { b -> Color(Bitmap.createScaledBitmap(b, 1, 1, true).getPixel(0, 0)) }
+            }
+            val tint by animateColorAsState(coverTint ?: Deck.primary, tween(600), label = "homeTint")
+            Box(
+                Modifier.fillMaxSize().drawBehind {
+                    val c = Offset(size.width * 0.2f, size.height * 0.3f)
+                    drawCircle(
+                        Brush.radialGradient(listOf(tint.copy(alpha = 0.32f), Color.Transparent), c, size.width * 0.7f),
+                        size.width * 0.7f,
+                        c,
+                    )
+                },
+            )
+            DeckWallFade()
 
-        // Shelves (L2/R2) top centre, status top right.
-        DeckStretchyTabs(
-            labels = listOf("All", "Recent", "Favourites", "Store games"),
-            selected = shelf,
-            onSelect = { deckTabs.select(it) },
-            focusable = false,
-            fillWidth = false,
-            height = 30.dp,
-            modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
-        )
-        DeckStatusStrip(Modifier.align(Alignment.TopEnd).padding(end = 16.dp, top = 12.dp))
+            DeckHomeCarousel(
+                modifier = Modifier.graphicsLayer {
+                    alpha = intro.value
+                    translationY = (1f - intro.value) * 60.dp.toPx()
+                },
+                entries = visible,
+                loaded = entries != null && (visible.isNotEmpty() || entries.orEmpty().isEmpty()),
+                selected = sel,
+                favs = favs,
+                details = details,
+                onFavorite = { toggleFavorite() },
+                onSelect = { selected = it },
+                mode = homeMode,
+                onMode = { homeMode = it },
+                actions = actions,
+                cards = cards,
+                onAdd = { addModeMenu = true },
+                focus = heroFocus,
+                enabled = shortcutSettingsFor == null,
+            )
+            if (entries == null) {
+                CircularProgressIndicator(
+                    color = DeckPalette.primary,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            } else if (visible.isEmpty() && entries.orEmpty().isNotEmpty()) {
+                Text(
+                    "Nothing on this shelf yet - press Y on a game to favourite it",
+                    color = DeckPalette.onSurfaceVariant,
+                    fontSize = 14.sp,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
+
+            // Shelves (L2/R2) top centre, status top right.
+            DeckStretchyTabs(
+                labels = listOf("All", "Recent", "Favourites", "Store games"),
+                selected = shelf,
+                onSelect = { deckTabs.select(it) },
+                focusable = false,
+                fillWidth = false,
+                height = 30.dp,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
+            )
+            DeckStatusStrip(Modifier.align(Alignment.TopEnd).padding(end = 16.dp, top = 12.dp))
+        }
         AnimatedVisibility(
             visible = splash,
             exit = fadeOut(tween(450)),

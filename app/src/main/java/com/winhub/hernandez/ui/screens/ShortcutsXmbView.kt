@@ -186,6 +186,8 @@ internal fun ShortcutsXmbView(
     onNestedChange: (Boolean) -> Unit = {},
     /** Open one of the drawer destinations (Containers, File Manager, Social Hub…) from the menu square. */
     onNavigate: ((Screen) -> Unit)? = null,
+    /** Bump to take D-pad focus back (e.g. after an overlay drawn over the XMB closes). */
+    focusTick: Int = 0,
 ) {
     if (shortcuts.isEmpty()) return
     val context = LocalContext.current
@@ -287,7 +289,7 @@ internal fun ShortcutsXmbView(
     // Take D-pad focus on entry and again whenever the app comes back (e.g. after a game exits).
     val focusRequester = remember { FocusRequester() }
     nav.refocus = { runCatching { focusRequester.requestFocus() } }
-    LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
+    LaunchedEffect(focusTick) { runCatching { focusRequester.requestFocus() } }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->

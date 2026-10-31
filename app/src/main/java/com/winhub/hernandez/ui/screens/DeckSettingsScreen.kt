@@ -145,6 +145,8 @@ internal fun DeckSettingsScreen() {
     var configEditorStyle by remember {
         mutableStateOf(prefs.getString("config_editor_style", "popup") ?: "popup")
     }
+    // Deck Home's layout ("xmb" | "classic"); read by DeckHome when it opens.
+    var homeStyle by remember { mutableStateOf(if (prefs.getString("home_style", "xmb") == "classic") "classic" else "xmb") }
 
     // ── Sound (MIDI Sound Font) — same as SettingsScreen's Sound section. ──
     var sfNames by remember { mutableStateOf(listOf<String>()) }
@@ -636,6 +638,23 @@ internal fun DeckSettingsScreen() {
                     ThemePreviewDots(
                         themeChoices.firstOrNull { it.name == selectedTheme } ?: themeChoices.first(),
                     )
+                },
+            )
+        }
+
+        // ── Home ──
+        DeckGroup(title = "Home") {
+            DeckChoiceRow(
+                label = "Home style",
+                hint = "XMB shows your games on a bar with their options in a column under each one",
+                options = listOf(
+                    "classic" to "Classic",
+                    "xmb" to "XMB",
+                ),
+                selected = homeStyle,
+                onPick = {
+                    homeStyle = it
+                    prefs.edit().putString("home_style", it).apply()
                 },
             )
         }
